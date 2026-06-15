@@ -3,7 +3,6 @@ name: code-reviewer
 description: ソースコードをレビューする際に使用。「コードをレビューして」「実装をチェックして」「PRをレビューして」といったレビュー依頼時に自動委譲される。
 # tools: レビュー専用エージェントのため、コード編集ツール（Edit, Write）は意図的に除外。
 # 修正が必要な場合は、レビュー結果を報告し、実装エージェント（implement-feature, modify-feature）に委譲する。
-# skills: code-review スキルの内容をコンテキストにプリロードし、汎用レビューの方法論として参照する（動的呼び出しではない）。
 tools: Read, Glob, Grep, Bash
 skills:
   - code-review
