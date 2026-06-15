@@ -56,7 +56,7 @@ description: "devcontainer環境を構築する設定ファイルを生成する
 
 #### `.devcontainer/claude-settings.json`
 
-コンテナ内の Claude Code に決定論的な安全ゲートとして `permissions.deny` を設定する。`/init-project` が出力する `deny` と同じ破壊的コマンドのブロックルールを含める。
+コンテナ内の Claude Code に決定論的な安全ゲートとして `permissions.deny` を設定する。`/init-project` と同じ最小限のベース（ブラスト半径が広く取り返しのつかない操作）を含める。
 
 ```json
 {
@@ -66,15 +66,14 @@ description: "devcontainer環境を構築する設定ファイルを生成する
       "Bash(rm -r:*)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
-      "Bash(git reset --hard:*)",
-      "Bash(gh repo delete:*)",
-      "Bash(gh api -X DELETE:*)"
+      "Bash(git clean -f:*)",
+      "Bash(gh repo delete:*)"
     ]
   }
 }
 ```
 
-> プロジェクト固有の破壊的操作は `permissions.deny` に追記してください（例: `Bash(kubectl delete namespace production:*)`）。コマンドの文脈的な安全判断は Claude Code ネイティブの auto-mode が担うため、独自のコマンドブロックスクリプトは設定しない。
+> プロジェクト固有の破壊的操作は `permissions.deny` に追記してください（例: `Bash(terraform destroy:*)`）。コマンドの文脈的な安全判断は Claude Code ネイティブの auto-mode が担うため、独自のコマンドブロックスクリプトは設定しない。
 
 ### 4. ネットワーク制御の確認（オプション）
 

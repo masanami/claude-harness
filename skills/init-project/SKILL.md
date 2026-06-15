@@ -175,42 +175,39 @@ Agent Teamsの各teammateはworktree隔離環境で動作するため、`.claude
 }
 ```
 
-**deny の構成**（常に含める）:
+**deny の構成**（最小限のベース）:
+
+ベースには「ブラスト半径が広く、取り返しのつかない」普遍的な操作だけを含める。これを土台に、各リポジトリが自身の `.claude/settings.json` で deny を上書き・追記する。
 
 ```json
 {
   "permissions": {
     "deny": [
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
-      "Bash(git reset --hard:*)",
-      "Bash(git clean -f:*)",
-      "Bash(git branch -D:*)",
-      "Bash(git checkout -- .:*)",
-      "Bash(git restore .:*)",
-      "Bash(gh repo delete:*)",
-      "Bash(gh issue delete:*)",
-      "Bash(gh pr close:*)",
-      "Bash(gh api -X DELETE:*)",
-      "Bash(gh api --method DELETE:*)",
       "Bash(rm -rf:*)",
       "Bash(rm -r:*)",
-      "Bash(rmdir:*)",
-      "Bash(chmod:*)",
-      "Bash(chown:*)",
-      "Bash(curl -X DELETE:*)",
-      "Bash(curl -X PUT:*)",
-      "Bash(cdk destroy:*)",
-      "Bash(cdktf destroy:*)",
-      "Bash(terraform apply:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git clean -f:*)",
+      "Bash(gh repo delete:*)"
+    ]
+  }
+}
+```
+
+**方針**:
+
+- **取り返しのつく操作はベースに含めない**。`git reset --hard`（reflogで復旧可）、`git branch -D`（reflog）、`gh pr close`（再オープン可）、`chmod` / `chown` などは deny しない。文脈的な危険判断はネイティブ auto-mode の分類器に委ねる。
+- **インフラ・デプロイ系はベースに含めない**。`cdk` / `terraform` / `pulumi` / `serverless` / `kubectl` / `docker push` などはプロジェクト依存のため、必要なリポジトリで個別に追記する。
+- **プロジェクト依存の削除系**（`gh issue delete`、`gh api -X DELETE`、`curl -X DELETE` など）も同様に、必要に応じて各リポジトリで追記する。
+
+追記例（インフラを扱うリポジトリの場合）:
+
+```json
+{
+  "permissions": {
+    "deny": [
       "Bash(terraform destroy:*)",
-      "Bash(pulumi up:*)",
-      "Bash(pulumi destroy:*)",
-      "Bash(serverless deploy:*)",
-      "Bash(sls deploy:*)",
-      "Bash(kubectl apply:*)",
-      "Bash(kubectl delete:*)",
-      "Bash(docker push:*)"
+      "Bash(kubectl delete:*)"
     ]
   }
 }
