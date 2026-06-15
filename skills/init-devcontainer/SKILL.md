@@ -56,40 +56,24 @@ description: "devcontainer環境を構築する設定ファイルを生成する
 
 #### `.devcontainer/claude-settings.json`
 
-`block-dangerous.sh` の PreToolUse フックを設定する。
+コンテナ内の Claude Code に決定論的な安全ゲートとして `permissions.deny` を設定する。`/init-project` と同じ最小限のベース（ブラスト半径が広く取り返しのつかない操作）を含める。
 
 ```json
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/bin/sh -c 'DENYLIST_PATH=/workspace/.devcontainer/denylist.conf /workspace/scripts/block-dangerous.sh'"
-          }
-        ]
-      }
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(rm -r:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git clean -f:*)",
+      "Bash(gh repo delete:*)"
     ]
   }
 }
 ```
 
-#### `scripts/block-dangerous.sh`
-
-ハーネスの `scripts/block-dangerous.sh` をプロジェクトにコピーし、実行権限を付与する。
-これはコンテナ内のフック（`/workspace/scripts/block-dangerous.sh`）から参照される。
-
-#### `.devcontainer/denylist.conf`
-
-`scripts/denylist.conf` をコピーし、プロジェクト固有のルールをユーザーが追加できるようコメントを末尾に追加する。
-
-```conf
-# プロジェクト固有のdenyルールをここに追加
-# 例（パターンとメッセージはタブ文字で区切る）:
-# kubectl[[:space:]]+delete[[:space:]]+namespace[[:space:]]+production	productionネームスペースの削除は実行できません
-```
+> プロジェクト固有の破壊的操作は `permissions.deny` に追記してください（例: `Bash(terraform destroy:*)`）。コマンドの文脈的な安全判断は Claude Code ネイティブの auto-mode が担うため、独自のコマンドブロックスクリプトは設定しない。
 
 ### 4. ネットワーク制御の確認（オプション）
 
@@ -118,14 +102,11 @@ networks:
 ## devcontainer 環境構築 完了
 
 - 生成ファイル:
-  - `scripts/block-dangerous.sh`
   - `.devcontainer/devcontainer.json`
   - `.devcontainer/claude-settings.json`
-  - `.devcontainer/denylist.conf`
 
 次のステップ:
 - VS Code: "Reopen in Container" でコンテナを起動
 - CLI: `devcontainer up --workspace-folder . && devcontainer exec --workspace-folder . claude`（セッション内で auto-mode を有効化）
-- プロジェクト固有のdenyルールは `.devcontainer/denylist.conf` に追記してください
-- auto-mode の安全な運用については [セーフティガイド](../../docs/auto-mode-safety.md) を参照
+- プロジェクト固有のdenyルールは `.devcontainer/claude-settings.json` の `permissions.deny` に追記してください
 ```

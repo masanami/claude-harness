@@ -5,6 +5,6 @@
   "author": {
     "name": "masanami"
   },
-  "repository": "https://github.com/masanami/harness",
+  "repository": "https://github.com/masanami/claude-harness",
   "keywords": ["ai-driven-development", "harness", "quality-gates", "tdd", "workflow", "agent-teams"]
 }

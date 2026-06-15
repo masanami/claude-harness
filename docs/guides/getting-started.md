@@ -6,22 +6,22 @@
 
 ```bash
 # マーケットプレイスを追加
-/plugin marketplace add masanami/harness
+/plugin marketplace add masanami/claude-harness
 
 # プラグインをインストール
-/plugin install harness@harness-marketplace
+/plugin install harness@masanami-harness
 ```
 
 ### GitHub直接指定
 
 ```bash
-claude plugin add github:masanami/harness
+claude plugin add github:masanami/claude-harness
 ```
 
 ### ローカルインストール（開発用）
 
 ```bash
-claude plugin add ./path/to/harness
+claude plugin add ./path/to/claude-harness
 ```
 
 ---
@@ -87,9 +87,7 @@ claude plugin add ./path/to/harness
 
 ```
 /commit → Conventional Commits形式でコミット
-/test → テスト実行と分析
 /quality-check → 品質ゲートチェック
-/rebase → リベースを実行
 /para-impl 123 → Issue #123 の実装を開始
 ```
 
