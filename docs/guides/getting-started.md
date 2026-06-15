@@ -87,9 +87,7 @@ claude plugin add ./path/to/claude-harness
 
 ```
 /commit → Conventional Commits形式でコミット
-/test → テスト実行と分析
 /quality-check → 品質ゲートチェック
-/rebase → リベースを実行
 /para-impl 123 → Issue #123 の実装を開始
 ```
 
