@@ -9,7 +9,7 @@
 /plugin marketplace add masanami/claude-harness
 
 # プラグインをインストール
-/plugin install harness@harness-marketplace
+/plugin install harness@masanami-harness
 ```
 
 ### GitHub直接指定
