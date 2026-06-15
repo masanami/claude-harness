@@ -3,11 +3,11 @@
 ## 1. 概要
 
 本ドキュメントは、AI駆動開発における開発フローの概要を定義する。
-詳細なチーム体制・役割・品質管理については [品質ゲート定義](./quality-gates.md) を参照。
+品質保証・レビュー方針については [AI駆動開発戦略](../ai-driven-development-strategy.md) を参照。
 
 ### 関連ドキュメント
 
-- [品質ゲート定義](./quality-gates.md) - 品質保証レベル、品質ゲート
+- [AI駆動開発戦略](../ai-driven-development-strategy.md) - 開発サイクル、品質保証・レビュー方針
 - [ブランチ戦略](./branching-strategy.md) - GitHub Flow、PR規約
 - [チケット記述ガイドライン](./ticket-writing.md) - チケットの書き方
 
@@ -57,7 +57,7 @@ flowchart TD
     phase5 -.->|修正要| phase4
 ```
 
-> プロジェクトの品質保証レベルに応じたレビューを実施。詳細は品質ゲート定義を参照。
+> レビューは変更のリスク・重要度に応じて範囲を判断して実施。詳細は [AI駆動開発戦略](../ai-driven-development-strategy.md) を参照。
 
 ---
 
