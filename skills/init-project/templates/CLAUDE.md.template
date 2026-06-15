@@ -25,6 +25,7 @@
 ## 開発規約
 
 ### ブランチ・コミット
+- **方針**: 1チケット = 1ブランチ → PR → 必須ゲート通過後にマージ（{BRANCH_STRATEGY}）
 - **ブランチ**: `{BRANCH_FORMAT}`
 - **コミット**: Conventional Commits + {COMMIT_LANGUAGE}
   - type: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `ci`
@@ -48,11 +49,11 @@
 
 ## ドキュメントマップ
 
-| カテゴリ | パス |
-|---------|------|
-| {DOC_CATEGORY_1} | `{DOC_PATH_1}` |
-| {DOC_CATEGORY_2} | `{DOC_PATH_2}` |
-{DETECTED_DESIGN_DOCS}
+プロジェクトで整備するドキュメント。「作成予定」は初期設定で選定したもの。
+
+| カテゴリ | パス | 状態 |
+|---------|------|------|
+{DOCUMENT_MAP}
 
 ## 品質方針
 
