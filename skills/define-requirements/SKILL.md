@@ -86,12 +86,12 @@ argument-hint: "[テーマや概要]"
 - GitHub Issue: #{番号}
 
 次のステップ:
-# 設計→チケット分解→実装→マージ（フル実行）
-/auto-develop --from-issue #{番号}
+# 1. 設計
+/design #{番号}
 
-# 設計をスキップして直接チケット分解→実装
-/auto-develop --from-issue #{番号} --skip-design
+# 2. 設計を実装チケットに分解
+/create-ticket
 
-# 要件docから開始（親Issueを新規作成）
-/auto-develop docs/requirements/{slug}.md
+# 3. 実装チケットが揃ったら全自律で実装→レビュー→マージ
+/auto-develop #{番号}
 ```
