@@ -4,12 +4,12 @@
 
 本ドキュメントは、ハーネスの**既定のGit運用ルール**を定義する。原則 **GitHub Flow** を採用し、シンプルで継続的なデプロイを可能にする。
 
-これは1つの既定例であり、各プロジェクトは自身の方針で上書きしてよい。ただし開発フロー（[AI駆動開発戦略](../ai-driven-development-strategy.md)）が前提とする最小契約 —— **1チケット = 1ブランチ → PR → 必須ゲート通過後に mainline へマージ** —— は満たすこと。
+これは1つの既定例であり、各プロジェクトは自身の方針で上書きしてよい。ただし開発フロー（[AI駆動開発戦略](./ai-driven-development-strategy.md)）が前提とする最小契約 —— **1チケット = 1ブランチ → PR → 必須ゲート通過後に mainline へマージ** —— は満たすこと。
 
 ### 関連ドキュメント
 
 - [GitHub Flow](https://docs.github.com/en/get-started/using-github/github-flow) - 公式ドキュメント
-- [AI駆動開発戦略](../ai-driven-development-strategy.md) - 開発サイクル全体
+- [AI駆動開発戦略](./ai-driven-development-strategy.md) - 開発サイクル全体
 
 ---
 
@@ -173,7 +173,7 @@ Refs: #123
 ### 5.2 マージ条件
 
 - CIがすべてグリーン
-- 必要なレビューが完了している（変更のリスク・重要度に応じた範囲。詳細は [AI駆動開発戦略](../ai-driven-development-strategy.md) を参照）
+- 必要なレビューが完了している（変更のリスク・重要度に応じた範囲。詳細は [AI駆動開発戦略](./ai-driven-development-strategy.md) を参照）
 - コンフリクトが解消済み
 
 ### 5.3 マージ後の作業

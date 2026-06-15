@@ -101,12 +101,12 @@ claude --plugin-dir /path/to/claude-harness
 ### 戦略・ワークフロー
 
 - [AI駆動開発戦略](docs/ai-driven-development-strategy.md) — 開発サイクル、レビュー優先順位、品質保証・テスト戦略、クリティカル箇所の定義
-- [ブランチ戦略](docs/workflows/branching-strategy.md) — GitHub Flow、Conventional Commits、マージ規約
+- [ブランチ戦略](docs/branching-strategy.md) — GitHub Flow、Conventional Commits、マージ規約
 
 ### ガイド
 
-- [セットアップガイド](docs/guides/getting-started.md) — インストールからCLAUDE.md整備、動作確認まで
-- [カスタマイズ方法](docs/guides/customization.md) — エージェント/スキルのオーバーライド、フック追加
+- [セットアップガイド](docs/getting-started.md) — インストールからCLAUDE.md整備、動作確認まで
+- [カスタマイズ方法](docs/customization.md) — エージェント/スキルのオーバーライド、フック追加
 
 ---
 

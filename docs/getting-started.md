@@ -95,7 +95,7 @@ claude plugin add ./path/to/claude-harness
 
 ## 4. 開発ワークフロー
 
-導入後の基本的な流れは次のとおり。サイクルの詳細は [AI駆動開発戦略](../ai-driven-development-strategy.md) を参照してください。
+導入後の基本的な流れは次のとおり。サイクルの詳細は [AI駆動開発戦略](./ai-driven-development-strategy.md) を参照してください。
 
 1. **要件定義**: 開発者が機能要件を定義し、親チケットを作成
 2. **タスク分解**: 子チケットに分解（`/create-ticket` スキルを活用）
@@ -106,7 +106,7 @@ claude plugin add ./path/to/claude-harness
 
 ## 5. 品質方針の設定
 
-レビュー範囲・テスト範囲は固定のレベルではなく、変更のリスク・重要度に応じて判断します。考え方は [AI駆動開発戦略](../ai-driven-development-strategy.md) を参照してください。
+レビュー範囲・テスト範囲は固定のレベルではなく、変更のリスク・重要度に応じて判断します。考え方は [AI駆動開発戦略](./ai-driven-development-strategy.md) を参照してください。
 
 CLAUDE.md にプロジェクトの品質方針を明記しておくと、エージェントが適切に判断します:
 
