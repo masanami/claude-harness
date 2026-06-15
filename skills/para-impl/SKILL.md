@@ -34,14 +34,14 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 
 | Issue数 | フロー |
 |---------|--------|
-| 1件 | **通常実装**: サブエージェント委譲（後述のPhase 3-8） |
-| 複数 | **Agent Teams提案**: 各teammateが独立に実装（後述のPhase 3-8） |
+| 1件 | **通常実装**: リードエージェントが「1チケットの実装フロー」を実行 |
+| 複数 | **Agent Teams提案**: 各teammateが独立に「1チケットの実装フロー」を実行 |
 
 ---
 
-## 実行手順（通常実装 / Agent Teams提案）
+## 実行手順
 
-> Phase番号は「AI駆動開発戦略」セクション4「エージェントの1チケット実行フロー」に準拠する。
+> 各ステップは [AI駆動開発戦略](../../docs/ai-driven-development-strategy.md) の §2「エージェントの1チケット実行フロー」に準拠する。
 
 ### Phase 1: Issue分析（設計理解）
 
@@ -66,32 +66,39 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 
 ---
 
-### Phase 3-5: 実装・テスト
+## 1チケットの実装フロー（Phase 3〜7）
 
-#### 単一Issueの場合
+単一Issueはリードエージェントが、複数Issueは各teammateがworktreeで、以下を実行する（**チケット = ブランチ = PR** の単位）:
 
-サブエージェントに委譲して以下を実行：
-
-1. **ブランチ作成**
+1. **ブランチ作成**: `origin/main` から作成
    ```bash
    git fetch origin main
    git checkout -b feature/issue-{番号}-{説明} origin/main
    ```
-
-2. **依存関係のインストール**
-   - プロジェクトの依存関係をインストール（CLAUDE.mdまたはpackage.jsonの構成に従う）
-
-3. **実装**: Issue種別に応じたエージェントに委譲
-4. **品質チェック**: `/quality-check` を実行（実装中の早期エラー検出）
-5. **E2Eテスト**: 対象機能の場合、`skills/create-e2e/SKILL.md` の手順に従う
-
-> コミットはPhase 6、PR作成はPhase 7で行う。
+2. **依存関係のインストール**（CLAUDE.md または package.json の構成に従う）
+3. **実装（TDD）**: Issue種別に応じて `implement-feature` / `modify-feature` エージェントに委譲
+4. **品質チェック**: `/quality-check` を実行し、機械可読な結果が `pass` であることを確認（失敗時は修正して再実行）
+5. **E2E / 動作確認**（対象機能の場合）:
+   - 動作確認: `/walkthrough`（AIがHeaded Playwrightで操作し、ユーザーは観察して承認）
+   - E2Eテスト: `/create-e2e`（完了条件とのトレーサビリティ・解説生成付き）
+6. **コミット**: `/commit`（self-review → /simplify → /quality-check → Conventional Commits）
+7. **プッシュ・PR作成**: ドラフトPRで作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める
+   ```bash
+   git push -u origin {ブランチ名}
+   gh pr create --draft --title "{タイトル}" --body "{本文}" --base main
+   ```
 
 ---
 
-#### 複数Issueの場合 — Agent Teams構成の提案
+### 単一Issueの場合
 
-Phase 1-2の分析結果をもとに、Agent Teams構成をユーザーに提案する。各teammateはworktreeで独立にPhase 3〜7を実行する。
+リードエージェントが上記「1チケットの実装フロー」を実行する（worktree は使用しない）。完了後、Phase 8（完了報告）へ進む。
+
+---
+
+### 複数Issueの場合 — Agent Teams構成の提案
+
+Phase 1-2の分析結果をもとに、Agent Teams構成をユーザーに提案する。各teammateはworktreeで独立に「1チケットの実装フロー（Phase 3〜7）」を実行する。
 
 > **重要**: Agent Teamsはスキルから自動的に起動することはできません。ユーザーがClaude Codeに対して明示的にチーム構成を指示する必要があります。このスキルでは分析と提案までを行い、実際のチーム起動はユーザーに委ねます。
 
@@ -116,21 +123,7 @@ Phase 1-2の分析結果をもとに、Agent Teams構成をユーザーに提案
 
 ### 各teammateの実行フロー
 
-各teammateはPhase 3〜7を独立に実行します：
-
-**準備:**
-- origin/mainからブランチを作成
-- 依存関係のインストール
-
-**Phase 3-5（実装・テスト）:**
-- implement-feature/modify-featureエージェントの手順に従い実装
-- `/quality-check` を実行（実装中の早期エラー検出）
-
-**Phase 6（コミット）:**
-- `/commit` スキルを呼び出し（self-review → /simplify → /quality-check → git commit）
-
-**Phase 7（プッシュ・PR作成）:**
-- プッシュしてPR作成（本文に Closes #{番号} を含める）
+各teammateはworktreeで独立に、上記「1チケットの実装フロー（Phase 3〜7）」を実行します。
 
 ### worktreeについて
 
@@ -153,31 +146,6 @@ Phase 1-2の分析結果をもとに、Agent Teams構成をユーザーに提案
 ```
 
 > **注意**: 実際のAgent Teams起動はユーザー（またはClaude Code本体）が行います。このスキルからは起動できません。
-
----
-
-### Phase 6: コミット
-
-`/commit` スキルを呼び出し、以下の手順でコミットを実施:
-
-1. セルフレビュー（self-review）
-2. コードの簡潔化（/simplify・推奨）
-3. 品質チェック（/quality-check）
-4. git commit（Conventional Commits形式）
-
-> 複数Issueの場合、各teammateがコミットを実施するため、リードエージェントとしてのこのPhaseはスキップする。
-
----
-
-### Phase 7: プッシュ・PR作成
-
-```bash
-git push -u origin {ブランチ名}
-gh pr create --title "{タイトル}" --body "{本文}" --base main
-```
-- PR本文には必ず `Closes #番号` を含める（バグ修正の場合は `Fixes #番号`）
-
-> 複数Issueの場合、各teammateがプッシュ・PR作成を実施するため、リードエージェントとしてのこのPhaseはスキップする。
 
 ---
 
