@@ -35,7 +35,7 @@ auto-mode は Claude Code のセッション内で有効化できる自律実行
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/harness/scripts/block-dangerous.sh"
+            "command": "/path/to/claude-harness/scripts/block-dangerous.sh"
           }
         ]
       }
@@ -64,7 +64,7 @@ rm[[:space:]]+(-[a-zA-Z]*r[a-zA-Z]*f|...)[[:space:]]+/[[:space:]]*$<TAB>rm -rf /
         "hooks": [
           {
             "type": "command",
-            "command": "DENYLIST_PATH=/path/to/custom-denylist.conf /path/to/harness/scripts/block-dangerous.sh"
+            "command": "DENYLIST_PATH=/path/to/custom-denylist.conf /path/to/claude-harness/scripts/block-dangerous.sh"
           }
         ]
       }

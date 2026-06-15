@@ -6,7 +6,7 @@
 
 ```bash
 # マーケットプレイスを追加
-/plugin marketplace add masanami/harness
+/plugin marketplace add masanami/claude-harness
 
 # プラグインをインストール
 /plugin install harness@harness-marketplace
@@ -15,13 +15,13 @@
 ### GitHub直接指定
 
 ```bash
-claude plugin add github:masanami/harness
+claude plugin add github:masanami/claude-harness
 ```
 
 ### ローカルインストール（開発用）
 
 ```bash
-claude plugin add ./path/to/harness
+claude plugin add ./path/to/claude-harness
 ```
 
 ---
