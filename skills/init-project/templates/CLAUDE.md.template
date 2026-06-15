@@ -54,10 +54,10 @@
 | {DOC_CATEGORY_2} | `{DOC_PATH_2}` |
 {DETECTED_DESIGN_DOCS}
 
-## 品質ゲート
+## 品質方針
 
 ```
-{QUALITY_GATE_FLOW}
+{QUALITY_POLICY}
 ```
 
 ## よく使うコマンド
