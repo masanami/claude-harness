@@ -80,7 +80,8 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 4. **品質チェック**: `/quality-check` を実行し、機械可読な結果が `pass` であることを確認（失敗時は修正して再実行）
 5. **E2E / 動作確認**（対象機能の場合）:
    - 動作確認: `/walkthrough`（AIがHeaded Playwrightで操作し、ユーザーは観察して承認）
-   - E2Eテスト: `/create-e2e`（完了条件とのトレーサビリティ・解説生成付き）
+   - E2Eテスト: `/create-e2e`（完了条件トレーサビリティ付きで設計→実装→実行）
+   - E2Eレビュー: `/explain-e2e`（テストシナリオ解説と独立検証をメインで対話的に実施）
 6. **コミット**: `/commit`（self-review → /simplify → /quality-check → Conventional Commits）
 7. **プッシュ・PR作成**: ドラフトPRで作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める
    ```bash
