@@ -164,9 +164,9 @@ git fetch origin main
 git checkout -b feature/issue-{{ISSUE_NUMBER}}-$(gh issue view {{ISSUE_NUMBER}} --json title -q '.title' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | head -c 40) origin/main
 ```
 
-## Step 3: 実装（TDD）＋必須ゲート通過
+## Step 3: 実装（TDD）＋必須ゲート＋セルフレビュー
 
-`feature-implementer` エージェントの手順に従い、設計成果物の出力 → TDD 実装 → 内部で `/quality-check` を回して必須ゲート通過まで一気に行う（新規/変更の種別はエージェントが内部で判断）。依存関係のインストールも含む。
+`feature-implementer` エージェントの手順に従い、設計成果物の出力 → TDD 実装 → 内部で `/quality-check` を回して必須ゲート通過 → 軽量セルフレビュー（完了条件達成・スコープ確認）まで一気に行う（新規/変更の種別はエージェントが内部で判断）。依存関係のインストールも含む。
 
 エージェントが `failure` を返した場合（リトライしても `/quality-check` が `pass` にならない場合）は、**Step 4〜6（E2E・コミット・PR作成）に進まず、Step 7 で `status: failed` を返す**（必須ゲート未通過のコードはコミット・マージしない）。全自律モードでも、止まるのは当該チケットのみで、オーケストレーターは次のチケットへ進む。
 
