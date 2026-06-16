@@ -2,7 +2,7 @@
 
 ## スキル概要
 
-`/para-impl` は GitHub Issue を分析して実装を行うスキルです。単一 Issue の場合は実装→テスト→コミット（self-review・simplify・品質チェック含む）→プッシュ→PR作成まで一貫して実行します。複数 Issue の場合は Agent Teams 構成を提案します。
+`/para-impl` は GitHub Issue を分析して実装を行うスキルです。単一 Issue の場合は実装→テスト→コミット（self-review・simplify・品質チェック含む）→プッシュ→ドラフトPR作成まで一貫して実行します。複数 Issue の場合は Agent Teams 構成を提案します。
 
 **参照**: [SKILL.md](../../skills/para-impl/SKILL.md)
 
@@ -44,7 +44,7 @@
   6. 実装コードを作成する
   7. `/quality-check` で lint・テストを実行してパスすることを確認する
   8. `/commit` スキルを呼び出す（self-review → simplify（推奨）→ quality-check → git commit の順で実行）
-  9. `git push` でブランチをプッシュし、`gh pr create` で PR を作成する（本文に `Closes #番号` を含む）
+  9. `git push` でブランチをプッシュし、`gh pr create --draft` でドラフトPRを作成する（本文に `Closes #番号` を含む）
   10. 実装サマリー・PRのURL・レビューしてほしいポイントを報告する
 
 - **合格基準**:
@@ -53,7 +53,7 @@
   - [ ] `greet(name)` 関数が実装されている
   - [ ] テストが実装されており、パスしている
   - [ ] コミットメッセージが Conventional Commits 形式（`feat:` 等）である
-  - [ ] PR が作成されており、本文に `Closes #番号` が含まれている
+  - [ ] ドラフトPR が作成されており、本文に `Closes #番号` が含まれている
 
 - **チェック方法**:
   ```bash
@@ -66,8 +66,8 @@
   # テストファイルが実装コードと同一コミットまたはそれ以前に含まれていること
 
   # PRの確認
-  gh pr view --json title,body | jq '{title: .title, closes: (.body | test("Closes #[0-9]+"))}'
-  # closes が true であること
+  gh pr view --json title,body,isDraft | jq '{title: .title, closes: (.body | test("Closes #[0-9]+")), isDraft: .isDraft}'
+  # closes が true、isDraft が true であること
   ```
 
 ---

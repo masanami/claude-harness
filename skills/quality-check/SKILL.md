@@ -38,7 +38,7 @@ CLAUDE.mdおよびpackage.json等から、以下のコマンドを特定:
 
 **人間向けサマリー**（✅ パス / ❌ 失敗 / ⊘ スキップ）:
 
-```
+```text
 ## 品質ゲートチェック結果
 
 | チェック | 結果 | 詳細 |
@@ -52,7 +52,7 @@ CLAUDE.mdおよびpackage.json等から、以下のコマンドを特定:
 
 **機械可読な結果**（呼び出し元のスキル/エージェントが判定に使う。最後に必ず出力する）:
 
-~~~json
+```json
 {
   "result": "pass",
   "gates": {
@@ -61,7 +61,7 @@ CLAUDE.mdおよびpackage.json等から、以下のコマンドを特定:
     "test":      { "status": "pass", "passed": 0, "failed": 0, "skipped": 0 }
   }
 }
-~~~
+```
 
 - `result`: いずれかのゲートが `fail` なら `fail`、それ以外（全て `pass`/`skip`）は `pass`
 - 各ゲートの `status`: `pass` / `fail` / `skip`（該当コマンドが未設定）

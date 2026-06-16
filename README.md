@@ -67,7 +67,7 @@ claude --plugin-dir /path/to/claude-harness
 | スキル | 使い方 | 説明 |
 |--------|--------|------|
 | `/auto-develop` | `/auto-develop {親Issue番号} [--sequential] [--note "..."]` | 親チケット配下の実装チケット群を全自律で実装→レビュー対応→マージ |
-| `/para-impl` | `/para-impl {Issue番号...}` | Issueを分析→実装→PR作成（複数Issue時はAgent Teams提案） |
+| `/para-impl` | `/para-impl {Issue番号...}` | Issueを分析→実装→ドラフトPR作成（複数Issue時はAgent Teams提案） |
 | `/pr-review-respond` | `/pr-review-respond [PR番号]` | PRレビューコメントへの対応 |
 | `/pr-merge` | `/pr-merge [PR番号]` | PRのレビューとマージ |
 | `/reduce-debt` | `/reduce-debt {親Issue番号}` | 親Issueの実装範囲を技術負債スキャン→必要に応じて修正Issue起票 |

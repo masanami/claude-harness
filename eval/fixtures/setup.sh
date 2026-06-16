@@ -201,7 +201,7 @@ else
   echo "手動で以下の Issue を作成してください:"
   echo "  #1: feat: add formatDate function（para-impl TC-01用）"
   echo "  #2: fix: README の誤字修正（para-impl TC-02用）"
-  echo "  #3: feat: add user authentication（para-impl TC-03用）"
+  echo "  #3: feat: add user authentication（para-impl 実装サンプル）"
   echo "  #4: chore: legacy.js の技術負債調査と改善（reduce-debt TC-01用）"
 fi
 
