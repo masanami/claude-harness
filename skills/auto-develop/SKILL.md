@@ -164,19 +164,17 @@ git fetch origin main
 git checkout -b feature/issue-{{ISSUE_NUMBER}}-$(gh issue view {{ISSUE_NUMBER}} --json title -q '.title' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | head -c 40) origin/main
 ```
 
-## Step 3: 実装（TDD）
+## Step 3: 実装（TDD）＋必須ゲート通過
 
-`feature-implementer` エージェントの手順に従い、設計成果物の出力と TDD 実装を行う（新規/変更の種別はエージェントが内部で判断）。依存関係のインストールも含む。
+`feature-implementer` エージェントの手順に従い、設計成果物の出力 → TDD 実装 → 内部で `/quality-check` を回して必須ゲート通過まで一気に行う（新規/変更の種別はエージェントが内部で判断）。依存関係のインストールも含む。
 
-## Step 4: 品質チェック
+エージェントが `failure` を返した場合（リトライしても `/quality-check` が `pass` にならない場合）は、**Step 4〜6（E2E・コミット・PR作成）に進まず、Step 7 で `status: failed` を返す**（必須ゲート未通過のコードはコミット・マージしない）。全自律モードでも、止まるのは当該チケットのみで、オーケストレーターは次のチケットへ進む。
 
-quality-check スキルの手順に従い実行し、機械可読な結果が `pass` であることを確認する。失敗時は修正を試みる。修正しても `pass` にできない場合は、**Step 5〜7（E2E・コミット・PR作成）に進まず、Step 8 で `status: failed` を返す**（必須ゲート未通過のコードはコミット・マージしない）。全自律モードでも、止まるのは当該チケットのみで、オーケストレーターは次のチケットへ進む。
-
-## Step 5: E2Eテスト（対象機能の場合）
+## Step 4: E2Eテスト（対象機能の場合）
 
 E2Eテスト対象機能（認証・権限・クリティカルパス等）の場合、`/create-e2e` の手順に従い、仕様（完了条件・受入基準）からトレーサビリティ表→実装→実行までを行う（非対話・仕様ベース。全自律のためユーザー動作確認は行わない）。`/explain-e2e`（解説と独立検証）は人間レビュアー向けのため全自律モードでは省略する。
 
-## Step 6: コミット & プッシュ
+## Step 5: コミット & プッシュ
 
 commit スキルの手順に従い Conventional Commits 形式でコミットし、プッシュする。
 
@@ -184,7 +182,7 @@ commit スキルの手順に従い Conventional Commits 形式でコミットし
 git push -u origin {ブランチ名}
 ```
 
-## Step 7: ドラフトPR作成
+## Step 6: ドラフトPR作成
 
 ```bash
 gh pr create --draft --title "{タイトル}" --body "Closes #{{ISSUE_NUMBER}}
@@ -198,7 +196,7 @@ gh pr create --draft --title "{タイトル}" --body "Closes #{{ISSUE_NUMBER}}
 {テスト結果}" --base main
 ```
 
-## Step 8: 結果の返却
+## Step 7: 結果の返却
 
 **必ず以下の JSON 形式のみを最終出力として返却すること。** 説明文は不要。
 
