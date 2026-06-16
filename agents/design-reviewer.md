@@ -2,7 +2,7 @@
 name: design-reviewer
 description: 設計レビューを行う際に使用。「設計をレビューして」「アーキテクチャを確認して」「依存関係をチェックして」といった設計レビュー依頼時に自動委譲される。
 # tools: レビュー専用エージェントのため、コード編集ツール（Edit, Write）は意図的に除外。
-# 修正が必要な場合は、レビュー結果を報告し、実装エージェント（implement-feature, modify-feature）に委譲する。
+# 修正が必要な場合は、レビュー結果を報告し、実装エージェント（feature-implementer）に委譲する。
 tools: Read, Glob, Grep, Bash
 model: inherit
 ---

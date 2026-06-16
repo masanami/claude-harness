@@ -63,8 +63,7 @@ disable-model-invocation: true
 
 | 用途 | 参照ファイル |
 |------|------------|
-| 新規機能実装 | `agents/implement-feature.md` |
-| 既存機能変更 | `agents/modify-feature.md` |
+| 機能実装（新規追加・既存変更・バグ修正） | `agents/feature-implementer.md` |
 | 品質チェック | `skills/quality-check/SKILL.md` |
 | E2Eテスト作成 | `skills/create-e2e/SKILL.md` |
 | コミット | `skills/commit/SKILL.md` |
@@ -145,7 +144,7 @@ Task の返却値から `parent`, `issues`, `dependencies` を取得する。
 
 以下を読み込み、各工程の手順を把握する:
 - `CLAUDE.md` — プロジェクト構成・規約・コマンド
-- `agents/implement-feature.md`（新規機能） / `agents/modify-feature.md`（変更・修正）— TDD実装手順
+- `agents/feature-implementer.md` — 設計成果物の出力＋TDD実装手順（新規追加・既存変更・バグ修正に対応）
 - `skills/quality-check/SKILL.md` — 品質チェック手順
 - `skills/create-e2e/SKILL.md` — E2Eテスト作成手順
 - `skills/commit/SKILL.md` — コミット規約
@@ -167,7 +166,7 @@ git checkout -b feature/issue-{{ISSUE_NUMBER}}-$(gh issue view {{ISSUE_NUMBER}} 
 
 ## Step 3: 実装（TDD）
 
-チケット種別に応じて implement-feature / modify-feature の手順に従い TDD で実装する。依存関係のインストールも含む。
+`feature-implementer` エージェントの手順に従い、設計成果物の出力と TDD 実装を行う（新規/変更の種別はエージェントが内部で判断）。依存関係のインストールも含む。
 
 ## Step 4: 品質チェック
 

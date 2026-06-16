@@ -37,7 +37,7 @@
 
 - **期待する動作**:
   1. Issue の内容を取得・分析する（`gh issue view`）
-  2. Issue 種別を「新規機能実装」と判断し、implement-feature エージェントを使用すると明示する
+  2. `feature-implementer` エージェントを使用して設計成果物の出力と TDD 実装を行うと明示する
   3. 実行計画（変更対象ファイル・実装ステップ）をユーザーに提示する
   4. ブランチを `feature/issue-{番号}-add-greeting-function` 等の命名で作成する
   5. テストファイルを先に作成する（TDD）
