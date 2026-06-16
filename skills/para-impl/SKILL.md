@@ -41,7 +41,7 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 
 ## 実行手順
 
-> 各ステップは [AI駆動開発戦略](../../docs/ai-driven-development-strategy.md) の §2「エージェントの1チケット実行フロー」に準拠する。
+> 各ステップは「1チケット = 1ブランチ → 実装 → 必須ゲート → コミット → PR」の標準フローに準拠する。
 
 ### Phase 1: Issue分析（設計理解）
 
