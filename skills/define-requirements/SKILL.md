@@ -8,7 +8,7 @@ argument-hint: "[テーマや概要]"
 
 ユーザーとの対話を通じて要件を具体化し、要件ドキュメント（`.md`）と GitHub Issue（要件チケット）を作成します。
 
-生成した要件ドキュメントは要件チケットとして登録され、後続の `/design`・`/create-ticket`・`/para-impl` の入力として使えます。
+生成した要件ドキュメントは要件チケットとして登録され、後続の `/design-feature`・`/create-ticket`・`/para-impl` の入力として使えます。
 
 ---
 
@@ -86,8 +86,8 @@ argument-hint: "[テーマや概要]"
 - GitHub Issue: #{番号}
 
 次のステップ:
-# 1. 設計
-/design #{番号}
+# 1. 機能設計
+/design-feature #{番号}
 
 # 2. 設計を実装チケットに分解
 /create-ticket
