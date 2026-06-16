@@ -1,6 +1,6 @@
 ---
 name: para-impl
-description: "GitHub Issueを分析し、実装を行う。複数Issue時はAgent Teams構成を提案する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
+description: "GitHub Issueを分析し、設計→クリティカル判定→TDD実装→コミット→E2E→PR→CI確認の1チケットフローを実行する。複数Issue時はAgent Teams構成を提案する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
 argument-hint: "<Issue番号> [Issue番号...]"
 model: opus
 ---
@@ -9,7 +9,7 @@ model: opus
 
 **あなたは実装を統括するリードエージェントです。**
 
-GitHub Issueを分析し、実装を進めます。Issueが複数の場合はAgent Teamsの構成をユーザーに提案します。
+GitHub Issueを分析し、AI駆動開発戦略の1チケット実行フロー（設計→クリティカル判定→TDD実装→コミット→E2E→PR）に沿って実装を進めます。Issueが複数の場合はAgent Teamsの構成をユーザーに提案します。
 
 ---
 
@@ -30,8 +30,6 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 
 ## ルーティング
 
-パース結果に応じて実行フローを分岐する:
-
 | Issue数 | フロー |
 |---------|--------|
 | 1件 | **通常実装**: リードエージェントが「1チケットの実装フロー」を実行 |
@@ -39,26 +37,25 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 
 ---
 
-## 実行手順
+## Phase 1: Issue分析（要件理解）
 
-> 各ステップは「1チケット = 1ブランチ → 実装 → 必須ゲート → コミット → PR」の標準フローに準拠する。
-
-### Phase 1: Issue分析（設計理解）
-
-1. **全Issueの取得と分析**
+1. **全Issueの取得**
    ```bash
    gh issue view {番号} --json title,body,state,labels,number
    ```
-   - 各Issueの内容を確認し、実装要件を把握する
+   - 各Issueの**要件・完了条件・受入基準**を把握する
    - Issue間の依存関係を特定する
 
-2. **Issue種別の判断**（各Issueごとに）
+2. **Issue種別の判断**（各Issueごと）
    - **新規機能実装**: `implement-feature` エージェントを使用
    - **既存機能の変更/バグ修正**: `modify-feature` エージェントを使用
 
+3. **E2E対象判定**（各Issueごと）
+   - 認証フロー、権限制御、クリティカルパスなどの場合は E2E対象とする
+
 ---
 
-### Phase 2: 実行計画
+## Phase 2: 実行計画
 
 - 依存関係のあるIssueは順序を決定
 - 独立したIssueは並列実行対象
@@ -66,57 +63,146 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 
 ---
 
-## 1チケットの実装フロー（Phase 3〜7）
+## 1チケットの実装フロー（Phase 3〜9）
 
-単一Issueはリードエージェントが、複数Issueは各teammateがworktreeで、以下を実行する（**チケット = ブランチ = PR** の単位）:
+単一Issueはリードエージェントが、複数Issueは各teammateがworktreeで以下を実行する（**1チケット = 1ブランチ = 1PR**）。設計→クリティカル判定→TDD実装→コミット（必須ゲート＋セルフレビュー内包）→E2E→PR→CIの順で進める。
 
-1. **ブランチ作成**: `origin/main` から作成
-   ```bash
-   git fetch origin main
-   git checkout -b feature/issue-{番号}-{説明} origin/main
-   ```
-2. **依存関係のインストール**（CLAUDE.md または package.json の構成に従う）
-3. **実装（TDD）**: Issue種別に応じて `implement-feature` / `modify-feature` エージェントに委譲
-4. **品質チェック**: `/quality-check` を実行し、機械可読な結果が `pass` であることを確認（失敗時は修正して再実行）
-5. **E2E / 動作確認**（対象機能の場合）:
-   - 動作確認: `/walkthrough`（AIがHeaded Playwrightで操作し、ユーザーは観察して承認）
-   - E2Eテスト: `/create-e2e`（完了条件トレーサビリティ付きで設計→実装→実行）
-   - E2Eレビュー: `/explain-e2e`（テストシナリオ解説と独立検証をメインで対話的に実施）
-6. **コミット**: `/commit`（self-review → /simplify → /quality-check → Conventional Commits）
-7. **プッシュ・PR作成**: ドラフトPRで作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める
-   ```bash
-   git push -u origin {ブランチ名}
-   gh pr create --draft --title "{タイトル}" --body "{本文}" --base main
-   ```
+```text
+Phase 3 ブランチ準備
+   ↓
+Phase 4 設計（クリティカル判定 + E2Eシナリオ設計レビュー）
+   ↓（クリティカル/E2E対象 → 人間レビュー要求して停止）
+Phase 5 TDD実装
+   ↓
+Phase 6 コミット（必須ゲート: Lint/型/テスト + セルフレビュー）─指摘あり→ Phase 5
+   ↓
+Phase 7 E2E実装と独立検証（E2E対象の場合）─失敗→ Phase 5
+   ↓
+Phase 8 プッシュ・PR作成（ドラフト）
+   ↓
+Phase 9 CI確認（必須ゲート）
+```
+
+### Phase 3: ブランチ準備
+
+```bash
+git fetch origin main
+git checkout -b {type}/issue-{番号}-{説明} origin/main
+```
+
+依存関係のインストールが必要であれば実施する（CLAUDE.md または package.json の構成に従う）。
+
+### Phase 4: 設計（クリティカル判定 + E2Eシナリオ設計レビュー）
+
+`implement-feature` / `modify-feature` エージェントを **設計のみで停止する指示** で呼び出す。例:
+
+> 「Issue #{番号} の Step 1〜3（要件・既存設計の理解・開発標準の確認）まで実施し、以下を出力したうえで **Step 4（実装）には進まず停止** してください:
+> - 設計方針・影響範囲・実装計画（実装ステップ一覧）
+> - E2E対象機能の場合: E2Eシナリオ一覧と完了条件トレーサビリティ表」
+
+エージェントから受け取る成果物:
+
+- **設計方針・影響範囲・実装計画**: 既存コードの調査結果、変更対象モジュール、実装ステップ
+- **E2Eシナリオ一覧と完了条件トレーサビリティ表**（E2E対象の場合）
+
+```text
+| 完了条件 / 受入基準 | 対応E2Eシナリオ |
+|-------------------|---------------|
+| {完了条件1} | {シナリオ名} |
+| ... | ... |
+```
+
+#### クリティカル箇所判定
+
+以下のいずれかを含むかを判定する:
+
+- セキュリティ（認証・認可、入力検証）
+- 機密データ・個人情報の取り扱い
+- 外部システム連携
+- データベーススキーマの変更
+
+#### 人間レビューの要求
+
+次のいずれかに該当する場合、設計内容をユーザーに提示してレビューを依頼し、**承認を待ってから Phase 5 に進む**:
+
+- クリティカル箇所を含む → 実装計画と影響範囲を提示
+- E2E対象機能 → E2Eシナリオ・トレーサビリティ表を提示し、カバレッジの過不足を確認
+
+両方該当する場合は同じターンで両方提示する。**どちらにも該当しない**場合は AI完結で即 Phase 5 へ進む。
+
+### Phase 5: TDD実装
+
+Phase 4 で確定した設計に基づき、`implement-feature` / `modify-feature` エージェントに TDD（Red → Green → Refactor）で実装を依頼する。
+
+### Phase 6: コミット
+
+```text
+/commit
+```
+
+`/commit` は内部で `self-review` → `/simplify` → `/quality-check` → Conventional Commits を実行する。これにより必須ゲート（**Lint / 型チェック / テスト** と **セルフレビュー**）を兼ねる。セルフレビューでは完了条件の達成も確認する。
+
+- 必須ゲート失敗 → 修正して再実行
+- セルフレビュー指摘あり → **Phase 5 に戻る**
+
+### Phase 7: E2E実装と独立検証（E2E対象の場合）
+
+E2E対象機能の場合、Phase 4 で合意したシナリオに基づき実装する:
+
+1. `/create-e2e` — 設計（Phase 4 のシナリオを根拠）→ 実装 → 全テスト実行
+2. `/explain-e2e` — テストシナリオ解説と独立検証をメインセッションで対話的に実施
+
+- E2E失敗 → **Phase 5 に戻る**
+
+非E2E対象の場合、このフェーズはスキップする。
+
+### Phase 8: プッシュ・PR作成
+
+ドラフトPRで作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。
+
+```bash
+git push -u origin {ブランチ名}
+gh pr create --draft --title "{タイトル}" --body "{本文}" --base main
+```
+
+### Phase 9: CI確認（必須ゲート）
+
+PR作成後、CIの完了を確認する:
+
+```bash
+gh pr checks {PR番号} --watch
+```
+
+- CI失敗 → 失敗内容を確認して **Phase 5 に戻る**
+- CIパス → Phase 10（完了報告）へ
 
 ---
 
-### 単一Issueの場合
+## 単一Issueの場合
 
-リードエージェントが上記「1チケットの実装フロー」を実行する（worktree は使用しない）。完了後、Phase 8（完了報告）へ進む。
+リードエージェントが「1チケットの実装フロー（Phase 3〜9）」を実行する（worktree は使用しない）。完了後、Phase 10 へ進む。
 
 ---
 
-### 複数Issueの場合 — Agent Teams構成の提案
+## 複数Issueの場合 — Agent Teams構成の提案
 
-Phase 1-2の分析結果をもとに、Agent Teams構成をユーザーに提案する。各teammateはworktreeで独立に「1チケットの実装フロー（Phase 3〜7）」を実行する。
+Phase 1-2 の分析結果をもとに、Agent Teams構成をユーザーに提案する。各teammateはworktreeで独立に「1チケットの実装フロー（Phase 3〜9）」を実行する。
 
 > **重要**: Agent Teamsはスキルから自動的に起動することはできません。ユーザーがClaude Codeに対して明示的にチーム構成を指示する必要があります。このスキルでは分析と提案までを行い、実際のチーム起動はユーザーに委ねます。
 
-##### 提案フォーマット
+### 提案フォーマット
 
-```
+```text
 ## Agent Teams 構成提案
 
 以下の構成で並列実装を行うことを提案します。
 
 ### チーム構成
 
-| teammate | 担当Issue | 種別 | ブランチ名 |
-|----------|----------|------|-----------|
-| teammate-1 | #{番号} {タイトル} | 新規実装 | feature/issue-{番号}-{説明} |
-| teammate-2 | #{番号} {タイトル} | バグ修正 | fix/issue-{番号}-{説明} |
-| ... | ... | ... | ... |
+| teammate | 担当Issue | 種別 | E2E対象 | クリティカル | ブランチ名 |
+|----------|----------|------|--------|------------|-----------|
+| teammate-1 | #{番号} {タイトル} | 新規実装 | ○/× | ○/× | feature/issue-{番号}-{説明} |
+| teammate-2 | #{番号} {タイトル} | バグ修正 | ○/× | ○/× | fix/issue-{番号}-{説明} |
 
 ### 依存関係
 
@@ -124,24 +210,23 @@ Phase 1-2の分析結果をもとに、Agent Teams構成をユーザーに提案
 
 ### 各teammateの実行フロー
 
-各teammateはworktreeで独立に、上記「1チケットの実装フロー（Phase 3〜7）」を実行します。
+各teammateはworktreeで独立に Phase 3〜9（ブランチ準備 → 設計 → TDD実装 → コミット → E2E → PR → CI確認）を実行します。
+クリティカル/E2E対象の場合は Phase 4 で停止し、メインセッション経由でユーザーレビューを依頼します。
 
 ### worktreeについて
 
 **重要: 実装完了後、worktreeは削除しません。**
 全PRのレビュー対応が完了するまでworktreeを保持します。
-クリーンアップはPhase 8.5で実施します。
+クリーンアップは Phase 11 で実施します。
 
 ---
 
 この構成でAgent Teamsを起動してよろしいですか？
 ```
 
-##### ユーザーの承認後
+### ユーザーの承認後
 
-ユーザーが構成を承認したら、以下のようにAgent Teamsの起動を依頼する：
-
-```
+```text
 上記の構成でAgent Teamsを起動してください。
 各teammateにはworktreeを使用して独立した環境で作業させてください。
 ```
@@ -150,31 +235,32 @@ Phase 1-2の分析結果をもとに、Agent Teams構成をユーザーに提案
 
 ---
 
-### Phase 8: 完了報告
+## Phase 10: 完了報告
 
-#### 単一Issueの場合
+### 単一Issueの場合
 
-作業完了後、以下を報告：
 1. 実装サマリー
-2. PRのURL
-3. テスト結果
-4. レビューしてほしいポイント
+2. PR URL とCIステータス
+3. Phase 4 で人間レビューを実施した場合はその結果
+4. E2E結果（対象機能の場合）— /explain-e2e の解説と独立検証結果
+5. **次のアクションの案内**:
+   - レビュー対応: `/pr-review-respond {PR番号}`
+   - マージ: `/pr-merge {PR番号}`
 
-#### 複数Issueの場合（Agent Teams完了後）
+### 複数Issueの場合（Agent Teams完了後）
 
-全teammateの作業完了後、以下を集約して報告：
 1. 各Issueの実装サマリー
-2. 各PRのURL
-3. テスト結果の集約
-4. Issue間の整合性確認結果
-5. レビューしてほしいポイント
-6. **worktreeの状態**: 各teammateのworktreeが保持されていることを報告し、レビュー対応後にPhase 8.5でクリーンアップする旨を伝える
+2. 各PR URLとCIステータス
+3. Phase 4 で人間レビューを実施したチケットの一覧
+4. テスト結果の集約・Issue間の整合性確認
+5. **次のアクションの案内**: 各PRに対し `/pr-review-respond`、マージ可能になり次第 `/pr-merge`
+6. **worktreeの状態**: 各teammateのworktreeが保持されていることを報告し、レビュー対応後に Phase 11 でクリーンアップする旨を伝える
 
-> **重要**: 複数Issueの場合、この時点でworktreeを削除しません。PRレビューで指摘が見つかった場合、修正のためにworktreeが必要です。クリーンアップはPhase 8.5で行います。
+> **重要**: 複数Issueの場合、この時点でworktreeを削除しません。PRレビューで指摘が見つかった場合、修正のためにworktreeが必要です。クリーンアップは Phase 11 で行います。
 
 ---
 
-### Phase 8.5: Worktreeクリーンアップ（複数Issueの場合）
+## Phase 11: Worktreeクリーンアップ（複数Issueの場合）
 
 全PRのレビュー対応が完了した後、またはユーザーが明示的にクリーンアップを指示した場合に、各teammateのworktreeを削除する。
 
@@ -184,15 +270,9 @@ Phase 1-2の分析結果をもとに、Agent Teams構成をユーザーに提案
 > - 必要な修正のコミット・プッシュが完了
 
 ```bash
-# 残存するworktreeを確認
 git worktree list
-
-# 各teammateのworktreeを削除
 git worktree remove {teammate-1のworktreeパス} --force
 git worktree remove {teammate-2のworktreeパス} --force
-# ... 全teammate分を繰り返す
-
-# worktreeが全て削除されたことを確認
 git worktree list
 ```
 
@@ -205,15 +285,16 @@ git worktree list
 | Issue数 | worktree使用 | 削除タイミング | 削除フェーズ |
 |---------|-------------|--------------|------------|
 | 単一Issue | 不使用 | - | - |
-| 複数Issue | Agent Teamsが使用 | 全PRのレビュー対応完了後、またはユーザーの明示的な指示 | Phase 8.5 |
+| 複数Issue | Agent Teamsが使用 | 全PRのレビュー対応完了後、またはユーザーの明示的な指示 | Phase 11 |
 
 ---
 
 ## 成果物
 
 - プロダクションコード
-- テストコード
-- Pull Request（Issueごとに1つ）
+- テストコード（単体・結合・E2E）
+- 設計内容（クリティカル/E2E対象時の人間レビュー記録を含む）
+- Pull Request（Issueごとに1つ、ドラフト→CI緑→レビュー対応→マージ）
 
 ---
 
@@ -221,17 +302,19 @@ git worktree list
 
 - スコープ外の機能追加
 - PRの自己マージ
-- 設計ドキュメントなしでの大規模実装開始
+- 設計フェーズ（Phase 4）の省略
+- クリティカル箇所での人間レビュースキップ
 - テストなしでのコード追加
 
 ---
 
 ## ユーザーへの確認タイミング
 
-以下の場合はユーザーに確認を求めてください：
 - Issueの要件が不明確な場合
 - 複数の実装アプローチが考えられる場合
 - スコープの拡大が必要と判断した場合
 - Issue間の依存関係で判断が必要な場合
 - 複数Issue時のAgent Teams構成の承認
+- **Phase 4: クリティカル箇所を含む実装計画のレビュー**
+- **Phase 4: E2Eシナリオと完了条件トレーサビリティのレビュー**
 - 実装完了後のレビュー依頼時
