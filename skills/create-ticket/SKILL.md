@@ -1,12 +1,12 @@
 ---
 name: create-ticket
-description: "機能仕様ドキュメントから要件チケットを作成、または親要件チケットを実装チケット群に分解する。入力で動作が切り替わる、GitHub Issue を触る唯一のスキル。Triggers on: '/create-ticket', 'チケットを作成', 'Issueを作って', 'create ticket', '実装チケットに分解'"
+description: "機能仕様ドキュメントから要件チケットを作成、または親要件チケットを実装チケット群に分解する。入力で動作が切り替わる。Triggers on: '/create-ticket', 'チケットを作成', 'Issueを作って', 'create ticket', '実装チケットに分解'"
 argument-hint: "<機能仕様ドキュメントパス | 親Issue番号>"
 ---
 
 # チケット作成
 
-GitHub Issue を作成します。本スキルは **`gh issue create` を呼ぶ唯一のスキル**で、入力に応じて動作が切り替わります。
+GitHub Issue を作成します。入力に応じて動作が切り替わります。
 
 ---
 
@@ -173,6 +173,5 @@ GitHub Sub-issue 機能が使えるなら `gh api` で親へ紐付ける（`/rep
 
 ## 注意事項
 
-- このスキルは `gh issue create` を呼ぶ唯一のスキル
 - 機能仕様ドキュメントの作成は `/define-feature` の責務
 - バグ修正やドキュメント更新など、親要件チケットを伴わない単独タスクの場合は、ユーザー指示に基づき要件モードに準じて単発 Issue を作成してよい
