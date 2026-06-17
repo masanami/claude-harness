@@ -55,5 +55,5 @@ bash eval/fixtures/setup.sh [リポジトリ名]
 |-------|---------|--------|
 | #1 | feat: add formatDate function | para-impl TC-01（単一 Issue 通常実装） |
 | #2 | fix: README の誤字修正 | para-impl TC-02（複数 Issue 並列実装） |
-| #3 | feat: add user authentication | para-impl TC-03（`-c N` 計画比較モード） |
+| #3 | feat: add user authentication | para-impl（実装サンプル） |
 | #4 | chore: legacy.js の技術負債調査と改善 | reduce-debt TC-01 |

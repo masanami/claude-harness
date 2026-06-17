@@ -173,7 +173,7 @@ ISSUE
 - JWT またはセッションベースの認証のいずれかで実装すること
 - ユーザー名・パスワードを受け取り、認証結果を返す関数を実装する
 
-**評価用途**: para-impl TC-03（-c N による計画比較モード）
+**評価用途**: para-impl（実装サンプル）
 ISSUE
 )"
 
@@ -201,7 +201,7 @@ else
   echo "手動で以下の Issue を作成してください:"
   echo "  #1: feat: add formatDate function（para-impl TC-01用）"
   echo "  #2: fix: README の誤字修正（para-impl TC-02用）"
-  echo "  #3: feat: add user authentication（para-impl TC-03用）"
+  echo "  #3: feat: add user authentication（para-impl 実装サンプル）"
   echo "  #4: chore: legacy.js の技術負債調査と改善（reduce-debt TC-01用）"
 fi
 
