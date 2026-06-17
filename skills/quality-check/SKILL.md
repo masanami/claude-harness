@@ -65,6 +65,8 @@ CLAUDE.mdおよびpackage.json等から、以下のコマンドを特定:
 
 - `result`: いずれかのゲートが `fail` なら `fail`、それ以外（全て `pass`/`skip`）は `pass`
 - 各ゲートの `status`: `pass` / `fail` / `skip`（該当コマンドが未設定）
+- **`status` の判定は errors のみで行う**: lint の警告は `warnings` 件数に載せるが `status` には影響しない。lint で `errors == 0` なら `pass`。型チェックとテストも同様に errors / failed が 0 なら `pass`
+- **本スキルは検査のみ**: 自動修正（`lint --fix` / `format` 等）は行わない。修正可能な箇所は呼び出し元（`feature-implementer` 等）が事前に適用してから本スキルを呼ぶ
 
 ### 4. 失敗時の対応
 
