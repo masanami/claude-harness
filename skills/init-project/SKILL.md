@@ -199,7 +199,7 @@ Node.js以外のプロジェクトの場合:
 
 ユーザーが希望する場合のみ、ステップ3で「作成予定」としたドキュメントの雛形（見出しのみのスケルトン）を標準パスに作成し、CLAUDE.md のドキュメントマップの状態を「整備済み」に更新する。
 
-- 作成しない場合は「作成予定」として記録のみ（後で `/define-requirements` 等で整備）
+- 作成しない場合は「作成予定」として記録のみ（後で `/define-feature` 等で整備）
 - 雛形作成の要否はユーザーに確認する
 
 ### 4b. `.claude/settings.json` 生成
@@ -331,7 +331,7 @@ Agent Teamsの各teammateはworktree隔離環境で動作するため、`.claude
 - `CLAUDE.md` の内容を確認し、必要に応じて手動で調整してください
 - `.claude/settings.json` の権限設定（allow/deny）を確認してください
 - 個人用の追加設定（WebSearch等）は `.claude/settings.local.json` に記載してください
-- 「作成予定」のドキュメントは `/define-requirements` 等で順次整備してください
-- 要件定義を開始するには: /define-requirements [テーマ]
+- 「作成予定」のドキュメントは `/define-feature` 等で順次整備してください
+- 機能定義を開始するには: /define-feature [テーマ]
 - チケットを作成するには: /create-ticket
 ```

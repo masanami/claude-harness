@@ -62,8 +62,7 @@ claude plugin add ./path/to/claude-harness
 
 ## ドキュメント
 
-- 要件定義: `docs/requirements/`
-- 設計書: `docs/design/`
+- 機能仕様: `docs/features/`
 - API仕様: `docs/api/`
 
 ## テスト方針
