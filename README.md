@@ -68,7 +68,7 @@ claude --plugin-dir /path/to/claude-harness
 |--------|--------|------|
 | `/define-feature` | `/define-feature [テーマ]` | 対話から機能仕様ドキュメント(`docs/features/{slug}.md`)を作成。要件＋クリティカル設計決定＋(必要なら)機能全体の設計を1ドキュメントに集約 |
 | `/create-ticket` | `/create-ticket <機能specパス or 親Issue番号>` | 機能仕様→親要件チケット、または親Issue→実装チケット群に分解（GitHub Issue 作成専用） |
-| `/para-impl` | `/para-impl {Issue番号...}` | Issueを分析→実装→ドラフトPR作成（複数Issue時はAgent Teams提案） |
+| `/para-impl` | `/para-impl {Issue番号...}` | Issueを分析→実装→PR作成（複数Issue時はAgent Teams提案） |
 | `/pr-review-respond` | `/pr-review-respond [PR番号]` | PRレビューコメントへの対応 |
 | `/pr-merge` | `/pr-merge [PR番号]` | PRのレビューとマージ |
 | `/reduce-debt` | `/reduce-debt {親Issue番号}` | 親Issueの実装範囲を技術負債スキャン→必要に応じて修正Issue起票 |

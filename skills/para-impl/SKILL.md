@@ -73,7 +73,7 @@ Phase 6 コミット（safety net QC + Conventional Commits）
    ↓
 Phase 7 E2E実装（E2E対象の場合）─失敗→ Phase 4-5
    ↓
-Phase 8 プッシュ・PR作成（ドラフト）
+Phase 8 プッシュ・PR作成
    ↓
 Phase 9 CI確認（必須ゲート）
 ```
@@ -144,12 +144,14 @@ E2E対象機能の場合、Phase 4-5 で feature-implementer が返した E2Eシ
 
 ### Phase 8: プッシュ・PR作成
 
-ドラフトPRで作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。
+PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4-5 で必須ゲート・セルフレビューを通過済み、対象機能なら `/explain-e2e` も済んでいるため、**通常PR（非ドラフト）で開く**（AI レビューを即時起動し `/pr-review-respond` へ繋ぐ）。
 
 ```bash
 git push -u origin {ブランチ名}
-gh pr create --draft --title "{タイトル}" --body "{本文}" --base main
+gh pr create --title "{タイトル}" --body "{本文}" --base main
 ```
+
+> 「まだ詰め切れていない」状態で意図的に保留したい場合のみ `--draft` を付けるか、ラベル `hold` を活用する。
 
 ### Phase 9: CI確認（必須ゲート）
 
@@ -272,7 +274,7 @@ git worktree list
 - プロダクションコード
 - テストコード（単体・結合・E2E）
 - 設計内容（クリティカル/E2E対象時の人間レビュー記録を含む）
-- Pull Request（Issueごとに1つ、ドラフト→CI緑→レビュー対応→マージ）
+- Pull Request（Issueごとに1つ、通常PR→CI緑＋AIレビュー対応→マージ）
 
 ---
 
