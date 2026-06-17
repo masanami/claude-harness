@@ -1,14 +1,16 @@
 ---
 name: define-requirements
-description: "ユーザーとの対話から要件定義ドキュメントを作成し、GitHub Issueも作成する。Triggers on: '/define-requirements', '要件定義', '要件を作成'"
+description: "ユーザーとの対話から要件定義ドキュメントを作成する。クリティカル設計の意思決定もこの段階で行う。チケット化(GitHub Issue 作成)は `/create-ticket` の責務。Triggers on: '/define-requirements', '要件定義', '要件を作成'"
 argument-hint: "[テーマや概要]"
 ---
 
 # 要件定義
 
-ユーザーとの対話を通じて要件を具体化し、要件ドキュメント（`.md`）と GitHub Issue（要件チケット）を作成します。
+ユーザーとの対話を通じて要件を具体化し、**要件ドキュメント (`.md`) を作成**します。GitHub Issue 化はこのスキルの責務外で、後続の `/create-ticket` が担います。
 
-生成した要件ドキュメントは要件チケットとして登録され、後続の `/design-feature`・`/create-ticket`・`/para-impl` の入力として使えます。
+> **責務分離**:
+> - `/define-requirements` — 要件ドキュメント生成（文書化）
+> - `/create-ticket` — GitHub Issue 作成（チケット化）
 
 ---
 
@@ -115,32 +117,25 @@ argument-hint: "[テーマや概要]"
   - 該当しないセクションは「（該当なし）」ではなくセクションごと削除する
   - 機能要件・受入基準はチェックボックス形式で記述する
 
-### 6. GitHub Issue 作成
-
-`skills/create-ticket/SKILL.md` の要件チケット手順に従い、GitHub Issue を作成する。
-
-- テンプレート: `skills/create-ticket/templates/requirement-ticket.md`
-- Issue 本文に以下を含める:
-  - 要件ドキュメントへのリンク: `要件ドキュメント: docs/requirements/{slug}.md`
-- ラベル: `requirement`（またはプロジェクトの慣習に従う）
-
-### 7. 完了報告
+### 6. 完了報告
 
 以下の形式で報告する:
 
-```
+```text
 ## 要件定義 完了
 
-- 要件ドキュメント: `docs/requirements/{slug}.md`
-- GitHub Issue: #{番号}
+- 要件ドキュメント: docs/requirements/{slug}.md
 
 次のステップ:
-# 1. 機能設計
-/design-feature #{番号}
+# 1. 要件チケット(GitHub Issue) を作成
+/create-ticket docs/requirements/{slug}.md
 
-# 2. 設計を実装チケットに分解
-/create-ticket
+# 2. (任意) 複雑な機能なら設計ドキュメントを作る
+/design-feature {作成された親Issue番号}
 
-# 3. 実装チケットが揃ったら並列実装
+# 3. 設計が固まったら実装チケットに分解
+/create-ticket {親Issue番号}
+
+# 4. 実装チケットが揃ったら並列実装
 /para-impl <実装チケット番号...>
 ```

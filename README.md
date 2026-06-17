@@ -66,9 +66,9 @@ claude --plugin-dir /path/to/claude-harness
 
 | スキル | 使い方 | 説明 |
 |--------|--------|------|
-| `/define-requirements` | `/define-requirements [テーマ]` | ユーザーとの対話から要件定義ドキュメント＋要件チケット作成 |
-| `/design-feature` | `/design-feature {親Issue番号}` | 要件チケットから機能スコープの設計ドキュメントを作成 |
-| `/create-ticket` | `/create-ticket` | 設計を実装チケット（GitHub Issue）に分解 |
+| `/define-requirements` | `/define-requirements [テーマ]` | 対話から要件ドキュメントを作成（GitHub Issue は作らない） |
+| `/create-ticket` | `/create-ticket <要件doc or 親Issue番号>` | 要件ドキュメント→親要件チケット、または親Issue→実装チケット群に分解（GitHub Issue 作成専用） |
+| `/design-feature` | `/design-feature {親Issue番号}` | 要件チケットから機能スコープの設計ドキュメントを作成（任意） |
 | `/para-impl` | `/para-impl {Issue番号...}` | Issueを分析→実装→ドラフトPR作成（複数Issue時はAgent Teams提案） |
 | `/pr-review-respond` | `/pr-review-respond [PR番号]` | PRレビューコメントへの対応 |
 | `/pr-merge` | `/pr-merge [PR番号]` | PRのレビューとマージ |
