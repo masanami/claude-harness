@@ -8,10 +8,10 @@ model: sonnet
 
 変更を Conventional Commits 形式でコミットします。
 
-> 品質ゲートは safety net として内部で再確認します。レビューや簡潔化はこのスキルでは行わず、必要なら別スキルを `/commit` の前に明示的に呼んでください:
+> 品質ゲートは safety net として内部で再確認します。レビューと簡潔化はこのスキルでは行いません:
 >
-> - `/self-review` — コードレビュー＋設計レビュー（重め）
-> - `/simplify` — コード簡潔化
+> - **`/self-review`**: `feature-implementer` 経由なら Phase 5 で通過済み。**直接コミットする変更**（手動修正など）の場合のみ、`/commit` の前に明示的に実行する
+> - **`/simplify`**: 必要に応じて `/commit` の前に呼ぶ（必須ではない）
 
 ---
 

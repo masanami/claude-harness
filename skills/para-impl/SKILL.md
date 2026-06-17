@@ -61,12 +61,12 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 
 ## 1チケットの実装フロー（Phase 3〜9）
 
-単一Issueはリードエージェントが、複数Issueは各teammateがworktreeで以下を実行する（**1チケット = 1ブランチ = 1PR**）。設計→TDD実装（必須ゲート＋軽量セルフレビュー内包）→コミット→E2E→PR→CIの順で進める。**実装フェーズに人間ゲートは無い**。
+単一Issueはリードエージェントが、複数Issueは各teammateがworktreeで以下を実行する（**1チケット = 1ブランチ = 1PR**）。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CIの順で進める。**実装フェーズに人間ゲートは無い**。
 
 ```text
 Phase 3 ブランチ準備
    ↓
-Phase 4-5 設計 + TDD実装 + 必須ゲート + 軽量セルフレビュー（feature-implementer 一気通貫）
+Phase 4-5 設計 + TDD実装 + 必須ゲート + セルフレビュー（feature-implementer 一気通貫）
    ↓（必須ゲート未通過 → 当該チケットをスキップ）
 Phase 6 コミット（safety net QC + Conventional Commits）
    ↓
@@ -100,7 +100,7 @@ git checkout -b {type}/issue-{番号}-{説明} origin/main
 
 - **変更ファイル一覧 / 追加テスト件数 / TDDサイクルの概要**
 - **`/quality-check` の最終結果**（`pass` or `failure`）
-- **セルフレビュー結果**（完了条件達成のチェック）
+- **`/self-review` の結果サマリー**（指摘あり/なし、反復回数。完了条件達成・スコープ確認の観点も含む）
 - **E2Eシナリオ一覧と完了条件トレーサビリティ表**（E2E対象の場合、Phase 7 で使う）
 
 ```text
@@ -124,11 +124,9 @@ git checkout -b {type}/issue-{番号}-{説明} origin/main
 /commit
 ```
 
-`/commit` は **コミット規約に従ったコミット実行に責務を絞った**スキル。内部では safety net として `/quality-check` を再走させ、Conventional Commits 形式でコミットを作成する。Phase 4-5 で必須ゲート・セルフレビューを通過済みのため、ここでの `/quality-check` は通過前提で速やかに完了する。
+`/commit` は **コミット規約に従ったコミット実行に責務を絞った**スキル。内部では safety net として `/quality-check` を再走させ、Conventional Commits 形式でコミットを作成する。Phase 4-5 で必須ゲート・`/self-review` を通過済みのため、ここでの `/quality-check` は通過前提で速やかに完了する。
 
-> 詳細レビュー（コードレビュー＋設計レビュー）が必要な場合は、Phase 6 の前に **`/self-review`** を別途明示的に実行する。重要度の高い変更のみで、毎チケットで通すものではない。
->
-> コード簡潔化が必要な場合は **`/simplify`** を別途呼ぶ（同じく必須ではない）。
+> コード簡潔化が必要な場合は **`/simplify`** を Phase 6 の前に別途呼ぶ（必須ではない）。
 
 ### Phase 7: E2E実装と独立検証（E2E対象の場合）
 
