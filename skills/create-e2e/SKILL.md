@@ -87,6 +87,8 @@ argument-hint: "[Issue番号|PR番号|機能名]"
 
 `CLAUDE.md` の「よく使うコマンド」に記載されたE2Eテスト実行コマンドで全テストを実行する。`CLAUDE.md` が無い場合は先に `/init-project` を実行すること。失敗テストは修正し、再実行する。
 
+> **trace 有効化**: 後段の `/explain-e2e` で実行エビデンス（trace / 動画 / スクリーンショット）を参照するため、実行時は **trace を有効化**する（Playwright なら `--trace on` 等、フレームワークに応じた設定）。
+
 ```text
 ## E2Eテスト実装結果
 
