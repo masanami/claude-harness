@@ -67,7 +67,7 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 Phase 3 ブランチ準備
    ↓
 Phase 4-5 設計 + TDD実装 + 必須ゲート + 軽量セルフレビュー（feature-implementer 一気通貫）
-   ↓（failure → 当該チケットをスキップ）
+   ↓（必須ゲート未通過 → 当該チケットをスキップ）
 Phase 6 コミット（safety net QC + Conventional Commits）
    ↓
 Phase 7 E2E実装（E2E対象の場合）─失敗→ Phase 4-5
