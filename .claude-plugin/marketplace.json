@@ -5,7 +5,7 @@
   },
   "plugins": [
     {
-      "name": "harness",
+      "name": "claude-harness",
       "source": "./",
       "description": "AI駆動開発チームのための汎用ハーネスプラグイン - エージェント、スキル、フックの統合パッケージ"
     }
