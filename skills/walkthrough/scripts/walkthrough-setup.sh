@@ -90,14 +90,24 @@ fi
 # --- 3. OS 依存ライブラリの不足を ldd で検出（Linux） ------------------------
 # Headed が主目的のため、headless_shell ではなく full chromium(chrome) を対象に ldd する
 # （両者は必要ライブラリが異なる。headed は GTK/X11 系を要する）。
-CACHE_DIR="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
 CHROME_BIN=""
-for cand in "$CACHE_DIR"/chromium-*/chrome-linux/chrome; do
-  if [ -x "$cand" ]; then CHROME_BIN="$cand"; break; fi
-done
+if [ "${PLAYWRIGHT_BROWSERS_PATH:-}" = "0" ]; then
+  # PLAYWRIGHT_BROWSERS_PATH=0 は Playwright のローカル配置モード（hermetic install）。
+  # ブラウザは node_modules/.../.local-browsers 配下に置かれる。
+  for cand in \
+    "$PROJECT_ROOT"/node_modules/playwright-core/.local-browsers/chromium-*/chrome-linux/chrome \
+    "$PROJECT_ROOT"/node_modules/@playwright/test/node_modules/playwright-core/.local-browsers/chromium-*/chrome-linux/chrome; do
+    if [ -x "$cand" ]; then CHROME_BIN="$cand"; break; fi
+  done
+else
+  CACHE_DIR="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+  for cand in "$CACHE_DIR"/chromium-*/chrome-linux/chrome; do
+    if [ -x "$cand" ]; then CHROME_BIN="$cand"; break; fi
+  done
+fi
 
 if [ -z "$CHROME_BIN" ]; then
-  warn "headed 用 chromium(chrome) を特定できませんでした（$CACHE_DIR）。"
+  warn "headed 用 chromium(chrome) を特定できませんでした（cache: ${CACHE_DIR:-node_modules(.local-browsers)}）。"
   warn "Headed 起動に失敗する場合は次を実行してください: sudo ${PW[*]} install-deps chromium"
   # ldd で確定できないため ready 即断はせず、案内付きで終了する
   finish deps-missing

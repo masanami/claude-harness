@@ -175,8 +175,12 @@ try {
       shotCount += 1
       const name = `${String(shotCount).padStart(2, '0')}-${label}.png`
       const file = path.join(outDir, name)
-      await page.screenshot({ path: file, fullPage: true }).catch(() => {})
-      log(`スクショ: ${name}`)
+      try {
+        await page.screenshot({ path: file, fullPage: true })
+        log(`スクショ: ${name}`)
+      } catch (e) {
+        console.warn(`\x1b[33m[runner]\x1b[0m スクショ保存に失敗: ${name} (${e?.message ?? e})`)
+      }
       return file
     },
 
@@ -208,7 +212,12 @@ try {
         process.env.E2E_SUBMIT_SELECTOR ??
         'button[type="submit"], button:has-text("Login"), button:has-text("ログイン")'
 
-      step(`ログイン（${username}）`)
+      // ユーザー識別子はメールアドレス等 PII になり得るため、ログにはマスクして出す
+      const maskedUser =
+        typeof username === 'string' && username.includes('@')
+          ? username.replace(/^(.{1,2}).*(@.*)$/, '$1***$2')
+          : '***'
+      step(`ログイン（${maskedUser}）`)
       await page.goto(loginPath)
       await page.locator(userSel).first().fill(username)
       await page.locator(passSel).first().fill(password)
