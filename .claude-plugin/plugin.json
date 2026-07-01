@@ -1,6 +1,6 @@
 {
   "name": "claude-harness",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "AI駆動開発チームのための汎用ハーネスプラグイン",
   "author": {
     "name": "masanami"
