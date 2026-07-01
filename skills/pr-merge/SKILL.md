@@ -3,6 +3,8 @@ name: pr-merge
 description: "PRのレビューとマージを実施する。Triggers on: '/pr-merge', 'PRをマージして', 'マージして'"
 argument-hint: "[PR番号]"
 model: opus
+# effort: 定型・機械的なマージ処理のため low。
+effort: low
 ---
 
 # PR確認・マージ指示書

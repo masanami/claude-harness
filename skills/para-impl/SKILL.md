@@ -3,6 +3,8 @@ name: para-impl
 description: "GitHub Issueを分析し、設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認の1チケットフローを実装フェーズの人間ゲートなしで実行する。クリティカル設計は要件チケット側で決定済み前提。複数Issue時はAgent Teams構成を提案する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
 argument-hint: "<Issue番号> [Issue番号...]"
 model: opus
+# effort: 設計〜TDD実装〜PRの自走フローを担うため high。
+effort: high
 ---
 
 # Issue実装指示書

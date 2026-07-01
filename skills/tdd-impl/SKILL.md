@@ -2,6 +2,8 @@
 name: tdd-impl
 description: "Kent Beck/t-wada 流の TDD でテストコードとプロダクションコードを実装する手法。テストリスト→Red→Green→Refactor のサイクルと、仮実装/三角測量/明白な実装の使い分けを規律として課す。Triggers on: '/tdd-impl', 'TDDで実装', 'TDD実装'"
 argument-hint: "[設計成果物 or Issue番号]"
+# effort: テスト設計と実装の規律を担うため high。
+effort: high
 ---
 
 # TDD実装（t-wada / Kent Beck 流）

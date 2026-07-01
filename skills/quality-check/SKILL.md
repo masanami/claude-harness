@@ -2,6 +2,8 @@
 name: quality-check
 description: "auto-fix→lint→型チェック→テストを順に実行し、必須ゲート通過を機械可読な結果で返す品質ゲートチェック。Triggers on: '/quality-check', '品質チェック', 'QCして', 'quality gate'"
 model: sonnet
+# effort: auto-fix は機械的範囲のみ（型/テスト失敗の修正は呼び出し元が担う）ため low。
+effort: low
 ---
 
 # 品質ゲートチェック

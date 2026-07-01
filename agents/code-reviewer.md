@@ -7,6 +7,8 @@ tools: Read, Glob, Grep, Bash
 skills:
   - code-review
 model: inherit
+# effort: バグ・正確性・設計の深い検討を要するレビュー中核のため xhigh。
+effort: xhigh
 ---
 
 # コードレビューエージェント

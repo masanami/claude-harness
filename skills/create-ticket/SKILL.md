@@ -2,6 +2,8 @@
 name: create-ticket
 description: "機能仕様ドキュメントから要件チケットを作成、または親要件チケットを実装チケット群に分解する。入力で動作が切り替わる。Triggers on: '/create-ticket', 'チケットを作成', 'Issueを作って', 'create ticket', '実装チケットに分解'"
 argument-hint: "<機能仕様ドキュメントパス | 親Issue番号>"
+# effort: 仕様→チケット分解が中心のため medium。
+effort: medium
 ---
 
 # チケット作成

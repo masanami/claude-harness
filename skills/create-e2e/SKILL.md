@@ -2,6 +2,8 @@
 name: create-e2e
 description: "仕様（チケットの完了条件・受入基準）からE2Eテストを実装するスキル。テストケース設計→実装→実行→解説を非対話で行う。Triggers on: '/create-e2e', 'E2Eテストを書いて', 'E2Eテストを追加して'"
 argument-hint: "[Issue番号|PR番号|機能名]"
+# effort: E2Eテスト実装が中心のため medium。
+effort: medium
 ---
 
 # E2Eテスト実装
