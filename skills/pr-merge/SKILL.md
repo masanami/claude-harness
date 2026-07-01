@@ -32,6 +32,23 @@ PR番号: $ARGUMENTS
 
 ## 実行手順
 
+### Phase 0: base ブランチ判定（承認ゲートの決定）
+
+マージ先の base ブランチによって承認ゲートが変わるため、**最初に base を確認する**:
+
+```bash
+gh pr view $ARGUMENTS --json baseRefName -q '.baseRefName'
+```
+
+| base | 意味 | 承認ゲート |
+|------|------|-----------|
+| `main`（リポジトリの既定ブランチ） | 本番へのマージ・昇格 | **人間承認必須**（本番影響あり・実質不可逆）。ユーザーに最終確認を取ってからマージする |
+| `main` 以外（統合ブランチ `feat/issue-*` 等） | サブタスクを統合ブランチへ集約 | **人間承認不要**（本番影響なし・可逆）。CI グリーン＋レビュー対応済みで自律マージ可 |
+
+> **「本番ブランチ」の判定**: 上表の `main` は**リポジトリの既定ブランチ**を指す（既定ブランチが `main` 以外のリポジトリもあるため、必要なら `gh repo view --json defaultBranchRef -q '.defaultBranchRef.name'` で確認する）。base がこの既定ブランチと一致すれば本番ゲート、それ以外（統合ブランチ）なら自律マージ対象と判定する。
+>
+> 詳細は [ブランチ戦略 5.4](../../docs/branching-strategy.md) / [承認ゲート 3.5](../../docs/ai-driven-development-strategy.md)。以降の判定・マージ手順はこの base 区分を踏まえて進める。統合 → `main` 昇格 PR（base = 既定ブランチ）が統合ブランチ方式における唯一の人間ゲートである。
+
 ### Phase 1: PR情報の確認
 
 1. **PRの詳細を取得**
@@ -75,10 +92,13 @@ mergeableが`CONFLICTING`の場合：
    gh pr checkout $ARGUMENTS
    ```
 
-2. **mainの最新を取り込んでコンフリクト解消**
+2. **PR の base（Phase 0 で確認した base）の最新を取り込んでコンフリクト解消**
+
+   統合ブランチ方式では PR の base が `main` とは限らないため、**Phase 0 で取得した base ブランチ**を対象に rebase する（`main` 固定にしない）:
    ```bash
-   git fetch origin main
-   git rebase origin/main
+   BASE=$(gh pr view $ARGUMENTS --json baseRefName -q '.baseRefName')
+   git fetch origin "$BASE"
+   git rebase "origin/$BASE"
    ```
    - コンフリクトが発生したファイルを確認
    - 各ファイルのコンフリクトを手動で解消
@@ -116,14 +136,18 @@ mergeableが`CONFLICTING`の場合：
 
 ### Phase 4: マージ
 
-1. **マージ実行**
+1. **承認ゲートの確認（Phase 0 の base 区分に従う）**
+   - base が **`main`**: 本番昇格のため、マージ前に**ユーザーの承認を得る**（統合ブランチ方式では最終動作確認 `/walkthrough` 済みが前提）。承認が取れるまでマージしない
+   - base が **統合ブランチ（`main` 以外）**: 本番影響がなく可逆のため、CI グリーン＋レビュー対応済みなら**ユーザー確認なしで自律マージ**してよい
+
+2. **マージ実行**
    ```bash
    gh pr merge $ARGUMENTS --squash --delete-branch
    ```
    - `--squash`: コミットを1つにまとめる
    - `--delete-branch`: マージ後にブランチを削除
 
-2. **マージ確認**
+3. **マージ確認**
    ```bash
    gh pr view $ARGUMENTS --json state
    ```
@@ -151,9 +175,12 @@ mergeableが`CONFLICTING`の場合：
 ## ユーザーへの確認タイミング
 
 以下の場合はユーザーに確認を求めてください：
+- **base が `main` の PR をマージする場合（本番昇格）**: 本番影響があり実質不可逆のため、マージ前に必ず承認を得る。統合ブランチ方式では最終動作確認（`/walkthrough`）済みが前提
 - コンフリクト解消の判断が難しい場合
 - コードに重大な問題を発見した場合
 - マージ方法（squash/merge/rebase）を変更したい場合
+
+> **base が統合ブランチ（`main` 以外）の PR**は本番影響がなく可逆のため、CI グリーン＋レビュー対応済みであれば上記の承認は不要（自律マージ可）。
 
 ---
 
