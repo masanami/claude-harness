@@ -41,7 +41,7 @@
 
 レイアウト案（実装時の指針。本 ADR では未実施）:
 
-```
+```text
 methodology/        ← ツール非依存の本体（観点・規律・フロー）= 唯一の真実
 adapters/claude/    ← skills/ agents/ .claude-plugin/   (methodology を参照)
 adapters/codex/     ← *.toml / skills / AGENTS.md        (同上)
@@ -57,7 +57,7 @@ para-impl 運用が対象。para-impl は「クリティカル設計を要件チ
 - para-impl は既に subagent 委譲ベースの star 型であり、Agent Teams(通信前提) を必要としない
 - 複数 Issue 時の「Agent Teams 構成を提案」記述は通信不要前提ではオーバースペック → **将来 star 型へ寄せる**
 
-```
+```text
 Claude オーケストレーター（1人: dispatch / 統合 / 順序・衝突解決 / harness スキルロジックの番人）
    ├─ ticket#1 → Codex worker（per-ticket フロー: 設計→TDD→commit→E2E→PR→CI）
    ├─ ticket#2 → Codex worker
