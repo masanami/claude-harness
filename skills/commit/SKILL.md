@@ -2,6 +2,8 @@
 name: commit
 description: "Conventional Commits形式でコミットする。Triggers on: '/commit', 'コミットして', 'commit changes'"
 model: sonnet
+# effort: 定型・機械的なコミット処理のため low。
+effort: low
 ---
 
 # Conventional Commit

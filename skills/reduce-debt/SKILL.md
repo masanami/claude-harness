@@ -3,6 +3,8 @@ name: reduce-debt
 description: "プロジェクト全体の技術負債をスキャンし、親Issueの実装範囲を基に優先度を分類する。Triggers on: '/reduce-debt', '技術負債チェック', '負債チェック'"
 argument-hint: "<親Issue番号>"
 model: opus
+# effort: 負債の発見と優先度判断を要するため high。
+effort: high
 ---
 
 # 技術負債チェック指示書

@@ -5,6 +5,8 @@ tools: Read, Glob, Grep, Edit, Write, Bash, Task
 skills:
   - create-e2e
 model: inherit
+# effort: パターン踏襲が中心のため medium。
+effort: medium
 ---
 
 # E2Eテスト実装エンジニア

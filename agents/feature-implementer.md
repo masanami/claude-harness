@@ -5,6 +5,8 @@ tools: Read, Glob, Grep, Edit, Write, Bash, Task, Skill
 skills:
   - tdd-impl
 model: inherit
+# effort: 実装の中核ロジックを担うため high。
+effort: high
 ---
 
 # 機能実装エージェント
