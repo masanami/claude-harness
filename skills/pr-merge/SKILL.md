@@ -49,7 +49,7 @@ BASE=$(gh pr view $ARGUMENTS --json baseRefName -q '.baseRefName')
 
 > 以降の手順では、この判定結果を **「本番ゲート」/「統合ブランチゲート」** と呼ぶ。
 >
-> 詳細は [ブランチ戦略 5.4](../../docs/branching-strategy.md) / [承認ゲート 3.5](../../docs/ai-driven-development-strategy.md)。統合 → 既定ブランチへの昇格 PR（本番ゲート）が統合ブランチ方式における唯一の人間ゲートである。
+> 承認ゲートは「本番への影響と可逆性」で決まる（本番影響のある不可逆操作のみ人間承認）。統合 → 既定ブランチへの昇格 PR（本番ゲート）が統合ブランチ方式における唯一の人間ゲートである。
 
 ### Phase 1: PR情報の確認
 
