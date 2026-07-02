@@ -60,6 +60,60 @@ main                    # 本番環境（保護ブランチ、常にデプロイ
 - PRマージにはApprove必須
 - ステータスチェック（CI）パス必須
 
+### 2.5 統合ブランチ運用（大きめ機能）
+
+大きめの機能を自走で実装しつつ `main` を常にデプロイ可能に保つため、**親 Issue 単位の統合ブランチ（integration branch）方式**を採る。人間の関与を不可逆点（最終動作確認・`main` マージ）に集約するのが狙い（承認ゲートの原則は [AI駆動開発戦略 3.5](./ai-driven-development-strategy.md) を参照）。
+
+#### 2.5.1 ブランチ構成
+
+```text
+main                         # 常にデプロイ可能
+│
+└── feat/issue-<親>          # 統合ブランチ（親 Issue 単位、main から分岐）
+    │
+    ├── feature/issue-<子1>  # 実装サブタスク（統合ブランチを base に PR）
+    ├── feature/issue-<子2>
+    └── ...
+```
+
+#### 2.5.2 運用フロー
+
+1. **統合ブランチ作成**: 親 Issue に対し `main` から `feat/issue-<親>` を切る。
+   ```bash
+   git fetch origin main
+   git checkout -b feat/issue-<親> origin/main
+   git push -u origin feat/issue-<親>
+   ```
+2. **サブタスク分解（base 指定）**: `/create-ticket <親Issue> --base feat/issue-<親>` で実装チケットを分解。各チケットに統合ブランチ base が記録される。
+3. **サブタスク実装（自律）**: `/para-impl <子1> <子2> ... --base feat/issue-<親>` で実装。サブタスク PR の **base は統合ブランチ**。
+4. **統合ブランチへ自律マージ**: 各サブタスク PR は `/pr-merge` で統合ブランチへマージ。**統合ブランチへのマージは本番影響がなく可逆のため人間承認不要**（自律実行可）。CI グリーン＋レビュー対応済みであればそのままマージする。
+5. **統合 → `main` 昇格（唯一の人間ゲート）**: 全サブタスク完了後、下記手順で昇格する。
+
+#### 2.5.3 統合 → main 昇格手順（手動運用）
+
+統合 → `main` は **本番影響があり実質不可逆**なため、**人間の最終動作確認＋承認**を要する唯一のゲートである。当面は手動運用とする（将来のスキル化は Issue 管理）。
+
+```bash
+# 1. 統合ブランチを最新化し、main を取り込んでおく（コンフリクトを昇格前に解消）
+git fetch origin
+git checkout feat/issue-<親>
+git merge origin/main            # or: git rebase origin/main
+git push
+
+# 2. 統合ブランチで最終動作確認（人間ゲート）
+#    /walkthrough で親 Issue の完了条件をハッピーパス中心に通し、人間が OK/NG を判断する
+
+# 3. 昇格 PR を作成（base = main）
+gh pr create --base main --head feat/issue-<親> \
+  --title "feat: <親機能> を main へ昇格" \
+  --body "Closes #<親Issue>（統合ブランチ feat/issue-<親> の全サブタスクを main へ昇格）"
+
+# 4. 人間が承認 → main へマージ（squash 推奨。履歴を残したい大機能は merge commit）
+gh pr merge <PR番号> --squash --delete-branch
+```
+
+> **ゲートの区別**: 「統合ブランチへのマージ（手順 4）」は自律実行可、「`main` への昇格マージ（本手順 4）」は人間承認必須。`/pr-merge` は PR の base ブランチを見てこの区別を自動判定する（[マージ規約 5.4](#54-統合ブランチマージとmain昇格の区別) 参照）。
+
 ---
 
 ## 3. コミット規約
@@ -180,6 +234,19 @@ Refs: #123
 - マージ済みブランチは削除
 - 関連チケットのステータスを更新
 - 必要に応じてデプロイ
+
+### 5.4 統合ブランチマージとmain昇格の区別
+
+統合ブランチ方式（[2.5](#25-統合ブランチ運用大きめ機能)）では、マージ先の base ブランチによって承認ゲートが変わる。`/pr-merge` は PR の base（`gh pr view --json baseRefName`）を見てこれを自動判定する。
+
+`main` は**リポジトリの既定ブランチ**を指す（既定ブランチが `master`/`develop` 等のリポジトリでは適宜読み替える。`/pr-merge` は `gh repo view --json defaultBranchRef` で既定ブランチを動的に取得して判定する）。
+
+| PR の base | 意味 | 本番影響 | 承認 |
+|-----------|------|---------|------|
+| 既定ブランチ以外の統合ブランチ（`feat/issue-*` 等） | サブタスクを統合ブランチへ集約 | なし（可逆） | **不要**（CI グリーン＋レビュー対応済みで自律マージ） |
+| 既定ブランチ（`main` 等） | 統合ブランチ／機能を本番へ昇格 | あり（実質不可逆） | **必須**（人間の最終動作確認・承認） |
+
+> 承認ゲートの原則は [AI駆動開発戦略 3.5 承認ゲート（本番影響ベース）](./ai-driven-development-strategy.md) を参照。
 
 ---
 
