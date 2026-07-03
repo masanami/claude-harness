@@ -2,7 +2,8 @@
 name: doc-verifier
 description: 実装とドキュメント（要件定義・設計書）の整合性を確認する際に使用。「ドキュメントと整合性を確認して」「設計書と実装が合っているか確認して」といった依頼時に自動委譲される。
 tools: Read, Glob, Grep
-model: inherit
+# model: 実装とドキュメントの整合チェックは機械的なため sonnet で十分。
+model: sonnet
 # effort: 整合性チェックが中心のため medium。
 effort: medium
 ---
