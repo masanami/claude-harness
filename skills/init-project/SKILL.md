@@ -1,7 +1,6 @@
 ---
 name: init-project
 description: "プロジェクトを分析してCLAUDE.mdと.claude/settings.jsonを自動生成する。観点ベース（規模/ドメイン/データ/運用/規制 等9軸）で整備すべきドキュメントを選定し、ブランチ戦略も決定する。Triggers on: '/init-project', 'プロジェクト初期設定', 'CLAUDE.mdを作成'"
-# model: 初期設定の分析・選定はテンプレ寄り。sonnet で十分。
 model: sonnet
 # effort: 初期設定の分析・選定が中心のため medium。
 effort: medium
