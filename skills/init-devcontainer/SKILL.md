@@ -1,6 +1,7 @@
 ---
 name: init-devcontainer
 description: "devcontainer環境を構築する設定ファイルを生成する。Triggers on: '/init-devcontainer', 'devcontainerを設定', 'devcontainer環境を作って'"
+model: sonnet
 # effort: 初期設定生成が中心のため medium。
 effort: medium
 ---
