@@ -207,7 +207,7 @@ Node.js以外のプロジェクトの場合:
 
 ### 4b. `.claude/settings.json` 生成
 
-Agent Teamsの各teammateはworktree隔離環境で動作するため、`.claude/settings.json`（git tracked）にBash権限を設定する必要がある。`.claude/settings.local.json`（gitignored）はworktreeにコピーされないため、ここに権限を記載してもworktree内のエージェントに適用されない。
+並列実装（star 型）の各 worker はworktree隔離環境で動作するため、`.claude/settings.json`（git tracked）にBash権限を設定する必要がある。`.claude/settings.local.json`（gitignored）はworktreeにコピーされないため、ここに権限を記載してもworktree内のエージェントに適用されない。
 
 #### 既存ファイルの確認
 

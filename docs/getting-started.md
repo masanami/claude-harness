@@ -98,7 +98,7 @@ claude plugin add ./path/to/claude-harness
 
 1. **要件定義**: 開発者が機能要件を定義し、親チケットを作成
 2. **タスク分解**: 子チケットに分解（`/create-ticket` スキルを活用）
-3. **並列実装**: `/para-impl {Issue番号...}` で実装（複数指定でAgent Teams並列実行）
+3. **並列実装**: `/para-impl {Issue番号...}` で実装（複数指定で star 型並列実行）
 4. **レビュー・マージ**: `/pr-merge {PR番号}` でレビューとマージ
 
 ---

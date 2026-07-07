@@ -6,5 +6,5 @@
     "name": "masanami"
   },
   "repository": "https://github.com/masanami/claude-harness",
-  "keywords": ["ai-driven-development", "harness", "quality-gates", "tdd", "workflow", "agent-teams"]
+  "keywords": ["ai-driven-development", "harness", "quality-gates", "tdd", "workflow", "orchestrator-worker"]
 }
