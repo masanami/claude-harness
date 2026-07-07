@@ -169,6 +169,8 @@ E2E対象機能の場合、Phase 4-5 で feature-implementer が返した E2Eシ
 
 PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4-5 で必須ゲート・セルフレビューを通過済み、対象機能なら `/explain-e2e` も済んでいるため、**通常PR（非ドラフト）で開く**（AI レビューを即時起動し `/pr-review-respond` へ繋ぐ）。
 
+feature-implementer が**クロスリポジトリ依存の確証結果**を返した場合は、そのまま PR 本文に転記する（確証の規律・形式は feature-implementer / code-reviewer 側に定義）。
+
 **PR の base は Phase の冒頭で決定した `{base}`**（既定はリポジトリの既定ブランチ・通常 `main`、統合ブランチ方式では統合ブランチ）にする:
 
 ```bash
