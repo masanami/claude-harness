@@ -65,7 +65,7 @@ fi
 
 リードが `feature-implementer` 等のサブエージェントを呼び出すとき、および Agent Teams の各 teammate を起動するときは、**以下をそのままプロンプトに含めて伝播させる**。委譲元がリードへのブリーフに禁止事項を書いても、それはリードの文脈止まりで、リードが組み立てるサブエージェントのプロンプトには自動では届かない。注入点はこのスキル（プロンプトの組み立て側）にある:
 
-1. **permission 拒否時の振る舞い**: permission で拒否された操作を、別コマンド経由（`node -e` / `python3 -c` / `sh -c` 等のインタープリタから child_process などでの間接実行）で回避しないこと。拒否された作業は**未実施のままリードに返す**（リードが代行できる。特にコミット・push・PR 作成はリードの責務）。インタープリタの包括 allow は prefix 型 deny を実質無効化できてしまうため、この規範はエージェント側の行動規律としてのみ守れる層である
+1. **permission 拒否時の振る舞い**: permission で拒否された操作を、別コマンド経由（`node -e` / `python3 -c` / `sh -c` 等のインタープリタから child_process などでの間接実行）で回避しないこと。**この規範は「拒否された操作」にのみ適用される**——通常フローで許可されている操作（teammate が自分の worktree で行う `git commit` / `git push` / `gh pr create` を含む）は、担当エージェント自身がそのまま実行してよい。拒否された作業だけを**未実施のままリードに返す**（リードが代行できる）。インタープリタの包括 allow は prefix 型 deny を実質無効化できてしまうため、この規範はエージェント側の行動規律としてのみ守れる層である
 2. **headless 制約**: リードが headless（非対話）セッションの場合、サブエージェントからの非同期の問い合わせ・待ち合わせは成立しない（関連: masanami/claude-flywheel#33）。ユーザー判断が必要な事項は待たずに作業を止め、返却内容に「判断待ち」として明記すること
 
 > **permission 拒否の予防**（worktree 使用時）: gitignore された `.claude/settings.local.json` は worktree にコピーされないため、allow 権限は **git tracked の `.claude/settings.json`** に無ければ worktree 内のエージェントに適用されない（`/init-project` のステップ 4b 参照）。また prefix 型 allowlist は `cd {path} && git commit …` のような複合コマンドや `git -C {path}` 形式にはマッチしないため、worktree 内では **cwd を worktree にして素の `git commit` / `git push` / `gh pr create` 形式で実行する**よう指示する。Agent Teams 起動前に、必要な権限が git tracked の settings.json に揃っているかを確認し、不足があればユーザーに案内する。
