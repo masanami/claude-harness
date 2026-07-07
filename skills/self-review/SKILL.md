@@ -12,10 +12,14 @@ description: "コード変更のセルフレビューを実施する。Triggers 
 
 ### 1. 変更差分の取得
 
+差分の基準ブランチを動的に解決する（`main` 決め打ちにしない。既定ブランチが `master`/`develop` 等のリポジトリや、統合ブランチ方式で base が `feat/issue-*` の場合に、兄弟チケットの差分混入・コマンド失敗を防ぐため）:
+
 ```bash
-# 現在のブランチの変更を確認
-git log origin/main..HEAD --oneline
-git diff origin/main..HEAD
+# base の決定: 呼び出し元から渡されていればそれを優先。無ければ PR の base → リポジトリの既定ブランチ
+BASE=$(gh pr view --json baseRefName -q '.baseRefName' 2>/dev/null \
+  || gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')
+git log "origin/$BASE..HEAD" --oneline
+git diff "origin/$BASE...HEAD"
 ```
 
 ### 2. コードレビューの実施

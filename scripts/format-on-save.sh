@@ -2,14 +2,16 @@
 # format-on-save.sh
 # Write/Edit後にファイルのフォーマットを自動実行するフック
 #
-# 環境変数:
-#   TOOL_OUTPUT - ツール出力（ファイルパスを含む）
+# 入力: stdin の JSON（PostToolUse フック仕様）
+#   {"tool_input": {"file_path": "..."}, ...}
 
-# ツール出力からファイルパスを抽出
+# stdin の JSON からファイルパスを抽出
+INPUT=$(cat)
 FILE_PATH=""
-if [ -n "$TOOL_OUTPUT" ]; then
-  # Write/Edit toolの出力からファイルパスを抽出
-  FILE_PATH=$(echo "$TOOL_OUTPUT" | grep -oE '/[^ ]+\.[a-zA-Z]+' | head -1)
+if command -v jq &>/dev/null; then
+  FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+else
+  FILE_PATH=$(echo "$INPUT" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 fi
 
 if [ -z "$FILE_PATH" ] || [ ! -f "$FILE_PATH" ]; then
