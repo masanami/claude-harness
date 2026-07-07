@@ -242,13 +242,18 @@ Node.js以外のプロジェクトの場合:
       "Bash(git show:*)",
       "Bash(git status:*)",
       "Bash(git rev-parse:*)",
+      "Bash(git ls-remote:*)",
       "Bash(gh issue:*)",
       "Bash(gh pr:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(gh repo view:*)",
+      "Bash(cd:*)"
     ]
   }
 }
 ```
+
+> `Bash(cd:*)` は star 型並列実装の worker が worktree 起点でコマンドを実行するための権限（複合コマンド `cd {worktree} && git commit …` は permission がサブコマンド単位で評価されるため、`cd` と各コマンドの allow が揃っている必要がある）。`git ls-remote` / `gh repo view` は `/para-impl` `/pr-merge` の base 判定で使用する。
 
 **deny の構成**（最小限のベース）:
 

@@ -3,7 +3,7 @@ name: ticket-worker
 description: para-impl の複数Issue並列実装（star 型 orchestrator-worker）で、1チケット分の実装フローを worktree 内で実行する worker。リードから Issue・worktree・ブランチ・フロー手順を受け取って自走する。
 tools: Read, Glob, Grep, Edit, Write, Bash, Task, Skill
 model: sonnet
-# effort: フロー管理と委譲が中心（実装の中核は feature-implementer 側が担う）のため high。
+# effort: CI失敗の分析と Phase 4-5 差し戻し判断を含むフロー統括のため high（実装の中核は feature-implementer 側が担う）。
 effort: high
 ---
 
@@ -18,9 +18,11 @@ effort: high
 
 ## 作業規律
 
-- **最初に worktree へ移動する**: 作業開始時に `cd {worktreeパス}` を**単独コマンド**で実行し、以降のすべての git / gh / ビルド・テストコマンドを worktree の cwd で**素のコマンド形式**（`git commit …` / `git push …` / `gh pr create …`）で実行する。`cd {path} && git …` の複合形式や `git -C {path}` は prefix 型 permission allowlist にマッチしないため使わない
+- **すべてのコマンドを worktree 起点で実行する**: サブエージェントの Bash は**呼び出しごとに cwd がリセットされる**ため、git / gh / ビルド・テストコマンドは毎回 `cd {worktreeパス} && {コマンド}` の複合形式で実行する。複合コマンドの permission はサブコマンド単位で評価されるため、`cd` と各コマンドの allow が揃っていれば通る（`Bash(cd:*)` は `/init-project` 4b の共通権限に含まれる）。`git -C {path}` 形式は `Bash(git commit:*)` 等の prefix allow にマッチしないため使わない
+- **ファイル操作も worktree 配下に限定する**: Read / Edit / Write / Glob / Grep は worktree の**絶対パス**配下のみを対象とし、メインチェックアウト側のファイルには触れない
+- **依存関係のインストール**: 作業開始時に必要であれば worktree 内で実施する（CLAUDE.md またはパッケージマネージャの構成に従う）
 - **worker 間通信はしない**: 他チケットとの調整が必要になった場合（共有ファイルの衝突等）は、自分で解決しようとせず作業を止めてリードに返す
-- **Phase 4-5 は `feature-implementer` エージェントに委譲する**（単一Issue時のリードと同じ呼び出し方。要件チケットの「クリティカル設計決定」セクションをプロンプトに含める）
+- **Phase 4-5 は `feature-implementer` エージェントに委譲する**。プロンプトには要件チケットの「クリティカル設計決定」セクションに加えて **worktree の絶対パスを必ず含め、すべての作業をその配下で行うよう指示する**（ファイル操作は worktree 絶対パス、Bash は `cd {worktreeパス} && {コマンド}` 形式）
 
 ## 返却内容
 
