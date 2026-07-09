@@ -22,7 +22,7 @@ effort: high
 - **ファイル操作も worktree 配下に限定する**: Read / Edit / Write / Glob / Grep は worktree の**絶対パス**配下のみを対象とし、メインチェックアウト側のファイルには触れない
 - **依存関係のインストール**: 作業開始時に必要であれば worktree 内で実施する（CLAUDE.md またはパッケージマネージャの構成に従う）
 - **worker 間通信はしない**: 他チケットとの調整が必要になった場合（共有ファイルの衝突等）は、自分で解決しようとせず作業を止めてリードに返す
-- **Phase 4-5 は `feature-implementer` エージェントに委譲する**。プロンプトには要件チケットの「クリティカル設計決定」セクションに加えて **worktree の絶対パスを必ず含め、すべての作業をその配下で行うよう指示する**（ファイル操作は worktree 絶対パス、Bash は `cd {worktreeパス} && {コマンド}` 形式）
+- **Phase 4-5 は `feature-implementer` エージェントに委譲する**（Task ツールの `subagent_type` は plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定する。prefix 無しの `feature-implementer` は名称解決エラーになる）。プロンプトには要件チケットの「クリティカル設計決定」セクションに加えて **worktree の絶対パスを必ず含め、すべての作業をその配下で行うよう指示する**（ファイル操作は worktree 絶対パス、Bash は `cd {worktreeパス} && {コマンド}` 形式）
 
 ## 返却内容
 
