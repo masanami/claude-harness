@@ -82,10 +82,13 @@ classify_pm() {
   echo ""
 }
 
-# 引数: pm文字列, tsconfig.jsonの有無("true"/"false")
+# 引数: pm文字列, tsconfig.jsonの有無("true"/"false"), package.jsonの有無("true"/"false")
+# pm がロックファイル不在で空文字でも、package.json があれば Node.js（JS/TS）と判定する
+# （PM判定＝ロックファイル起点、言語判定＝package.json起点で分離）
 classify_language() {
   local pm="$1"
   local has_tsconfig="${2:-false}"
+  local has_package_json="${3:-false}"
   case "$pm" in
     npm|yarn|pnpm|bun)
       if [ "$has_tsconfig" = "true" ]; then echo "TypeScript"; else echo "JavaScript"; fi
@@ -94,7 +97,13 @@ classify_language() {
     go) echo "Go" ;;
     pip) echo "Python" ;;
     bundler) echo "Ruby" ;;
-    *) echo "" ;;
+    *)
+      if [ "$has_package_json" = "true" ]; then
+        if [ "$has_tsconfig" = "true" ]; then echo "TypeScript"; else echo "JavaScript"; fi
+      else
+        echo ""
+      fi
+      ;;
   esac
 }
 
@@ -106,8 +115,10 @@ fetch_pm_and_language() {
   pm=$(classify_pm "$files")
   local has_tsconfig="false"
   [ -f "$dir/tsconfig.json" ] && has_tsconfig="true"
+  local has_package_json="false"
+  [ -f "$dir/package.json" ] && has_package_json="true"
   local language
-  language=$(classify_language "$pm" "$has_tsconfig")
+  language=$(classify_language "$pm" "$has_tsconfig" "$has_package_json")
   PM_RESULT="$pm"
   LANGUAGE_RESULT="$language"
 }
@@ -256,7 +267,9 @@ fetch_stack_evidence() {
   compgen -G "$dir/jest.config.*" >/dev/null 2>&1 && has_jest_config="true"
   compgen -G "$dir/vitest.config.*" >/dev/null 2>&1 && has_vitest_config="true"
   compgen -G "$dir/playwright.config.*" >/dev/null 2>&1 && has_playwright_config="true"
-  [ -f "$dir/pytest.ini" ] && has_pytest_ini="true"
+  if [ -f "$dir/pytest.ini" ] || grep -q '\[tool.pytest' "$dir/pyproject.toml" 2>/dev/null; then
+    has_pytest_ini="true"
+  fi
 
   local has_dockerfile="false" has_compose="false" has_terraform="false" has_gh_workflows="false"
   [ -f "$dir/Dockerfile" ] && has_dockerfile="true"
@@ -416,16 +429,18 @@ fetch_test_prereqs() {
 # 2d. ディレクトリ構成のスキャン
 # ------------------------------------------------------------------
 
-DIR_TREE_EXCLUDE_REGEX='(^|/)(\.git|node_modules|dist|\.next|target|__pycache__|\.venv|vendor)(/|$)'
-
 fetch_dir_tree() {
   local dir="$1"
   local max_depth="${2:-3}"
   local max_entries="${3:-200}"
   local all_entries
-  all_entries=$(cd "$dir" 2>/dev/null && find . -mindepth 1 -maxdepth "$max_depth" \( -type d -o -type f \) 2>/dev/null \
+  # 除外ディレクトリは走査前に -prune で刈り込む（grep で事後除外すると大規模プロジェクトで
+  # node_modules 等を全走査してメモリに積むことになり、解析時間・メモリ使用量が急増するため）
+  all_entries=$(cd "$dir" 2>/dev/null && find . -mindepth 1 -maxdepth "$max_depth" \
+    \( -type d \( -name .git -o -name node_modules -o -name dist -o -name .next \
+       -o -name target -o -name __pycache__ -o -name .venv -o -name vendor \) \) -prune \
+    -o \( -type d -o -type f \) -print 2>/dev/null \
     | sed 's|^\./||' \
-    | grep -Ev "$DIR_TREE_EXCLUDE_REGEX" \
     | sort)
   local total_count=0
   [ -n "$all_entries" ] && total_count=$(printf '%s\n' "$all_entries" | awk 'NF' | wc -l | tr -d ' ')
@@ -454,6 +469,11 @@ DESIGN_DOC_PATTERNS=(
   "api_spec*" "api_specifications*" "openapi*" "swagger*"
 )
 
+# 文書・仕様ファイルとして許可する拡張子。下流（skills/init-project/SKILL.md）が
+# designDocs を「整備済み」の正本として扱うため、schema.ts のような実装ファイルや
+# ディレクトリ（src/domain 等）を誤って含めないよう -type f + 拡張子で限定する。
+DESIGN_DOC_EXTENSIONS_REGEX='\.(md|mdx|txt|rst|adoc|yaml|yml|json)$'
+
 fetch_docs_evidence() {
   local dir="$1"
   local docs_dir="null"
@@ -467,7 +487,9 @@ fetch_docs_evidence() {
     done < <(cd "$dir" 2>/dev/null && find . \
       \( -path "./.git" -o -path "./node_modules" -o -path "./dist" -o -path "./.next" \
          -o -path "./target" -o -path "./__pycache__" -o -path "./.venv" -o -path "./vendor" \) -prune \
-      -o -iname "$pattern" -print 2>/dev/null | sed 's|^\./||')
+      -o -type f -iname "$pattern" -print 2>/dev/null \
+      | sed 's|^\./||' \
+      | grep -Ei "$DESIGN_DOC_EXTENSIONS_REGEX")
   done
   local design_docs_json
   design_docs_json=$(printf '%s\n' "${results[@]:-}" | awk 'NF' | sort -u | jq -R -s 'split("\n") | map(select(length>0))')
@@ -608,7 +630,7 @@ fetch_axes() {
   openapi_hit=$(cd "$dir" 2>/dev/null && find . \
     \( -path "./.git" -o -path "./node_modules" -o -path "./dist" -o -path "./.next" \
        -o -path "./target" -o -path "./__pycache__" -o -path "./.venv" -o -path "./vendor" \) -prune \
-    -o -iname "openapi*" -print -o -iname "swagger*" -print 2>/dev/null | head -1)
+    -o -iname "openapi*" -print -o -iname "swagger*" -print 2>/dev/null | LC_ALL=C sort | head -1)
   [ -n "$openapi_hit" ] && has_openapi="true"
 
   local api_standing api_evidence

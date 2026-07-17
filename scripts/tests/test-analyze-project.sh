@@ -77,6 +77,9 @@ assert_eq "go -> Go" "Go" "$(classify_language "go" "false")"
 assert_eq "pip -> Python" "Python" "$(classify_language "pip" "false")"
 assert_eq "bundler -> Ruby" "Ruby" "$(classify_language "bundler" "false")"
 assert_eq "pm空 -> 空文字" "" "$(classify_language "" "false")"
+assert_eq "pm空+tsconfig無し+package.json有り -> JavaScript(PM不明でもNode.js判定)" "JavaScript" "$(classify_language "" "false" "true")"
+assert_eq "pm空+tsconfig有り+package.json有り -> TypeScript(PM不明でもNode.js判定)" "TypeScript" "$(classify_language "" "true" "true")"
+assert_eq "pm空+package.json無し -> 空文字" "" "$(classify_language "" "true" "false")"
 
 # ====================================================================
 # 純粋関数: project_name_fallback
@@ -196,6 +199,19 @@ fetch_pm_and_language "$NODE_DIR"
 assert_eq "npm検出" "npm" "$PM_RESULT"
 assert_eq "tsconfig.json有りでTypeScript判定" "TypeScript" "$LANGUAGE_RESULT"
 
+echo "=== test: fetch_pm_and_language (ロックファイル無し + package.json + tsconfig.json) ==="
+NODE_NO_LOCK_DIR="${TMP_ROOT}/node-project-no-lock"
+mkdir -p "$NODE_NO_LOCK_DIR"
+cat > "$NODE_NO_LOCK_DIR/package.json" <<'EOF'
+{
+  "name": "sample-node-app-no-lock"
+}
+EOF
+: > "$NODE_NO_LOCK_DIR/tsconfig.json"
+fetch_pm_and_language "$NODE_NO_LOCK_DIR"
+assert_eq "ロックファイル無しでpmは空文字" "" "$PM_RESULT"
+assert_eq "pm不明でもpackage.json+tsconfig.jsonからTypeScript判定(回帰)" "TypeScript" "$LANGUAGE_RESULT"
+
 echo "=== test: fetch_project_name (package.json優先) ==="
 fetch_project_name "$NODE_DIR"
 assert_eq "package.jsonのnameを採用" "sample-node-app" "$NAME_RESULT"
@@ -263,6 +279,21 @@ assert_eq "Pythonのtestコマンドがpytest" "pytest" "$(jq -r '.test' <<<"$CO
 assert_eq "Pythonのlintコマンドがruff" "ruff check ." "$(jq -r '.lint' <<<"$COMMANDS_JSON")"
 assert_eq "Pythonのtypecheckコマンドがmypy" "mypy ." "$(jq -r '.typecheck' <<<"$COMMANDS_JSON")"
 assert_eq "Pythonのformatコマンドがblack" "black ." "$(jq -r '.format' <<<"$COMMANDS_JSON")"
+
+echo "=== test: fetch_stack_evidence (pyproject.tomlのみでpytest.ini無し、回帰) ==="
+PY_DIR_PYPROJECT_ONLY="${TMP_ROOT}/python-project-pyproject-only"
+mkdir -p "$PY_DIR_PYPROJECT_ONLY"
+cat > "$PY_DIR_PYPROJECT_ONLY/pyproject.toml" <<'EOF'
+[project]
+name = "sample-python-app-pyproject-only"
+version = "0.1.0"
+
+[tool.pytest]
+EOF
+fetch_commands "$PY_DIR_PYPROJECT_ONLY" "pip"
+assert_eq "pytest.ini無しでもcommands.testはpytest" "pytest" "$(jq -r '.test' <<<"$COMMANDS_JSON")"
+fetch_stack_evidence "$PY_DIR_PYPROJECT_ONLY"
+assert_eq "pytest.ini無し+pyproject.tomlの[tool.pytest]でstack.testにpytestを含む(commands.testとの矛盾回帰)" "true" "$(jq '.test | any(. == "pytest")' <<<"$STACK_JSON")"
 
 # ====================================================================
 # fetch系: Rust プロジェクトのフィクスチャ
@@ -333,6 +364,16 @@ assert_eq "distが除外される" "false" "$(jq '[.entries[] | select(startswit
 assert_eq "srcは含まれる" "true" "$(jq '[.entries[] | select(startswith("src"))] | length > 0' <<<"$DIR_TREE_JSON")"
 assert_eq "truncatedはfalse" "false" "$(jq -r '.truncated' <<<"$DIR_TREE_JSON")"
 
+echo "=== test: fetch_dir_tree (find走査前のprune、ネストした除外ディレクトリ配下も除外/回帰) ==="
+TREE_DIR2="${TMP_ROOT}/tree-project-nested-exclude"
+mkdir -p "$TREE_DIR2/packages/app/node_modules/foo" "$TREE_DIR2/packages/app/src"
+: > "$TREE_DIR2/packages/app/node_modules/foo/pkg.js"
+: > "$TREE_DIR2/packages/app/src/index.ts"
+
+fetch_dir_tree "$TREE_DIR2" 5 200
+assert_eq "ネストしたnode_modules配下が除外される(prune走査/回帰)" "false" "$(jq '[.entries[] | select(contains("node_modules"))] | length > 0' <<<"$DIR_TREE_JSON")"
+assert_eq "ネストしたsrcは含まれる" "true" "$(jq '[.entries[] | select(contains("packages/app/src"))] | length > 0' <<<"$DIR_TREE_JSON")"
+
 echo "=== test: fetch_dir_tree (件数上限でtruncated) ==="
 MANY_DIR="${TMP_ROOT}/many-files"
 mkdir -p "$MANY_DIR"
@@ -356,6 +397,18 @@ fetch_docs_evidence "$DOCS_DIR_FIXTURE"
 assert_eq "docsDirが検出される" "docs" "$(jq -r '.docsDir' <<<"$DOCS_JSON")"
 assert_eq "architecture.mdがdesignDocsに含まれる" "true" "$(jq '.designDocs | any(. == "architecture.md")' <<<"$DOCS_JSON")"
 assert_eq "docs/api_spec.yamlがdesignDocsに含まれる" "true" "$(jq '.designDocs | any(. == "docs/api_spec.yaml")' <<<"$DOCS_JSON")"
+
+echo "=== test: fetch_docs_evidence (実装ファイル/ディレクトリの誤検出防止、回帰) ==="
+DOCS_DIR_FALSE_POSITIVE="${TMP_ROOT}/docs-project-false-positive"
+mkdir -p "$DOCS_DIR_FALSE_POSITIVE/src/domain"
+: > "$DOCS_DIR_FALSE_POSITIVE/src/domain/entity.ts"
+: > "$DOCS_DIR_FALSE_POSITIVE/schema.ts"
+: > "$DOCS_DIR_FALSE_POSITIVE/architecture.md"
+
+fetch_docs_evidence "$DOCS_DIR_FALSE_POSITIVE"
+assert_eq "src/domainディレクトリはdesignDocsに含まれない(-type f限定/回帰)" "false" "$(jq '.designDocs | any(. == "src/domain")' <<<"$DOCS_JSON")"
+assert_eq "schema.tsはdesignDocsに含まれない(拡張子限定/回帰)" "false" "$(jq '.designDocs | any(. == "schema.ts")' <<<"$DOCS_JSON")"
+assert_eq "architecture.mdはdesignDocsに含まれる" "true" "$(jq '.designDocs | any(. == "architecture.md")' <<<"$DOCS_JSON")"
 
 echo "=== test: fetch_docs_evidence (docs無し) ==="
 NO_DOCS_DIR="${TMP_ROOT}/no-docs-project"
@@ -439,6 +492,15 @@ fetch_axes "$AXES_DIR2" "false" "$E2E_DIRS_JSON"
 assert_eq "軸5がauto-no(ORM無し)" "auto-no" "$(jq -r '.[4].standing' <<<"$AXES_JSON")"
 assert_eq "軸6がauto-yes(openapi.yaml検出)" "auto-yes" "$(jq -r '.[5].standing' <<<"$AXES_JSON")"
 assert_eq "軸9がauto-yes(e2e/検出)" "auto-yes" "$(jq -r '.[8].standing' <<<"$AXES_JSON")"
+
+echo "=== test: fetch_axes (OpenAPI証跡が複数存在する場合の選択順が決定的、回帰) ==="
+AXES_DIR3="${TMP_ROOT}/axes-project3"
+mkdir -p "$AXES_DIR3/z_dir" "$AXES_DIR3/a_dir"
+: > "$AXES_DIR3/z_dir/swagger.yaml"
+: > "$AXES_DIR3/a_dir/openapi.yaml"
+fetch_e2e_dirs "$AXES_DIR3"
+fetch_axes "$AXES_DIR3" "false" "$E2E_DIRS_JSON"
+assert_eq "複数候補時、LC_ALL=Cソート後の先頭(a_dir/openapi.yaml)が決定的に選ばれる(find列挙順非依存/回帰)" "true" "$(jq -r '.[5].evidence' <<<"$AXES_JSON" | grep -qF "a_dir/openapi.yaml" && echo true || echo false)"
 
 # ====================================================================
 # CLIレベル（統合）: フルスクリプト実行での全体構造検証
