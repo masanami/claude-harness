@@ -1,0 +1,31 @@
+# sensitive-paths.txt
+#
+# scripts/pr-merge-preflight.sh の risk.touches_sensitive 判定に使う
+# glob パターンの正本。1行1パターン。空行と "#" 始まりの行は無視する。
+#
+# パターンは bash の `[[ "$path" == $pattern ]]` で評価する。
+# この照合方式では "*" はディレクトリ境界（"/"）も含めて任意の文字列にマッチする
+# （ファイルシステム上のパス展開ではなく文字列パターンマッチのため）。
+# そのため "**" は "*" と実質的に同じ挙動になる点に注意すること
+# （例: "*secrets/*" は "secrets/key.pem" にも "app/secrets/key.pem" にもマッチする）。
+#
+# このファイルが存在しない場合、pr-merge-preflight.sh は内蔵の
+# デフォルトパターン（このファイルと同内容）にフォールバックする。
+
+# CI/CD ワークフロー定義（実行権限・シークレット・自動化トリガーに直結する）
+.github/workflows/*
+
+# 認証情報・シークレットらしきパス/ファイル名
+*secret*
+*credential*
+*.pem
+*.key
+*.env
+
+# このリポジトリの自動化スクリプト自体（gh 権限で外部作用（PRマージ・コメント等）を及ぼすため）
+scripts/*
+
+# エージェントの規律・権限設定（プロンプトインジェクション・権限昇格の影響が大きい）
+CLAUDE.md
+.claude/settings.json
+.claude/settings.local.json
