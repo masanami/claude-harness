@@ -36,11 +36,16 @@ check_jq() {
 # 戻り値: 本文テキストを stdout に出力（呼び出し側で $() キャプチャする）。失敗時は非0を返す。
 fetch_issue_body() {
   local issue_num="$1"
-  local output
-  if ! output=$(gh issue view "$issue_num" --json body -q .body 2>&1); then
-    echo "Error: failed to fetch issue #${issue_num} via gh: ${output}" >&2
+  local output stderr_file
+  # stderr を stdout に混ぜない: gh が成功時に出す警告（rate limit 通知等）が
+  # 本文に混入するとセクション誤認の silent failure になるため、別ファイルに分離する。
+  stderr_file="$(mktemp)"
+  if ! output=$(gh issue view "$issue_num" --json body -q .body 2>"$stderr_file"); then
+    echo "Error: failed to fetch issue #${issue_num} via gh: $(cat "$stderr_file")" >&2
+    rm -f "$stderr_file"
     return 1
   fi
+  rm -f "$stderr_file"
   printf '%s' "$output"
 }
 
