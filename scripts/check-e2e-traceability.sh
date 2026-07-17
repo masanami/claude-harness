@@ -77,6 +77,26 @@ check_traceability() {
     echo "Error: trace JSON's 'cases' key must be an array" >&2
     return 1
   fi
+  if ! jq -e '
+    all(.criteria[];
+      (type == "object") and
+      (.id? | type == "string") and
+      (.text? | type == "string")
+    )
+  ' >/dev/null 2>&1 <<<"$criteria_str"; then
+    echo "Error: each criterion in criteria JSON must be an object with string 'id' and 'text' fields" >&2
+    return 1
+  fi
+  if ! jq -e '
+    all(.cases[];
+      (type == "object") and
+      ((.criteria? | type) == "array") and
+      all(.criteria[]; type == "string")
+    )
+  ' >/dev/null 2>&1 <<<"$trace_str"; then
+    echo "Error: each case in trace JSON must be an object with a 'criteria' array of strings" >&2
+    return 1
+  fi
 
   local parse_status criteria_count
   parse_status="$(jq -r '.parse_status // "ok"' <<<"$criteria_str")"

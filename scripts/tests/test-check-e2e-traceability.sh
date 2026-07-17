@@ -192,6 +192,50 @@ else
   echo "  ok - criteriaが配列でない場合に非0を返す"
 fi
 
+echo "=== test: criteria側の各要素にid/textが無い（非文字列含む）場合に非0を返す ==="
+FIXTURE_CRITERIA_BAD_ELEMENT='{"issue": 54, "criteria": [{"id": 1, "text": "x"}], "parse_status": "ok"}'
+if check_traceability "$FIXTURE_CRITERIA_BAD_ELEMENT" "$FIXTURE_TRACE_FULL_COVERAGE" 2>/dev/null; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("criteria要素のidが非文字列で非0を返す")
+  echo "  NG - criteria要素のidが非文字列で非0を返す"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - criteria要素のidが非文字列で非0を返す"
+fi
+
+echo "=== test: trace側のcaseにcriteriaキーが無い場合に非0を返す ==="
+FIXTURE_TRACE_CASE_MISSING_CRITERIA='{"cases": [{"name": "ログイン成功", "class": "正常系"}]}'
+if check_traceability "$FIXTURE_CRITERIA" "$FIXTURE_TRACE_CASE_MISSING_CRITERIA" 2>/dev/null; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("caseのcriteriaキー欠如で非0を返す")
+  echo "  NG - caseのcriteriaキー欠如で非0を返す"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - caseのcriteriaキー欠如で非0を返す"
+fi
+
+echo "=== test: trace側のcase.criteriaが配列でない場合に非0を返す ==="
+FIXTURE_TRACE_CASE_CRITERIA_NOT_ARRAY='{"cases": [{"name": "ログイン成功", "class": "正常系", "criteria": "AC-1"}]}'
+if check_traceability "$FIXTURE_CRITERIA" "$FIXTURE_TRACE_CASE_CRITERIA_NOT_ARRAY" 2>/dev/null; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("case.criteriaが配列でない場合に非0を返す")
+  echo "  NG - case.criteriaが配列でない場合に非0を返す"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - case.criteriaが配列でない場合に非0を返す"
+fi
+
+echo "=== test: trace側のcase.criteria配列に非文字列IDが含まれる場合に非0を返す ==="
+FIXTURE_TRACE_CASE_CRITERIA_NON_STRING_ID='{"cases": [{"name": "ログイン成功", "class": "正常系", "criteria": ["AC-1", 99]}]}'
+if check_traceability "$FIXTURE_CRITERIA" "$FIXTURE_TRACE_CASE_CRITERIA_NON_STRING_ID" 2>/dev/null; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("case.criteria内の非文字列IDで非0を返す")
+  echo "  NG - case.criteria内の非文字列IDで非0を返す"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - case.criteria内の非文字列IDで非0を返す"
+fi
+
 echo "=== test: CLIレベル（一時ファイル経由）での統合確認 ==="
 CRITERIA_FILE="$(mktemp)"
 TRACE_FILE="$(mktemp)"
