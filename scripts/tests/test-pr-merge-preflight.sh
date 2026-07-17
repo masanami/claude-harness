@@ -258,6 +258,67 @@ assert_eq "タイムアウトケース: REVIEWS_JSONは空配列のまま" "0" "
 unset -f fetch_pr_reviews_only
 
 # =============================================================================
+echo "=== test: main() のポーリング後の再取得（stale値を使わないことの検証） ==="
+# =============================================================================
+# gh を呼ぶ全関数をスタブして main() を直接実行する。
+# ポーリング前の fetch_pr_view はCI/mergeable/files等を含まない値のみ返し、
+# ポーリング完了後に fetch_pr_checks / fetch_pr_recheck が返す「新しい」値
+# （CI pass・mergeable=MERGEABLE・files 1件）が最終出力に反映されることを確認する。
+# main() は `$(...)` （サブシェル）経由で呼ぶため、内部の exit はテストプロセスを
+# 落とさない。呼び出し回数はサブシェル内で消えるプレーンな変数ではなくファイルに記録する
+# （poll_for_reviews のケース2と同じ理由）。
+
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_default_branch() { printf 'main'; }
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_view() {
+  printf '{"baseRefName":"main","reviews":[]}'
+}
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_reviews_only() {
+  printf '[]'
+}
+
+CHECKS_CALL_COUNT_FILE="$(mktemp)"
+echo 0 >"$CHECKS_CALL_COUNT_FILE"
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_checks() {
+  echo "$(($(cat "$CHECKS_CALL_COUNT_FILE") + 1))" >"$CHECKS_CALL_COUNT_FILE"
+  printf '[{"bucket":"pass"}]'
+}
+
+RECHECK_CALL_COUNT_FILE="$(mktemp)"
+echo 0 >"$RECHECK_CALL_COUNT_FILE"
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_recheck() {
+  echo "$(($(cat "$RECHECK_CALL_COUNT_FILE") + 1))" >"$RECHECK_CALL_COUNT_FILE"
+  printf '{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","files":[{"path":"src/foo.ts"}],"additions":5,"deletions":1,"changedFiles":1}'
+}
+
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_review_decision() { printf 'APPROVED'; }
+
+# shellcheck disable=SC2034  # poll_for_reviews 内で参照される（source元のグローバル変数）
+POLL_SLEEP_CMD="fake_sleep"
+# shellcheck disable=SC2034  # poll_for_reviews 内で参照される（source元のグローバル変数）
+POLL_INTERVAL_SECONDS=1
+
+MAIN_OUTPUT="$(main "123" 1)"
+
+assert_eq "再取得後: CIがpassとして反映される" "pass" "$(jq -r '.ci.status' <<<"$MAIN_OUTPUT")"
+assert_eq "再取得後: mergeableがMERGEABLEに更新される" "MERGEABLE" "$(jq -r '.mergeable' <<<"$MAIN_OUTPUT")"
+assert_eq "再取得後: mergeStateStatusがCLEANに更新される" "CLEAN" "$(jq -r '.mergeStateStatus' <<<"$MAIN_OUTPUT")"
+assert_eq "再取得後: blockingはfalse（CI pass・conflictなし・reviewDecision APPROVED）" \
+  "false" "$(jq -r '.blocking' <<<"$MAIN_OUTPUT")"
+assert_eq "再取得後: risk.files_changedが再取得後のfilesを反映" "1" "$(jq -r '.risk.files_changed' <<<"$MAIN_OUTPUT")"
+assert_eq "再取得後: risk.insertionsが再取得後の値を反映" "5" "$(jq -r '.risk.insertions' <<<"$MAIN_OUTPUT")"
+assert_eq "fetch_pr_checksはポーリング後に1回だけ呼ばれる" "1" "$(cat "$CHECKS_CALL_COUNT_FILE")"
+assert_eq "fetch_pr_recheckが1回呼ばれる" "1" "$(cat "$RECHECK_CALL_COUNT_FILE")"
+
+rm -f "$CHECKS_CALL_COUNT_FILE" "$RECHECK_CALL_COUNT_FILE"
+unset -f fetch_default_branch fetch_pr_view fetch_pr_reviews_only fetch_pr_checks fetch_pr_recheck fetch_pr_review_decision
+
+# =============================================================================
 echo "=== test: CLIレベル（引数バリデーション。ghを呼ばない） ==="
 # =============================================================================
 

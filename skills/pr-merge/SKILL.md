@@ -59,7 +59,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    BASE=$(jq -r '.base' <<<"$PREFLIGHT")                       # 後続フェーズで再取得せず再利用する
    DEFAULT_BRANCH=$(jq -r '.default_branch' <<<"$PREFLIGHT")   # 同上
    BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")               # true | false
-   BLOCK_REASONS=$(jq -c '.block_reasons' <<<"$PREFLIGHT")     # ["changes_requested","ci_failed","conflicting"] の部分集合
+   BLOCK_REASONS=$(jq -c '.block_reasons' <<<"$PREFLIGHT")     # ["changes_requested","ci_failed","conflicting","merge_blocked"] の部分集合
    MERGEABLE=$(jq -r '.mergeable' <<<"$PREFLIGHT")
    COMMENTED_BODIES=$(jq -c '.commented_bodies' <<<"$PREFLIGHT")
    RISK=$(jq -c '.risk' <<<"$PREFLIGHT")
@@ -78,6 +78,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    - `block_reasons` に `changes_requested` を含む → `CHANGES_REQUESTED` レビューあり。マージ不可（レビュー対応が必要）
    - `block_reasons` に `ci_failed` を含む → CIが失敗している。マージ不可（原因を報告し対応を検討）
    - `block_reasons` に `conflicting` を含む → コンフリクトあり。Phase 2 で解消する
+   - `block_reasons` に `merge_blocked` を含む → `mergeStateStatus` が `BLOCKED`（branch protection の必須条件未達等）。マージ不可（未達の条件を確認し対応を検討）
    - `blocking: false` → 上記いずれにも該当しない（`COMMENTED` のみ・`APPROVED` のみ・reviews空のいずれか）
 
 5. **`COMMENTED` レビュー本文の意味判断（意味理解が必要なため唯一 LLM 判断に残す項目）**
@@ -114,16 +115,17 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 4. **CI再確認・preflightの再実行**
 
-   rebase + push で PR の状態（CI・`mergeable`）が変わるため、**Phase 0-1 の判定結果（`$BLOCKING`/`$BLOCK_REASONS`/`$MERGEABLE`/`$RISK` 等）はここで無効になる**。CI完了を待った上で、preflight スクリプトを再実行して判定を更新する（`$GATE`/`$BASE`/`$DEFAULT_BRANCH` はブランチ構成由来のため不変。再取得不要）:
+   rebase + push で PR の状態（CI・`mergeable`）が変わるため、**Phase 0-1 の判定結果（`$BLOCKING`/`$BLOCK_REASONS`/`$MERGEABLE`/`$RISK`/`$COMMENTED_BODIES` 等）はここで無効になる**。CI完了を待った上で、preflight スクリプトを再実行して判定を更新する（`$GATE`/`$BASE`/`$DEFAULT_BRANCH` はブランチ構成由来のため不変。再取得不要）:
    ```bash
    gh pr checks "$PR_NUM" --watch
    PREFLIGHT=$(scripts/pr-merge-preflight.sh "$PR_NUM")
    BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")
    BLOCK_REASONS=$(jq -c '.block_reasons' <<<"$PREFLIGHT")
    MERGEABLE=$(jq -r '.mergeable' <<<"$PREFLIGHT")
+   COMMENTED_BODIES=$(jq -c '.commented_bodies' <<<"$PREFLIGHT")
    RISK=$(jq -c '.risk' <<<"$PREFLIGHT")
    ```
-   Phase 4 のマージ実行は、この再実行後の `$BLOCKING`/`$BLOCK_REASONS` を用いて判断する（Phase 2 に入る前の古い値を使い回さない）。
+   rebase + push で外部レビューが新たに投稿されている可能性もあるため `COMMENTED_BODIES` も再取得する。Phase 4 のマージ実行は、この再実行後の `$BLOCKING`/`$BLOCK_REASONS`/`$COMMENTED_BODIES` を用いて判断する（Phase 2 に入る前の古い値を使い回さない）。
 
 ### Phase 3: コードレビュー
 
@@ -175,7 +177,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 - 外部レビューの `COMMENTED` 内容（`commented_bodies`）に重大な指摘がないこと（LLMが意味判断する）
 
 ### マージを保留する条件
-- `blocking: true`（`block_reasons` に `ci_failed` / `conflicting` / `changes_requested` のいずれかを含む）
+- `blocking: true`（`block_reasons` に `ci_failed` / `conflicting` / `changes_requested` / `merge_blocked` のいずれかを含む）
 - 要件を満たしていない
 - セキュリティ上の懸念がある
 - `commented_bodies` に重大な問題の指摘がある（対応が必要。`blocking: false` でも保留する）

@@ -28,6 +28,11 @@
 # 「COMMENTED の内容に重大な指摘がないか」は意味判断のため commented_bodies を
 # 返すだけに留め、スクリプト側では本文の意味を一切判定しない（LLM 側の責務）。
 #
+# CI・mergeable/mergeStateStatus・files/additions/deletions/changedFiles は外部レビュー待機
+# ポーリング（最大約10分かかりうる）の完了後に取得する（ポーリング開始前のスナップショットを
+# 使うと、ポーリング中にCIが完了する・他の変更でmergeableやfilesが変わる等のケースで
+# 古い状態のまま blocking判定・risk算出をしてしまうため。main 参照）。
+#
 # gh 呼び出しを行う処理（fetch_*）と、入力から出力を組み立てる純粋な判定処理
 # （determine_gate / determine_ci_status / judge_blocking / compute_touches_sensitive /
 #  reviews_poll_decision / build_risk_json）を関数として分離している。
@@ -87,19 +92,20 @@ fetch_default_branch() {
   printf '%s' "$output"
 }
 
-# PR の base/mergeable/mergeStateStatus/reviewDecision/reviews/files/additions/deletions/changedFiles を
-# 1回の gh 呼び出しでまとめて取得する。PR の存在確認も兼ねる。
+# PR の base/reviews を1回の gh 呼び出しでまとめて取得する。PR の存在確認も兼ねる。
 #
-# reviewDecision（GitHub側が算出する "APPROVED"|"CHANGES_REQUESTED"|"REVIEW_REQUIRED"|null）を
-# 使うのは、reviews 配列がレビュー"履歴"全件（同一レビュアーがCHANGES_REQUESTEDの後にAPPROVEDした
-# 場合、両方のレビューが残る）であり、reviews配列を単純に走査すると過去に解消済みの
-# CHANGES_REQUESTED を検出してしまい、恒久的にblockingしてしまうため。
+# mergeable/mergeStateStatus/files/additions/deletions/changedFiles/reviewDecision は
+# ここでは取得しない（ここで取得した値は外部レビュー待機ポーリング開始前のスナップショットに
+# なってしまい、ポーリング中にCIが完了する・他の変更でmergeableやfilesが変わる等で
+# judge_blocking / risk算出に古い値を渡してしまうバグの原因になるため）。
+# それらは poll_for_reviews の後に fetch_pr_checks / fetch_pr_recheck / fetch_pr_review_decision で
+# 改めて取得する（main 参照）。
 fetch_pr_view() {
   local pr_num="$1"
   local output stderr_file
   stderr_file="$(mktemp)"
   if ! output=$(gh pr view "$pr_num" \
-    --json baseRefName,mergeable,mergeStateStatus,reviewDecision,reviews,files,additions,deletions,changedFiles \
+    --json baseRefName,reviews \
     2>"$stderr_file"); then
     echo "Error: failed to fetch PR #${pr_num} via gh: $(cat "$stderr_file")" >&2
     rm -f "$stderr_file"
@@ -145,6 +151,27 @@ fetch_pr_review_decision() {
   local pr_num="$1"
   local output
   output=$(gh pr view "$pr_num" --json reviewDecision -q '.reviewDecision' 2>/dev/null)
+  printf '%s' "$output"
+}
+
+# 外部レビュー待機ポーリング完了後に mergeable/mergeStateStatus/files/additions/deletions/
+# changedFiles を再取得する。
+# judge_blocking（mergeable/mergeStateStatus）と risk 算出（files/additions/deletions/
+# changedFiles）に渡す値を、ポーリング完了後の最新状態に合わせるために使う
+# （ポーリング開始前に取得した古い値を使い回すと、ポーリング中に他の変更でmergeableや
+#  変更ファイルが変わった場合に古い状態のまま判定してしまうため）。
+fetch_pr_recheck() {
+  local pr_num="$1"
+  local output stderr_file
+  stderr_file="$(mktemp)"
+  if ! output=$(gh pr view "$pr_num" \
+    --json mergeable,mergeStateStatus,files,additions,deletions,changedFiles \
+    2>"$stderr_file"); then
+    echo "Error: failed to re-fetch PR #${pr_num} via gh: $(cat "$stderr_file")" >&2
+    rm -f "$stderr_file"
+    return 1
+  fi
+  rm -f "$stderr_file"
   printf '%s' "$output"
 }
 
@@ -371,6 +398,15 @@ main() {
   local gate
   gate="$(determine_gate "$base" "$default_branch")"
 
+  local initial_reviews
+  initial_reviews="$(jq -c '.reviews // []' <<<"$view_json")"
+
+  poll_for_reviews "$pr_num" "$initial_reviews" "$timeout_seconds"
+  # REVIEWS_JSON はここで確定する
+
+  # ポーリング完了後に CI・mergeable/mergeStateStatus・files/additions/deletions/changedFiles を
+  # 再取得する（ポーリング中にCIが完了したり、他の変更でmergeableやfilesが変わったりする場合、
+  # ポーリング開始前の古いスナップショットのまま judge_blocking / risk算出に渡ってしまうため）。
   local checks_json
   checks_json="$(fetch_pr_checks "$pr_num")"
 
@@ -379,15 +415,14 @@ main() {
   local ci_json
   ci_json=$(jq -n --arg status "$ci_status" --argjson checks "$checks_json" '{status: $status, checks: $checks}')
 
+  local recheck_json
+  if ! recheck_json="$(fetch_pr_recheck "$pr_num")"; then
+    exit 1
+  fi
+
   local mergeable merge_state_status
-  mergeable="$(jq -r '.mergeable' <<<"$view_json")"
-  merge_state_status="$(jq -r '.mergeStateStatus' <<<"$view_json")"
-
-  local initial_reviews
-  initial_reviews="$(jq -c '.reviews // []' <<<"$view_json")"
-
-  poll_for_reviews "$pr_num" "$initial_reviews" "$timeout_seconds"
-  # REVIEWS_JSON はここで確定する
+  mergeable="$(jq -r '.mergeable' <<<"$recheck_json")"
+  merge_state_status="$(jq -r '.mergeStateStatus' <<<"$recheck_json")"
 
   # reviewDecision はポーリング完了後の最終状態に合わせて取り直す
   # （ポーリング開始前に取得した古い値を使うと、ポーリング中に投稿されたレビューを
@@ -403,10 +438,10 @@ main() {
   commented_bodies=$(jq -c '[.[] | select(.state == "COMMENTED") | .body]' <<<"$REVIEWS_JSON")
 
   local files_json insertions deletions changed_files
-  files_json="$(jq -c '.files // []' <<<"$view_json")"
-  insertions="$(jq -r '.additions // 0' <<<"$view_json")"
-  deletions="$(jq -r '.deletions // 0' <<<"$view_json")"
-  changed_files="$(jq -r '.changedFiles // 0' <<<"$view_json")"
+  files_json="$(jq -c '.files // []' <<<"$recheck_json")"
+  insertions="$(jq -r '.additions // 0' <<<"$recheck_json")"
+  deletions="$(jq -r '.deletions // 0' <<<"$recheck_json")"
+  changed_files="$(jq -r '.changedFiles // 0' <<<"$recheck_json")"
 
   local patterns touches_sensitive risk_json
   patterns="$(load_sensitive_patterns "$SENSITIVE_PATHS_CONFIG")"
