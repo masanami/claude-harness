@@ -72,6 +72,10 @@ FIXTURE_MISSING_MULTIPLE='{"title":"タイトル","parentRef":"","targetFiles":[
 
 FIXTURE_EMPTY_TARGET_FILES='{"title":"タイトル","parentRef":"#12","targetFiles":[],"problem":"問題","expectedState":"期待状態"}'
 
+FIXTURE_OBJECT_TITLE='{"title":{},"parentRef":"#12","targetFiles":["src/foo.ts"],"problem":"問題","expectedState":"期待状態"}'
+
+FIXTURE_OBJECT_TARGET_FILE_ENTRY='{"title":"タイトル","parentRef":"#12","targetFiles":[{}],"problem":"問題","expectedState":"期待状態"}'
+
 FIXTURE_UNDER_THRESHOLD='{"title":"タイトル","parentRef":"#12","targetFiles":["a.ts","b.ts"],"problem":"問題","expectedState":"期待状態"}'
 
 FIXTURE_OVER_THRESHOLD='{"title":"タイトル","parentRef":"#12","targetFiles":["a.ts","b.ts","c.ts","d.ts","e.ts","f.ts"],"problem":"問題","expectedState":"期待状態"}'
@@ -151,6 +155,16 @@ validate_manifest_item "$FIXTURE_EMPTY_TARGET_FILES"
 assert_eq "ITEM_VALIDATION_STATUS が invalid" "invalid" "$ITEM_VALIDATION_STATUS"
 assert_contains "エラーメッセージに targetFiles が含まれる" "$ITEM_VALIDATION_ERROR" "targetFiles"
 
+echo "=== test: validate_manifest_item - titleがオブジェクト値の場合は invalid（型検証の回帰防止） ==="
+validate_manifest_item "$FIXTURE_OBJECT_TITLE"
+assert_eq "ITEM_VALIDATION_STATUS が invalid" "invalid" "$ITEM_VALIDATION_STATUS"
+assert_contains "エラーメッセージに title が含まれる" "$ITEM_VALIDATION_ERROR" "title"
+
+echo "=== test: validate_manifest_item - targetFilesの要素がオブジェクト値の場合は invalid（型検証の回帰防止） ==="
+validate_manifest_item "$FIXTURE_OBJECT_TARGET_FILE_ENTRY"
+assert_eq "ITEM_VALIDATION_STATUS が invalid" "invalid" "$ITEM_VALIDATION_STATUS"
+assert_contains "エラーメッセージに targetFiles が含まれる" "$ITEM_VALIDATION_ERROR" "targetFiles"
+
 echo "=== test: build_issue_body - 本文にparentRef/targetFiles/problem/expectedStateが含まれる ==="
 build_issue_body "$FIXTURE_VALID_ITEM"
 assert_contains "本文に parentRef が含まれる" "$ISSUE_BODY" "#12"
@@ -211,6 +225,25 @@ process_manifest_item "0" "$FIXTURE_VALID_ITEM"
 assert_eq "status が created" "created" "$(jq -r '.status' <<<"$ITEM_RESULT_JSON")"
 assert_eq "issueUrlに警告文言が混入していない" "https://github.com/example/repo/issues/888" "$(jq -r '.issueUrl' <<<"$ITEM_RESULT_JSON")"
 assert_eq "issueNumberが888" "888" "$(jq -r '.issueNumber' <<<"$ITEM_RESULT_JSON")"
+
+echo "=== test: process_manifest_item - gh成功時にstdoutへ複数行出力があってもissueUrlはURL行のみになる（型混入の回帰防止） ==="
+create_github_issue() {
+  echo "https://github.com/example/repo/issues/999"
+  echo "Tip: connect with gh CLI"
+  return 0
+}
+process_manifest_item "0" "$FIXTURE_VALID_ITEM"
+assert_eq "status が created" "created" "$(jq -r '.status' <<<"$ITEM_RESULT_JSON")"
+assert_eq "issueUrlがURL行のみ（Tip行が混入しない）" "https://github.com/example/repo/issues/999" "$(jq -r '.issueUrl' <<<"$ITEM_RESULT_JSON")"
+assert_eq "issueNumberが999" "999" "$(jq -r '.issueNumber' <<<"$ITEM_RESULT_JSON")"
+
+echo "=== test: process_manifest_item - gh成功と判定されたがURLが抽出できない場合はfailedにする ==="
+create_github_issue() {
+  echo "unexpected output without a URL"
+  return 0
+}
+process_manifest_item "0" "$FIXTURE_VALID_ITEM"
+assert_eq "status が failed（URL抽出不能はfailed扱い）" "failed" "$(jq -r '.status' <<<"$ITEM_RESULT_JSON")"
 
 echo "=== test: process_manifest - 空manifestは0件・exit相当のcreated/failedともに0で完了する ==="
 create_github_issue() { mock_create_github_issue "$@"; }

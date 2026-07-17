@@ -69,21 +69,28 @@ check_jq() {
 # 結果: ITEM_VALIDATION_STATUS ("ok" | "invalid"), ITEM_VALIDATION_ERROR (エラーメッセージ or 空文字)
 validate_manifest_item() {
   local item_json="$1"
-  local title parentRef problem expectedState target_files_type target_files_count
   local missing=()
+  local field
 
-  title=$(jq -r '.title // empty' <<<"$item_json")
-  parentRef=$(jq -r '.parentRef // empty' <<<"$item_json")
-  problem=$(jq -r '.problem // empty' <<<"$item_json")
-  expectedState=$(jq -r '.expectedState // empty' <<<"$item_json")
-  target_files_type=$(jq -r '.targetFiles | type' <<<"$item_json" 2>/dev/null)
-  target_files_count=$(jq '.targetFiles | if type == "array" then length else 0 end' <<<"$item_json" 2>/dev/null)
+  # title/parentRef/problem/expectedState は「非空文字列」であることを要求する。
+  # jq -r '.field // empty' だけだとオブジェクト等の非文字列値もJSON表現の非空文字列として
+  # 通過してしまう（例: title:{} が "{}" という非空文字列扱いになる）ため、
+  # type == "string" を明示的に検証する。
+  for field in title parentRef problem expectedState; do
+    if ! jq -e --arg f "$field" \
+      '(.[$f] // null) | (type == "string") and (length > 0)' \
+      <<<"$item_json" >/dev/null 2>&1; then
+      missing+=("$field")
+    fi
+  done
 
-  [ -z "$title" ] && missing+=("title")
-  [ -z "$parentRef" ] && missing+=("parentRef")
-  [ -z "$problem" ] && missing+=("problem")
-  [ -z "$expectedState" ] && missing+=("expectedState")
-  if [ "$target_files_type" != "array" ] || [ "${target_files_count:-0}" -eq 0 ]; then
+  # targetFiles は「非空配列であり、かつ全要素が非空文字列」であることを要求する。
+  if ! jq -e \
+    '(.targetFiles // null) as $tf
+     | ($tf | type) == "array"
+     and ($tf | length) > 0
+     and ($tf | all(.[]; (type == "string") and (length > 0)))' \
+    <<<"$item_json" >/dev/null 2>&1; then
     missing+=("targetFiles")
   fi
 
@@ -207,11 +214,22 @@ process_manifest_item() {
     return
   fi
 
-  local issue_number
-  issue_number=$(extract_issue_number_from_url "$create_output")
+  # gh の正常終了時stdoutにURL行以外の出力（tip等）が混じっていても、
+  # issueUrlにはURL行だけを保存する（extract_issue_number_from_urlと同様、
+  # 「.../issues/N」形式のURL行を対象にする）。
+  local issue_url issue_number
+  issue_url=$(echo "$create_output" | grep -oE 'https?://[^[:space:]]+/issues/[0-9]+' | tail -n1)
+  issue_number=$(extract_issue_number_from_url "$issue_url")
+
+  if [ -z "$issue_url" ] || [ -z "$issue_number" ]; then
+    ITEM_RESULT_JSON=$(jq -n --argjson index "$index" \
+      --arg error "gh succeeded but did not return a parsable issue URL: ${create_output}" \
+      '{index: $index, status: "failed", error: $error}')
+    return
+  fi
 
   local result
-  result=$(jq -n --argjson index "$index" --argjson issueNumber "${issue_number:-null}" --arg issueUrl "$create_output" \
+  result=$(jq -n --argjson index "$index" --argjson issueNumber "$issue_number" --arg issueUrl "$issue_url" \
     '{index: $index, status: "created", issueNumber: $issueNumber, issueUrl: $issueUrl}')
 
   if [ -n "$GRANULARITY_WARNING" ]; then
