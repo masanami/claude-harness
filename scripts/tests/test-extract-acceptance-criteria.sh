@@ -95,6 +95,20 @@ read -r -d '' FIXTURE_NO_CHECKLIST <<'EOF'
 よしなに直す。
 EOF
 
+read -r -d '' FIXTURE_BOTH_SECTIONS <<'EOF'
+# 機能 + 実装タスク
+
+## 受入基準
+
+- [ ] ユーザーがログインできる
+- [x] エラーが表示される
+
+## 完了条件
+
+- [ ] APIが実装されている
+- [ ] テストが追加されている
+EOF
+
 echo "=== test: 受入基準セクション（feature-spec形式）からのチェックリスト抽出 ==="
 parse_acceptance_criteria "$FIXTURE_FEATURE_SPEC"
 assert_eq "parse_status が ok" "ok" "$PARSE_STATUS"
@@ -126,6 +140,13 @@ assert_eq "criteria が空配列" "0" "$(jq 'length' <<<"$CRITERIA_JSON")"
 echo "=== test: IDがAC-1からの安定連番であること ==="
 parse_acceptance_criteria "$FIXTURE_IMPLEMENTATION_TICKET"
 assert_eq "全件のidが順にAC-1,AC-2,AC-3" "AC-1 AC-2 AC-3" "$(jq -r '[.[].id] | join(" ")' <<<"$CRITERIA_JSON")"
+
+echo "=== test: 両セクション混在時に通しIDが振られること ==="
+parse_acceptance_criteria "$FIXTURE_BOTH_SECTIONS"
+assert_eq "parse_status が ok" "ok" "$PARSE_STATUS"
+assert_eq "criteria が4件" "4" "$(jq 'length' <<<"$CRITERIA_JSON")"
+assert_eq "全件のidが順にAC-1,AC-2,AC-3,AC-4" "AC-1 AC-2 AC-3 AC-4" "$(jq -r '[.[].id] | join(" ")' <<<"$CRITERIA_JSON")"
+assert_eq "セクション跨ぎでもtextが正しい（3件目=完了条件の1件目）" "APIが実装されている" "$(jq -r '.[2].text' <<<"$CRITERIA_JSON")"
 
 echo "=== test: CRLF改行の本文でも text にCRが混入しない ==="
 FIXTURE_CRLF=$(printf '## 受入基準\r\n\r\n- [ ] ログインできる\r\n- [x] エラーが表示される\r\n')
