@@ -201,6 +201,10 @@ REAL_PATTERNS="$(load_sensitive_patterns "$SENSITIVE_PATHS_CONFIG")"
 assert_eq "設定ファイルから1件以上のパターンが読める" \
   "true" "$([ "$(printf '%s\n' "$REAL_PATTERNS" | grep -c .)" -gt 0 ] && echo true || echo false)"
 
+DEFAULT_PATTERNS_JOINED="$(printf '%s\n' "${DEFAULT_SENSITIVE_PATTERNS[@]}")"
+assert_eq "設定ファイルと内蔵デフォルトが完全一致（順序・件数含む）" \
+  "$DEFAULT_PATTERNS_JOINED" "$REAL_PATTERNS"
+
 # =============================================================================
 echo "=== test: poll_for_reviews（sleepを実際に待たず、フェッチをスタブしてループ制御を検証） ==="
 # =============================================================================
@@ -251,8 +255,9 @@ fetch_pr_reviews_only() {
   echo '[]'
 }
 poll_for_reviews "123" '[]' 3
-# POLL_INTERVAL_SECONDS=1, timeout=3 -> max_attempts=3 -> 初回1回 + 再フェッチ2回 = sleep 2回
-assert_eq "タイムアウトケース: sleepはmax_attempts-1回" "2" "$SLEEP_CALLS"
+# POLL_INTERVAL_SECONDS=1, timeout=3 -> max_attempts=timeout/interval+1=4（初回チェック分を別枠にする）
+# -> 初回1回 + 再フェッチ3回 = sleep 3回（timeout秒数ぶんフルにポーリングする）
+assert_eq "タイムアウトケース: sleepはmax_attempts-1回" "3" "$SLEEP_CALLS"
 assert_eq "タイムアウトケース: REVIEWS_JSONは空配列のまま" "0" "$(jq 'length' <<<"$REVIEWS_JSON")"
 
 unset -f fetch_pr_reviews_only

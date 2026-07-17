@@ -331,7 +331,9 @@ load_sensitive_patterns() {
 poll_for_reviews() {
   local pr_num="$1" initial_reviews_json="$2" timeout_seconds="$3"
   local interval="$POLL_INTERVAL_SECONDS"
-  local max_attempts=$((timeout_seconds / interval))
+  # 初回チェック + timeout内に実行できる再チェック回数（初回チェック分を別枠にすることで
+  # 指定されたtimeout秒数ぶんをフルにポーリングへ使う）。
+  local max_attempts=$((timeout_seconds / interval + 1))
   if [ "$max_attempts" -lt 1 ]; then
     max_attempts=1
   fi
