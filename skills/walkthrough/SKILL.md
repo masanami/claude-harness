@@ -63,7 +63,7 @@ dev server とテストデータを整えたうえで、**同梱スクリプト*
    - 表示されたコマンドを**ユーザーに実行してもらう**よう促す（非対話環境ではエージェントは実行できない）。導入後に再度 `2.` を実行する。
 
 4. **runner で起動**
-   - `node "${CLAUDE_PLUGIN_ROOT}/skills/walkthrough/scripts/run-walkthrough.mjs" [flow.mjs]` を**プロジェクトを cwd にしたまま**実行する。
+   - `node "${CLAUDE_PLUGIN_ROOT}/skills/walkthrough/scripts/run-walkthrough.mjs" "/絶対パス/flow.mjs"` を**プロジェクトを cwd にしたまま**実行する。
      runner は `createRequire` で（cwd の git root 起点に）プロジェクトの `@playwright/test` を解決するため、**プラグイン配下の場所から実行しても壊れない**。
    - **headed + slowMo + trace** が既定 ON。ステップ実況ログ・スクショ・動画保存も runner が行う。
    - `BASE_URL` / `E2E_USERNAME` / `E2E_PASSWORD` は env で渡す（`E2E_*` は `/create-e2e` と共通の命名）。操作手順は `flow.mjs`（`export default async (ctx) => {...}`）に書き、`ctx.goto` / `ctx.step` / `ctx.shot` / `ctx.login` を使う。flow ファイルは**絶対パス**で渡すこと（cwd 相対で解決される）。
