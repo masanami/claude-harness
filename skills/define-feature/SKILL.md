@@ -117,10 +117,13 @@ effort: xhigh
 
 ### 5. テンプレート読み込み
 
+> **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/templates/feature-spec.md`）。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
 以下の優先順位でテンプレートを読み込む:
 
-1. `CLAUDE.md` に機能仕様テンプレートのパスが指定されている場合はそれ
-2. なければ `skills/define-feature/templates/feature-spec.md`
+1. `CLAUDE.md` に機能仕様テンプレートのパスが指定されている場合はそれ（導入先プロジェクトのパスとして解決する）
+2. なければ `${CLAUDE_PLUGIN_ROOT}/skills/define-feature/templates/feature-spec.md`（上記の解決手順に従う）
 
 ### 6. 機能仕様ドキュメント作成
 

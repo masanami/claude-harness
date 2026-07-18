@@ -61,7 +61,10 @@ effort: medium
 
 コンテナ内の Claude Code に決定論的な安全ゲートとして `permissions.deny` を設定する。`/init-project` と同じ最小限のベース（ブラスト半径が広く取り返しのつかない操作）を含める。
 
-ベース deny の正本は `${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/base-deny.json`（JSON配列。init-project の `generate-settings.sh` が参照するものと同一ファイル。`${CLAUDE_PLUGIN_ROOT}` は本スキルがプラグインとして配布されるため、ユーザーのプロジェクトrootではなくプラグイン配下へ実行時に展開されるパス）。このファイルを読み込み、`{"permissions": {"deny": <配列の内容>}}` の形に埋め込んで `.devcontainer/claude-settings.json` を生成する（例: `jq -n --argjson deny "$(cat "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/base-deny.json")" '{permissions: {deny: $deny}}'`）。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、参照するファイルは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。読み込む際は必ず `cat "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/base-deny.json"`（引用符必須）の形式で参照し、相対パス `skills/init-project/scripts/base-deny.json` では呼び出さないこと（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+ベース deny の正本は `${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/base-deny.json`（JSON配列。init-project の `generate-settings.sh` が参照するものと同一ファイル）。このファイルを読み込み、`{"permissions": {"deny": <配列の内容>}}` の形に埋め込んで `.devcontainer/claude-settings.json` を生成する（例: `jq -n --argjson deny "$(cat "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/base-deny.json")" '{permissions: {deny: $deny}}'`）。
 
 > プロジェクト固有の破壊的操作は `permissions.deny` に追記してください（例: `Bash(terraform destroy:*)`）。コマンドの文脈的な安全判断は Claude Code ネイティブの auto-mode が担うため、独自のコマンドブロックスクリプトは設定しない。
 

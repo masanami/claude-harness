@@ -34,7 +34,8 @@ effort: medium
 
 対象の**仕様**を把握する。テストの根拠は**仕様（完了条件・受入基準）**であり、設計書ではない。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、以下で参照するスクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、以下で参照するスクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/<スクリプト名>"` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/<スクリプト名>` では呼び出さないこと。
+<!-- 正本: docs/plugin-path-conventions.md -->
 
 - Issue/PRの場合: `gh issue view` / `gh pr view` で本文・完了条件・受入基準を取得する。加えて `bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-acceptance-criteria.sh" <番号>` で完了条件を機械可読JSONとしても取得しておく（後続 Step 1-3 のトレーサビリティチェックの入力になる）。**出力JSON形式の正本はプラグイン配下の `scripts/README.md`「extract-acceptance-criteria.sh / check-e2e-traceability.sh の入出力仕様」を参照し、ここには複製しない**（Read する場合はスキル起動時の「Base directory for this skill」から `<base>/../../scripts/README.md` として解決する）。使うフィールドは `criteria`（各要素の `id`/`text`）と `parse_status`。**この `<番号>` は常に Issue 番号**（`extract-acceptance-criteria.sh` は内部で `gh issue view` のみを呼ぶ）。対象がPRの場合は、PR番号をそのまま渡さず、PRに紐づく Issue 番号（`gh pr view <PR番号> --json closingIssuesReferences` 等で特定）を渡す。紐づく Issue が無いPRの場合は Step 1-1 の「機能名」ケースと同様に扱い、このスクリプトチェックは対象外とする
 - 機能名の場合（Issue番号が無いケース）: 関連チケット・コードを調査して完了条件に相当する期待挙動を特定する。この場合 `extract-acceptance-criteria.sh` は対象外（Issue本文が無いため）であり、Step 1-3 のトレーサビリティチェックも自動実行せず、従来通り目視でのトレーサビリティ表確認にとどめる
