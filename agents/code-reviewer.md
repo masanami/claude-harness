@@ -4,7 +4,8 @@ description: "ソースコードをレビューする際に使用。「コード
 # tools: レビュー専用エージェントのため、コード編集ツール（Edit, Write）は意図的に除外。
 # 修正が必要な場合は、レビュー結果を報告し、実装エージェント（feature-implementer）に委譲する。
 # 品質チェックコマンドの実行もこのエージェントの責務ではない（Fixステージ後段に一本化。Issue #44）。
-tools: Read, Glob, Grep, Bash
+# Skill: クロスリポジトリ依存の確証手順（/cross-repo-verify）を動的に呼び出すため（Issue #70）。
+tools: Read, Glob, Grep, Bash, Skill
 skills:
   - code-review
 model: opus
@@ -103,7 +104,7 @@ effort: xhigh
 - [ ] **モックテストへの依存**: 自リポジトリのモックテスト green を仮定の検証根拠にしていないか（モックは「X を呼んだこと」しか検証できず、「X を呼んだら何が起きるか」は検証対象外）
 - [ ] **未確証仮定の明示**: 確証できていない仮定が「未確証の仮定」として明示されているか
 
-根拠の記載が無い場合は、`gh api -H "Accept: application/vnd.github.raw" "repos/{owner}/{repo}/contents/{path}?ref={SHA}"`（read-only・リビジョン固定でファイル本文を取得。依存先の clone 不要）で依存先の実コードを確認して真偽を判定するか、判定不能なら「未確証の仮定」として問題点に挙げる。
+根拠の記載が無い、または不十分な場合は、Skill ツール経由で `/cross-repo-verify` を呼び出し、その手順に従って依存先の実コードを確認して真偽を判定するか、判定不能なら「未確証の仮定」として問題点に挙げる。
 
 > **品質チェックコマンドについて**: このエージェント自身はリント・型チェック・テストコマンドを実行しない。品質チェックの実行は、`/self-review` の Dynamic Workflow では修正エージェント（`feature-implementer`）が Fix ステージ後段で一度だけ `/quality-check` を実行する設計に一本化されている（ループ周回×レビュアー数だけ重複実行することを避けるため。Issue #44）。
 
