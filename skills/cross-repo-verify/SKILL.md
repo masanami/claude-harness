@@ -14,26 +14,34 @@ effort: low
 
 ## 手順
 
-### 1. 確証手段
+### 1. コミット SHA の解決
 
-依存先の clone は不要。`gh api` で対象ファイルの本文を read-only に取得し、判定箇所・書き込み箇所のコードを直接確認する:
+**取得前にコミット SHA を固定する**。ブランチ名のまま取得すると、取得中にブランチが進んだ場合に本文と記載する根拠 SHA がずれ得るため、先に対象ブランチの HEAD SHA を解決する:
 
 ```bash
-gh api -H "Accept: application/vnd.github.raw" "repos/{owner}/{repo}/contents/{path}?ref={SHA}"
+gh api "repos/{owner}/{repo}/commits/{branch}" --jq '.sha'
 ```
 
-### 2. 根拠の記載形式
+### 2. 依存先実コードの取得
 
-根拠は**確認したリビジョン（コミット SHA 等の ref）を固定して記載する**。`repo/file:line` だけでは後から別版のコードが根拠扱いになり得るため、`repo@ref/file:line` 形式で統一する（ref 無しで取得した場合は依存先既定ブランチの HEAD SHA を添える）。
+依存先の clone は不要。Step 1 で解決した SHA を `ref` に指定して `gh api` で対象ファイルの本文を read-only に取得し、判定箇所・書き込み箇所のコードを直接確認する:
 
-### 3. 確証結果テーブル
+```bash
+gh api -H "Accept: application/vnd.github.raw+json" "repos/{owner}/{repo}/contents/{path}?ref={SHA}"
+```
+
+### 3. 根拠の記載形式
+
+根拠は**Step 1 で解決したコミット SHA を記載する**。ref の省略やブランチ名のままの記載は不可とし、`repo/file:line` だけでは後から別版のコードが根拠扱いになり得るため、`repo@コミットSHA/file:line` 形式で統一する。
+
+### 4. 確証結果テーブル
 
 確証結果は以下の形式で設計成果物または PR 本文に記載する:
 
 ```text
 ## クロスリポジトリ依存の確証
 
-| 仮定 | 確証結果 | 根拠（repo@ref/file:line） |
+| 仮定 | 確証結果 | 根拠（repo@コミットSHA/file:line） |
 |------|---------|--------------------------|
 | {API X を呼ぶとテーブル B が導出される} | ✅ 確証 / ⚠️ 未確証 | {owner/repo}@{コミットSHA}/{path}:{行} |
 ```
