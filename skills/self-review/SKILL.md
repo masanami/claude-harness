@@ -35,7 +35,7 @@ Workflow ツールを、スクリプトの絶対パスと `args` を指定して
 }
 ```
 
-> **`scriptPath` の解決について（重要）**: `<CLAUDE_PLUGIN_ROOTの絶対パス>` は本ドキュメント内の表記上のプレースホルダであり、環境変数ではない（`CLAUDE_PLUGIN_ROOT` はメインセッションの Bash でも未設定であり、`echo "$CLAUDE_PLUGIN_ROOT"` 等では取得できない）。実際の絶対パスは、本スキル起動時にコンテキストへ与えられる「Base directory for this skill」（`<プラグインルート>/skills/self-review`）から**親ディレクトリを2階層**辿ることで得られる（`<Base directory for this skill>/../..` がプラグインルート）。この絶対パスと `/skills/self-review/scripts/self-review-loop.js` を連結した文字列を `scriptPath` に渡すこと。`args.collectDiffScript` / `args.extractHunkScript` も同じ絶対パス解決が必要で、同じプラグインルートの絶対パスにそれぞれ `/scripts/collect-review-diff.sh` / `/scripts/extract-hunk.sh` を連結した文字列を渡すこと。
+> **`scriptPath` の解決について（重要）**: `<CLAUDE_PLUGIN_ROOTの絶対パス>` は本ドキュメント内の表記上のプレースホルダであり、環境変数ではない（`CLAUDE_PLUGIN_ROOT` はメインセッションの Bash でも未設定であり、環境変数として参照しても空になる）。実際の絶対パスは、本スキル起動時にコンテキストへ与えられる「Base directory for this skill」（`<プラグインルート>/skills/self-review`）から**親ディレクトリを2階層**辿ることで得られる（`<Base directory for this skill>/../..` がプラグインルート）。この絶対パスと `/skills/self-review/scripts/self-review-loop.js` を連結した文字列を `scriptPath` に渡すこと。`args.collectDiffScript` / `args.extractHunkScript` も同じ絶対パス解決が必要で、同じプラグインルートの絶対パスにそれぞれ `/scripts/collect-review-diff.sh` / `/scripts/extract-hunk.sh` を連結した文字列を渡すこと。
 
 `args` の各フィールドの型と由来:
 
