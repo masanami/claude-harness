@@ -54,7 +54,7 @@ gh issue view {親Issue番号} --json title,body,number
 
 ### Step 4: 実装チケットの一括作成
 
-承認後、テンプレート `skills/create-ticket/templates/implementation-ticket.md` を読み込み、各タスクごとに Issue を作成する。
+承認後、テンプレート `${CLAUDE_PLUGIN_ROOT}/skills/create-ticket/templates/implementation-ticket.md` を読み込み、各タスクごとに Issue を作成する。
 
 各 Issue 本文に必ず含める:
 
