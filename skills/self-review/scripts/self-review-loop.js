@@ -5,40 +5,40 @@
 // として起動される（${CLAUDE_PLUGIN_ROOT} は呼び出し側で絶対パスに解決してから渡す）。
 //
 // args:
-//   base:         string | null  レビュー対象diffの基準ブランチ（省略時は
-//                                 scripts/collect-review-diff.sh 内の gh フォールバックで解決）
-//   execOverride: function | null  テスト専用。scripts/collect-review-diff.sh /
-//                                 scripts/extract-hunk.sh の実行を差し替えるためのフック
-//                                 （本番経路では未指定＝実際の execFileSync を使う）
+//   base:               string | null  レビュー対象diffの基準ブランチ（省略時は
+//                                       scripts/collect-review-diff.sh 内の gh フォールバックで解決）
+//   collectDiffScript:  string  必須。scripts/collect-review-diff.sh の絶対パス
+//                                （${CLAUDE_PLUGIN_ROOT} を呼び出し側で解決して渡す）
+//   extractHunkScript:  string  必須。scripts/extract-hunk.sh の絶対パス（同上）
 //
 // resume 安全性のため、このスクリプトは Date.now()/Math.random()/引数無し new Date() を使わない。
+//
+// 実行環境の制約（重要）:
+//   Workflow ランタイムは Node.js のファイルシステム操作モジュールや子プロセス起動
+//   モジュールを含む組み込みモジュールにアクセスできないサンドボックスで実行される
+//   （インポート文自体が実行時に失敗する）。そのため、このファイルは一切のインポート文を
+//   持たない。diff収集（collect-review-diff.sh）とhunk抽出（extract-hunk.sh）は、
+//   LLM判断を要さない決定的なgit/テキスト処理であっても、このファイル自身が
+//   子プロセスを起動して直接実行することはできない。代わりに、Bashツールのみを持つ
+//   薄いシェル実行専用エージェント（agentType: 'git-ops'。agents/git-ops.md）を
+//   agent() 経由で呼び出し、実行を委譲する（reduce-debt-scan.js が一切のインポート文を
+//   持たない先例と同じ制約に従う）。
 //
 // 設計メモ（レイヤリング）:
 //   - 反証規範・レビュー観点・修正時の振る舞いは agents/code-reviewer.md /
 //     agents/design-reviewer.md / agents/finding-verifier.md / agents/feature-implementer.md
 //     側の責務。このファイルには書かない
-//   - このファイルの責務は fan-out・schema検証・多数決・severityフィルタ・周回間dedup・
-//     ループの上限/終了条件という「構造」のみ
-//   - diff収集（scripts/collect-review-diff.sh）とhunk抽出（scripts/extract-hunk.sh）は
-//     LLM判断を要さない決定的なgit/テキスト処理のため、Workflowスクリプト自身が
-//     child_process経由で呼び出す（reduce-debt-scan.js と異なり「毎周」の再収集が
-//     ループの内側で必要なため。Issue #44 クリティカル設計決定コメント2 要求3）
-
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-import { unlinkSync } from 'node:fs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// このファイルは <plugin-root>/skills/self-review/scripts/self-review-loop.js に位置する。
-const PLUGIN_ROOT = path.resolve(__dirname, '../../..');
-const COLLECT_DIFF_SCRIPT = path.join(PLUGIN_ROOT, 'scripts/collect-review-diff.sh');
-const EXTRACT_HUNK_SCRIPT = path.join(PLUGIN_ROOT, 'scripts/extract-hunk.sh');
+//   - git-ops エージェントは「判断をしない・機械的にコマンドを実行するだけ」の薄い層であり、
+//     このファイルの責務は fan-out・schema検証・多数決・severityフィルタ・周回間dedup・
+//     ループの上限/終了条件という「構造」のみである点は変わらない
+//   - diff収集・hunk抽出は毎周（ループの内側で）必要になる（修正エージェントはコミットしない
+//     設計のため行番号が周回間で動く。Issue #44 クリティカル設計決定コメント2 要求3）
 
 export const meta = {
   name: 'self-review-loop',
-  description: 'Runs code-reviewer/design-reviewer in barrier-parallel, adversarially verifies high-severity/PLAUSIBLE findings via 3-way finding-verifier majority vote, applies confirmed fixes via feature-implementer (+ one quality-check), and loops up to 3 rounds until findings converge to zero.',
+  description: "Runs code-reviewer/design-reviewer in barrier-parallel, adversarially verifies high-severity/PLAUSIBLE findings via 3-way finding-verifier majority vote, applies confirmed fixes via feature-implementer (+ one quality-check), and loops up to 3 rounds until findings converge to zero. Diff collection and hunk extraction (deterministic git/text processing the Workflow runtime cannot execute directly) are delegated to a thin shell-execution agent (agentType: 'git-ops').",
   phases: [
+    { title: 'Collect' },
     { title: 'Review' },
     { title: 'Verify' },
     { title: 'Fix' },
@@ -166,6 +166,49 @@ export const FIX_SCHEMA = {
   required: ['appliedFixes', 'qc'],
 };
 
+// git-ops agent が実行する collect-review-diff.sh の出力そのままの形
+// （scripts/README.md の正本と同一フィールド）。
+export const GITOPS_COLLECT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    base: { type: 'string' },
+    merge_base: { type: 'string' },
+    commits: { type: 'array', items: { type: 'string' } },
+    files: { type: 'array', items: { type: 'string' } },
+    diff_file: { type: 'string' },
+  },
+  required: ['base', 'merge_base', 'commits', 'files', 'diff_file'],
+};
+
+export const GITOPS_CLEANUP_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { removed: { type: 'boolean' } },
+  required: ['removed'],
+};
+
+export const GITOPS_HUNK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    hunks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          findingId: { type: 'string' },
+          found: { type: 'boolean' },
+          snippet: { type: 'string' },
+        },
+        required: ['findingId', 'found', 'snippet'],
+      },
+    },
+  },
+  required: ['hunks'],
+};
+
 // --- プロンプトインジェクション対策（reduce-debt-scan.js の設計をそのまま踏襲） ---
 //
 // リポジトリ由来の非信頼データ（diff・指摘のclaim/evidence等）をプロンプトへ埋め込む際は、
@@ -202,6 +245,21 @@ export function dedupByKey(findings) {
   const result = [];
   for (const f of findings) {
     const key = findingKey(f);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(f);
+  }
+  return result;
+}
+
+// toFix の構築専用: (file,line,claim) の完全一致のみを重複として除去する。
+// (file,line) だけで dedup すると、code-reviewer と design-reviewer が同じ箇所を
+// 別々のclaimで指摘したケースを片方だけ握りつぶしてしまう（CodeRabbit指摘の回帰修正）。
+export function dedupExactFindings(findings) {
+  const seen = new Set();
+  const result = [];
+  for (const f of findings) {
+    const key = `${f.file}:${f.line}:${f.claim}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(f);
@@ -323,63 +381,95 @@ export function buildFixPrompt(toFix, diffInfo) {
   ].join('\n');
 }
 
-// --- 決定的I/O（git/テキスト処理。LLM判断を要さないためWorkflow自身がchild_process経由で呼ぶ） ---
+// --- git-ops プロンプトビルダー（固定テンプレート。周回番号・findings リスト以外は変えない。
+//     resume時のキャッシュ安定性のため文面を安定させる） ---
 
-function defaultExec(scriptPath, execArgs) {
-  return execFileSync(scriptPath, execArgs, { encoding: 'utf8' });
+export function buildGitOpsCollectPrompt(collectDiffScript, base, previousDiffFile) {
+  return [
+    'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行し、その標準出力をそのまま返すことだけが仕事です。内容の解釈・要約・加工は一切行わないでください。',
+    '',
+    '実行手順（この順で機械的に実行する）:',
+    '1. データブロックの previousDiffFile が null でなければ Bash で `rm -f "<previousDiffFileの値>"` を実行する（対象が既に存在しなくてもエラーとして扱わない）。',
+    '2. データブロックの base が null なら Bash で `bash "<collectDiffScriptの値>"` を、null でなければ `bash "<collectDiffScriptの値>" "<baseの値>"` を実行する。',
+    '3. 手順2の標準出力をJSONとしてパースし、フィールドの追加・削除・値の改変を一切行わずそのまま返す。',
+    '',
+    wrapDataBlock({ collectDiffScript, base, previousDiffFile }),
+    '',
+    '指定された JSON Schema（base, merge_base, commits, files, diff_file）に厳密に準拠したJSONのみを返してください。',
+  ].join('\n');
 }
 
-// scripts/collect-review-diff.sh を呼び出し、パース済みJSONを返す関数を生成する。
-// execFn を差し替えることでテスト時に実際のgitを呼ばずにモックできる。
-export function createDiffCollector(execFn = defaultExec) {
-  return function collectDiff(base, log) {
-    const cliArgs = base ? [base] : [];
-    let stdout;
-    try {
-      stdout = execFn(COLLECT_DIFF_SCRIPT, cliArgs);
-    } catch (err) {
-      throw new Error(`collect-review-diff.sh failed: ${err.message}`);
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(stdout);
-    } catch (err) {
-      throw new Error(`collect-review-diff.sh returned invalid JSON: ${err.message}`);
-    }
-    if (typeof log === 'function') {
-      log(`self-review-loop: collected diff (base=${parsed.base}, merge_base=${parsed.merge_base}, files=${(parsed.files || []).length})`);
-    }
-    return parsed;
-  };
+export function buildGitOpsCleanupPrompt(diffFile) {
+  return [
+    'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行するだけが仕事です。',
+    '',
+    'Bash で `rm -f "<diffFileの値>"` を実行し（対象が既に存在しなくてもエラーとして扱わない）、成功したら removed: true を返してください。',
+    '',
+    wrapDataBlock({ diffFile }),
+    '',
+    '指定された JSON Schema（removed のみ）に厳密に準拠したJSONのみを返してください。',
+  ].join('\n');
 }
 
-// collect-review-diff.sh が mktemp で書き出した diff_file を後始末する。
-// 毎周新しい一時ファイルが作られるため、前周分・最終周分ともに残置しないようにする。
-// 失敗（既に削除済み等）は無視する（後始末の失敗でワークフロー全体を止めない）。
-export function cleanupDiffFile(diffInfo) {
-  if (!diffInfo || !diffInfo.diff_file) return;
-  try {
-    unlinkSync(diffInfo.diff_file);
-  } catch {
-    // ENOENT等は無視（既に削除済み・テストのモックパス等）
+export function buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, contextLines) {
+  return [
+    'あなたは判断を行わない薄いシェル実行者です。データブロックの findings に列挙された各項目について、以下のコマンドをそれぞれ実行し、その標準出力（JSON）を集約して返すだけが仕事です。hunkの内容を解釈・要約・加工しないでください。',
+    '',
+    'findings の各項目について実行するコマンド:',
+    'Bash で `bash "<extractHunkScriptの値>" "<diff_fileの値>" "<その項目のfileの値>" "<その項目のlineの値>" <context_linesの値>` を実行する。',
+    '',
+    '各コマンドの標準出力JSONの found/snippet フィールドの値をそのまま使い、対応する findingId と組にして hunks 配列に格納する（findings の入力順を保つ必要はない。findingId で対応関係が特定できればよい）。あるコマンドが失敗した場合は、その項目のみ found: false, snippet: "" として扱う。',
+    '',
+    wrapDataBlock({ extractHunkScript, diff_file: diffFile, context_lines: contextLines, findings: findings.map((f) => ({ findingId: findingKey(f), file: f.file, line: f.line })) }),
+    '',
+    '指定された JSON Schema（hunks配列。各要素は findingId, found, snippet）に厳密に準拠したJSONのみを返してください。',
+  ].join('\n');
+}
+
+// --- git-ops 呼び出しヘルパー（agent() を agentType: 'git-ops' で呼ぶ。フェーズは 'Collect'） ---
+
+async function collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile, round, log }) {
+  const result = await agent(buildGitOpsCollectPrompt(collectDiffScript, base, previousDiffFile), {
+    agentType: 'git-ops',
+    schema: GITOPS_COLLECT_SCHEMA,
+    phase: 'Collect',
+    label: `collect:round-${round}`,
+  });
+  if (typeof log === 'function') {
+    log(`self-review-loop: collected diff (base=${result.base}, merge_base=${result.merge_base}, files=${(result.files || []).length})`);
+  }
+  return result;
+}
+
+async function cleanupDiffFileViaAgent(agent, diffFile, log) {
+  if (!diffFile) return;
+  await agent(buildGitOpsCleanupPrompt(diffFile), {
+    agentType: 'git-ops',
+    schema: GITOPS_CLEANUP_SCHEMA,
+    phase: 'Collect',
+    label: 'cleanup:final',
+  });
+  if (typeof log === 'function') {
+    log(`self-review-loop: cleaned up final diff_file (${diffFile})`);
   }
 }
 
-// scripts/extract-hunk.sh を呼び出し、パース済みJSONを返す関数を生成する。
-export function createHunkExtractor(execFn = defaultExec) {
-  return function extractHunk(diffFile, file, line) {
-    let stdout;
-    try {
-      stdout = execFn(EXTRACT_HUNK_SCRIPT, [diffFile, file, String(line), String(HUNK_CONTEXT_LINES)]);
-    } catch (err) {
-      return { file, line, found: false, snippet: '', error: err.message };
-    }
-    try {
-      return JSON.parse(stdout);
-    } catch (err) {
-      return { file, line, found: false, snippet: '', error: `invalid JSON: ${err.message}` };
-    }
-  };
+async function extractHunksViaAgent(agent, { extractHunkScript, diffFile, findings, round, log }) {
+  if (findings.length === 0) return new Map();
+  const result = await agent(buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, HUNK_CONTEXT_LINES), {
+    agentType: 'git-ops',
+    schema: GITOPS_HUNK_SCHEMA,
+    phase: 'Collect',
+    label: `hunks:round-${round}`,
+  });
+  if (typeof log === 'function') {
+    log(`self-review-loop: extracted ${(result.hunks || []).length} hunk(s) for round ${round}`);
+  }
+  const map = new Map();
+  for (const h of result.hunks || []) {
+    map.set(h.findingId, h);
+  }
+  return map;
 }
 
 // --- ステージ関数 ---
@@ -400,25 +490,26 @@ async function runReviewStage(diffInfo, mode, previousFindings, { agent, paralle
 }
 
 // severity: high かつ verdict: PLAUSIBLE の指摘のみ、finding-verifier 3体の多数決にかける。
-// 指摘ごとにhunkを抽出し(extract-hunk.sh)、pipeline(items, extractStage, voteStage) で処理する
-// （reduce-debt-scan.js の pipeline(buckets, scanStage, verifyStage) と同じ構造。voteStage内で
-// parallel([...3体])を呼ぶ点も reduce-debt-scan.js の verifyStage を踏襲している。
-// 複数指摘を「parallelに渡す複数thunkの中でさらにparallelを呼ぶ」形にはしない
-// ＝ pipeline側の1アイテム分岐としてネストを吸収し、fan-outの入れ子構造を単純化する）。
-async function verifyFindingsStage(toVerify, diffInfo, { agent, parallel, pipeline, log, extractHunk }) {
+// hunk抽出はfindings全件分をまとめて1回の git-ops 呼び出しで行い（extractHunksViaAgent）、
+// pipeline(items, attachHunkStage, voteStage) の第1ステージはその結果（Map）から引くだけの
+// 軽い関数にする（pipeline を使う二段構成自体は維持する。理由: voteStage内で
+// parallel([...3体])を呼ぶため、外側のfan-outでもparallelを使うと「parallelの中で
+// さらにparallel」の入れ子になり避けたい、という既存の設計方針をそのまま維持するため）。
+async function verifyFindingsStage(toVerify, diffInfo, { agent, parallel, pipeline, log, extractHunkScript, round }) {
   if (toVerify.length === 0) {
     return { confirmed: [], needsHumanJudgment: [] };
   }
 
-  async function extractStage(finding) {
-    const hunkInfo = extractHunk(diffInfo.diff_file, finding.file, finding.line);
+  const hunkMap = await extractHunksViaAgent(agent, { extractHunkScript, diffFile: diffInfo.diff_file, findings: toVerify, round, log });
+
+  async function attachHunkStage(finding) {
+    const hunkInfo = hunkMap.get(findingKey(finding)) || { findingId: findingKey(finding), found: false, snippet: '' };
     return { finding, hunkInfo };
   }
 
   async function voteStage({ finding, hunkInfo }) {
     const findingId = findingKey(finding);
     const prompt = buildVerifyPrompt(finding, hunkInfo);
-
     const verifierOutputs = await parallel(
       Array.from({ length: VERIFIER_COUNT }, (_, idx) => () => agent(prompt, {
         agentType: 'finding-verifier',
@@ -427,7 +518,6 @@ async function verifyFindingsStage(toVerify, diffInfo, { agent, parallel, pipeli
         label: `verify:${findingId}:${idx + 1}`,
       })),
     );
-
     const votes = verifierOutputs
       .map((out) => (out.verdicts || []).find((v) => v.findingId === findingId))
       .filter(Boolean);
@@ -435,7 +525,7 @@ async function verifyFindingsStage(toVerify, diffInfo, { agent, parallel, pipeli
     return { finding, verdict, votes };
   }
 
-  const outcomes = await pipeline(toVerify, extractStage, voteStage);
+  const outcomes = await pipeline(toVerify, attachHunkStage, voteStage);
 
   const confirmed = [];
   const needsHumanJudgment = [];
@@ -455,16 +545,17 @@ async function verifyFindingsStage(toVerify, diffInfo, { agent, parallel, pipeli
 }
 
 export default async function ({ agent, parallel, pipeline, log, args }) {
-  const { base = null, execOverride = null } = args || {};
-  const execFn = execOverride || defaultExec;
-  const collectDiff = createDiffCollector(execFn);
-  const extractHunk = createHunkExtractor(execFn);
+  const { base = null, collectDiffScript, extractHunkScript } = args || {};
+  if (!collectDiffScript || !extractHunkScript) {
+    throw new Error('self-review-loop: args.collectDiffScript and args.extractHunkScript (absolute paths) are required.');
+  }
 
   const roundHistory = [];
   const seenKeys = new Set();
   const needsHumanJudgmentAll = [];
+  let qcFailed = false;
 
-  let diffInfo = collectDiff(base, log);
+  let diffInfo = await collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile: null, round: 1, log });
   let findings = await runReviewStage(diffInfo, 'full', [], { agent, parallel, log });
   roundHistory.push({ round: 1, findingsCount: findings.length });
 
@@ -485,12 +576,12 @@ export default async function ({ agent, parallel, pipeline, log, args }) {
     const { confirmed, needsHumanJudgment } = await verifyFindingsStage(
       freshToVerify,
       diffInfo,
-      { agent, parallel, pipeline, log, extractHunk },
+      { agent, parallel, pipeline, log, extractHunkScript, round: i + 1 },
     );
     freshToVerify.forEach((f) => seenKeys.add(findingKey(f)));
     needsHumanJudgmentAll.push(...needsHumanJudgment, ...alreadyVerified);
 
-    const toFix = dedupByKey([...trusted, ...confirmed]);
+    const toFix = dedupExactFindings([...trusted, ...confirmed]);
 
     if (toFix.length === 0) {
       if (typeof log === 'function') {
@@ -506,30 +597,43 @@ export default async function ({ agent, parallel, pipeline, log, args }) {
       phase: 'Fix',
       label: `fix:round-${i + 1}`,
     });
+    const qcResult = fixResult && fixResult.qc ? fixResult.qc.result : 'unknown';
     if (typeof log === 'function') {
-      const qcResult = fixResult && fixResult.qc ? fixResult.qc.result : 'unknown';
       log(`self-review-loop: round ${i + 1} fix applied (${toFix.length} finding(s)), quality-check result=${qcResult}`);
+    }
+
+    if (qcResult === 'fail') {
+      // 修正が品質ゲートを通過しなかった場合、レビュアーの指摘が0件でも
+      // converged: true として扱ってはならない（CodeRabbit指摘の回帰修正）。
+      // 再レビューを試みずループを打ち切り、要人間判断として残す。
+      qcFailed = true;
+      needsHumanJudgmentAll.push(...toFix.map((f) => ({ ...f, reason: `quality-check failed after fix (round ${i + 1})` })));
+      if (typeof log === 'function') {
+        log(`self-review-loop: quality-check failed after round ${i + 1} fix; stopping loop without further review.`);
+      }
+      findings = [];
+      break;
     }
 
     // 行番号は周回間で動くため、毎周diffを再収集する。次周のレビュー・hunk抽出は
     // このスナップショットのみを基準にし、前周のfindingsの行番号は持ち越さない。
-    // 前周のdiff_file（一時ファイル）はここで役目を終えるため後始末する。
-    const previousDiffInfo = diffInfo;
-    diffInfo = collectDiff(base, log);
-    cleanupDiffFile(previousDiffInfo);
+    // 前周のdiff_file（一時ファイル）はgit-ops側の手順1でここに合わせて後始末される。
+    const previousDiffFile = diffInfo.diff_file;
+    diffInfo = await collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile, round: i + 2, log });
     findings = await runReviewStage(diffInfo, 'confirmation', toFix, { agent, parallel, log });
     roundHistory.push({ round: i + 2, findingsCount: findings.length });
   }
 
   // 収束判定は「報告すべき残指摘が無いこと」で行う（findings.length===0だけで判定すると、
-  // toFix.length===0で打ち切った回にneeds_human_judgmentが残っているケースを取りこぼすため）。
+  // toFix.length===0で打ち切った回にneeds_human_judgmentが残っているケースや、
+  // quality-check失敗で打ち切ったケースを取りこぼすため）。
   // refuted判定（偽陽性として棄却）はneedsHumanJudgmentAllに含めないため、
   // 残指摘には現れない（多数決で「妥当な指摘ではない」と判定された以上、
   // 未解決の問題としては扱わない）。
   const residualFindings = dedupByKey([...findings, ...needsHumanJudgmentAll]);
-  const converged = residualFindings.length === 0;
+  const converged = !qcFailed && residualFindings.length === 0;
 
-  cleanupDiffFile(diffInfo);
+  await cleanupDiffFileViaAgent(agent, diffInfo.diff_file, log);
 
   return {
     rounds: roundHistory.length,

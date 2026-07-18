@@ -136,7 +136,7 @@ stdout JSON:
 
 ## collect-review-diff.sh / extract-hunk.sh の出力仕様（正本）
 
-`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が、レビューの各ラウンド開始時にこの2スクリプトを `child_process` 経由で呼び出す（LLM 判断を要さない決定的な git/テキスト処理のため。詳細は同スクリプト冒頭のコメントを参照）。
+`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が、レビューの各ラウンド開始時にこの2スクリプトを呼び出す（LLM 判断を要さない決定的な git/テキスト処理のため）。Workflow ランタイムは Node.js の組み込みモジュール（ファイルシステム操作・子プロセス起動等）にアクセスできないサンドボックスで実行されるため、スクリプト自身が直接実行することはできず、Bash ツールのみを持つ薄いシェル実行専用エージェント（`agentType: 'git-ops'`。`agents/git-ops.md`）を `agent()` 経由で呼び出して実行を委譲する（詳細は同スクリプト冒頭のコメントを参照）。
 
 ### `scripts/collect-review-diff.sh [BASE]`
 

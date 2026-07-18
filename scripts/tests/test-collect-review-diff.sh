@@ -134,6 +134,16 @@ stage_untracked_as_intent_to_add
 collect_files "$MAIN_HEAD_SHA"
 assert_contains_json_array "intent-to-add後はuntracked-new-file.txtがfilesに含まれる" "$FILES_JSON" "untracked-new-file.txt"
 
+echo "=== test: stage_untracked_as_intent_to_add — git add失敗時は戻り値1を伝播する（回帰テスト。CodeRabbit指摘: 従来は握りつぶして常にreturn 0していた） ==="
+NON_REPO_DIR="$(mktemp -d)"
+(
+  cd "$NON_REPO_DIR" || exit 1
+  stage_untracked_as_intent_to_add 2>/dev/null
+)
+STAGE_FAIL_STATUS=$?
+assert_eq "gitリポジトリ外ではgit add --intent-to-add -Aが失敗し戻り値1が伝播する" "1" "$STAGE_FAIL_STATUS"
+rm -rf "$NON_REPO_DIR"
+
 echo "=== test: write_diff_file — 未コミットの作業ツリー変更 + untracked新規ファイルの両方がdiff本文に含まれる（回帰テスト） ==="
 write_diff_file "$MAIN_HEAD_SHA"
 assert_eq "diff_fileが生成される" "0" "$([ -f "$DIFF_FILE" ] && echo 0 || echo 1)"

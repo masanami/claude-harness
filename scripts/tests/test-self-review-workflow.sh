@@ -6,12 +6,14 @@
 # 実行方法: bash scripts/tests/test-self-review-workflow.sh
 #
 # (a) `node --check` でスクリプトの構文妥当性を検証する
-# (b) 純粋関数（findingKey/dedupFindings/dedupByKey/mergeReviewFindings/
-#     partitionFindingsForVerification/decideVerifyVerdict/buildXxxPrompt/
-#     createDiffCollector/createHunkExtractor）と
-#     default export（mock した agent/parallel 経由。execOverride で
-#     collect-review-diff.sh / extract-hunk.sh の呼び出しもモックする）を
-#     scripts/tests/self-review-workflow-smoke.mjs で検証する
+# (b) 静的ガード: self-review-loop.js が node:fs/node:child_process への参照や
+#     import/require を一切含まないことを検証する（Workflowランタイムはこれらに
+#     アクセスできないサンドボックスで実行されるため。再発防止のためのガード）
+# (c) 純粋関数（findingKey/dedupFindings/dedupByKey/dedupExactFindings/
+#     mergeReviewFindings/partitionFindingsForVerification/decideVerifyVerdict/
+#     buildXxxPrompt）と default export（mock した agent/parallel/pipeline 経由。
+#     agent() が opts.agentType === 'git-ops' を見て diff収集・hunk抽出の
+#     モック応答を返す）を scripts/tests/self-review-workflow-smoke.mjs で検証する
 #
 # node が不在の環境では、format-on-save.sh の防御的スタイル（機能をスキップしても
 # 実害が小さい処理は無言でクラッシュさせず skip する）に倣い、このテスト全体を
@@ -43,6 +45,14 @@ main() {
     exit 1
   fi
   echo "ok - node --check passed"
+  echo ""
+
+  echo "=== runtime-restriction guard (no Node builtin imports) ==="
+  if grep -nE 'child_process|node:fs|require\(|^import ' "$WORKFLOW_JS"; then
+    echo "NG - self-review-loop.js must not reference Node built-in modules or use import/require (Workflow runtime has no fs/child_process/module access)"
+    exit 1
+  fi
+  echo "ok - no forbidden Node builtin references found"
   echo ""
 
   echo "=== smoke test (logic) ==="

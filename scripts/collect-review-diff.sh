@@ -128,9 +128,12 @@ compute_merge_base() {
 
 # 未追跡ファイルをintent-to-addでインデックスに登録する（内容は空のまま）。
 # これにより後続の `git diff` が新規ファイルを追加として検出できるようになる。
-# 失敗しても致命的ではない（対象が無ければ何もしない）ため、常に成功扱いにする。
+# git add 自体が失敗した場合（リポジトリ破損等）は呼び出し元に終了ステータスを伝播する。
 stage_untracked_as_intent_to_add() {
-  git add --intent-to-add -A >/dev/null 2>&1
+  if ! git add --intent-to-add -A 2>/dev/null; then
+    echo "Error: git add --intent-to-add -A failed" >&2
+    return 1
+  fi
   return 0
 }
 
@@ -207,7 +210,9 @@ main() {
   fi
   local merge_base="$MERGE_BASE"
 
-  stage_untracked_as_intent_to_add
+  if ! stage_untracked_as_intent_to_add; then
+    exit 1
+  fi
 
   collect_commits "$base_ref"
   local commits_json="$COMMITS_JSON"

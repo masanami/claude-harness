@@ -3,6 +3,13 @@
 // 純粋関数と、default export（オーケストレーション全体）をモック経由で検証するスモークテスト。
 // node が無い環境では scripts/tests/test-self-review-workflow.sh 側でこのファイルの実行自体をスキップする。
 //
+// Workflow ランタイムはnode:fs/node:child_processにアクセスできないサンドボックスで
+// 実行されるため、self-review-loop.js は diff収集・hunk抽出を agent() 経由で
+// agentType: 'git-ops'（薄いシェル実行専用エージェント）に委譲する設計になっている。
+// このスモークテストのモック agent() は opts.agentType === 'git-ops' と opts.label を見て
+// 応答を返す（reduce-debt-scan.js のスモークテストが opts.phase/opts.label で分岐する
+// 既存パターンをそのまま踏襲する）。
+//
 // 実行方法: node scripts/tests/self-review-workflow-smoke.mjs
 // 失敗時は非0 exitし、要約を出力する（他の scripts/tests/*.sh の pass/fail 集計スタイルに合わせる）。
 
@@ -10,20 +17,15 @@ import {
   findingKey,
   dedupFindings,
   dedupByKey,
+  dedupExactFindings,
   mergeReviewFindings,
   partitionFindingsForVerification,
   decideVerifyVerdict,
   buildReviewPrompt,
   buildVerifyPrompt,
   buildFixPrompt,
-  createDiffCollector,
-  createHunkExtractor,
-  cleanupDiffFile,
 } from '../../skills/self-review/scripts/self-review-loop.js';
 import workflow from '../../skills/self-review/scripts/self-review-loop.js';
-import { writeFileSync, existsSync, mkdtempSync, rmdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 
 let passCount = 0;
 let failCount = 0;
@@ -42,6 +44,10 @@ async function mockPipeline(items, stage1, stage2) {
   return out;
 }
 
+async function mockParallel(thunks) {
+  return Promise.all(thunks.map((t) => t()));
+}
+
 function assertEq(description, expected, actual) {
   const expectedStr = JSON.stringify(expected);
   const actualStr = JSON.stringify(actual);
@@ -57,8 +63,12 @@ function assertEq(description, expected, actual) {
   }
 }
 
-// --- findingKey / dedupFindings / dedupByKey ---
-console.log('=== findingKey / dedupFindings / dedupByKey ===');
+const COLLECT_DIFF_SCRIPT = '/plugin-root/scripts/collect-review-diff.sh';
+const EXTRACT_HUNK_SCRIPT = '/plugin-root/scripts/extract-hunk.sh';
+const BASE_ARGS = { base: null, collectDiffScript: COLLECT_DIFF_SCRIPT, extractHunkScript: EXTRACT_HUNK_SCRIPT };
+
+// --- findingKey / dedupFindings / dedupByKey / dedupExactFindings ---
+console.log('=== findingKey / dedupFindings / dedupByKey / dedupExactFindings ===');
 {
   assertEq('findingKey: file:line 形式', 'src/a.js:10', findingKey({ file: 'src/a.js', line: 10 }));
 
@@ -79,6 +89,19 @@ console.log('=== findingKey / dedupFindings / dedupByKey ===');
   const deduped = dedupByKey(dup);
   assertEq('dedupByKey: 同一(file,line)は最初の1件のみ残る', 2, deduped.length);
   assertEq('dedupByKey: 最初の出現(claim: c1)が残る', 'c1', deduped[0].claim);
+
+  // dedupExactFindings: (file,line)だけでなくclaim込みで完全一致のみを重複として除去する
+  // （CodeRabbit指摘の回帰テスト。code-reviewerとdesign-reviewerが同一箇所を別claimで
+  // 指摘したケースを片方だけ握りつぶさないことを検証する）。
+  const sameLocDiffClaim = [
+    { file: 'shared.js', line: 20, severity: 'medium', claim: 'code issue', evidence: 'e1', verdict: 'CONFIRMED' },
+    { file: 'shared.js', line: 20, severity: 'medium', claim: 'design issue', evidence: 'e2', verdict: 'CONFIRMED' },
+    { file: 'shared.js', line: 20, severity: 'medium', claim: 'code issue', evidence: 'e1-dup', verdict: 'CONFIRMED' },
+  ];
+  const exactDeduped = dedupExactFindings(sameLocDiffClaim);
+  assertEq('dedupExactFindings: 同一(file,line)でもclaimが異なれば両方残る(完全一致のみ除去)', 2, exactDeduped.length);
+  assertEq('dedupExactFindings: 完全一致(file,line,claim)する3件目は除去される', 'code issue', exactDeduped[0].claim);
+  assertEq('dedupExactFindings: 2件目のclaimも残る', 'design issue', exactDeduped[1].claim);
 }
 
 // --- mergeReviewFindings ---
@@ -181,89 +204,43 @@ console.log('=== prompt injection: boundary marker forgery ===');
   );
 }
 
-// --- createDiffCollector: execFnをモックしてJSONパース/エラーハンドリングを検証 ---
-console.log('=== createDiffCollector ===');
+// --- default export: args.collectDiffScript/extractHunkScript 未指定時は早期にthrowする ---
+console.log('=== default export: missing collectDiffScript/extractHunkScript throws early ===');
 {
-  const okExec = () => JSON.stringify({ base: 'main', merge_base: 'sha1', commits: [], files: ['a.js'], diff_file: '/tmp/d1' });
-  const collectDiff = createDiffCollector(okExec);
-  const result = collectDiff(null, () => {});
-  assertEq('collectDiff: execFnのJSON出力をそのままパースして返す', 'main', result.base);
-
-  const badJsonExec = () => 'not json';
-  const collectDiffBad = createDiffCollector(badJsonExec);
-  let threw = false;
-  try {
-    collectDiffBad(null, () => {});
-  } catch (e) {
-    threw = true;
+  async function unreachableAgent() {
+    throw new Error('agent() should not be called when required args are missing');
   }
-  assertEq('collectDiff: 不正なJSONが返るとthrowする', true, threw);
-
-  const throwingExec = () => { throw new Error('git error'); };
-  const collectDiffThrow = createDiffCollector(throwingExec);
-  let threw2 = false;
-  try {
-    collectDiffThrow('main', () => {});
-  } catch (e) {
-    threw2 = true;
-  }
-  assertEq('collectDiff: execFnがthrowするとそのままthrowする', true, threw2);
-}
-
-// --- createHunkExtractor: execFnをモックしてJSONパース/エラーハンドリングを検証 ---
-console.log('=== createHunkExtractor ===');
-{
-  const okExec = () => JSON.stringify({ file: 'a.js', line: 1, found: true, snippet: 'hunk text' });
-  const extractHunk = createHunkExtractor(okExec);
-  const result = extractHunk('/tmp/d1', 'a.js', 1);
-  assertEq('extractHunk: execFnのJSON出力をそのままパースして返す', true, result.found);
-
-  const throwingExec = () => { throw new Error('extract error'); };
-  const extractHunkThrow = createHunkExtractor(throwingExec);
-  const resultThrow = extractHunkThrow('/tmp/d1', 'a.js', 1);
-  assertEq('extractHunk: execFnがthrowしてもfound=falseで防御的に返す(懐疑者はRead/Grepで自読可能なため)', false, resultThrow.found);
-}
-
-// --- cleanupDiffFile: mktempで作った一時diffファイルを後始末できること ---
-console.log('=== cleanupDiffFile ===');
-{
-  const dir = mkdtempSync(path.join(tmpdir(), 'self-review-loop-test-'));
-  const filePath = path.join(dir, 'diff-file.txt');
-  writeFileSync(filePath, 'dummy diff content');
-  assertEq('後始末前はファイルが存在する', true, existsSync(filePath));
-
-  cleanupDiffFile({ diff_file: filePath });
-  assertEq('cleanupDiffFile呼び出し後はファイルが削除される', false, existsSync(filePath));
 
   let threw = false;
   try {
-    cleanupDiffFile({ diff_file: filePath }); // 既に削除済み(ENOENT)でも例外を投げない
+    await workflow({ agent: unreachableAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: { base: null } });
   } catch (e) {
     threw = true;
   }
-  assertEq('既に存在しないファイルに対して呼んでも例外を投げない', false, threw);
-
-  threw = false;
-  try {
-    cleanupDiffFile(null);
-    cleanupDiffFile({});
-  } catch (e) {
-    threw = true;
-  }
-  assertEq('diffInfoがnull/diff_fileが無い場合も例外を投げない', false, threw);
-
-  rmdirSync(dir);
+  assertEq('collectDiffScript/extractHunkScript未指定でthrowする', true, threw);
 }
 
 // --- default export: モックでフルレビュー -> confirmed(高severityのみ検証) -> fix -> 収束 までのend-to-end smoke ---
 console.log('=== default export: converges within 1 fix round ===');
 {
-  async function mockParallel(thunks) {
-    return Promise.all(thunks.map((t) => t()));
-  }
-
   let reviewCallCount = 0;
+  let diffCollectCallCount = 0;
+  let cleanupCallCount = 0;
   async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        diffCollectCallCount += 1;
+        return { base: 'main', merge_base: `sha-${diffCollectCallCount}`, commits: ['abc msg'], files: ['src/a.js', 'src/b.js'], diff_file: `mock-diff-round-${diffCollectCallCount}` };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/a.js:10', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        cleanupCallCount += 1;
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
     if (opts.phase === 'Review') {
       reviewCallCount += 1;
       if (opts.label.includes('confirm')) {
@@ -291,31 +268,17 @@ console.log('=== default export: converges within 1 fix round ===');
     throw new Error(`unexpected phase: ${opts.phase}`);
   }
 
-  const mockExtractExec = () => JSON.stringify({ file: 'src/a.js', line: 10, found: true, snippet: 'hunk' });
-  let diffCallCount = 0;
-  const mockDiffAndExtractExec = (scriptPath, execArgs) => {
-    if (scriptPath.endsWith('collect-review-diff.sh')) {
-      diffCallCount += 1;
-      return JSON.stringify({ base: 'main', merge_base: `sha-${diffCallCount}`, commits: ['abc msg'], files: ['src/a.js', 'src/b.js'], diff_file: `/tmp/diff-${diffCallCount}` });
-    }
-    if (scriptPath.endsWith('extract-hunk.sh')) {
-      return mockExtractExec();
-    }
-    throw new Error(`unexpected script: ${scriptPath}`);
-  };
-
   const noopLog = () => {};
-  const args = { base: null, execOverride: mockDiffAndExtractExec };
-
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args });
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
 
   assertEq('converged: true (2巡目レビューで指摘0件)', true, result.converged);
   assertEq('residualFindings は空', 0, result.residualFindings.length);
   assertEq('roundHistory は2件(初回review + 1回のfix後confirmationレビュー)', 2, result.roundHistory.length);
   assertEq('roundHistory[0].findingsCount は初回2件', 2, result.roundHistory[0].findingsCount);
   assertEq('roundHistory[1].findingsCount は解消後0件', 0, result.roundHistory[1].findingsCount);
-  assertEq('diff収集は毎周呼ばれる(初回+fix後の再収集で最低2回)', true, diffCallCount >= 2);
+  assertEq('diff収集は毎周呼ばれる(初回+fix後の再収集で最低2回)', true, diffCollectCallCount >= 2);
   assertEq('レビューは初回とconfirmationで各2回(code+design)呼ばれる', true, reviewCallCount >= 4);
+  assertEq('最終的にcleanup:finalが1回呼ばれる', 1, cleanupCallCount);
 }
 
 // --- default export: 懐疑者が2/3でrefuted -> 偽陽性として棄却され、
@@ -324,11 +287,19 @@ console.log('=== default export: converges within 1 fix round ===');
 //     解決済み＝収束扱いとする） ---
 console.log('=== default export: all high+PLAUSIBLE findings refuted -> converges (dropped as false positive) ===');
 {
-  async function mockParallel(thunks) {
-    return Promise.all(thunks.map((t) => t()));
-  }
-
   async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/x.js'], diff_file: 'mock-diff-refuted-1' };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/x.js:1', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
     if (opts.phase === 'Review') {
       if (opts.label.startsWith('review:code')) {
         return [{ file: 'src/x.js', line: 1, severity: 'high', claim: 'maybe bug', evidence: 'ev', verdict: 'PLAUSIBLE' }];
@@ -344,15 +315,8 @@ console.log('=== default export: all high+PLAUSIBLE findings refuted -> converge
     throw new Error(`Fix stage should not be reached (nothing confirmed): ${opts.phase}`);
   }
 
-  const mockExec = (scriptPath) => {
-    if (scriptPath.endsWith('collect-review-diff.sh')) {
-      return JSON.stringify({ base: 'main', merge_base: 'sha1', commits: [], files: ['src/x.js'], diff_file: '/tmp/diff-1' });
-    }
-    return JSON.stringify({ file: 'src/x.js', line: 1, found: true, snippet: 'hunk' });
-  };
-
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: { execOverride: mockExec } });
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
 
   assertEq('converged: true (refutedは偽陽性として棄却され、修正対象が無いためそのまま収束)', true, result.converged);
   assertEq('residualFindingsは空(refutedは残指摘として報告しない)', 0, result.residualFindings.length);
@@ -363,11 +327,19 @@ console.log('=== default export: all high+PLAUSIBLE findings refuted -> converge
 //     残指摘としてresidualFindingsに残る（要人間判断のため、refutedとは違い可視化する） ---
 console.log('=== default export: needs_human_judgment findings surface in residualFindings ===');
 {
-  async function mockParallel(thunks) {
-    return Promise.all(thunks.map((t) => t()));
-  }
-
   async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/y.js'], diff_file: 'mock-diff-uncertain-1' };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/y.js:7', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
     if (opts.phase === 'Review') {
       if (opts.label.startsWith('review:code')) {
         return [{ file: 'src/y.js', line: 7, severity: 'high', claim: 'unclear', evidence: 'ev', verdict: 'PLAUSIBLE' }];
@@ -383,15 +355,8 @@ console.log('=== default export: needs_human_judgment findings surface in residu
     throw new Error(`Fix stage should not be reached: ${opts.phase}`);
   }
 
-  const mockExec = (scriptPath) => {
-    if (scriptPath.endsWith('collect-review-diff.sh')) {
-      return JSON.stringify({ base: 'main', merge_base: 'sha1', commits: [], files: ['src/y.js'], diff_file: '/tmp/diff-1' });
-    }
-    return JSON.stringify({ file: 'src/y.js', line: 7, found: true, snippet: 'hunk' });
-  };
-
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: { execOverride: mockExec } });
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
 
   assertEq('converged: false (要人間判断の残指摘があるため)', false, result.converged);
   assertEq('residualFindingsに1件残る(needs_human_judgment)', 1, result.residualFindings.length);
@@ -401,16 +366,21 @@ console.log('=== default export: needs_human_judgment findings surface in residu
 // --- default export: 指摘0件で即座に収束（レビュー1回で完了） ---
 console.log('=== default export: zero findings converges immediately ===');
 {
-  async function mockParallel(thunks) {
-    return Promise.all(thunks.map((t) => t()));
-  }
   async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: [], diff_file: 'mock-diff-empty' };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
     if (opts.phase === 'Review') return [];
     throw new Error(`unexpected phase: ${opts.phase}`);
   }
-  const mockExec = () => JSON.stringify({ base: 'main', merge_base: 'sha1', commits: [], files: [], diff_file: '/tmp/diff-empty' });
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: { execOverride: mockExec } });
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
 
   assertEq('converged: true', true, result.converged);
   assertEq('residualFindings空', 0, result.residualFindings.length);
@@ -421,12 +391,22 @@ console.log('=== default export: zero findings converges immediately ===');
 //     残指摘を構造化して返す（無限ループしない） ---
 console.log('=== default export: does not converge within MAX_ROUNDS(3) -> returns residual findings ===');
 {
-  async function mockParallel(thunks) {
-    return Promise.all(thunks.map((t) => t()));
-  }
-
   let fixCallCount = 0;
+  let diffCollectCallCount = 0;
   async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        diffCollectCallCount += 1;
+        return { base: 'main', merge_base: `sha-${diffCollectCallCount}`, commits: [], files: ['src/stubborn.js'], diff_file: `mock-diff-stubborn-${diffCollectCallCount}` };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/stubborn.js:42', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
     if (opts.phase === 'Review') {
       if (opts.label.startsWith('review:code')) {
         // 毎回同じ指摘を返し続ける（修正しても解消しない状況を模す）
@@ -444,17 +424,8 @@ console.log('=== default export: does not converge within MAX_ROUNDS(3) -> retur
     throw new Error(`unexpected phase in non-convergence test: ${opts.phase}`);
   }
 
-  let diffCallCount = 0;
-  const mockExec = (scriptPath) => {
-    if (scriptPath.endsWith('collect-review-diff.sh')) {
-      diffCallCount += 1;
-      return JSON.stringify({ base: 'main', merge_base: `sha-${diffCallCount}`, commits: [], files: ['src/stubborn.js'], diff_file: `/tmp/diff-${diffCallCount}` });
-    }
-    return JSON.stringify({ file: 'src/stubborn.js', line: 42, found: true, snippet: 'hunk' });
-  };
-
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: { execOverride: mockExec } });
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
 
   assertEq('converged: false (3周経っても指摘が残る)', false, result.converged);
   assertEq('residualFindingsに指摘が残る', 1, result.residualFindings.length);
@@ -468,11 +439,20 @@ console.log('=== default export: does not converge within MAX_ROUNDS(3) -> retur
 //     混同しないことを確認する） ---
 console.log('=== default export: re-appearing high+PLAUSIBLE finding after prior verification is not silently dropped (regression) ===');
 {
-  async function mockParallel(thunks) {
-    return Promise.all(thunks.map((t) => t()));
-  }
   let fixCallCount = 0;
   async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha-x', commits: [], files: ['src/stubborn.js'], diff_file: 'mock-diff-reappear' };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/stubborn.js:42', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
     if (opts.phase === 'Review') {
       if (opts.label.startsWith('review:code')) {
         // 初回・confirmation双方で同じ(file,line)をhigh+PLAUSIBLEとして報告し続ける
@@ -493,17 +473,8 @@ console.log('=== default export: re-appearing high+PLAUSIBLE finding after prior
     throw new Error(`unexpected phase: ${opts.phase}`);
   }
 
-  let diffCallCount = 0;
-  const mockExec = (scriptPath) => {
-    if (scriptPath.endsWith('collect-review-diff.sh')) {
-      diffCallCount += 1;
-      return JSON.stringify({ base: 'main', merge_base: `sha-${diffCallCount}`, commits: [], files: ['src/stubborn.js'], diff_file: `/tmp/nonexistent-diff-${diffCallCount}` });
-    }
-    return JSON.stringify({ file: 'src/stubborn.js', line: 42, found: true, snippet: 'hunk' });
-  };
-
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: { execOverride: mockExec } });
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
 
   // 1巡目: high+PLAUSIBLE -> 懐疑者検証でconfirmed -> Fix実行 -> 2巡目レビューで再度同じ(file,line)がhigh+PLAUSIBLEとして再出現。
   // seenKeysに載っているため懐疑者への再fan-outはスキップされるが、needs_human_judgmentとして残指摘に残るべき
@@ -520,11 +491,17 @@ console.log('=== default export: re-appearing high+PLAUSIBLE finding after prior
 //     呼び出し元(runReviewStage)で誤って上書きされていないことを検証する） ---
 console.log('=== default export: same (file,line) flagged by both reviewers for different reasons is not collapsed within a round (regression) ===');
 {
-  async function mockParallel(thunks) {
-    return Promise.all(thunks.map((t) => t()));
-  }
-
+  let capturedFixPrompt = null;
   async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/shared.js'], diff_file: 'mock-diff-shared' };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
     if (opts.phase === 'Review') {
       if (opts.label.includes('confirm')) {
         // 2巡目のconfirmationレビューでは解消済みとして空配列を返す
@@ -539,25 +516,70 @@ console.log('=== default export: same (file,line) flagged by both reviewers for 
       return [];
     }
     if (opts.phase === 'Fix') {
+      capturedFixPrompt = prompt;
       return { appliedFixes: [{ file: 'src/shared.js', line: 20, summary: 'fixed both' }], qc: { result: 'pass', gates: {} } };
     }
     throw new Error(`unexpected phase: ${opts.phase}`);
   }
 
-  const mockExec = (scriptPath) => {
-    if (scriptPath.endsWith('collect-review-diff.sh')) {
-      return JSON.stringify({ base: 'main', merge_base: 'sha1', commits: [], files: ['src/shared.js'], diff_file: '/tmp/nonexistent-diff-shared' });
-    }
-    return JSON.stringify({ file: 'src/shared.js', line: 20, found: true, snippet: 'hunk' });
-  };
-
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: { execOverride: mockExec } });
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
 
   // 初回レビューの指摘数(roundHistory[0])には両方のfindingが残っているはず(2件)。
   assertEq('初回レビューでは同一(file,line)でも両reviewerの指摘が両方残る(2件)', 2, result.roundHistory[0].findingsCount);
-  // Fixステージへ渡すtoFixの段階では1件にまとめられる(dedupByKey)ため、2巡目レビューが実施され収束する。
+  // Fixステージへ渡すtoFixの段階で両方のclaimが残っていること（dedupExactFindingsは
+  // claim込み完全一致のみ除去する）を、実際にfeature-implementerへ渡されたプロンプト
+  // 文字列に両方のclaimが含まれているかで直接検証する（CodeRabbit指摘の回帰テスト本体）。
+  assertEq('Fixプロンプトに両reviewerのclaimが両方含まれる(code issue)', true, !!capturedFixPrompt && capturedFixPrompt.includes('code issue'));
+  assertEq('Fixプロンプトに両reviewerのclaimが両方含まれる(design issue)', true, !!capturedFixPrompt && capturedFixPrompt.includes('design issue'));
   assertEq('converged: true (Fix後の確認レビューで解消)', true, result.converged);
+}
+
+// --- default export: Fixステージ後のquality-checkが'fail'を返した場合、(a) converged: false、
+//     (b) residualFindingsが空でない、(c) 再レビュー(confirmationラベル)を一切呼ばずに
+//     打ち切ること（CodeRabbit指摘の回帰テスト。従来はqc結果を見ずに次周レビューへ進んでいた） ---
+console.log('=== default export: quality-check failure after fix stops the loop without re-review (regression) ===');
+{
+  let fixCallCount = 0;
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/qcfail.js'], diff_file: 'mock-diff-qcfail' };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/qcfail.js:1', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') {
+      if (opts.label.includes('confirmation')) {
+        throw new Error('re-review after quality-check failure must not happen');
+      }
+      if (opts.label.startsWith('review:code')) {
+        return [{ file: 'src/qcfail.js', line: 1, severity: 'medium', claim: 'needs fix', evidence: 'ev', verdict: 'CONFIRMED' }];
+      }
+      return [];
+    }
+    if (opts.phase === 'Fix') {
+      fixCallCount += 1;
+      return {
+        appliedFixes: [{ file: 'src/qcfail.js', line: 1, summary: 'attempted fix' }],
+        qc: { result: 'fail', gates: { lint: { status: 'fail', errors: 1, warnings: 0 } } },
+      };
+    }
+    throw new Error(`unexpected phase/label: ${opts.phase} / ${opts.label}`);
+  }
+
+  const noopLog = () => {};
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+
+  assertEq('converged: false (quality-check失敗で打ち切り)', false, result.converged);
+  assertEq('residualFindingsが空でない', true, result.residualFindings.length > 0);
+  assertEq('Fixは1回のみ実行され、再レビューは行われない', 1, fixCallCount);
+  assertEq('roundHistoryは初回のみ1件(quality-check失敗で確認レビューへ進まない)', 1, result.roundHistory.length);
 }
 
 console.log('');
