@@ -90,6 +90,44 @@ gs_base_allow_json() {
   ]'
 }
 
+# ------------------------------------------------------------------
+# スキーマ検証（純粋関数、exit code で判定。有効なJSONでも型契約が
+# 異なると下流のjqが失敗し既存設定を破損させうるため、構文検証だけでなく
+# 各JSON境界で型を検証する）
+# ------------------------------------------------------------------
+
+# 引数: JSON配列の文字列。全要素が文字列であることを検証する。
+gs_validate_string_array_json() {
+  local json="$1"
+  jq -e '(type == "array") and (all(type == "string"))' >/dev/null 2>&1 <<<"$json"
+}
+
+# 引数: .claude/settings.json 相当のJSON文字列。
+# ルートがオブジェクトで、permissions が省略またはオブジェクト、
+# permissions.allow/deny が省略または文字列配列であることを検証する。
+gs_validate_settings_schema() {
+  local json="$1"
+  jq -e '
+    (type == "object")
+    and ((.permissions == null) or (.permissions | type == "object"))
+    and ((.permissions.allow == null) or ((.permissions.allow | type == "array") and (.permissions.allow | all(type == "string"))))
+    and ((.permissions.deny == null) or ((.permissions.deny | type == "array") and (.permissions.deny | all(type == "string"))))
+  ' >/dev/null 2>&1 <<<"$json"
+}
+
+# 引数: --input で渡される analyze-project.sh 出力相当のJSON文字列。
+# .pm が省略または文字列、.stack.test/.stack.infra が省略または文字列配列であることを検証する。
+gs_validate_analyze_input_schema() {
+  local json="$1"
+  jq -e '
+    (type == "object")
+    and ((.pm == null) or (.pm | type == "string"))
+    and ((.stack == null) or (.stack | type == "object"))
+    and ((.stack.test == null) or ((.stack.test | type == "array") and (.stack.test | all(type == "string"))))
+    and ((.stack.infra == null) or ((.stack.infra | type == "array") and (.stack.infra | all(type == "string"))))
+  ' >/dev/null 2>&1 <<<"$json"
+}
+
 # jq 内蔵のフォールバック（base-deny.json が読めない場合用）
 gs_fallback_base_deny_json() {
   jq -n '[
@@ -111,9 +149,16 @@ gs_fallback_base_deny_json() {
 gs_load_base_deny_json() {
   local script_dir="$1"
   local deny_file="${script_dir}/base-deny.json"
-  if [ -f "$deny_file" ] && jq -e . "$deny_file" >/dev/null 2>&1; then
-    jq -c '.' "$deny_file"
-    return 0
+  if [ -f "$deny_file" ]; then
+    local content
+    content="$(jq -c '.' "$deny_file" 2>/dev/null)"
+    # 構文（valid JSON）だけでなく型契約（文字列配列）も検証する。
+    # 有効なJSONでも型が違えば後続のunion/mergeでjqが失敗し、
+    # 既存 .claude/settings.json の破損に繋がりうるため。
+    if [ -n "$content" ] && gs_validate_string_array_json "$content"; then
+      echo "$content"
+      return 0
+    fi
   fi
   gs_fallback_base_deny_json
 }
@@ -332,6 +377,14 @@ main() {
       exit 1
     fi
 
+    # 構文だけでなくスキーマ（.pm が文字列、.stack.test/.stack.infra が文字列配列）も
+    # 検証する。型不一致のまま抽出を進めると下流のjqが失敗しうるため。
+    if ! gs_validate_analyze_input_schema "$input_str"; then
+      echo "Error: --input does not match expected schema (.pm must be a string, .stack.test/.stack.infra must be string arrays)" >&2
+      printf '{"status":"error","error":"input json schema invalid"}\n' >&2
+      exit 1
+    fi
+
     local input_pm input_test_csv input_infra_csv
     input_pm="$(gs_extract_pm_from_input "$input_str")"
     input_test_csv="$(gs_extract_test_csv_from_input "$input_str")"
@@ -363,19 +416,53 @@ main() {
       printf '{"status":"error","error":"existing target invalid json"}\n' >&2
       exit 1
     fi
+    # 構文だけでなくスキーマ（permissions.allow/deny が文字列配列）も検証する。
+    # 検証せずマージへ進むと下流のjqが失敗し、既存ファイルが空で
+    # 上書きされる恐れがある（mvはtmp_fileの中身を検証しないため）。
+    if ! gs_validate_settings_schema "$existing_str"; then
+      echo "Error: existing target does not match expected schema (permissions.allow/deny must be string arrays): $target" >&2
+      printf '{"status":"error","error":"existing target schema invalid"}\n' >&2
+      exit 1
+    fi
     final_json="$(gs_merge_settings_json "$existing_str" "$generated_json")"
   else
     final_json="$generated_json"
   fi
 
+  # 合成/マージ結果そのものが期待スキーマを満たすことも最終防衛線として確認する
+  # （純粋関数のロジック誤りで壊れたJSONを書き込まないため）。
+  if ! gs_validate_settings_schema "$final_json"; then
+    echo "Error: generated settings JSON failed internal schema validation (this is a bug)" >&2
+    printf '{"status":"error","error":"generated settings schema invalid"}\n' >&2
+    exit 1
+  fi
+
   local target_dir tmp_file
   target_dir="$(dirname "$target")"
-  mkdir -p "$target_dir"
-  # 同一ディレクトリ内の一時ファイルに書いてから mv でアトミックに置換する
-  # （書き込み途中の中断で既存の .claude/settings.json を空にしないため）。
-  tmp_file="${target}.tmp.$$"
-  jq '.' <<<"$final_json" > "$tmp_file"
-  mv "$tmp_file" "$target"
+  if ! mkdir -p "$target_dir"; then
+    echo "Error: cannot create target directory: $target_dir" >&2
+    printf '{"status":"error","error":"target directory creation failed"}\n' >&2
+    exit 1
+  fi
+
+  # 同一ディレクトリ内に mktemp で予測不可能な一時ファイルを作成し、
+  # jq/mv 完了後に置き換える（アトミック置換）。
+  # `${target}.tmp.$$` のような予測可能な名前は symlink 攻撃の対象になりうるため使わない。
+  # jq/mv のいずれかが失敗した場合は既存ファイルを書き換えず、
+  # status:"ok" を返さずにエラー終了する（部分書き込みで空ファイル化させない）。
+  if ! tmp_file="$(mktemp "${target_dir}/.settings.json.tmp.XXXXXX" 2>/dev/null)"; then
+    echo "Error: temporary file creation failed in $target_dir" >&2
+    printf '{"status":"error","error":"temporary file creation failed"}\n' >&2
+    exit 1
+  fi
+  trap 'rm -f "$tmp_file"' EXIT
+
+  if ! jq '.' <<<"$final_json" > "$tmp_file" || ! mv "$tmp_file" "$target"; then
+    echo "Error: failed to write target file: $target" >&2
+    printf '{"status":"error","error":"target update failed"}\n' >&2
+    exit 1
+  fi
+  trap - EXIT
 
   local allow_count deny_count created merged
   allow_count=$(jq '.permissions.allow | length' <<<"$final_json")

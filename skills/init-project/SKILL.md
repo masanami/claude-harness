@@ -173,7 +173,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh" \
 | `--input <file\|->` | `analyze-project.sh` の出力JSON（`-` で stdin）。`.pm` / `.stack.test[]` / `.stack.infra[]` を抽出し、`--pm`/`--test`/`--infra` と合成する |
 | `--target <path>` | 出力先パス（既定: `./.claude/settings.json`） |
 
-**出力**（stdout にJSON1個）: `{"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M}`。`status: "error"` の場合はエラー内容を確認する（jq不在・入力JSON不正など）。
+**出力**: 成功時のみ stdout に `{"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M}` を1個出力する。失敗時（jq不在・入力JSON不正・既存 `.claude/settings.json` のスキーマ不正・書き込み失敗など）は stdout を空のまま exit 非0とし、エラー内容は stderr の `{"status":"error","error":"..."}` とメッセージで確認する。
 
 **既存ファイルとの冪等マージ**: `--target` が既に存在する場合、既存の `permissions.allow`/`permissions.deny` を保持しつつ、生成した allow/deny の非重複分のみ追加する（配列は重複排除され、同じ入力で再実行しても差分は出ない）。存在しない場合は `.claude/` ディレクトリごと新規作成する。
 
