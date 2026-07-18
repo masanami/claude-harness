@@ -11,7 +11,7 @@ effort: high
 
 **あなたは技術負債の分析を統括するリードエージェントです。**
 
-プロジェクト全体を対象に技術負債をスキャンし、親Issueの実装範囲をコンテキストとして結果を分類・優先度付けします。スキャンと偽陽性除去（敵対的検証）は Dynamic Workflows（`.claude/workflows/reduce-debt-scan.js`）に委ね、あなたはスキャン範囲の確認・結果の報告・Issue化の承認取得に専念します。問題が見つかればユーザー確認の上、修正Issueとして起票します。
+プロジェクト全体を対象に技術負債をスキャンし、親Issueの実装範囲をコンテキストとして結果を分類・優先度付けします。スキャンと偽陽性除去（敵対的検証）は Dynamic Workflows（`skills/reduce-debt/scripts/reduce-debt-scan.js`）に委ね、あなたはスキャン範囲の確認・結果の報告・Issue化の承認取得に専念します。問題が見つかればユーザー確認の上、修正Issueとして起票します。
 
 ---
 
@@ -78,280 +78,13 @@ find . -maxdepth 2 -type d \
 この範囲でスキャンを開始してよろしいですか？
 ```
 
-> **オプトイン要件について**: Dynamic Workflows はオプトイン機能であり、SKILL の指示文が明示的に Workflow を呼び出す形にすることでオプトイン要件を満たす。以下の「Workflow スクリプトの配置」「Workflow の起動」の手順そのものが、そのオプトインに当たる。
+> **オプトイン要件について**: Dynamic Workflows はオプトイン機能であり、SKILL の指示文が明示的に Workflow を呼び出す形にすることでオプトイン要件を満たす。以下の「Workflow の起動」がそのオプトインに当たる。
 
-#### 2-2. Workflow スクリプトの配置
+#### 2-2. Workflow スクリプトについて
 
-下記のコードブロックの内容を**そのまま**プロジェクト側の `.claude/workflows/reduce-debt-scan.js` に書き出す。resume 時のキャッシュ安定性のため、モデルはこのスクリプト本文を都度生成・改変せず、固定テンプレートとして扱うこと（可変なのは `args` のみ）。
+スキャン fan-out・敵対的検証・多数決は `skills/reduce-debt/scripts/reduce-debt-scan.js` に実装済みの Dynamic Workflow スクリプトが担う。このファイルはプラグインに同梱されており、モデルが都度書き出す・複写する必要はない（resume 時のキャッシュ安定性のため、Workflow ツールには常に同じ絶対パスをそのまま渡すこと）。
 
-```javascript
-export const meta = {
-  name: 'reduce-debt-scan',
-  description: 'Scans assigned directories for technical debt and adversarially verifies medium/high severity findings via 3-way majority vote before reporting.',
-  phases: [
-    { title: 'Scan' },
-    { title: 'Verify' },
-  ],
-};
-
-// --- 定数（fan-out・多数決の上限。総エージェント数の青天井化を防ぐ） ---
-
-const MAX_BUCKETS = 10; // 同時実行スロット目安に合わせたバケット上限
-const VERIFY_BATCH_SIZE = 5; // 懐疑者1体あたりに渡す同一ファイル内の検出項目数の上限
-const MAX_TOTAL_AGENTS = 1000; // 1run あたりの総エージェント数上限（scan + verify 合算）
-const VERIFIER_COUNT = 3; // 多数決のための懐疑者数（同数回避のため固定で3）
-
-const CATEGORIES = ['code_quality', 'dependencies', 'design', 'tests', 'documentation', 'performance'];
-
-// --- JSON Schema（agent() の schema オプションに渡す。出力検証・自動リトライに使われる） ---
-
-const SCAN_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      file: { type: 'string' },
-      summary: { type: 'string' },
-      detail: { type: 'string' },
-      severity: { type: 'string', enum: ['high', 'medium', 'low'] },
-      category: { type: 'string', enum: CATEGORIES },
-    },
-    required: ['file', 'summary', 'detail', 'severity', 'category'],
-  },
-};
-
-const VERIFY_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    verdicts: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          file: { type: 'string' },
-          findingIndex: { type: 'integer' },
-          verdict: { type: 'string', enum: ['confirmed', 'refuted', 'uncertain'] },
-          reason: { type: 'string' },
-          severity_adjustment: { type: 'string' },
-        },
-        required: ['file', 'findingIndex', 'verdict', 'reason'],
-      },
-    },
-  },
-  required: ['verdicts'],
-};
-
-// --- 純粋関数群（非決定的呼び出し Date.now()/Math.random() は使わない） ---
-
-// 確認済みディレクトリ一覧を、fan-out 上限（MAX_BUCKETS）内に収まるようバケットへ分割する。
-// ディレクトリ数が上限以下ならディレクトリ1個 = バケット1個。上限超過時は均等にまとめる。
-function planScanBuckets(directories) {
-  const dirs = Array.from(new Set(directories)).sort();
-  if (dirs.length === 0) return [];
-  if (dirs.length <= MAX_BUCKETS) {
-    return dirs.map((d) => ({ id: d, directories: [d] }));
-  }
-  const buckets = Array.from({ length: MAX_BUCKETS }, () => []);
-  dirs.forEach((d, i) => {
-    buckets[i % MAX_BUCKETS].push(d);
-  });
-  return buckets
-    .filter((b) => b.length > 0)
-    .map((b, i) => ({ id: `bucket-${i + 1}`, directories: b }));
-}
-
-function chunkArray(arr, size) {
-  const chunks = [];
-  for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
-  }
-  return chunks;
-}
-
-// 検出項目1件が「親Issueの実装（今回導入）」か「既存の負債」かを、
-// args.changedFiles / args.changedDirs との集合演算で判定する。
-// ディレクトリのみ一致（ファイル自体は変更されていない）を「今回導入」に含めると
-// 過剰分類になるため、ファイル完全一致のみを introducedByParent = true とする。
-// ディレクトリのみ一致は relatedDir = true として区別し、「既存（親実装の関連ディレクトリ）」
-// として報告表で識別できるようにする（両方不一致なら relatedDir も false の素の既存負債）。
-function classifyParentRelation(file, changedFileSet, changedDirs) {
-  if (changedFileSet.has(file)) {
-    return { introducedByParent: true, relatedDir: false };
-  }
-  const relatedDir = changedDirs.some((dir) => dir !== '.' && (file === dir || file.startsWith(`${dir}/`)));
-  return { introducedByParent: false, relatedDir };
-}
-
-// 3体の懐疑者の verdict 配列から、1件の検出項目の最終判定を多数決で決める。
-// confirmed が2票以上 -> confirmed。refuted が2票以上 -> refuted。
-// それ以外（1-1-1 割れ、uncertain 過半数等）は要人間判断として扱う。
-function decideVerdict(votes) {
-  const counts = { confirmed: 0, refuted: 0, uncertain: 0 };
-  for (const vote of votes) {
-    if (Object.prototype.hasOwnProperty.call(counts, vote.verdict)) {
-      counts[vote.verdict] += 1;
-    }
-  }
-  if (counts.confirmed >= 2) return 'confirmed';
-  if (counts.refuted >= 2) return 'refuted';
-  return 'needs_human_judgment';
-}
-
-function buildScanPrompt(bucket) {
-  return [
-    '以下の担当ディレクトリ配下のみを対象に技術負債をスキャンしてください。',
-    '担当ディレクトリ:',
-    ...bucket.directories.map((d) => `- ${d}`),
-    '',
-    '指定された JSON Schema（file, summary, detail, severity, category の配列）に厳密に準拠したJSONのみを返してください。',
-  ].join('\n');
-}
-
-function buildVerifyPrompt(file, batch) {
-  const lines = [
-    `対象ファイル: ${file}`,
-    'このファイルを実際に読み、以下の検出項目それぞれについて反証を試みてください。',
-    '',
-  ];
-  batch.forEach((finding) => {
-    lines.push(`- findingIndex ${finding.findingIndex}: [${finding.severity}/${finding.category}] ${finding.summary}`);
-    lines.push(`  詳細: ${finding.detail}`);
-  });
-  lines.push('');
-  lines.push('指定された JSON Schema（verdicts 配列。file と findingIndex は入力の値をそのまま使うこと）に厳密に準拠したJSONのみを返してください。');
-  return lines.join('\n');
-}
-
-export default async function ({ agent, parallel, pipeline, log, args }) {
-  const {
-    directories = [],
-    parentIssue = null,
-    changedFiles = [],
-    changedDirs = [],
-  } = args;
-
-  const buckets = planScanBuckets(directories);
-
-  const emptyResult = {
-    meta: { parentIssue, scannedDirectories: directories, bucketCount: 0 },
-    confirmed: [],
-    needsHumanJudgment: [],
-    appendix: { refuted: [], unverified: [] },
-  };
-
-  if (buckets.length === 0) {
-    log('reduce-debt-scan: no directories to scan, skipping.');
-    return emptyResult;
-  }
-
-  log(`reduce-debt-scan: planned ${buckets.length} bucket(s) from ${directories.length} confirmed director(y/ies).`);
-
-  // 総エージェント数上限のガード。scanStage 側で1バケット1エージェントを消費し、
-  // verifyStage 側で1バッチにつき VERIFIER_COUNT 体を消費する。
-  // pipeline はアイテム単位で非同期に進行するが、この関数自体は同期的に
-  // チェック&デクリメントするため（await を挟まない）競合状態は起きない。
-  let remainingAgentBudget = MAX_TOTAL_AGENTS - buckets.length;
-
-  function consumeAgentBudget(n) {
-    if (remainingAgentBudget < n) return false;
-    remainingAgentBudget -= n;
-    return true;
-  }
-
-  async function scanStage(bucket, originalBucket, index) {
-    const findings = await agent(buildScanPrompt(bucket), {
-      agentType: 'debt-scanner',
-      schema: SCAN_SCHEMA,
-      phase: 'Scan',
-      label: `scan:${bucket.id}`,
-    });
-    return { bucket, findings: Array.isArray(findings) ? findings : [] };
-  }
-
-  async function verifyStage(scanResult, originalBucket, index) {
-    const { bucket, findings } = scanResult;
-
-    const unverified = [];
-    const toVerify = [];
-    findings.forEach((finding) => {
-      if (finding.severity === 'low') {
-        unverified.push({ ...finding, verdict: 'unverified', votes: [], bucketId: bucket.id });
-      } else {
-        toVerify.push({ ...finding, bucketId: bucket.id });
-      }
-    });
-
-    const byFile = new Map();
-    for (const finding of toVerify) {
-      if (!byFile.has(finding.file)) byFile.set(finding.file, []);
-      byFile.get(finding.file).push(finding);
-    }
-
-    const verifiedFindings = [];
-    for (const [file, fileFindings] of byFile) {
-      for (const batch of chunkArray(fileFindings, VERIFY_BATCH_SIZE)) {
-        const batchWithIndex = batch.map((finding, i) => ({ ...finding, findingIndex: i }));
-
-        if (!consumeAgentBudget(VERIFIER_COUNT)) {
-          batchWithIndex.forEach((finding) => {
-            verifiedFindings.push({
-              ...finding,
-              verdict: 'needs_human_judgment',
-              votes: [],
-              reason: 'agent budget cap reached before verification',
-            });
-          });
-          continue;
-        }
-
-        const prompt = buildVerifyPrompt(file, batchWithIndex);
-        const verifierOutputs = await parallel([
-          () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:1` }),
-          () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:2` }),
-          () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:3` }),
-        ]);
-
-        batchWithIndex.forEach((finding, i) => {
-          const votes = verifierOutputs
-            .map((out) => (out.verdicts || []).find((v) => v.file === file && v.findingIndex === i))
-            .filter(Boolean);
-          const verdict = decideVerdict(votes);
-          verifiedFindings.push({ ...finding, verdict, votes });
-        });
-      }
-    }
-
-    return { bucket, findings: [...verifiedFindings, ...unverified] };
-  }
-
-  const bucketResults = await pipeline(buckets, scanStage, verifyStage);
-
-  const changedFileSet = new Set(changedFiles);
-  const allFindings = bucketResults.flatMap((result) =>
-    result.findings.map((finding) => ({
-      ...finding,
-      ...classifyParentRelation(finding.file, changedFileSet, changedDirs),
-    })),
-  );
-
-  const confirmed = allFindings.filter((f) => f.verdict === 'confirmed');
-  const needsHumanJudgment = allFindings.filter((f) => f.verdict === 'needs_human_judgment');
-  const refuted = allFindings.filter((f) => f.verdict === 'refuted');
-  const unverifiedLow = allFindings.filter((f) => f.verdict === 'unverified');
-
-  return {
-    meta: { parentIssue, scannedDirectories: directories, bucketCount: buckets.length },
-    confirmed,
-    needsHumanJudgment,
-    appendix: { refuted, unverified: unverifiedLow },
-  };
-}
-```
-
-このスクリプトの構造:
+スクリプトの構造:
 
 - **fan-out（バケット分割）**: `planScanBuckets()` が確認済みディレクトリ一覧をスロット上限（`MAX_BUCKETS = 10`）内のバケットへ分割する純関数
 - **`pipeline(buckets, scanStage, verifyStage)`**: バケット単位で `scanStage`（`agentType: 'debt-scanner'` によるスキャン） → `verifyStage`（懐疑者3体 `parallel` + 多数決）を**バリアなし**で流す。あるバケットが verify に進んでいる間、他のバケットはまだ scan 中でもよい
@@ -362,18 +95,30 @@ export default async function ({ agent, parallel, pipeline, log, args }) {
 
 #### 2-3. Workflow の起動
 
-Step 2-1 で確認したディレクトリ一覧と、Step 1 で取得した `parentIssue` / `changedFiles` / `changedDirs` を `args` として Workflow を起動する:
+Workflow ツールを、スクリプトの絶対パスと `args` を指定して起動する:
 
 ```
-args: {
-  directories: [確認済みディレクトリ一覧],
-  parentIssue: <親Issue番号>,
-  changedFiles: [Step1で取得したchangedFiles],
-  changedDirs: [Step1で取得したchangedDirs]
+{
+  scriptPath: "<CLAUDE_PLUGIN_ROOTの絶対パス>/skills/reduce-debt/scripts/reduce-debt-scan.js",
+  args: {
+    directories: [確認済みディレクトリ一覧],
+    parentIssue: <親Issue番号>,
+    changedFiles: [Step1で取得したchangedFiles],
+    changedDirs: [Step1で取得したchangedDirs]
+  }
 }
 ```
 
-で `.claude/workflows/reduce-debt-scan.js` を起動する。
+> **`scriptPath` の解決について（重要）**: `scriptPath` はプレースホルダ文字列 `${CLAUDE_PLUGIN_ROOT}` をそのまま渡しても展開されない（環境変数展開が行われるのは Bash ツール上のみ）。Workflow ツールを呼ぶ**前**に、Bash で `echo "$CLAUDE_PLUGIN_ROOT"` 等を実行してプラグインルートの絶対パスを取得し、その絶対パスと `/skills/reduce-debt/scripts/reduce-debt-scan.js` を連結した文字列を `scriptPath` に渡すこと。
+
+`args` の各フィールドの型と由来:
+
+| フィールド | 型 | 由来 |
+|---|---|---|
+| `directories` | `string[]` | Step 2-1 でユーザーが確認したスキャン対象ディレクトリ一覧 |
+| `parentIssue` | `number \| null` | Step 1 の `collect-impl-context.sh` 出力の `parentIssue` |
+| `changedFiles` | `string[]` | Step 1 の `collect-impl-context.sh` 出力の `changedFiles`（`resolution_status` が `ok` 以外の場合は空または推定値になりうる） |
+| `changedDirs` | `string[]` | Step 1 の `collect-impl-context.sh` 出力の `changedDirs`（同上） |
 
 ---
 
