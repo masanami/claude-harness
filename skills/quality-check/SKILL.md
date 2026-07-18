@@ -46,7 +46,7 @@ SCRIPT_EXIT=$?
 - **`$SCRIPT_EXIT` が `2` の場合は `$RESULT` が空（JSONが出力されていない）。この場合は `$RESULT` をJSONとしてパースせず、stderr のメッセージ（jq不在等）をそのまま報告して処理を中断する**
 - 各コマンドの生出力（lintエラー箇所・型エラー内容・失敗テストの詳細）は stderr に転記される。**手順4の失敗分析はこの stderr 出力を使う**
 
-出力 JSON の**フィールド定義と件数抽出の仕様の正本は `scripts/README.md`「quality-check-runner.sh の出力仕様」**（ここには複製しない）。
+出力 JSON の**フィールド定義と件数抽出の仕様の正本は、プラグイン配下の `scripts/README.md`「quality-check-runner.sh の出力仕様」**（ここには複製しない）。**cwd 起点の相対パス `scripts/README.md` では導入先プロジェクトの同名ファイルを誤って参照しうるため、Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/README.md` として解決すること。
 
 ### 3. 結果サマリー
 
