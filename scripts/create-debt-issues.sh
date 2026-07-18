@@ -239,6 +239,32 @@ process_manifest_item() {
   ITEM_RESULT_JSON="$result"
 }
 
+# 各Issue起票の直後にstderrへ結果1行を出力する（中断時の二重起票対策）。
+# stdoutは最終対応表JSON1個のみという規約を維持するため、進捗はstderr専用にする。
+# 途中で処理が中断（Ctrl-C・タイムアウト等）しても、この行の履歴から
+# 「どこまで起票済みか」を人間が把握でき、再実行時に丸ごと再起票して
+# 二重起票してしまう事故を防げる。
+# 引数: index item_json（元のmanifest項目） result_json（process_manifest_itemの結果）
+emit_progress_line() {
+  local index="$1" item_json="$2" result_json="$3"
+  local title status line
+
+  title=$(jq -r '.title // "(no title)"' <<<"$item_json")
+  status=$(jq -r '.status' <<<"$result_json")
+
+  if [ "$status" = "created" ]; then
+    local issue_number
+    issue_number=$(jq -r '.issueNumber' <<<"$result_json")
+    line="[${index}] created #${issue_number}: ${title}"
+  else
+    local error
+    error=$(jq -r '.error' <<<"$result_json")
+    line="[${index}] failed: ${title} (${error})"
+  fi
+
+  echo "$line" >&2
+}
+
 # manifest全体（JSON配列文字列）を処理し、対応表JSON全体を組み立てる。
 # 引数: manifest_json（JSON配列文字列）
 # 結果: RESULTS_JSON（{"results": [...], "createdCount": N, "failedCount": M}）
@@ -256,6 +282,7 @@ process_manifest() {
     item=$(jq -c ".[$idx]" <<<"$manifest_json")
     process_manifest_item "$idx" "$item"
     results_array=$(jq --argjson r "$ITEM_RESULT_JSON" '. + [$r]' <<<"$results_array")
+    emit_progress_line "$idx" "$item" "$ITEM_RESULT_JSON"
 
     status=$(jq -r '.status' <<<"$ITEM_RESULT_JSON")
     if [ "$status" = "created" ]; then

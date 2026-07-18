@@ -265,6 +265,16 @@ assert_eq "index3 は failed（gh失敗）" "failed" "$(jq -r '.results[3].statu
 assert_eq "createdCount が 2" "2" "$(jq -r '.createdCount' <<<"$RESULTS_JSON")"
 assert_eq "failedCount が 2" "2" "$(jq -r '.failedCount' <<<"$RESULTS_JSON")"
 
+echo "=== test: process_manifest - 各Issue起票直後にstderrへ逐次結果を出力する（中断時の二重起票対策・Issue #55 デグレレビュー対応） ==="
+create_github_issue() { mock_create_github_issue "$@"; }
+MOCK_ISSUE_COUNTER=500
+PROGRESS_STDERR=$( { process_manifest "$FIXTURE_MANIFEST_MIXED" >/dev/null; } 2>&1 )
+assert_contains "index0（created）の進捗行がstderrに出る" "$PROGRESS_STDERR" "[0] created"
+assert_contains "index0の進捗行にタイトルが含まれる" "$PROGRESS_STDERR" "item0 通常項目"
+assert_contains "index1（failed）の進捗行がstderrに出る" "$PROGRESS_STDERR" "[1] failed"
+assert_contains "index2（created・警告あり）の進捗行がstderrに出る" "$PROGRESS_STDERR" "[2] created"
+assert_contains "index3（failed・gh失敗）の進捗行がstderrに出る" "$PROGRESS_STDERR" "[3] failed"
+
 echo "=== test: CLIレベル（main関数直接呼び出し、ghはモック） - 全件成功でexit 0 ==="
 create_github_issue() { mock_create_github_issue "$@"; }
 MOCK_ISSUE_COUNTER=300
