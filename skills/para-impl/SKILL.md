@@ -59,6 +59,8 @@ fi
 | 1件 | **通常実装**: リードエージェントが「1チケットの実装フロー」を実行 |
 | 複数 | **star 型並列実装**: `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` を Read してから Phase 3 へ。リードがオーケストレーターとなり、各 `ticket-worker` が独立に「1チケットの実装フロー」を実行 |
 
+> 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/star-parallel.md`）。Base directory が得られない場合は Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立てる（Read ツールは環境変数を展開しない）。
+
 ---
 
 ## Phase 1: Issue分析（要件理解）
@@ -85,7 +87,7 @@ fi
 
 ## 1チケットの実装フロー（Phase 3〜9）
 
-単一Issueはリードエージェントが Phase 3〜9 を実行する。複数Issueでは **Phase 3（worktree・ブランチ作成）をリードが担い**、各 `ticket-worker` が worktree で Phase 4-5〜9 を実行する（**1チケット = 1ブランチ = 1PR**。詳細は `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` 参照）。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CIの順で進める。**実装フェーズに人間ゲートは無い**。
+単一Issueはリードエージェントが Phase 3〜9 を実行する。複数Issueでは **Phase 3（worktree・ブランチ作成）をリードが担い**、各 `ticket-worker` が worktree で Phase 4-5〜9 を実行する（**1チケット = 1ブランチ = 1PR**。詳細は `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` 参照。解決手順は上記参照）。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CIの順で進める。**実装フェーズに人間ゲートは無い**。
 
 ```text
 Phase 3 ブランチ準備
