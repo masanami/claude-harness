@@ -4,6 +4,8 @@
 # (i) 裸の scripts/ 参照（${CLAUDE_PLUGIN_ROOT} も <base> も SCRIPT_DIR 自己解決も伴わない bash/node 実行）
 # (ii) 実行時ファイルから docs/ 配下の設計文書への参照（HTML コメント行は除外。docs/features/ は
 #      スキルの入出力ドキュメントであり設計文書ではないため対象外）
+# (iii) 成立しない `echo "$CLAUDE_PLUGIN_ROOT"` 解決手順の再出現（実機検証によりBash環境では
+#       常にUNSETであることが確認済み。Base directory起点の解決に一本化されている）
 # を検出する。規約の正本は docs/plugin-path-conventions.md。
 #
 # 実行方法: bash scripts/tests/test-path-conventions.sh
@@ -33,6 +35,10 @@ BARE_SCRIPT_ALLOWLIST="
 # （本行番号は本Issue #80 のパス規約修正でファイル冒頭側に4行追加されたことに伴うシフト後の値）
 DOCS_REF_ALLOWLIST="
 skills/init-project/SKILL.md:137
+"
+
+# (iii) echo "$CLAUDE_PLUGIN_ROOT" 解決手順の許容リスト。現時点では既知の例外は無い。
+DEAD_ECHO_ALLOWLIST="
 "
 
 is_allowlisted() {
@@ -107,6 +113,35 @@ else
   FAILED_TESTS+=("docs/ 設計文書への参照を検出")
   echo "  NG - docs/ 設計文書への参照を検出"
   print_indented "$docs_ref_violations"
+fi
+
+echo ""
+echo "=== (iii) echo \"\$CLAUDE_PLUGIN_ROOT\" 解決手順チェック ==="
+
+dead_echo_hits="$(grep -rnE 'echo[[:space:]]+"?\$\{?CLAUDE_PLUGIN_ROOT\}?"?' skills agents --include='*.md' || true)"
+
+dead_echo_violations=""
+if [ -n "$dead_echo_hits" ]; then
+  while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    file="${hit%%:*}"
+    rest="${hit#*:}"
+    lineno="${rest%%:*}"
+    if ! is_allowlisted "${file}:${lineno}" "$DEAD_ECHO_ALLOWLIST"; then
+      dead_echo_violations="${dead_echo_violations}${hit}
+"
+    fi
+  done <<<"$dead_echo_hits"
+fi
+
+if [ -z "$dead_echo_violations" ]; then
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 成立しない echo \"\$CLAUDE_PLUGIN_ROOT\" 解決手順は無い"
+else
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("echo \"\$CLAUDE_PLUGIN_ROOT\" 解決手順の再出現を検出")
+  echo "  NG - echo \"\$CLAUDE_PLUGIN_ROOT\" 解決手順の再出現を検出"
+  print_indented "$dead_echo_violations"
 fi
 
 echo ""

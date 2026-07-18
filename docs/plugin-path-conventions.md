@@ -4,6 +4,14 @@
 
 本文書はパス参照メカニズムごとの規約を1箇所に集約する正本。`scripts/README.md` は scripts/ 配下の実装規約（jq前提・出力規約・テスト方針等）のみを扱い、プラグイン内ファイル参照のパス解決はここを参照する。
 
+## `${CLAUDE_PLUGIN_ROOT}` の位置づけ（重要）
+
+`skills/` `agents/` の文中に現れる `${CLAUDE_PLUGIN_ROOT}` は**プラグインルートの絶対パスを表すプレースホルダ表記**であり、Bash の環境変数ではない。
+
+> **検証済み事実（2026-07-18 実機検証）**: メインセッション・サブエージェントのいずれの Bash 環境でも `echo "$CLAUDE_PLUGIN_ROOT"`（およびデフォルト値付きの `echo "${CLAUDE_PLUGIN_ROOT:-UNSET}"`）は空／`UNSET` を返した。**`${CLAUDE_PLUGIN_ROOT}` を shell 変数として読み出す手順は成立しない。**
+
+環境変数として実際に展開されるのは、`hooks/hooks.json` 等**ハーネスが置換する設定ファイル内の文脈のみ**（本文書が扱うパス参照規約の対象外。`hooks/hooks.json` の既存記述は変更不要）。skills/ agents/ 内で絶対パスが必要な場合は、Bash で値を読み出そうとせず、後述のとおり**スキル起動時にコンテキストへ与えられる「Base directory for this skill」から文字列操作で導出する**。
+
 ---
 
 ## (a) Bash 実行
@@ -14,9 +22,9 @@
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/xxx.sh" <引数>
 ```
 
-- `${CLAUDE_PLUGIN_ROOT}` は Bash ツール上でのみ実行時にプラグインルートへ展開される
 - cwd 起点の相対パス（`scripts/xxx.sh`）では呼び出さない（導入先プロジェクトの同名パスと衝突しうる／cwd がプラグインルートである保証がない）
 - パスに空白を含む環境でも壊れないよう、引用符を省略しない
+- 値を Bash で読み出す（`echo "$CLAUDE_PLUGIN_ROOT"` 等）手順は上記のとおり成立しないため行わない
 
 ### 定型の所在注記（コピー用）
 
@@ -29,24 +37,25 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/xxx.sh" <引数>
 
 ## (b) Workflow ツールの `scriptPath` / `args`
 
-Workflow ツールに渡す `scriptPath` 等の引数は、Bash ツールと違い**環境変数展開が行われない**。プレースホルダ文字列 `${CLAUDE_PLUGIN_ROOT}` をそのまま渡しても展開されず、存在しないパスとしてエラーになる。
+Workflow ツールに渡す `scriptPath` 等の引数は、Bash ツールと違い**プレースホルダの展開が行われない**。文字列 `${CLAUDE_PLUGIN_ROOT}` をそのまま渡しても展開されず、存在しないパスとしてエラーになる。
 
-- Workflow ツールを呼ぶ**前**に、Bash で `echo "$CLAUDE_PLUGIN_ROOT"` 等を実行してプラグインルートの絶対パスを取得する
-- 取得した絶対パスと相対部分（例: `/skills/xxx/scripts/yyy.js`）を連結した文字列を `scriptPath` に渡す
+- スキル起動時にコンテキストへ与えられる**「Base directory for this skill」**（例: `<プラグインルート>/skills/<スキル名>`）から、末尾の `/skills/<スキル名>` を取り除いてプラグインルートの絶対パスを得る（文字列操作のみで完結し、Bash 実行は不要）
+- 得られた絶対パスと相対部分（例: `/skills/xxx/scripts/yyy.js`）を連結した文字列を `scriptPath` に渡す
 - resume 安定性のため、同一セッション内では常に同一の絶対パスをそのまま渡す（都度再計算して微妙に異なる文字列にしない）
 
 ## (c) Read ツールで参照する `references/` `templates/` `scripts/README.md`
 
-Read ツールも Bash ツールと同様、パス文字列中の `${CLAUDE_PLUGIN_ROOT}` を展開しない。以下の優先順で解決する:
+Read ツールも Bash ツールと同様、パス文字列中の `${CLAUDE_PLUGIN_ROOT}` を展開しない。以下の手順で解決する:
 
-1. **スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを組み立てる**（最も確実。例: `<base>/references/xxx.md`）。スキル自身の `references/` `templates/` はこの方式で解決できる
+1. **スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを組み立てる**（例: `<base>/references/xxx.md`）。スキル自身の `references/` `templates/` はこの方式で解決できる
 2. スキル外のファイル（例: `scripts/README.md`）は `<base>/../../scripts/README.md` のように相対階層で辿る
-3. Base directory が得られない文脈では、(a) と同様に Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立ててから Read する
+
+Base directory はスキル起動時に必ずコンテキストへ与えられるため、これが唯一の解決手順であり、Bash による読み出しへのフォールバックは無い（前掲のとおり成立しないため）。
 
 ### 定型の所在注記（コピー用）
 
 ```text
-> **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/xxx.md`）。Base directory が得られない場合は Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立てる（Read ツールは環境変数を展開しない）。
+> **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/xxx.md`）。
 <!-- 正本: docs/plugin-path-conventions.md -->
 ```
 
@@ -54,7 +63,7 @@ Read ツールも Bash ツールと同様、パス文字列中の `${CLAUDE_PLUG
 
 エージェント定義（`agents/*.md`）に `${CLAUDE_PLUGIN_ROOT}` への依存を書かない。サブエージェントは呼び出し側（リード）とは別コンテキストで起動され、`${CLAUDE_PLUGIN_ROOT}` が展開される保証がない。呼び出し側が**解決済みの絶対パス**を spawn プロンプト・args に明示的に渡す（模範実装: `/self-review` の git-ops エージェント呼び出し）。
 
-> **検証済み事実（2026-07-18 実機検証）**: Task ツールで spawn した汎用サブエージェント（general-purpose）の Bash 環境で `echo "${CLAUDE_PLUGIN_ROOT:-UNSET}"` を実行した結果は `UNSET` だった。**サブエージェントの Bash 環境で `${CLAUDE_PLUGIN_ROOT}` が設定されている保証は無い**ことが確認済み。このため、サブエージェントにプラグイン内ファイルへのアクセスをさせる場合は、呼び出し側が解決済みの絶対パスを渡すことが**必須**であり、サブエージェント側で `${CLAUDE_PLUGIN_ROOT}` を再展開しようとする実装は成立しない前提で設計すること。
+> **検証済み事実（2026-07-18 実機検証）**: Task ツールで spawn した汎用サブエージェント（general-purpose）の Bash 環境で `echo "${CLAUDE_PLUGIN_ROOT:-UNSET}"` を実行した結果は `UNSET` だった。**メインセッションの Bash 環境で同様に検証した結果も `UNSET` だった**（前掲「`${CLAUDE_PLUGIN_ROOT}` の位置づけ」節参照）。**Bash 環境で `${CLAUDE_PLUGIN_ROOT}` が変数として設定されている保証はどのコンテキストにも無い**ことが確認済み。このため、サブエージェントにプラグイン内ファイルへのアクセスをさせる場合は、呼び出し側が解決済みの絶対パスを渡すことが**必須**であり、サブエージェント側で `${CLAUDE_PLUGIN_ROOT}` を再展開しようとする実装は成立しない前提で設計すること。
 
 ## (e) スクリプト間の同梱参照
 
@@ -89,5 +98,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 - 裸の `scripts/` 参照（`${CLAUDE_PLUGIN_ROOT}` も `<base>` も `SCRIPT_DIR` 自己解決も伴わない bash 実行）
 - `docs/` 配下の設計文書への参照（HTML コメント内は除外）
+- 成立しない `echo "$CLAUDE_PLUGIN_ROOT"` 解決手順の再出現
 
 既知の許容パターンはテストファイル内でホワイトリストとして管理する。

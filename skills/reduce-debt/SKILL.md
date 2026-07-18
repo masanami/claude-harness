@@ -110,7 +110,8 @@ Workflow ツールを、スクリプトの絶対パスと `args` を指定して
 }
 ```
 
-> **`scriptPath` の解決について（重要）**: `scriptPath` はプレースホルダ文字列 `${CLAUDE_PLUGIN_ROOT}` をそのまま渡しても展開されない（環境変数展開が行われるのは Bash ツール上のみ）。Workflow ツールを呼ぶ**前**に、Bash で `echo "$CLAUDE_PLUGIN_ROOT"` 等を実行してプラグインルートの絶対パスを取得し、その絶対パスと `/skills/reduce-debt/scripts/reduce-debt-scan.js` を連結した文字列を `scriptPath` に渡すこと。
+> **`scriptPath` の解決について（重要）**: `scriptPath` はプレースホルダ文字列 `${CLAUDE_PLUGIN_ROOT}` をそのまま渡しても展開されない。スキル起動時にコンテキストへ与えられる「Base directory for this skill」（例: `<プラグインルート>/skills/reduce-debt`）から末尾の `/skills/reduce-debt` を取り除いてプラグインルートの絶対パスを得て（Bash での読み出しは不要かつ成立しない）、その絶対パスと `/skills/reduce-debt/scripts/reduce-debt-scan.js` を連結した文字列を `scriptPath` に渡すこと。
+<!-- 正本: docs/plugin-path-conventions.md -->
 
 `args` の各フィールドの型と由来:
 
