@@ -1,0 +1,8 @@
+[
+  "Bash(rm -rf:*)",
+  "Bash(rm -r:*)",
+  "Bash(git push --force:*)",
+  "Bash(git push -f:*)",
+  "Bash(git clean -f:*)",
+  "Bash(gh repo delete:*)"
+]

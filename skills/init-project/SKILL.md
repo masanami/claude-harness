@@ -144,118 +144,46 @@ effort: medium
 
 並列実装（star 型）の各 worker はworktree隔離環境で動作するため、`.claude/settings.json`（git tracked）にBash権限を設定する必要がある。`.claude/settings.local.json`（gitignored）はworktreeにコピーされないため、ここに権限を記載してもworktree内のエージェントに適用されない。
 
-#### 既存ファイルの確認
+権限の合成（共通権限 ＋ pm別/testFW別/infra別の条件付き権限）と、既存ファイルとの冪等マージは本スキルの `scripts/generate-settings.sh` が決定的に行う。本セクションはこのスクリプトの入出力契約と、deny の設計思想（規律文）のみを記す。
 
-- `.claude/settings.json` が既に存在する場合: 既存の `permissions.allow` を保持しつつ、不足している権限のみ追加する
-- 存在しない場合: 新規作成する
-- `.claude/` ディレクトリが存在しない場合: ディレクトリも作成する
+> **スクリプトの所在**: `${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh` を参照すること。
 
-#### 権限の構成
+**実行例**（Step 2 の `analyze-project.sh` 出力をそのまま入力にできる）:
 
-**共通権限**（常に含める）:
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
-      "Bash(git push:*)",
-      "Bash(git push origin:*)",
-      "Bash(git push -u:*)",
-      "Bash(git push --force-with-lease:*)",
-      "Bash(git fetch:*)",
-      "Bash(git checkout:*)",
-      "Bash(git switch:*)",
-      "Bash(git branch:*)",
-      "Bash(git stash:*)",
-      "Bash(git rebase:*)",
-      "Bash(git merge:*)",
-      "Bash(git worktree:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git show:*)",
-      "Bash(git status:*)",
-      "Bash(git rev-parse:*)",
-      "Bash(git ls-remote:*)",
-      "Bash(gh issue:*)",
-      "Bash(gh pr:*)",
-      "Bash(gh api:*)",
-      "Bash(gh repo view:*)",
-      "Bash(cd:*)"
-    ]
-  }
-}
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh" . > /tmp/analyze-output.json
+bash "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh" \
+  --input /tmp/analyze-output.json --target .claude/settings.json
 ```
 
-> `Bash(cd:*)` は star 型並列実装の worker が worktree 起点でコマンドを実行するための権限（複合コマンド `cd {worktree} && git commit …` は permission がサブコマンド単位で評価されるため、`cd` と各コマンドの allow が揃っている必要がある）。`git ls-remote` / `gh repo view` は `/para-impl` `/pr-merge` の base 判定で使用する。
+個別の検出結果を明示的に渡すことも可能（`--test` / `--infra` は複数回指定可）:
 
-**deny の構成**（最小限のベース）:
-
-ベースには「ブラスト半径が広く、取り返しのつかない」普遍的な操作だけを含める。これを土台に、各リポジトリが自身の `.claude/settings.json` で deny を上書き・追記する。
-
-```json
-{
-  "permissions": {
-    "deny": [
-      "Bash(rm -rf:*)",
-      "Bash(rm -r:*)",
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
-      "Bash(git clean -f:*)",
-      "Bash(gh repo delete:*)"
-    ]
-  }
-}
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh" \
+  --pm npm --test playwright --infra docker --target .claude/settings.json
 ```
 
-**方針**:
+**引数**:
+
+| 引数 | 内容 |
+|---|---|
+| `--pm <pm>` | パッケージマネージャ（`analyze-project.sh` の `pm` 出力語彙: npm/yarn/pnpm/bun/cargo/go/pip/bundler。`python`/`ruby` も別名として可） |
+| `--test <fw>` | テストフレームワーク（pytest/vitest/jest/playwright）。複数回指定可 |
+| `--infra <infra>` | インフラ種別（`docker` を含む文字列。`analyze-project.sh` の `stack.infra` の値もそのまま渡せる）。複数回指定可 |
+| `--input <file\|->` | `analyze-project.sh` の出力JSON（`-` で stdin）。`.pm` / `.stack.test[]` / `.stack.infra[]` を抽出し、`--pm`/`--test`/`--infra` と合成する |
+| `--target <path>` | 出力先パス（既定: `./.claude/settings.json`） |
+
+**出力**: 成功時のみ stdout に `{"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M}` を1個出力する。失敗時（jq不在・入力JSON不正・既存 `.claude/settings.json` のスキーマ不正・書き込み失敗など）は stdout を空のまま exit 非0とし、エラー内容は stderr の `{"status":"error","error":"..."}` とメッセージで確認する。
+
+**既存ファイルとの冪等マージ**: `--target` が既に存在する場合、既存の `permissions.allow`/`permissions.deny` を保持しつつ、生成した allow/deny の非重複分のみ追加する（配列は重複排除され、同じ入力で再実行しても差分は出ない）。存在しない場合は `.claude/` ディレクトリごと新規作成する。
+
+**deny の設計思想**（スクリプトが合成するベース deny の方針。プロジェクトごとの追記判断に使う規律文のためインラインに残す）:
 
 - **取り返しのつく操作はベースに含めない**。`git reset --hard`（reflogで復旧可）、`git branch -D`（reflog）、`gh pr close`（再オープン可）、`chmod` / `chown` などは deny しない。文脈的な危険判断はネイティブ auto-mode の分類器に委ねる。
 - **インフラ・デプロイ系はベースに含めない**。`cdk` / `terraform` / `pulumi` / `serverless` / `kubectl` / `docker push` などはプロジェクト依存のため、必要なリポジトリで個別に追記する。
 - **プロジェクト依存の削除系**（`gh issue delete`、`gh api -X DELETE`、`curl -X DELETE` など）も同様に、必要に応じて各リポジトリで追記する。
 
-追記例（インフラを扱うリポジトリの場合）:
-
-```json
-{
-  "permissions": {
-    "deny": [
-      "Bash(terraform destroy:*)",
-      "Bash(kubectl delete:*)"
-    ]
-  }
-}
-```
-
-**パッケージマネージャに応じた追加権限**:
-
-| 検出結果 | 追加する権限 |
-|---------|------------|
-| npm | `Bash(npm:*)` |
-| yarn | `Bash(yarn:*)` |
-| pnpm | `Bash(pnpm:*)` |
-| bun | `Bash(bun:*)` |
-| Rust/cargo | `Bash(cargo:*)` |
-| Go | `Bash(go:*)` |
-| Python | `Bash(python3:*)`, `Bash(pip:*)` |
-| Ruby | `Bash(bundle:*)` |
-
-**テストフレームワークに応じた追加権限**:
-
-| 検出結果 | 追加する権限 |
-|---------|------------|
-| pytest | `Bash(pytest:*)` |
-| vitest / jest | （npm/yarn等でカバーされるため追加不要） |
-| playwright (npm) | `Bash(npx playwright:*)` |
-| playwright (pnpm) | `Bash(pnpm exec playwright:*)` |
-| playwright (yarn) | `Bash(yarn playwright:*)` |
-
-**Infraに応じた追加権限**:
-
-| 検出結果 | 追加する権限 |
-|---------|------------|
-| Docker | `Bash(docker:*)`, `Bash(docker compose:*)` |
+追記が必要な場合（インフラを扱うリポジトリの `terraform destroy` 等）は、スクリプト実行後に `.claude/settings.json` の `permissions.deny` へ手動で追記する。
 
 #### `.gitignore` の確認
 
