@@ -437,6 +437,17 @@ main() {
     exit 1
   fi
 
+  # target がディレクトリ（またはディレクトリを指すsymlink）の場合、
+  # `[ -d ]` はsymlinkを解決して判定するため両方を検出できる。
+  # このチェックを怠ると、後段の `mv "$tmp_file" "$target"` が
+  # tmp_fileをディレクトリの中へ移動して成功してしまい、意図したsettingsファイルを
+  # 作らないまま status:"ok" を返す事故に繋がる。
+  if [ -d "$target" ]; then
+    echo "Error: target must not be a directory: $target" >&2
+    printf '{"status":"error","error":"target is a directory"}\n' >&2
+    exit 1
+  fi
+
   local target_dir tmp_file
   target_dir="$(dirname "$target")"
   if ! mkdir -p "$target_dir"; then

@@ -23,7 +23,13 @@ FAILED_TESTS=()
 # テスト全体で共有する一時ディレクトリ。固定の /tmp パスを使うと並列テスト間で
 # 衝突したりシンボリックリンク経由で別ファイルを追跡する恐れがあるため、
 # すべての一時ファイル・ディレクトリはこの配下に作成する。
-TGS_TMP_DIR="$(mktemp -d)"
+# mktemp 失敗時にそのまま進むと TGS_TMP_DIR が空文字列のままになり、
+# 後続の "${TGS_TMP_DIR}/xxx" が意図せずルート直下（/xxx）を指してしまうため、
+# 失敗時は直ちに終了する。
+if ! TGS_TMP_DIR="$(mktemp -d)"; then
+  echo "Failed to create test temporary directory" >&2
+  exit 1
+fi
 trap 'rm -rf "$TGS_TMP_DIR"' EXIT
 
 assert_eq() {
@@ -330,24 +336,71 @@ assert_true "targetのsymlinkは通常ファイルに置き換わる" \
 assert_true "置き換え後のtargetにpm権限が入る" \
   "$(json_contains "$(jq -c '.permissions.allow' "$TGS_SYMLINK_TARGET")" 'Bash(npm:*)')"
 
-# 書き込み失敗時: targetディレクトリを書き込み不可にし、status:okを返さずexit非0になることを確認
+# 書き込み失敗時: status:okを返さずexit非0になることを確認する。
+# chmod 555 によるパーミッション依存は root 実行(コンテナ等)では書き込みが
+# ブロックされず偽 pass するため使わない。PATHの先頭に mv を必ず失敗させる
+# スタブを差し込み、権限に関係なく決定的に書き込み失敗を再現する。
+TGS_FAIL_MV_BIN="${TGS_TMP_DIR}/fail-mv-bin"
+mkdir -p "$TGS_FAIL_MV_BIN"
+cat > "${TGS_FAIL_MV_BIN}/mv" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "${TGS_FAIL_MV_BIN}/mv"
+
 TGS_TARGET_ROFAIL_DIR="${TGS_TMP_DIR}/case-rofail/.claude"
 mkdir -p "$TGS_TARGET_ROFAIL_DIR"
 TGS_TARGET_ROFAIL="${TGS_TARGET_ROFAIL_DIR}/settings.json"
-chmod 555 "$TGS_TARGET_ROFAIL_DIR"
-if "$TGS_TARGET_SCRIPT" --pm npm --target "$TGS_TARGET_ROFAIL" \
+if PATH="${TGS_FAIL_MV_BIN}:${PATH}" "$TGS_TARGET_SCRIPT" --pm npm --target "$TGS_TARGET_ROFAIL" \
     >"${TGS_TMP_DIR}/rofail-stdout.json" 2>"${TGS_TMP_DIR}/rofail-stderr.log"; then
-  FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("書き込み不可ディレクトリでexit非0")
-  echo "  NG - 書き込み不可ディレクトリでexit非0"
+  FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("mv失敗時にexit非0")
+  echo "  NG - mv失敗時にexit非0"
 else
   PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  ok - 書き込み不可ディレクトリでexit非0"
+  echo "  ok - mv失敗時にexit非0"
 fi
-chmod 755 "$TGS_TARGET_ROFAIL_DIR"
-assert_true "書き込み不可ディレクトリではstdoutが空(status:okを返さない)" \
+assert_true "mv失敗時はstdoutが空(status:okを返さない)" \
   "$([ ! -s "${TGS_TMP_DIR}/rofail-stdout.json" ] && echo true || echo false)"
-assert_true "書き込み不可ディレクトリではtargetファイルが生成されない" \
+assert_true "mv失敗時はtargetファイルが生成されない" \
   "$([ ! -f "$TGS_TARGET_ROFAIL" ] && echo true || echo false)"
+
+# --- targetがディレクトリの場合はエラー拒否する(mvがtmp_fileをディレクトリの
+#     中へ移動して成功してしまい、意図したsettingsファイルを作らずstatus:okを
+#     返す事故を防ぐ) ---
+echo "=== test: --target にディレクトリを渡した場合はエラーで拒否する ==="
+TGS_TARGET_IS_DIR="${TGS_TMP_DIR}/case-target-is-dir/.claude/settings.json"
+mkdir -p "$TGS_TARGET_IS_DIR"
+if "$TGS_TARGET_SCRIPT" --pm npm --target "$TGS_TARGET_IS_DIR" \
+    >"${TGS_TMP_DIR}/target-is-dir-stdout.json" 2>"${TGS_TMP_DIR}/target-is-dir-stderr.log"; then
+  FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("targetがディレクトリの場合にexit非0")
+  echo "  NG - targetがディレクトリの場合にexit非0"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - targetがディレクトリの場合にexit非0"
+fi
+assert_true "targetがディレクトリの場合はstdoutが空(status:okを返さない)" \
+  "$([ ! -s "${TGS_TMP_DIR}/target-is-dir-stdout.json" ] && echo true || echo false)"
+assert_true "targetがディレクトリの場合はディレクトリの中にファイルが作られない" \
+  "$([ -z "$(ls -A "$TGS_TARGET_IS_DIR" 2>/dev/null)" ] && echo true || echo false)"
+
+# --- targetがディレクトリを指すsymlinkの場合も同様に拒否する ---
+TGS_TARGET_DIR_SYMLINK_REAL="${TGS_TMP_DIR}/case-target-dir-symlink-real"
+mkdir -p "$TGS_TARGET_DIR_SYMLINK_REAL"
+TGS_TARGET_DIR_SYMLINK="${TGS_TMP_DIR}/case-target-dir-symlink/.claude/settings.json"
+mkdir -p "$(dirname "$TGS_TARGET_DIR_SYMLINK")"
+ln -s "$TGS_TARGET_DIR_SYMLINK_REAL" "$TGS_TARGET_DIR_SYMLINK"
+if "$TGS_TARGET_SCRIPT" --pm npm --target "$TGS_TARGET_DIR_SYMLINK" \
+    >"${TGS_TMP_DIR}/target-dir-symlink-stdout.json" 2>"${TGS_TMP_DIR}/target-dir-symlink-stderr.log"; then
+  FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("targetがディレクトリsymlinkの場合にexit非0")
+  echo "  NG - targetがディレクトリsymlinkの場合にexit非0"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - targetがディレクトリsymlinkの場合にexit非0"
+fi
+assert_true "targetがディレクトリsymlinkの場合はstdoutが空(status:okを返さない)" \
+  "$([ ! -s "${TGS_TMP_DIR}/target-dir-symlink-stdout.json" ] && echo true || echo false)"
+assert_true "targetがディレクトリsymlinkの場合は参照先ディレクトリの中にファイルが作られない" \
+  "$([ -z "$(ls -A "$TGS_TARGET_DIR_SYMLINK_REAL" 2>/dev/null)" ] && echo true || echo false)"
 
 # --- jq不在時のエラーハンドリング ---
 echo "=== test: jq不在時のエラーハンドリング ==="
