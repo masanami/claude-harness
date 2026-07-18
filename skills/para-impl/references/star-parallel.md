@@ -91,9 +91,12 @@ spawn プロンプトに含めるもの:
 > - PRレビュー指摘の修正が完了（指摘なしの場合は不要）
 > - 必要な修正のコミット・プッシュが完了
 
+削除前に各 worktree の `git status --short` を確認し、**PR 未作成・`failure` の worker の worktree は再試行または調査完了まで保持する**（削除対象は PR 作成済み＋レビュー対応完了のもののみ）。未コミットの修正や失敗解析用の成果物を無条件の `--force` 削除で不可逆に失わないため、通常手順では `--force` を使わない。
+
 ```bash
 git worktree list
-git worktree remove {workerのworktreeパス} --force   # 全 worker 分繰り返す
+git -C {workerのworktreeパス} status --short   # クリーン（未コミット差分なし）であることを確認してから削除
+git worktree remove {workerのworktreeパス}      # PR作成済み＋レビュー対応完了のworktreeのみ、該当worker分繰り返す
 git worktree list
 ```
 
