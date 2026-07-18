@@ -173,9 +173,16 @@ function chunkArray(arr, size) {
 
 // 検出項目1件が「親Issueの実装（今回導入）」か「既存の負債」かを、
 // args.changedFiles / args.changedDirs との集合演算で判定する。
-function isIntroducedByParent(file, changedFileSet, changedDirs) {
-  if (changedFileSet.has(file)) return true;
-  return changedDirs.some((dir) => dir !== '.' && (file === dir || file.startsWith(`${dir}/`)));
+// ディレクトリのみ一致（ファイル自体は変更されていない）を「今回導入」に含めると
+// 過剰分類になるため、ファイル完全一致のみを introducedByParent = true とする。
+// ディレクトリのみ一致は relatedDir = true として区別し、「既存（親実装の関連ディレクトリ）」
+// として報告表で識別できるようにする（両方不一致なら relatedDir も false の素の既存負債）。
+function classifyParentRelation(file, changedFileSet, changedDirs) {
+  if (changedFileSet.has(file)) {
+    return { introducedByParent: true, relatedDir: false };
+  }
+  const relatedDir = changedDirs.some((dir) => dir !== '.' && (file === dir || file.startsWith(`${dir}/`)));
+  return { introducedByParent: false, relatedDir };
 }
 
 // 3体の懐疑者の verdict 配列から、1件の検出項目の最終判定を多数決で決める。
@@ -326,7 +333,7 @@ export default async function ({ agent, parallel, pipeline, log, args }) {
   const allFindings = bucketResults.flatMap((result) =>
     result.findings.map((finding) => ({
       ...finding,
-      introducedByParent: isIntroducedByParent(finding.file, changedFileSet, changedDirs),
+      ...classifyParentRelation(finding.file, changedFileSet, changedDirs),
     })),
   );
 
@@ -350,7 +357,7 @@ export default async function ({ agent, parallel, pipeline, log, args }) {
 - **`pipeline(buckets, scanStage, verifyStage)`**: バケット単位で `scanStage`（`agentType: 'debt-scanner'` によるスキャン） → `verifyStage`（懐疑者3体 `parallel` + 多数決）を**バリアなし**で流す。あるバケットが verify に進んでいる間、他のバケットはまだ scan 中でもよい
 - **バッチ化**: `verifyStage` は severity: low の検出は検証をスキップして「未検証」のまま付録行きにし、high/medium はファイル単位でバッチ化（`VERIFY_BATCH_SIZE = 5`）してから懐疑者3体に渡す
 - **多数決**: `decideVerdict()` が confirmed 2票以上→confirmed、refuted 2票以上→refuted、それ以外（1-1-1 割れ・uncertain 過半数等）→`needs_human_judgment` の3分類を行う
-- **分類**: `isIntroducedByParent()` が `args.changedFiles` / `args.changedDirs` との集合演算で「今回導入」か「既存」かを判定する
+- **分類**: `classifyParentRelation()` が `args.changedFiles` との**ファイル完全一致**のみを「今回導入」（`introducedByParent: true`）とする。ディレクトリのみ一致（`args.changedDirs` に含まれるがファイル自体は不一致）は「今回導入」に含めず、`relatedDir: true` を付けて「既存（親実装の関連ディレクトリ）」として区別する（ディレクトリ一致だけで今回導入扱いにすると過剰分類になるため）
 - スキャン観点（6観点）・CLAUDE.md参照の規律、懐疑的検証の規律は、このスクリプトには書かず `agents/debt-scanner.md` / `agents/debt-verifier.md` 側に置く（レイヤリング: 規律はエージェント定義側、Workflow 側は fan-out・schema検証・多数決・集合演算という構造のみを担う）
 
 #### 2-3. Workflow の起動
@@ -378,7 +385,11 @@ Workflow の返り値（`{meta, confirmed, needsHumanJudgment, appendix: {refute
 
 ### Step 4: 結果分類と報告
 
-「今回の実装で導入 vs 既存」の分類は Workflow 内 JS の集合演算（`introducedByParent` フィールド）で既に行われている。リードは Workflow の返り値をそのまま次の報告フォーマットに転記する。
+「今回の実装で導入 vs 既存」の分類は Workflow 内 JS の集合演算（`introducedByParent` / `relatedDir` フィールド）で既に行われている。リードは Workflow の返り値をそのまま次の報告フォーマットに転記する。
+
+- `introducedByParent: true`（`changedFiles` とファイル完全一致）→「今回の実装で導入された技術負債」
+- `introducedByParent: false` かつ `relatedDir: true`（ファイルは不一致だが `changedDirs` のいずれかに含まれる）→「既存の技術負債」の中で「既存（親実装の関連ディレクトリ）」として区別表示
+- `introducedByParent: false` かつ `relatedDir: false`（どちらも不一致）→「既存の技術負債」の中で通常の「既存」として表示
 
 ```markdown
 ## 技術負債スキャン結果
@@ -399,10 +410,12 @@ Workflow の返り値（`{meta, confirmed, needsHumanJudgment, appendix: {refute
 
 ### 既存の技術負債（confirmed かつ introducedByParent = false）
 
-| # | 概要 | 優先度 | 観点 | 対象ファイル | 詳細 |
-|---|------|--------|------|------------|------|
-| 1 | {summary} | 高/中/低 | {category} | {file} | {detail} |
-| ... | ... | ... | ... | ... | ... |
+`relatedDir` の値に応じて「分類」列に「既存（親実装の関連ディレクトリ）」/「既存」を区別表示する（ディレクトリのみ一致はファイル自体が変更されていないため今回導入には含めないが、親実装との関連が疑われるため区別する）。
+
+| # | 概要 | 優先度 | 観点 | 対象ファイル | 詳細 | 分類 |
+|---|------|--------|------|------------|------|------|
+| 1 | {summary} | 高/中/低 | {category} | {file} | {detail} | 既存（親実装の関連ディレクトリ） / 既存 |
+| ... | ... | ... | ... | ... | ... | ... |
 
 （なければ「検出なし」）
 
