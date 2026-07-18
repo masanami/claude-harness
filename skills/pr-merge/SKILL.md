@@ -34,7 +34,9 @@ PR番号: $ARGUMENTS
 
 ### Phase 0-1: Preflight（base/ゲート判定・CI・mergeable・外部レビュー待機）
 
-base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeable の取得、外部レビュー待機のポーリングは、決定的な処理として `scripts/pr-merge-preflight.sh` に切り出されている。**このフェーズでは生の gh JSON をメインのコンテキストに滞留させず、スクリプトが返す構造化済みJSONのみを扱う。**
+base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeable の取得、外部レビュー待機のポーリングは、決定的な処理として preflight スクリプトに切り出されている。**このフェーズでは生の gh JSON をメインのコンテキストに滞留させず、スクリプトが返す構造化済みJSONのみを扱う。**
+
+> スクリプトはユーザーのプロジェクトではなく**プラグイン配下**にある。必ず `${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh` で参照すること（cwd 起点の相対パス `scripts/...` は導入先プロジェクトでは解決できない）。
 
 1. **PR番号の解決**（`$ARGUMENTS` が空の場合は現在のブランチのPRを自動検出する）
    ```bash
@@ -43,7 +45,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 2. **preflight スクリプトの実行**
    ```bash
-   PREFLIGHT=$(scripts/pr-merge-preflight.sh "$PR_NUM")
+   PREFLIGHT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh" "$PR_NUM")
    ```
    - 内部で以下を決定的に行う（LLMの自己規律ポーリングには依存しない）:
      - base とリポジトリの既定ブランチの取得・比較によるゲート判定（`main` 決め打ちにしない。既定ブランチが `master`/`develop` 等でも正しく判定する）
@@ -69,7 +71,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    `commented_bodies`（`COMMENTED` 状態のレビュー本文一覧）に重大な指摘が含まれていないかを確認する。スクリプト側は本文の意味を判定しない。重大な指摘がある場合は `blocking: false` であってもマージを保留する。
 
 5. **risk の参照**
-   `risk.touches_sensitive` が true の場合、sensitive パス（正本: `scripts/config/sensitive-paths.txt`）への変更を含む。Phase 3 のコードレビューで特に注意する。
+   `risk.touches_sensitive` が true の場合、sensitive パス（正本: プラグイン配下の `scripts/config/sensitive-paths.txt`）への変更を含む。Phase 3 のコードレビューで特に注意する。
 
 ### Phase 2: コンフリクト解消（必要な場合）
 
@@ -102,7 +104,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    rebase + push で PR の状態（CI・`mergeable`・レビュー）が変わるため、**Phase 0-1 の判定結果はここで無効になる**。CI完了を待った上で preflight を再実行し、値を取り直す（`$GATE`/`$BASE` はブランチ構成由来のため不変）:
    ```bash
    gh pr checks "$PR_NUM" --watch
-   PREFLIGHT=$(scripts/pr-merge-preflight.sh "$PR_NUM")
+   PREFLIGHT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh" "$PR_NUM")
    BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")
    ```
    Phase 4 のマージ実行は、この再実行後の値で判断する（Phase 2 に入る前の古い値を使い回さない）。
