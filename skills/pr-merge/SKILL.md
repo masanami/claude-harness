@@ -75,7 +75,9 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 ### Phase 2: コンフリクト解消（必要な場合）
 
-`block_reasons` に `conflicting` を含む場合のみ、`${CLAUDE_PLUGIN_ROOT}/skills/pr-merge/references/conflict-resolution.md` を Read してその手順に従う（相対パス `skills/pr-merge/references/...` では導入先プロジェクトから解決できないため、必ずプラグインルート起点で参照する）。
+`block_reasons` に `conflicting` を含む場合のみ、`${CLAUDE_PLUGIN_ROOT}/skills/pr-merge/references/conflict-resolution.md` を Read してその手順に従う。
+
+> 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/conflict-resolution.md`）。Base directory が得られない場合は Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立てる（Read ツールは環境変数を展開しない）。
 
 > **規律フック**: rebase + push 後は preflight の再実行が必須（Phase 0-1 の判定結果は無効になる）。Phase 4 のマージ判断は、この再実行後の値で行うこと（古い値を使い回さない）。再実行後の `.base`/`.gate` が初回値と異なる場合は、値を更新して続行せず**処理を中断して Phase 0-1 からやり直す**。
 
