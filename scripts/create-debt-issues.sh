@@ -20,7 +20,8 @@
 #       "parentRef": "元の親Issue番号への参照（例: #12）または既存負債である旨の説明",
 #       "targetFiles": ["path/to/file1", "path/to/file2"],
 #       "problem": "現状の問題点",
-#       "expectedState": "期待する改善後の状態"
+#       "expectedState": "期待する改善後の状態",
+#       "priority": "高/中/低（任意。未指定なら本文の「## 優先度」セクション自体を省略する）"
 #     },
 #     ...
 #   ]
@@ -115,12 +116,23 @@ validate_manifest_item() {
 # （元の親Issue番号への参照 / 対象ファイル・モジュール / 現状の問題点 / 期待する改善後の状態）に対応する。
 build_issue_body() {
   local item_json="$1"
-  local parentRef problem expectedState files_md
+  local parentRef problem expectedState files_md priority priority_section
 
   parentRef=$(jq -r '.parentRef' <<<"$item_json")
   problem=$(jq -r '.problem' <<<"$item_json")
   expectedState=$(jq -r '.expectedState' <<<"$item_json")
   files_md=$(jq -r '.targetFiles[] | "- " + .' <<<"$item_json")
+  # priority は任意フィールド。未指定（null/空文字）なら「## 優先度」セクション自体を省略する。
+  priority=$(jq -r '.priority // empty' <<<"$item_json")
+
+  priority_section=""
+  if [ -n "$priority" ]; then
+    priority_section="
+
+## 優先度
+
+${priority}"
+  fi
 
   ISSUE_BODY="## 元Issue・既存負債の参照
 
@@ -136,7 +148,7 @@ ${problem}
 
 ## 期待する改善後の状態
 
-${expectedState}"
+${expectedState}${priority_section}"
 }
 
 # 粒度ヒューリスティック: targetFilesの件数が閾値を超えるかを機械的にチェックする。

@@ -62,6 +62,23 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local description="$1"
+  local haystack="$2"
+  local needle="$3"
+
+  if [[ "$haystack" != *"$needle"* ]]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       expected NOT to contain: ${needle}"
+    echo "       actual:                  ${haystack}"
+  fi
+}
+
 # --- フィクスチャ: manifest 項目（単体） ---
 
 FIXTURE_VALID_ITEM='{"title":"重複したバリデーションロジックの共通化","parentRef":"#12","targetFiles":["src/foo.ts","src/bar.ts"],"problem":"バリデーションロジックが3箇所に重複している","expectedState":"共通関数に切り出され、重複が解消されている"}'
@@ -79,6 +96,8 @@ FIXTURE_OBJECT_TARGET_FILE_ENTRY='{"title":"タイトル","parentRef":"#12","tar
 FIXTURE_UNDER_THRESHOLD='{"title":"タイトル","parentRef":"#12","targetFiles":["a.ts","b.ts"],"problem":"問題","expectedState":"期待状態"}'
 
 FIXTURE_OVER_THRESHOLD='{"title":"タイトル","parentRef":"#12","targetFiles":["a.ts","b.ts","c.ts","d.ts","e.ts","f.ts"],"problem":"問題","expectedState":"期待状態"}'
+
+FIXTURE_ITEM_WITH_PRIORITY='{"title":"タイトル","parentRef":"#12","targetFiles":["src/a.ts"],"problem":"問題","expectedState":"期待状態","priority":"高"}'
 
 # --- フィクスチャ: manifest 全体（配列） ---
 # index0: 正常（閾値以下） -> created, warningなし
@@ -172,6 +191,15 @@ assert_contains "本文に1件目のtargetFileが含まれる" "$ISSUE_BODY" "- 
 assert_contains "本文に2件目のtargetFileが含まれる" "$ISSUE_BODY" "- src/bar.ts"
 assert_contains "本文に problem が含まれる" "$ISSUE_BODY" "バリデーションロジックが3箇所に重複している"
 assert_contains "本文に expectedState が含まれる" "$ISSUE_BODY" "共通関数に切り出され、重複が解消されている"
+
+echo "=== test: build_issue_body - priority指定時は優先度セクションが出力される（Issue #55 デグレレビュー対応） ==="
+build_issue_body "$FIXTURE_ITEM_WITH_PRIORITY"
+assert_contains "本文に優先度セクションの見出しが含まれる" "$ISSUE_BODY" "## 優先度"
+assert_contains "本文に優先度の値が含まれる" "$ISSUE_BODY" "高"
+
+echo "=== test: build_issue_body - priority未指定時は優先度セクションが省略される ==="
+build_issue_body "$FIXTURE_VALID_ITEM"
+assert_not_contains "本文に優先度セクションが含まれない" "$ISSUE_BODY" "## 優先度"
 
 echo "=== test: extract_issue_number_from_url - 複数行出力でも正しいissue番号だけを抽出する ==="
 MULTILINE_OUTPUT=$'Warning: something happened 42\nhttps://github.com/example/repo/issues/777'
