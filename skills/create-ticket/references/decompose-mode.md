@@ -40,8 +40,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-acceptance-criteria.sh" {親Issue番
 スクリプトの構造:
 
 - **Generate フェーズ**: `agentType: 'ticket-decomposer'` の分解案エージェント3体を `parallel` で fan-out する。それぞれ「依存最小優先」「垂直スライス優先」「レイヤ分割優先」の異なるレンズを与える（レンズの解釈指針は `agents/ticket-decomposer.md` 側の責務）
-- **網羅マトリクス・グラフ指標の算出（コード側）**: 3候補案それぞれについて、AC全集合と `tasks[].acceptance_criteria_covered` の和集合との差集合演算で未網羅（`uncovered`）・幻覚ID（`hallucinated`）を検出し、`depends_on`（計画内インデックス参照のDAG）から最大並列幅・クリティカルパス長・循環検出をトポロジカルに算出する。いずれも judge に計算させず、**計算済みの事実**として注入する
-- **Judge フェーズ**: `agentType: 'decompose-judge'` の judge 1体が、3候補案＋計算済みの網羅結果・グラフ指標を基に採点・合成し、候補と同型のschema（`tasks` 配列）で最終分解計画を返す。judge出力にも同じ網羅マトリクス関数を適用し、未網羅・幻覚IDが残っていれば judge を再実行する（上限付き。上限に達しても解決しない場合はエラーにせず `converged: false` を返す）
+- **網羅マトリクス・グラフ指標の算出（コード側）**: 3候補案それぞれについて、AC全集合と `tasks[].acceptance_criteria_covered` の和集合との差集合演算で未網羅（`uncovered`）・幻覚ID（`hallucinated`）を検出し、`depends_on`（計画内インデックス参照のDAG）から最大並列幅・クリティカルパス長・循環検出・範囲外インデックス参照（`invalidRefs`）をトポロジカルに算出する。いずれも judge に計算させず、**計算済みの事実**として注入する
+- **Judge フェーズ**: `agentType: 'decompose-judge'` の judge 1体が、3候補案＋計算済みの網羅結果・グラフ指標を基に採点・合成し、候補と同型のschema（`tasks` 配列）で最終分解計画を返す。judge出力にも同じ網羅マトリクス関数・依存グラフ検証関数を適用し、**未網羅・幻覚ID・循環依存・範囲外インデックス参照のいずれか1つでも残っていれば** judge を再実行する（上限付き。AC網羅性が満たされていても、最終計画に循環や存在しないタスクへの依存が残っていれば非収束として扱う。上限に達しても解決しない場合はエラーにせず `converged: false` を返す）
 - 「最良案がコードで保証される」わけではない点に注意: コードが保証するのは**プロセス**（3案生成・ルーブリック採点・網羅検証）であり、割当の網羅性はコードで決定的に検証されるが、意味的な正しさ（分解の質そのもの）は judge の定性評価に委ねられる
 
 #### 3-3. Workflow の起動
@@ -74,7 +74,7 @@ Workflow ツールを、スクリプトの絶対パスと `args` を指定して
 
 Workflow の返り値（`{tasks: [{title, summary, files, depends_on, acceptance_criteria_covered}], meta: {candidates, finalCoverage, finalGraphMetrics, judgeRounds, converged}}`）を受け取る。`depends_on` は `tasks` 配列のインデックス参照（0始まり）のため、提示用テーブルでは `#` 列（インデックス+1）に対応付けて表示する。
 
-`meta.converged` が `false` の場合、`meta.finalCoverage.uncovered`（未割当の受入基準）・`meta.finalCoverage.hallucinated`（幻覚ID）が残っている旨をユーザーに明示し、承認前に注意喚起する（機械的な網羅検証が上限内で解決しなかったことを隠さない）。
+`meta.converged` が `false` の場合、`meta.finalCoverage.uncovered`（未割当の受入基準）・`meta.finalCoverage.hallucinated`（幻覚ID）に加え、`meta.finalGraphMetrics.hasCycle`（循環依存の有無）・`meta.finalGraphMetrics.invalidRefs`（存在しないタスクインデックスへの依存）が残っている旨をユーザーに明示し、承認前に注意喚起する（機械的な網羅検証・依存グラフ検証が上限内で解決しなかったことを隠さない）。
 
 実装タスク一覧と依存関係を提示してユーザーに確認（**この確認は Workflow の外・本ステップで完結させる人間ゲート**。Workflow 自体には対話的な承認ゲートを挟む手段が無いため）:
 
@@ -87,9 +87,11 @@ Workflow の返り値（`{tasks: [{title, summary, files, depends_on, acceptance
 | 2 | {タスク名} | 1 | {概要} | {acceptance_criteria_coveredのid一覧} |
 
 （`meta.converged` が false の場合のみ）
-> 注意: 以下の受入基準は自動検証（judge再実行 {meta.judgeRounds}ラウンド実施）でも割当が確定しませんでした。承認前にご確認ください。
-> - 未割当: {uncoveredの一覧}
+> 注意: 以下は自動検証（judge再実行 {meta.judgeRounds}ラウンド実施）でも解決しませんでした。承認前にご確認ください。
+> - 未割当の受入基準: {uncoveredの一覧}
 > - 存在しないID参照: {hallucinatedの一覧}
+> - 循環依存: {hasCycleがtrueなら「あり（依存関係を修正してください）」、falseなら省略}
+> - 存在しないタスクへの依存参照: {invalidRefsの一覧（あれば）}
 
 この粒度で Issue を作成してよろしいですか？
 ```

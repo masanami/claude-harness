@@ -152,6 +152,19 @@ export function computeGraphMetrics(tasks) {
   const n = list.length;
   const deps = list.map((t) => (Array.isArray(t.depends_on) ? t.depends_on : []));
 
+  // 範囲外・非整数の depends_on 参照は、レベル分け計算では無視して防御的に扱うが、
+  // 「無かったこと」にして握りつぶさず invalidRefs として明示的に収集する。
+  // CodeRabbit指摘（PR#87）: これを収集しないと、存在しないタスクへの依存を含む
+  // 最終計画が「独立タスク」として誤って converged: true になってしまう。
+  const invalidRefs = [];
+  deps.forEach((refs, taskIndex) => {
+    refs.forEach((ref) => {
+      if (typeof ref !== 'number' || !Number.isInteger(ref) || ref < 0 || ref >= n) {
+        invalidRefs.push({ taskIndex, ref });
+      }
+    });
+  });
+
   const WHITE = 0;
   const GRAY = 1;
   const BLACK = 2;
@@ -161,7 +174,7 @@ export function computeGraphMetrics(tasks) {
   function dfs(u) {
     color[u] = GRAY;
     for (const v of deps[u]) {
-      if (typeof v !== 'number' || v < 0 || v >= n) continue; // 範囲外インデックスは無視（防御的）
+      if (typeof v !== 'number' || v < 0 || v >= n) continue; // 範囲外インデックスはグラフ探索から除外（invalidRefsに記録済み）
       if (v === u || color[v] === GRAY) {
         hasCycle = true;
       } else if (color[v] === WHITE) {
@@ -176,7 +189,7 @@ export function computeGraphMetrics(tasks) {
   }
 
   if (hasCycle) {
-    return { maxParallelWidth: null, criticalPathLength: null, hasCycle: true };
+    return { maxParallelWidth: null, criticalPathLength: null, hasCycle: true, invalidRefs };
   }
 
   const level = new Array(n).fill(-1);
@@ -197,7 +210,7 @@ export function computeGraphMetrics(tasks) {
   for (let i = 0; i < n; i += 1) computeLevel(i);
 
   if (n === 0) {
-    return { maxParallelWidth: 0, criticalPathLength: 0, hasCycle: false };
+    return { maxParallelWidth: 0, criticalPathLength: 0, hasCycle: false, invalidRefs };
   }
 
   const levelCounts = new Map();
@@ -205,7 +218,15 @@ export function computeGraphMetrics(tasks) {
   const maxParallelWidth = Math.max(...levelCounts.values());
   const criticalPathLength = Math.max(...level) + 1;
 
-  return { maxParallelWidth, criticalPathLength, hasCycle: false };
+  return { maxParallelWidth, criticalPathLength, hasCycle: false, invalidRefs };
+}
+
+// 依存グラフが「収束」とみなせるか（循環が無く、範囲外/不正な depends_on 参照も無いか）を判定する。
+// AC網羅性（computeAcCoverage）とは独立した収束条件として、judgeループの終了判定に使う
+// （CodeRabbit指摘（PR#87）: AC網羅性だけで converged: true にすると、循環や範囲外参照を
+// 含む最終計画を見逃してしまうため）。
+export function isGraphValid(graphMetrics) {
+  return !graphMetrics.hasCycle && Array.isArray(graphMetrics.invalidRefs) && graphMetrics.invalidRefs.length === 0;
 }
 
 // --- プロンプトビルダー ---
@@ -235,13 +256,21 @@ export function buildJudgePrompt(candidates, previousAttempt) {
   ];
 
   if (previousAttempt) {
+    const graphIssues = [];
+    if (previousAttempt.graphMetrics.hasCycle) {
+      graphIssues.push('循環依存が検出されました（あるタスクの depends_on を辿ると自分自身に戻ってきます）。循環しないよう depends_on を修正してください。');
+    }
+    if (previousAttempt.graphMetrics.invalidRefs.length > 0) {
+      graphIssues.push(`存在しないタスクインデックスへの depends_on 参照があります（taskIndex/ref の組で示します）: ${JSON.stringify(previousAttempt.graphMetrics.invalidRefs)}。depends_on は必ず最終計画内の実在するタスクのインデックスのみを指すよう修正してください。`);
+    }
     lines.push(
       '',
-      '前回のあなたの出力は受入基準の網羅に不備がありました。以下のデータブロック（前回のあなたの出力と、不足・幻覚IDの内容）を踏まえ、必ず全ての受入基準IDがいずれかのタスクの acceptance_criteria_covered に含まれ、かつ存在しないIDを含まないよう修正してください。',
+      '前回のあなたの出力は受入基準の網羅、または依存グラフの妥当性（循環・範囲外参照の不在）に不備がありました。以下のデータブロック（前回のあなたの出力・不足/幻覚IDの内容・依存グラフの問題点）を踏まえ、必ず全ての受入基準IDがいずれかのタスクの acceptance_criteria_covered に含まれ、存在しないIDを含まず、かつ depends_on が循環せず全て実在するタスクインデックスのみを指すよう修正してください。',
       wrapDataBlock({
         previousTasks: previousAttempt.tasks,
         uncovered: previousAttempt.coverage.uncovered,
         hallucinated: previousAttempt.coverage.hallucinated,
+        graphIssues,
       }),
     );
   }
@@ -311,9 +340,12 @@ export default async function ({ agent, parallel, log, args }) {
     });
   }
 
-  // --- Judge フェーズ: 採点・合成。網羅マトリクスが非空なら上限付きで再実行 ---
+  // --- Judge フェーズ: 採点・合成。網羅マトリクスまたは依存グラフの妥当性のいずれかが
+  // 満たされなければ上限付きで再実行する（CodeRabbit指摘（PR#87）: AC網羅性だけを収束条件に
+  // すると、循環・範囲外参照を含む最終計画を見逃す） ---
   let finalTasks = [];
   let finalCoverage = computeAcCoverage(criteria, []);
+  let finalGraphMetrics = computeGraphMetrics([]);
   let judgeRounds = 0;
   let converged = false;
   let previousAttempt = null;
@@ -329,11 +361,14 @@ export default async function ({ agent, parallel, log, args }) {
     });
     const tasks = Array.isArray(output && output.tasks) ? output.tasks : [];
     const coverage = computeAcCoverage(criteria, tasks);
+    const graphMetrics = computeGraphMetrics(tasks);
+    const graphValid = isGraphValid(graphMetrics);
 
     finalTasks = tasks;
     finalCoverage = coverage;
+    finalGraphMetrics = graphMetrics;
 
-    if (coverage.uncovered.length === 0 && coverage.hallucinated.length === 0) {
+    if (coverage.uncovered.length === 0 && coverage.hallucinated.length === 0 && graphValid) {
       converged = true;
       if (typeof log === 'function') {
         log(`decompose-judge: judge round ${judgeRounds} converged (tasks=${tasks.length}).`);
@@ -342,16 +377,14 @@ export default async function ({ agent, parallel, log, args }) {
     }
 
     if (typeof log === 'function') {
-      log(`decompose-judge: judge round ${judgeRounds} incomplete (uncovered=${coverage.uncovered.length}, hallucinated=${coverage.hallucinated.length}).`);
+      log(`decompose-judge: judge round ${judgeRounds} incomplete (uncovered=${coverage.uncovered.length}, hallucinated=${coverage.hallucinated.length}, hasCycle=${graphMetrics.hasCycle}, invalidRefs=${graphMetrics.invalidRefs.length}).`);
     }
-    previousAttempt = { tasks, coverage };
+    previousAttempt = { tasks, coverage, graphMetrics };
   }
 
   if (!converged && typeof log === 'function') {
-    log(`decompose-judge: gave up after ${judgeRounds} judge round(s); returning converged:false with residual coverage gaps.`);
+    log(`decompose-judge: gave up after ${judgeRounds} judge round(s); returning converged:false with residual coverage/graph issues.`);
   }
-
-  const finalGraphMetrics = computeGraphMetrics(finalTasks);
 
   return {
     tasks: finalTasks,
