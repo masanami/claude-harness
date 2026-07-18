@@ -171,13 +171,19 @@ console.log('=== computeGraphMetrics ===');
     outOfRangeResult.invalidRefs,
   );
 
-  // 非整数・負数の depends_on も invalidRefs として検出される
+  // 非整数・負数の depends_on も invalidRefs として検出され、グラフ探索・レベル計算からは
+  // 除外される（Number.isInteger を使わず typeof v === 'number' のみで判定すると、
+  // 1.5 のような非整数値が「範囲内」判定を通過してしまい、レベル計算に NaN が
+  // 混入するバグがあった。CodeRabbit指摘 PR#87 で修正）。
   const malformedDep = [{ depends_on: [1.5, -1, 'x'] }, { depends_on: [] }];
+  const malformedResult = computeGraphMetrics(malformedDep);
   assertEq(
     '非整数・負数・文字列の depends_on はすべて invalidRefs として検出される',
     3,
-    computeGraphMetrics(malformedDep).invalidRefs.length,
+    malformedResult.invalidRefs.length,
   );
+  assertEq('非整数の depends_on は探索から除外されNaNが混入しない(criticalPathLengthは有限値)', false, Number.isNaN(malformedResult.criticalPathLength));
+  assertEq('非整数の depends_on は探索から除外されNaNが混入しない(maxParallelWidthは有限値)', false, Number.isNaN(malformedResult.maxParallelWidth));
 
   // isGraphValid: hasCycle/invalidRefsのいずれかがあれば無効
   assertEq('isGraphValid: 循環も範囲外参照も無ければ true', true, isGraphValid(computeGraphMetrics(simpleDag)));

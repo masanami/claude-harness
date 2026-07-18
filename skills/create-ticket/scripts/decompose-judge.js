@@ -174,7 +174,11 @@ export function computeGraphMetrics(tasks) {
   function dfs(u) {
     color[u] = GRAY;
     for (const v of deps[u]) {
-      if (typeof v !== 'number' || v < 0 || v >= n) continue; // 範囲外インデックスはグラフ探索から除外（invalidRefsに記録済み）
+      // 範囲外・非整数インデックスはグラフ探索から除外する（invalidRefsに記録済み）。
+      // Number.isInteger を使うのは、typeof v === 'number' だけだと 1.5 のような
+      // 非整数値が「範囲内」判定を通過してしまい、以降の level 計算で NaN が
+      // 混入するバグを避けるため（CodeRabbit指摘 PR#87）。
+      if (!Number.isInteger(v) || v < 0 || v >= n) continue;
       if (v === u || color[v] === GRAY) {
         hasCycle = true;
       } else if (color[v] === WHITE) {
@@ -195,7 +199,7 @@ export function computeGraphMetrics(tasks) {
   const level = new Array(n).fill(-1);
   function computeLevel(u) {
     if (level[u] !== -1) return level[u];
-    const validDeps = deps[u].filter((v) => typeof v === 'number' && v >= 0 && v < n);
+    const validDeps = deps[u].filter((v) => Number.isInteger(v) && v >= 0 && v < n);
     if (validDeps.length === 0) {
       level[u] = 0;
       return 0;
