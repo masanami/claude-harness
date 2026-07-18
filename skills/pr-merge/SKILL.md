@@ -77,7 +77,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 `block_reasons` に `conflicting` を含む場合のみ、`${CLAUDE_PLUGIN_ROOT}/skills/pr-merge/references/conflict-resolution.md` を Read してその手順に従う（相対パス `skills/pr-merge/references/...` では導入先プロジェクトから解決できないため、必ずプラグインルート起点で参照する）。
 
-> **規律フック**: rebase + push 後は preflight の再実行が必須（Phase 0-1 の判定結果は無効になる）。Phase 4 のマージ判断は、この再実行後の値で行うこと（古い値を使い回さない）。
+> **規律フック**: rebase + push 後は preflight の再実行が必須（Phase 0-1 の判定結果は無効になる）。Phase 4 のマージ判断は、この再実行後の値で行うこと（古い値を使い回さない）。再実行後の `.base`/`.gate` が初回値と異なる場合は、値を更新して続行せず**処理を中断して Phase 0-1 からやり直す**。
 
 ### Phase 3: コードレビュー
 

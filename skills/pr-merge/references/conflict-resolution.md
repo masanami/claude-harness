@@ -35,3 +35,5 @@
    BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")
    ```
    Phase 4 のマージ実行は、この再実行後の値で判断する（Phase 2 に入る前の古い値を使い回さない）。
+
+   `.base` / `.gate` も再取得し、初回値（Phase 0-1 で取得した `$BASE`/`$GATE`）と異なる場合は、値を黙って更新せず**処理を中断して Phase 0-1 からやり直す**（base retarget は稀な操作であり、途中の rebase 前提が崩れているため）。
