@@ -43,6 +43,7 @@ effort: medium
 | `dirTree` | 除外・深さ制限付きディレクトリ構造（2d相当） |
 | `docs` | `docsDir` と設計ドキュメント一覧（2e相当） |
 | `testDirs` / `e2eDirs` | テスト/E2E配置（2e相当） |
+| `colocatedTests` | `src/foo.test.ts` のようにテスト対象と同じディレクトリに置く co-located 配置の有無（真偽値、2e相当）。`testDirs` はディレクトリ名ベースの検出のため、co-located 配置はこのフィールドで別途表現する |
 | `branchEvidence` | `branches`（`git branch -a`）、`recentMergeStyles`（直近コミットのsquash/merge集計）、`contributingPath` の**証拠のみ**（2g相当）。**戦略の推定・解釈（GitHub Flow既定の採用など）はスクリプトでは行わない。次項の手順で本スキル側が判断する** |
 | `axes` | 観点9軸すべての仮判定（2h相当）。各要素は `{axis, name, standing: "auto-yes"\|"auto-no"\|"ask-user", evidence}` |
 
@@ -51,11 +52,14 @@ effort: medium
 #### LLM側の補完
 
 - スクリプトの検出結果が明らかに不足・誤検出している場合（未知フレームワークの誤分類、モノレポでの検出漏れ等）のみ、対象ファイルを直接 Read して補完する
+- **スタック検出の補完**: `stack` の `frontend`/`backend`/`db` のいずれかが空、または `package.json` の `dependencies`/`devDependencies`（Node系の場合）に候補外の主要ライブラリが見える場合は、`package.json`（Node系以外は `go.mod`/`Cargo.toml`/`pyproject.toml`/`Gemfile` 等）を直接 Read し、リードの裁量でスタック判定を補う
 - **ブランチ戦略の判断**: `branchEvidence` の証拠（`branches`, `recentMergeStyles`, `contributingPath`）から戦略を解釈する
   - `contributingPath` があれば内容を Read してブランチ/コミット規約を確認する
   - `recentMergeStyles` で `squash` が優勢なら squash マージ運用、`merge` が優勢なら merge commit 運用と推定する
+  - `branches` から `{type}/{id}-{説明}` 等の命名傾向（プレフィックスの種類、区切り文字）を推定し、既存の慣習に沿った命名規則を採用する
   - 判断材料が乏しい（コミット数が少ない・新規リポジトリ等）場合は既定の **GitHub Flow**（命名 `{type}/{ticket-id}-{説明}`、squash マージ）を採用する
   - いずれの場合も、開発フローの**最小契約「1チケット = 1ブランチ → PR → 必須ゲート通過後にマージ」**を満たすこと
+- **テスト前提の補完**: docker-compose 等でテスト環境（DB・外部サービスのモック等）を立てる構成は `testPrereqs` に現れないため、`docker-compose.yml`/`docker-compose.yaml`（`stack.infra` に `docker-compose` があれば存在する）があればサービス定義を Read し、テスト実行に必要な前提として補完する
 - `axes` のうち `standing: "ask-user"` の軸は Step 3 でユーザーに問いかける（次項参照）。`auto-yes`/`auto-no` の軸はそのまま仮判定として提示する
 - 既に存在が検出された（`docs.designDocs`）ドキュメントは「整備済み」扱いで候補化しない。立っている軸に対応するドキュメントが既存なら、新規作成候補には載せない
 
