@@ -33,6 +33,42 @@
 //     ループの上限/終了条件という「構造」のみである点は変わらない
 //   - diff収集・hunk抽出は毎周（ループの内側で）必要になる（修正エージェントはコミットしない
 //     設計のため行番号が周回間で動く。Issue #44 クリティカル設計決定コメント2 要求3）
+//
+// スクリプトの構造（フェーズ単位。旧 SKILL.md 1-1 から移設。プリロード圧迫削減のため
+// SKILL.md 側には残さず、このファイルを正本とする。skills/self-review/SKILL.md からは
+// 「内部構造はこのファイル冒頭コメントを参照」の1行ポインタのみで参照される）:
+//   - Collect フェーズ: 上記「実行環境の制約」の通り、diff収集・hunk抽出は git-ops
+//     エージェント（agentType: 'git-ops'。agents/git-ops.md）に委譲する
+//   - Review フェーズ: code-reviewer / design-reviewer を parallel でバリア付き並列実行する。
+//     指摘は {file, line, severity, claim, evidence, verdict} の JSON Schema
+//     （verdict: レビュアー自身の一次判定 CONFIRMED/PLAUSIBLE）で受ける。1周目はフルレビュー、
+//     2周目以降は前周の確定指摘（confirmed）の解消検証に限定したレビューになる
+//   - Verify フェーズ: severity: high かつレビュアー verdict が PLAUSIBLE の指摘のみ、
+//     finding-verifier 3体（懐疑者。奇数固定で多数決の同数割れを回避）に fan-out して
+//     反証させ、多数決（2/3で confirmed、2/3で refuted、それ以外は要人間判断）で最終判定を
+//     決める。verdict: CONFIRMED の指摘・severity: medium/low の指摘は懐疑者による検証を
+//     スキップし、レビュアーの一次判定をそのまま信頼する（コスト最適化。偽陽性リスクが
+//     相対的に高い「high かつ確信度が低い」指摘だけを重点的に検証する）
+//   - Fix フェーズ: 多数決で confirmed になった指摘＋信頼された指摘（trusted）を修正エージェント
+//     （agentType: 'feature-implementer'。Edit/Write を持つ。code-reviewer/design-reviewer/
+//     finding-verifier は編集ツール非保持のため流用不可＝「レビュー専用・修正は実装エージェントに
+//     委譲」の責務分離を維持）に渡して修正させる（コミットはしない。修正は作業ツリーに残る）。
+//     修正エージェントは自身の応答の中で /quality-check を Skill ツール経由で実行し、機械可読な
+//     結果（result/gates）を返す。「レビュアー数×周回」で重複実行していた従来の code-reviewer
+//     側の品質チェック実行は廃止し、Fix ステージ1箇所に一本化した（1周につき1回。lint/型エラー
+//     解消のための /quality-check 内部リトライは feature-implementer Phase 4 の規律に従ってよく、
+//     これは妨げない）。Fix ステージのこの呼び出しは指摘の修正＋品質チェックにスコープ限定されて
+//     おり、修正エージェント自身の Phase 5（/self-review 委譲）を再帰的に起動しない
+//     （agents/feature-implementer.md の「再入回避」注記を参照）。修正後の /quality-check が
+//     fail を返した場合、ループはそのまま打ち切り、再レビューを試みずに要人間判断として残す
+//   - ループ制御: for (let i=0; i<3 && findings.length>0; i++) 相当でコード側に上限
+//     （最大3周）・終了条件を固定する。周回間の重複検証を避けるため roundDedupKey
+//     （(file,line)＋claim正規化プレフィックス）で dedup する
+//   - diffの再収集（重要）: 修正エージェントはコミットしないため、行番号は周回間で動く。
+//     スクリプトは毎周 git-ops エージェント経由で scripts/collect-review-diff.sh
+//     （merge-base → 作業ツリー込みdiff。未追跡の新規ファイルも git add --intent-to-add -A
+//     で検出対象に含める）を呼び直し、hunk抽出（scripts/extract-hunk.sh）は同一周回内の
+//     diffスナップショットのみを基準にする（前周の指摘の行番号は持ち越さない）
 
 export const meta = {
   name: 'self-review-loop',

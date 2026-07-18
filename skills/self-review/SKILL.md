@@ -16,15 +16,9 @@ description: "コード変更のセルフレビューを実施する。Triggers 
 
 並列レビュー（code-reviewer/design-reviewer）・敵対的検証（finding-verifier 3体・多数決）・修正反復ループは `skills/self-review/scripts/self-review-loop.js` に実装済みの Dynamic Workflow スクリプトが担う。このファイルはプラグインに同梱されており、モデルが都度書き出す・複写する必要はない（resume 時のキャッシュ安定性のため、Workflow ツールには常に同じ絶対パスをそのまま渡すこと）。
 
-スクリプトの構造:
+Workflow の内部構造（Collect/Review/Verify/Fix の各フェーズ・ループ制御・diff再収集の仕様）は `skills/self-review/scripts/self-review-loop.js` の冒頭コメントを正本とする。レビュー観点・懐疑的検証の反証規範・修正時の振る舞いの規律は `agents/code-reviewer.md` / `agents/design-reviewer.md` / `agents/finding-verifier.md` / `agents/feature-implementer.md` 側に置く（レイヤリング。本 SKILL には重複記載しない）。
 
-- **Collect フェーズ**: Workflow ランタイムは `node:fs` / `node:child_process` にアクセスできないサンドボックスで実行されるため、diff収集（`scripts/collect-review-diff.sh`）と hunk抽出（`scripts/extract-hunk.sh`）はスクリプト自身が直接実行できない。代わりに、Bash ツールのみを持つ薄いシェル実行専用エージェント（`agentType: 'git-ops'`。`agents/git-ops.md`。判断を一切行わず、指示されたコマンドを機械的に実行して出力をそのまま返すだけの役割）に委譲する
-- **Review フェーズ**: `code-reviewer` / `design-reviewer` を `parallel` でバリア付き並列実行する。指摘は `{file, line, severity, claim, evidence, verdict}` の JSON Schema（`verdict`: レビュアー自身の一次判定 `CONFIRMED`/`PLAUSIBLE`）で受ける。1周目はフルレビュー、2周目以降は前周の確定指摘（confirmed）の解消検証に限定したレビューになる
-- **Verify フェーズ**: `severity: high` かつレビュアー `verdict` が `PLAUSIBLE` の指摘のみ、`finding-verifier` 3体（懐疑者。奇数固定で多数決の同数割れを回避）に fan-out して反証させ、多数決（2/3で confirmed、2/3で refuted、それ以外は要人間判断）で最終判定を決める。`verdict: CONFIRMED` の指摘・`severity: medium/low` の指摘は懐疑者による検証をスキップし、レビュアーの一次判定をそのまま信頼する（コスト最適化。偽陽性リスクが相対的に高い「high かつ確信度が低い」指摘だけを重点的に検証する）
-- **Fix フェーズ**: 多数決で confirmed になった指摘＋信頼された指摘（trusted）を修正エージェント（`agentType: 'feature-implementer'`。Edit/Write を持つ。code-reviewer/design-reviewer/finding-verifier は編集ツール非保持のため流用不可＝「レビュー専用・修正は実装エージェントに委譲」の責務分離を維持）に渡して修正させる（**コミットはしない**）。修正エージェントは自身の応答の中で `/quality-check` を Skill ツール経由で実行し、機械可読な結果（`result`/`gates`）を返す。「レビュアー数×周回」で重複実行していた従来の code-reviewer 側の品質チェック実行は廃止し、**Fix ステージ1箇所に一本化**した（1周につき1回。lint/型エラー解消のための `/quality-check` 内部リトライは feature-implementer Phase 4 の規律に従ってよく、これは妨げない）。Fix ステージのこの呼び出しは指摘の修正＋品質チェックにスコープ限定されており、修正エージェント自身の Phase 5（`/self-review` 委譲）を再帰的に起動しない（`agents/feature-implementer.md` の「再入回避」注記を参照）。修正後の `/quality-check` が `fail` を返した場合、ループはそのまま打ち切り、再レビューを試みずに要人間判断として残す
-- **ループ制御**: `for (let i=0; i<3 && findings.length>0; i++)` 相当でコード側に上限（最大3周）・終了条件を固定する。周回間の重複検証を避けるため `(file,line)` の機械キーで dedup する（claim の意味的同一性判定はしない）
-- **diffの再収集（重要）**: 修正エージェントはコミットしないため、行番号は周回間で動く。スクリプトは**毎周** `git-ops` エージェント経由で `scripts/collect-review-diff.sh`（merge-base → 作業ツリー込みdiff。未追跡の新規ファイルも `git add --intent-to-add -A` で検出対象に含める）を呼び直し、hunk抽出（`scripts/extract-hunk.sh`）は同一周回内のdiffスナップショットのみを基準にする（前周の指摘の行番号は持ち越さない）
-- レビュー観点・懐疑的検証の反証規範・修正時の振る舞いは、このスクリプトには書かず `agents/code-reviewer.md` / `agents/design-reviewer.md` / `agents/finding-verifier.md` / `agents/feature-implementer.md` 側に置く（レイヤリング: 規律はエージェント定義側、Workflow 側は fan-out・schema検証・多数決・severityフィルタ・周回間dedup・ループ制御という構造のみを担う。`git-ops` はさらにその下で「判断を伴わないコマンド実行」のみを担う薄い層）
+呼び出し元の後続動作に直結する内部挙動としてここに明記する点: **Fix フェーズの修正エージェントはコミットしない**。修正内容は作業ツリーに残ったままとなる（Step 3/4 の報告・`/commit` の要否はこの前提の上で呼び出し元が判断する）。
 
 #### 1-2. Workflow の起動
 
