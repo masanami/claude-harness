@@ -54,38 +54,22 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    - スクリプトが非0 exitで終了した場合（jq不在・PRが見つからない等の致命的エラー）は、stderr の内容を確認し、それを報告して処理を中断する
 
 3. **preflight結果の読み取り**
+
+   出力 JSON の**フィールド定義と `block_reasons` の意味論の正本は `scripts/README.md`「pr-merge-preflight.sh の出力仕様」**（ここには複製しない）。後続フェーズで使う値だけ展開する:
    ```bash
-   GATE=$(jq -r '.gate' <<<"$PREFLIGHT")                      # "production" | "integration"
-   BASE=$(jq -r '.base' <<<"$PREFLIGHT")                       # 後続フェーズで再取得せず再利用する
-   DEFAULT_BRANCH=$(jq -r '.default_branch' <<<"$PREFLIGHT")   # 同上
-   BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")               # true | false
-   BLOCK_REASONS=$(jq -c '.block_reasons' <<<"$PREFLIGHT")     # ["changes_requested","ci_failed","conflicting","merge_blocked"] の部分集合
-   MERGEABLE=$(jq -r '.mergeable' <<<"$PREFLIGHT")
-   COMMENTED_BODIES=$(jq -c '.commented_bodies' <<<"$PREFLIGHT")
-   RISK=$(jq -c '.risk' <<<"$PREFLIGHT")
+   GATE=$(jq -r '.gate' <<<"$PREFLIGHT")          # production=本番ゲート / integration=統合ブランチゲート
+   BASE=$(jq -r '.base' <<<"$PREFLIGHT")          # 以降のフェーズで再取得せず再利用
+   BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")  # true なら block_reasons を確認
    ```
+   `block_reasons` はスクリプトが機械的に判定済みであり **LLM 側での再判定は不要**。`conflicting` を含む場合のみ Phase 2 へ進む。それ以外の理由（`changes_requested` / `ci_failed` / `merge_blocked`）はマージ不可として原因を報告する。
 
-   | 判定（`gate`） | 意味 | 承認ゲート |
-   |------|------|-----------|
-   | `production`（base = 既定ブランチ） | 本番へのマージ・昇格 | **人間承認必須**（本番影響あり・実質不可逆）。ユーザーに最終確認を取ってからマージする |
-   | `integration`（base = 既定ブランチ以外＝統合ブランチ `feat/issue-*` 等） | サブタスクを統合ブランチへ集約 | **人間承認不要**（本番影響なし・可逆）。CI グリーン＋レビュー対応済みで自律マージ可 |
+   > **本番ゲート**（`production`、base = 既定ブランチ）は人間承認必須（本番影響あり・実質不可逆）。**統合ブランチゲート**（`integration`）は本番影響がなく可逆のため自律マージ可。承認ゲートは「本番への影響と可逆性」で決まり、統合 → 既定ブランチへの昇格 PR（本番ゲート）が統合ブランチ方式における唯一の人間ゲートである。
 
-   > 以降の手順では、この判定結果を **「本番ゲート」/「統合ブランチゲート」** と呼ぶ（`gate` フィールドの値と対応）。
-   >
-   > 承認ゲートは「本番への影響と可逆性」で決まる（本番影響のある不可逆操作のみ人間承認）。統合 → 既定ブランチへの昇格 PR（本番ゲート）が統合ブランチ方式における唯一の人間ゲートである。
-
-4. **blocking判定の読み方**（`block_reasons` はスクリプト側で機械的に判定済み。以下は結果の解釈であり、LLM側での再判定は不要）
-   - `block_reasons` に `changes_requested` を含む → `CHANGES_REQUESTED` レビューあり。マージ不可（レビュー対応が必要）
-   - `block_reasons` に `ci_failed` を含む → CIが失敗している。マージ不可（原因を報告し対応を検討）
-   - `block_reasons` に `conflicting` を含む → コンフリクトあり。Phase 2 で解消する
-   - `block_reasons` に `merge_blocked` を含む → `mergeStateStatus` が `BLOCKED`（branch protection の必須条件未達等）。マージ不可（未達の条件を確認し対応を検討）
-   - `blocking: false` → 上記いずれにも該当しない（`COMMENTED` のみ・`APPROVED` のみ・reviews空のいずれか）
-
-5. **`COMMENTED` レビュー本文の意味判断（意味理解が必要なため唯一 LLM 判断に残す項目）**
+4. **`COMMENTED` レビュー本文の意味判断（意味理解が必要なため唯一 LLM 判断に残す項目）**
    `commented_bodies`（`COMMENTED` 状態のレビュー本文一覧）に重大な指摘が含まれていないかを確認する。スクリプト側は本文の意味を判定しない。重大な指摘がある場合は `blocking: false` であってもマージを保留する。
 
-6. **risk（judge panel 等の下流判断向け）**
-   `risk.touches_sensitive` が true の場合、`scripts/config/sensitive-paths.txt` に定義されたセンシティブなパス（CI設定・シークレットらしきファイル・自動化スクリプト自体・エージェント権限設定等）への変更が含まれる。Phase 3 のコードレビューで特に注意する。
+5. **risk の参照**
+   `risk.touches_sensitive` が true の場合、sensitive パス（正本: `scripts/config/sensitive-paths.txt`）への変更を含む。Phase 3 のコードレビューで特に注意する。
 
 ### Phase 2: コンフリクト解消（必要な場合）
 
@@ -115,32 +99,35 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 4. **CI再確認・preflightの再実行**
 
-   rebase + push で PR の状態（CI・`mergeable`）が変わるため、**Phase 0-1 の判定結果（`$BLOCKING`/`$BLOCK_REASONS`/`$MERGEABLE`/`$RISK`/`$COMMENTED_BODIES` 等）はここで無効になる**。CI完了を待った上で、preflight スクリプトを再実行して判定を更新する（`$GATE`/`$BASE`/`$DEFAULT_BRANCH` はブランチ構成由来のため不変。再取得不要）:
+   rebase + push で PR の状態（CI・`mergeable`・レビュー）が変わるため、**Phase 0-1 の判定結果はここで無効になる**。CI完了を待った上で preflight を再実行し、値を取り直す（`$GATE`/`$BASE` はブランチ構成由来のため不変）:
    ```bash
    gh pr checks "$PR_NUM" --watch
    PREFLIGHT=$(scripts/pr-merge-preflight.sh "$PR_NUM")
    BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")
-   BLOCK_REASONS=$(jq -c '.block_reasons' <<<"$PREFLIGHT")
-   MERGEABLE=$(jq -r '.mergeable' <<<"$PREFLIGHT")
-   COMMENTED_BODIES=$(jq -c '.commented_bodies' <<<"$PREFLIGHT")
-   RISK=$(jq -c '.risk' <<<"$PREFLIGHT")
    ```
-   rebase + push で外部レビューが新たに投稿されている可能性もあるため `COMMENTED_BODIES` も再取得する。Phase 4 のマージ実行は、この再実行後の `$BLOCKING`/`$BLOCK_REASONS`/`$COMMENTED_BODIES` を用いて判断する（Phase 2 に入る前の古い値を使い回さない）。
+   Phase 4 のマージ実行は、この再実行後の値で判断する（Phase 2 に入る前の古い値を使い回さない）。
 
 ### Phase 3: コードレビュー
 
-1. **変更差分の確認**
+1. **PR概要と会話の確認**（preflight は title/body/会話コメントを取得しない。意味判断の材料はここで取得する）
+   ```bash
+   gh pr view "$PR_NUM" --json title,body,comments
+   ```
+   - PR 本文と紐づく Issue から**要件**を把握する（レビュー観点「要件を満たしているか」の材料）
+   - 会話タブのコメントに**人間の保留指示・未対応の依頼**が無いか確認する。あればマージを保留し内容を報告する
+
+2. **変更差分の確認**
    ```bash
    gh pr diff "$PR_NUM"
    ```
 
-2. **レビュー観点**
+3. **レビュー観点**
    - 実装がIssueの要件を満たしているか
    - コーディング規約に従っているか
    - テストが適切に書かれているか
    - セキュリティ上の問題がないか
 
-3. **問題がある場合**
+4. **問題がある場合**
    - PRにコメントを残す
    ```bash
    gh pr comment "$PR_NUM" --body "修正依頼: {内容}"
@@ -169,12 +156,13 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 ## 判断基準
 
-以下のうち機械判定可能なもの（CI失敗・コンフリクト・`CHANGES_REQUESTED`）は Phase 0-1 の `scripts/pr-merge-preflight.sh` が `blocking`/`block_reasons` として決定的に判定済み。LLM側で意味判断が必要なのは **`COMMENTED` レビュー内容の重大性判断**のみ。
+以下のうち機械判定可能なもの（CI失敗・コンフリクト・`CHANGES_REQUESTED`）は Phase 0-1 の `scripts/pr-merge-preflight.sh` が `blocking`/`block_reasons` として決定的に判定済み。LLM側で意味判断が必要なのは **`COMMENTED` レビュー内容の重大性判断**と **PR本文・会話コメントに基づく要件充足・保留指示の確認**（Phase 3 手順1）。
 
 ### マージ可能な条件
 - `blocking: false`（`block_reasons` が空。CIパス・コンフリクト無し・`CHANGES_REQUESTED` 無しを意味する）
 - コードレビュー（Phase 3）で重大な問題がない
 - 外部レビューの `COMMENTED` 内容（`commented_bodies`）に重大な指摘がないこと（LLMが意味判断する）
+- PR会話タブに人間の保留指示・未対応の依頼が無いこと（Phase 3 手順1で確認）
 
 ### マージを保留する条件
 - `blocking: true`（`block_reasons` に `ci_failed` / `conflicting` / `changes_requested` / `merge_blocked` のいずれかを含む）
