@@ -18,7 +18,7 @@
 #     "testPrereqs": {"setupFiles":[...], "pretest": "..."|null},
 #     "dirTree": {"entries":[...], "depthLimit":N, "maxEntries":N, "truncated":bool},
 #     "docs": {"docsDir":"docs"|null, "designDocs":[...]},
-#     "testDirs": [...], "e2eDirs": [...],
+#     "testDirs": [...], "e2eDirs": [...], "colocatedTests": true|false,
 #     "branchEvidence": {"status":"ok"|"not_a_git_repo", "branches":[...],
 #       "recentMergeStyles":{"squash":N,"merge":N}, "contributingPath":"..."|null},
 #     "axes": [ {axis:1,name:"...",standing:"auto-yes"|"auto-no"|"ask-user",evidence:"..."}, ... x9 ]
@@ -199,9 +199,9 @@ fetch_project_name() {
 # グローバル変数 STACK_FRONTEND_JSON / STACK_BACKEND_JSON / STACK_DB_DEPS_JSON に結果を格納する純粋関数
 classify_stack_from_deps() {
   local deps_json="$1"
-  local frontend_candidates=(react vue next nuxt svelte)
-  local backend_candidates=(express fastify nest)
-  local db_candidates=(prisma typeorm sequelize "drizzle-orm" "@prisma/client")
+  local frontend_candidates=(react vue next nuxt svelte astro remix "solid-js" qwik)
+  local backend_candidates=(express fastify nest hono koa hapi)
+  local db_candidates=(prisma typeorm sequelize "drizzle-orm" "@prisma/client" mongoose kysely knex)
 
   local -a frontend=() backend=() db=()
   local dep
@@ -252,6 +252,7 @@ classify_config_evidence() {
 
 fetch_stack_evidence() {
   local dir="$1"
+  local pm="${2:-}"
   local deps_json="[]"
   if [ -f "$dir/package.json" ]; then
     deps_json=$(jq -c '[(.dependencies // {}), (.devDependencies // {})] | add | keys' "$dir/package.json" 2>/dev/null)
@@ -281,9 +282,17 @@ fetch_stack_evidence() {
     "$has_jest_config" "$has_vitest_config" "$has_playwright_config" "$has_pytest_ini" \
     "$has_dockerfile" "$has_compose" "$has_terraform" "$has_gh_workflows"
 
+  # pm(言語) 由来のbackendエントリ。go.mod/Cargo.tomlのみでnpm系backend依存が
+  # 無い（例: 素のGo/RustのAPIサーバ）プロジェクトが stack.backend 空配列になるのを防ぐ
+  local backend_lang_json="[]"
+  case "$pm" in
+    go) backend_lang_json='["go"]' ;;
+    cargo) backend_lang_json='["rust"]' ;;
+  esac
+
   STACK_JSON=$(jq -n \
     --argjson frontend "$STACK_FRONTEND_JSON" \
-    --argjson backend "$STACK_BACKEND_JSON" \
+    --argjson backend "$(jq -c -s 'add | unique' <(echo "$STACK_BACKEND_JSON") <(echo "$backend_lang_json"))" \
     --argjson db "$(jq -c -s 'add | unique' <(echo "$STACK_DB_DEPS_JSON") <(echo "$CONFIG_DB_JSON"))" \
     --argjson test "$CONFIG_TEST_JSON" \
     --argjson infra "$CONFIG_INFRA_JSON" \
@@ -472,7 +481,7 @@ DESIGN_DOC_PATTERNS=(
 # 文書・仕様ファイルとして許可する拡張子。下流（skills/init-project/SKILL.md）が
 # designDocs を「整備済み」の正本として扱うため、schema.ts のような実装ファイルや
 # ディレクトリ（src/domain 等）を誤って含めないよう -type f + 拡張子で限定する。
-DESIGN_DOC_EXTENSIONS_REGEX='\.(md|mdx|txt|rst|adoc|yaml|yml|json)$'
+DESIGN_DOC_EXTENSIONS_REGEX='\.(md|mdx|txt|rst|adoc|yaml|yml|json|png|svg|drawio|excalidraw|puml|sql)$'
 
 fetch_docs_evidence() {
   local dir="$1"
@@ -523,6 +532,23 @@ fetch_test_dirs() {
 fetch_e2e_dirs() {
   local dir="$1"
   E2E_DIRS_JSON=$(fetch_named_dirs "$dir" "e2e" "playwright" "cypress")
+}
+
+# fetch_test_dirs はディレクトリ名ベースの検出のため、src/foo.test.ts のような
+# co-located（テスト対象と同じディレクトリに置く）配置を取りこぼす。
+# 別フィールド colocatedTests（真偽値）で存在有無のみ補う。
+fetch_colocated_tests() {
+  local dir="$1"
+  local hit
+  hit=$(cd "$dir" 2>/dev/null && find . \
+    \( -path "./.git" -o -path "./node_modules" -o -path "./dist" -o -path "./.next" \
+       -o -path "./target" -o -path "./__pycache__" -o -path "./.venv" -o -path "./vendor" \) -prune \
+    -o -type f \( -iname "*.test.*" -o -iname "*.spec.*" \) -print 2>/dev/null | head -1)
+  if [ -n "$hit" ]; then
+    COLOCATED_TESTS_JSON="true"
+  else
+    COLOCATED_TESTS_JSON="false"
+  fi
 }
 
 # ------------------------------------------------------------------
@@ -683,13 +709,14 @@ main() {
 
   fetch_pm_and_language "$abs_dir"
   fetch_project_name "$abs_dir"
-  fetch_stack_evidence "$abs_dir"
+  fetch_stack_evidence "$abs_dir" "$PM_RESULT"
   fetch_commands "$abs_dir" "$PM_RESULT"
   fetch_test_prereqs "$abs_dir"
   fetch_dir_tree "$abs_dir"
   fetch_docs_evidence "$abs_dir"
   fetch_test_dirs "$abs_dir"
   fetch_e2e_dirs "$abs_dir"
+  fetch_colocated_tests "$abs_dir"
   fetch_branch_evidence "$abs_dir"
   fetch_axes "$abs_dir" "$STACK_HAS_ORM" "$E2E_DIRS_JSON"
 
@@ -712,6 +739,7 @@ main() {
     --argjson docs "$DOCS_JSON" \
     --argjson testDirs "$TEST_DIRS_JSON" \
     --argjson e2eDirs "$E2E_DIRS_JSON" \
+    --argjson colocatedTests "$COLOCATED_TESTS_JSON" \
     --argjson branchEvidence "$BRANCH_EVIDENCE_JSON" \
     --argjson axes "$AXES_JSON" \
     '{
@@ -728,6 +756,7 @@ main() {
       docs: $docs,
       testDirs: $testDirs,
       e2eDirs: $e2eDirs,
+      colocatedTests: $colocatedTests,
       branchEvidence: $branchEvidence,
       axes: $axes
     }'
