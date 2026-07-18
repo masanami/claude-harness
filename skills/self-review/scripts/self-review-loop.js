@@ -233,10 +233,26 @@ export function findingKey(finding) {
   return `${finding.file}:${finding.line}`;
 }
 
-// 既に処理済み（周回間dedup対象）の (file,line) キーを除いた指摘のみを返す。
-// claim の意味的同一性判定はLLM領分のため、機械キー(file,line)のみでdedupする。
+// LLM生成のclaim文言は周回間で言い回しが微妙に揺れうるため、完全一致ではなく
+// 正規化（小文字化・空白圧縮）した先頭64文字を鍵の一部にする妥協案を採用する。
+// トレードオフ: 同一(file,line)の別指摘を確実に保持する効果を優先し（完全一致dedupだと
+// 別指摘が握りつぶされる）、言い回し揺れによる別指摘としての再検証コスト増は許容する
+// （懐疑者は3体固定で有界のため、無限にコストが膨らむことはない）。
+export function normalizeClaimPrefix(claim) {
+  return String(claim || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 64);
+}
+
+// 周回間dedup専用のキー。findingKey（file:line。git-ops/finding-verifierとの
+// 相関IDとして使う配線用の軽量キー）とは別物として扱う。
+export function roundDedupKey(finding) {
+  return `${finding.file}:${finding.line}:${normalizeClaimPrefix(finding.claim)}`;
+}
+
+// 既に処理済み（周回間dedup対象）の (file,line,claim正規化prefix) キーを除いた
+// 指摘のみを返す。claim の意味的同一性判定そのものはLLM領分のため、機械キーとしては
+// roundDedupKey（正規化プレフィックスの妥協案）を用いる。
 export function dedupFindings(findings, seenKeys) {
-  return findings.filter((f) => !seenKeys.has(findingKey(f)));
+  return findings.filter((f) => !seenKeys.has(roundDedupKey(f)));
 }
 
 // 同一ラウンド内で (file,line) が重複する指摘を除去する（最初の1件を残す）。
@@ -245,6 +261,19 @@ export function dedupByKey(findings) {
   const result = [];
   for (const f of findings) {
     const key = findingKey(f);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(f);
+  }
+  return result;
+}
+
+// residualFindings 等、周回間dedupの文脈で使う。roundDedupKeyの妥協案（正規化プレフィックス）に従う。
+export function dedupByRoundKey(findings) {
+  const seen = new Set();
+  const result = [];
+  for (const f of findings) {
+    const key = roundDedupKey(f);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(f);
@@ -384,14 +413,27 @@ export function buildFixPrompt(toFix, diffInfo) {
 // --- git-ops プロンプトビルダー（固定テンプレート。周回番号・findings リスト以外は変えない。
 //     resume時のキャッシュ安定性のため文面を安定させる） ---
 
+// git-ops エージェントへ渡す、データ値をシェルコマンド文字列へ埋め込む際の安全なクォート手順。
+// buildGitOpsCollectPrompt/buildGitOpsHunkPrompt の双方から共有する固定文面
+// （resume時のキャッシュ安定性のため、呼び出しごとに文言を変えない）。
+const SHELL_QUOTING_INSTRUCTIONS = [
+  '値をコマンド文字列に埋め込む際は、必ずシェルのシングルクォート安全埋め込み手順に従ってください（コマンドインジェクション対策のため必須です）:',
+  "1. 値中に含まれる各 ' (シングルクォート1文字) を '\\'' (シングルクォート＋バックスラッシュ＋シングルクォート＋シングルクォート) に置換する",
+  "2. 置換後の文字列全体をシングルクォート ' で囲む",
+  '3. ダブルクォートでの埋め込みや、値をエスケープせずそのまま連結することは行わない',
+  "例: 値が O'Brien.js の場合 -> 'O'\\''Brien.js' として埋め込む（数値のみのフィールドはこの手順は不要でそのまま埋め込んでよい）",
+].join('\n');
+
 export function buildGitOpsCollectPrompt(collectDiffScript, base, previousDiffFile) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行し、その標準出力をそのまま返すことだけが仕事です。内容の解釈・要約・加工は一切行わないでください。',
     '',
     '実行手順（この順で機械的に実行する）:',
-    '1. データブロックの previousDiffFile が null でなければ Bash で `rm -f "<previousDiffFileの値>"` を実行する（対象が既に存在しなくてもエラーとして扱わない）。',
-    '2. データブロックの base が null なら Bash で `bash "<collectDiffScriptの値>"` を、null でなければ `bash "<collectDiffScriptの値>" "<baseの値>"` を実行する。',
+    '1. データブロックの previousDiffFile が null でなければ Bash で `rm -f <previousDiffFileの値をシングルクォートで安全に埋め込んだもの>` を実行する（対象が既に存在しなくてもエラーとして扱わない）。',
+    '2. データブロックの base が null なら Bash で `bash <collectDiffScriptの値をシングルクォートで安全に埋め込んだもの>` を、null でなければ `bash <collectDiffScriptの値をシングルクォートで安全に埋め込んだもの> <baseの値をシングルクォートで安全に埋め込んだもの>` を実行する。',
     '3. 手順2の標準出力をJSONとしてパースし、フィールドの追加・削除・値の改変を一切行わずそのまま返す。',
+    '',
+    SHELL_QUOTING_INSTRUCTIONS,
     '',
     wrapDataBlock({ collectDiffScript, base, previousDiffFile }),
     '',
@@ -416,9 +458,11 @@ export function buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, con
     'あなたは判断を行わない薄いシェル実行者です。データブロックの findings に列挙された各項目について、以下のコマンドをそれぞれ実行し、その標準出力（JSON）を集約して返すだけが仕事です。hunkの内容を解釈・要約・加工しないでください。',
     '',
     'findings の各項目について実行するコマンド:',
-    'Bash で `bash "<extractHunkScriptの値>" "<diff_fileの値>" "<その項目のfileの値>" "<その項目のlineの値>" <context_linesの値>` を実行する。',
+    'Bash で `bash <extractHunkScriptの値をシングルクォートで安全に埋め込んだもの> <diff_fileの値をシングルクォートで安全に埋め込んだもの> <その項目のfileの値をシングルクォートで安全に埋め込んだもの> <その項目のlineの値（数値なのでそのまま）> <context_linesの値（数値なのでそのまま）>` を実行する。',
     '',
     '各コマンドの標準出力JSONの found/snippet フィールドの値をそのまま使い、対応する findingId と組にして hunks 配列に格納する（findings の入力順を保つ必要はない。findingId で対応関係が特定できればよい）。あるコマンドが失敗した場合は、その項目のみ found: false, snippet: "" として扱う。',
+    '',
+    SHELL_QUOTING_INSTRUCTIONS,
     '',
     wrapDataBlock({ extractHunkScript, diff_file: diffFile, context_lines: contextLines, findings: findings.map((f) => ({ findingId: findingKey(f), file: f.file, line: f.line })) }),
     '',
@@ -562,13 +606,16 @@ export default async function ({ agent, parallel, pipeline, log, args }) {
   for (let i = 0; i < MAX_ROUNDS && findings.length > 0; i += 1) {
     const { toVerify, trusted } = partitionFindingsForVerification(findings);
 
-    // 既にこの実行内で懐疑者検証を済ませた(file,line)が、再度high+PLAUSIBLEとして
-    // 再出現した場合（前回の修正が効いていない・再発した等）、懐疑者へ二重に
-    // fan-outしてトークンを二重支出しない。ただし黙って握りつぶすと「未解決の
-    // 高severity指摘がconverged: trueとして消える」事故になるため、再検証はスキップ
-    // しつつneeds_human_judgmentとして残指摘に残す（自動での再修正は試みない）。
+    // 既にこの実行内で懐疑者検証を済ませた(file,line,claim正規化prefix)が、再度
+    // high+PLAUSIBLEとして再出現した場合（前回の修正が効いていない・再発した等）、
+    // 懐疑者へ二重にfan-outしてトークンを二重支出しない。ただし黙って握りつぶすと
+    // 「未解決の高severity指摘がconverged: trueとして消える」事故になるため、再検証は
+    // スキップしつつneeds_human_judgmentとして残指摘に残す（自動での再修正は試みない）。
+    // dedupキーは roundDedupKey（(file,line)のみでなくclaim正規化prefixも含む妥協案）を
+    // 用いる。同一(file,line)でも周回間でclaimが明確に異なる新規指摘は、この妥協案により
+    // 誤って握りつぶされず改めて懐疑者検証を受けられる。
     const freshToVerify = dedupFindings(toVerify, seenKeys);
-    const alreadyVerified = toVerify.filter((f) => seenKeys.has(findingKey(f)));
+    const alreadyVerified = toVerify.filter((f) => seenKeys.has(roundDedupKey(f)));
     if (alreadyVerified.length > 0 && typeof log === 'function') {
       log(`self-review-loop: ${alreadyVerified.length} finding(s) re-appeared after prior verification in this run; surfacing as needs_human_judgment without re-verifying.`);
     }
@@ -578,7 +625,7 @@ export default async function ({ agent, parallel, pipeline, log, args }) {
       diffInfo,
       { agent, parallel, pipeline, log, extractHunkScript, round: i + 1 },
     );
-    freshToVerify.forEach((f) => seenKeys.add(findingKey(f)));
+    freshToVerify.forEach((f) => seenKeys.add(roundDedupKey(f)));
     needsHumanJudgmentAll.push(...needsHumanJudgment, ...alreadyVerified);
 
     const toFix = dedupExactFindings([...trusted, ...confirmed]);
@@ -630,7 +677,10 @@ export default async function ({ agent, parallel, pipeline, log, args }) {
   // refuted判定（偽陽性として棄却）はneedsHumanJudgmentAllに含めないため、
   // 残指摘には現れない（多数決で「妥当な指摘ではない」と判定された以上、
   // 未解決の問題としては扱わない）。
-  const residualFindings = dedupByKey([...findings, ...needsHumanJudgmentAll]);
+  // dedupには dedupByKey（(file,line)のみ）ではなく dedupByRoundKey（claim正規化prefix込み）
+  // を用いる。同一(file,line)の異なるclaimがここで片方だけ握りつぶされないようにするため
+  // （CodeRabbit指摘の回帰修正）。
+  const residualFindings = dedupByRoundKey([...findings, ...needsHumanJudgmentAll]);
   const converged = !qcFailed && residualFindings.length === 0;
 
   await cleanupDiffFileViaAgent(agent, diffInfo.diff_file, log);

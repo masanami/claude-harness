@@ -18,12 +18,17 @@ import {
   dedupFindings,
   dedupByKey,
   dedupExactFindings,
+  normalizeClaimPrefix,
+  roundDedupKey,
+  dedupByRoundKey,
   mergeReviewFindings,
   partitionFindingsForVerification,
   decideVerifyVerdict,
   buildReviewPrompt,
   buildVerifyPrompt,
   buildFixPrompt,
+  buildGitOpsCollectPrompt,
+  buildGitOpsHunkPrompt,
 } from '../../skills/self-review/scripts/self-review-loop.js';
 import workflow from '../../skills/self-review/scripts/self-review-loop.js';
 
@@ -72,13 +77,15 @@ console.log('=== findingKey / dedupFindings / dedupByKey / dedupExactFindings ==
 {
   assertEq('findingKey: file:line 形式', 'src/a.js:10', findingKey({ file: 'src/a.js', line: 10 }));
 
-  const seen = new Set(['src/a.js:10']);
+  // dedupFindings は roundDedupKey（(file,line)+claim正規化prefix）でdedupする
+  // （CodeRabbit指摘の回帰修正。findingKeyのみでは周回間のclaim揺れを考慮できないため）。
   const findings = [
     { file: 'src/a.js', line: 10, severity: 'high', claim: 'x', evidence: 'y', verdict: 'PLAUSIBLE' },
     { file: 'src/b.js', line: 5, severity: 'high', claim: 'x2', evidence: 'y2', verdict: 'PLAUSIBLE' },
   ];
+  const seen = new Set([roundDedupKey(findings[0])]);
   const result = dedupFindings(findings, seen);
-  assertEq('dedupFindings: seenKeysにある(file,line)は除外される', 1, result.length);
+  assertEq('dedupFindings: seenKeysにあるroundDedupKeyの指摘は除外される', 1, result.length);
   assertEq('dedupFindings: 除外されなかったのはsrc/b.js', 'src/b.js', result[0].file);
 
   const dup = [
@@ -102,6 +109,46 @@ console.log('=== findingKey / dedupFindings / dedupByKey / dedupExactFindings ==
   assertEq('dedupExactFindings: 同一(file,line)でもclaimが異なれば両方残る(完全一致のみ除去)', 2, exactDeduped.length);
   assertEq('dedupExactFindings: 完全一致(file,line,claim)する3件目は除去される', 'code issue', exactDeduped[0].claim);
   assertEq('dedupExactFindings: 2件目のclaimも残る', 'design issue', exactDeduped[1].claim);
+}
+
+// --- normalizeClaimPrefix / roundDedupKey / dedupByRoundKey ---
+// CodeRabbit指摘の回帰テスト: 周回間dedupは (file,line) の完全一致ではなく、claimの
+// 正規化(小文字化・空白圧縮)先頭64文字を鍵の一部にする妥協案(roundDedupKey)を使う。
+console.log('=== normalizeClaimPrefix / roundDedupKey / dedupByRoundKey ===');
+{
+  assertEq(
+    'normalizeClaimPrefix: 大文字小文字・空白揺れは同一クレームとして正規化される',
+    normalizeClaimPrefix('  Null   Check   Missing  '),
+    normalizeClaimPrefix('null check missing'),
+  );
+
+  const longClaim = 'x'.repeat(100);
+  assertEq('normalizeClaimPrefix: 64文字超のclaimは先頭64文字に切り詰められる', 64, normalizeClaimPrefix(longClaim).length);
+  assertEq('normalizeClaimPrefix: claimがnull/undefinedでも空文字扱いで例外にならない', '', normalizeClaimPrefix(undefined));
+
+  const sameLocSameClaim = { file: 'a.js', line: 10, claim: 'Null check missing' };
+  const sameLocSameClaimReworded = { file: 'a.js', line: 10, claim: '  null   check missing  ' };
+  const sameLocDiffClaim = { file: 'a.js', line: 10, claim: 'Completely different issue about caching' };
+  assertEq(
+    'roundDedupKey: (file,line)が同じで正規化後のclaimも同じなら同一キー(言い回し揺れは同一視)',
+    roundDedupKey(sameLocSameClaim),
+    roundDedupKey(sameLocSameClaimReworded),
+  );
+  assertEq(
+    'roundDedupKey: (file,line)が同じでも正規化後のclaimが明確に異なれば別キー',
+    true,
+    roundDedupKey(sameLocSameClaim) !== roundDedupKey(sameLocDiffClaim),
+  );
+
+  const roundFindings = [
+    { file: 'a.js', line: 10, severity: 'high', claim: 'Null check missing', evidence: 'e1', verdict: 'CONFIRMED' },
+    { file: 'a.js', line: 10, severity: 'high', claim: '  null   check missing  ', evidence: 'e1-reworded', verdict: 'CONFIRMED' },
+    { file: 'a.js', line: 10, severity: 'high', claim: 'Completely different issue about caching', evidence: 'e2', verdict: 'CONFIRMED' },
+  ];
+  const roundDeduped = dedupByRoundKey(roundFindings);
+  assertEq('dedupByRoundKey: 言い回し揺れのみの重複は除去され、異なるclaimは残る(2件)', 2, roundDeduped.length);
+  assertEq('dedupByRoundKey: 最初の出現(evidence: e1)が残る', 'e1', roundDeduped[0].evidence);
+  assertEq('dedupByRoundKey: 異なるclaimのfindingも残る', 'Completely different issue about caching', roundDeduped[1].claim);
 }
 
 // --- mergeReviewFindings ---
@@ -201,6 +248,48 @@ console.log('=== prompt injection: boundary marker forgery ===');
     'buildReviewPrompt: 終端マーカー直後は本物の終端（末尾のJSON Schema指示文）である',
     true,
     reviewPrompt.slice(reviewPrompt.indexOf(DATA_END_MARKER) + DATA_END_MARKER.length).startsWith('\n\n指定された JSON Schema'),
+  );
+}
+
+// --- git-ops プロンプトのシェルクォート安全性規律（CodeRabbit指摘の回帰テスト） ---
+// buildGitOpsCollectPrompt/buildGitOpsHunkPrompt は、base・file等の非信頼な文字列値を
+// git-opsエージェントがシェルコマンドへ埋め込む際、必ずシングルクォート安全埋め込み手順
+// （値中の ' を '\'' に置換してから全体を ' で囲む）に従うよう明示的に指示していなければならない。
+console.log('=== git-ops prompts: shell single-quote escaping discipline is instructed ===');
+{
+  const collectPrompt = buildGitOpsCollectPrompt('/plugin/scripts/collect-review-diff.sh', 'main', null);
+  assertEq(
+    'buildGitOpsCollectPrompt: シングルクォート安全埋め込み手順への言及がある',
+    true,
+    collectPrompt.includes('シングルクォート'),
+  );
+  assertEq(
+    "buildGitOpsCollectPrompt: '\\'' エスケープパターンの明記がある",
+    true,
+    collectPrompt.includes("'\\''"),
+  );
+  assertEq(
+    'buildGitOpsCollectPrompt: ダブルクォートでの埋め込み・無加工連結の禁止が明記されている',
+    true,
+    collectPrompt.includes('ダブルクォートでの埋め込み') && collectPrompt.includes('そのまま連結'),
+  );
+
+  const hunkFindings = [{ file: 'src/a.js', line: 10 }];
+  const hunkPrompt = buildGitOpsHunkPrompt('/plugin/scripts/extract-hunk.sh', '/tmp/diff', hunkFindings, 3);
+  assertEq(
+    'buildGitOpsHunkPrompt: シングルクォート安全埋め込み手順への言及がある',
+    true,
+    hunkPrompt.includes('シングルクォート'),
+  );
+  assertEq(
+    "buildGitOpsHunkPrompt: '\\'' エスケープパターンの明記がある",
+    true,
+    hunkPrompt.includes("'\\''"),
+  );
+  assertEq(
+    'buildGitOpsHunkPrompt: ダブルクォートでの埋め込み・無加工連結の禁止が明記されている',
+    true,
+    hunkPrompt.includes('ダブルクォートでの埋め込み') && hunkPrompt.includes('そのまま連結'),
   );
 }
 
@@ -483,6 +572,72 @@ console.log('=== default export: re-appearing high+PLAUSIBLE finding after prior
   assertEq('residualFindingsに1件残る(黙って消えない)', 1, result.residualFindings.length);
   assertEq('残った指摘はsrc/stubborn.js', 'src/stubborn.js', result.residualFindings[0]?.file);
   assertEq('Fixは1回のみ実行される(2回目以降は再検証されないためtoFixに入らずFix自体が呼ばれない)', 1, fixCallCount);
+}
+
+// --- default export: 同一(file,line)でも周回間でclaimが明確に異なる新規指摘は、
+//     roundDedupKey（(file,line)+claim正規化prefix）の妥協案により誤って握りつぶされず
+//     改めて懐疑者検証(finding-verifier 3体fan-out)を受けること（CodeRabbit指摘の回帰テスト。
+//     旧実装はfindingKey((file,line)のみ)でseenKeysを構築していたため、1巡目で検証済みの
+//     (file,line)に2巡目で別claimの新規指摘が出ても、懐疑者検証をスキップしてそのまま
+//     needs_human_judgmentへ回してしまっていた） ---
+console.log('=== default export: a different claim re-appearing at the same (file,line) across rounds is still verified (round-dedup key regression) ===');
+{
+  let verifyCallCount = 0;
+  let fixCallCount = 0;
+  let diffCollectCallCount = 0;
+  let confirmationReviewCallCount = 0;
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        diffCollectCallCount += 1;
+        return { base: 'main', merge_base: `sha-${diffCollectCallCount}`, commits: [], files: ['src/dup.js'], diff_file: `mock-diff-dup-${diffCollectCallCount}` };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/dup.js:10', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') {
+      if (opts.label.startsWith('review:code:full')) {
+        return [{ file: 'src/dup.js', line: 10, severity: 'high', claim: 'Claim A: null pointer dereference in handler', evidence: 'ev-a', verdict: 'PLAUSIBLE' }];
+      }
+      if (opts.label.startsWith('review:code:confirmation')) {
+        confirmationReviewCallCount += 1;
+        // 1回目のconfirmationレビューでのみ、同じ(file,line)に対する別claim(B)を新規指摘として返す。
+        // 2回目以降は解消済みとして空配列を返す(無限ループ回避)。
+        if (confirmationReviewCallCount === 1) {
+          return [{ file: 'src/dup.js', line: 10, severity: 'high', claim: 'Claim B: unrelated resource leak on close path', evidence: 'ev-b', verdict: 'PLAUSIBLE' }];
+        }
+        return [];
+      }
+      return [];
+    }
+    if (opts.phase === 'Verify') {
+      verifyCallCount += 1;
+      const findingId = opts.label.split(':').slice(1, -1).join(':');
+      return { verdicts: [{ findingId, verdict: 'confirmed', reason: 'reproduced' }] };
+    }
+    if (opts.phase === 'Fix') {
+      fixCallCount += 1;
+      return { appliedFixes: [{ file: 'src/dup.js', line: 10, summary: `fixed round ${fixCallCount}` }], qc: { result: 'pass', gates: {} } };
+    }
+    throw new Error(`unexpected phase/label: ${opts.phase} / ${opts.label}`);
+  }
+
+  const noopLog = () => {};
+  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+
+  assertEq(
+    'finding-verifierはclaim Aで3回・claim Bで3回、計6回呼ばれる(claim Bが黙って握りつぶされず再検証される)',
+    6,
+    verifyCallCount,
+  );
+  assertEq('Fixはclaim A・claim Bそれぞれに対して計2回実行される', 2, fixCallCount);
+  assertEq('converged: true (claim A・claim Bともに検証・修正され最終的に解消)', true, result.converged);
+  assertEq('residualFindingsは空(どちらも懐疑者検証を経て修正済み)', 0, result.residualFindings.length);
 }
 
 // --- default export: code-reviewerとdesign-reviewerが同一(file,line)を別の理由で

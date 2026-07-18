@@ -129,9 +129,24 @@ else
   echo "  ok - intent-to-add前はuntrackedファイルがfilesに含まれないこと"
 fi
 
-echo "=== test: stage_untracked_as_intent_to_add + collect_files — untracked新規ファイルが検出されるようになる（回帰テスト） ==="
+echo "=== test: stage_untracked_as_intent_to_add — 実の .git/index には副作用を残さない（回帰テスト。CodeRabbit指摘: 従来は実indexへ直接 git add --intent-to-add -A していた） ==="
+REAL_INDEX_STATUS_BEFORE="$(git status --porcelain -- untracked-new-file.txt)"
+REAL_STAGED_BEFORE="$(git diff --cached --name-only)"
+assert_eq "呼び出し前は untracked-new-file.txt が ?? (untracked)のまま" "?? untracked-new-file.txt" "$REAL_INDEX_STATUS_BEFORE"
+assert_eq "呼び出し前は実indexにstagedなファイルが無い" "" "$REAL_STAGED_BEFORE"
+
 stage_untracked_as_intent_to_add
-collect_files "$MAIN_HEAD_SHA"
+STAGE_STATUS=$?
+assert_eq "stage_untracked_as_intent_to_addは成功する(戻り値0)" "0" "$STAGE_STATUS"
+assert_eq "TMP_INDEX_FILEが生成される" "0" "$([ -f "$TMP_INDEX_FILE" ] && echo 0 || echo 1)"
+
+REAL_INDEX_STATUS_AFTER="$(git status --porcelain -- untracked-new-file.txt)"
+REAL_STAGED_AFTER="$(git diff --cached --name-only)"
+assert_eq "呼び出し後も実indexでは untracked-new-file.txt が ?? のまま(staged=Aに変化しない)" "?? untracked-new-file.txt" "$REAL_INDEX_STATUS_AFTER"
+assert_eq "呼び出し後も実indexにstagedなファイルが増えない" "" "$REAL_STAGED_AFTER"
+
+echo "=== test: collect_files(TMP_INDEX_FILE指定) — untracked新規ファイルが検出されるようになる（回帰テスト。実indexは使わず一時indexを介する） ==="
+collect_files "$MAIN_HEAD_SHA" "$TMP_INDEX_FILE"
 assert_contains_json_array "intent-to-add後はuntracked-new-file.txtがfilesに含まれる" "$FILES_JSON" "untracked-new-file.txt"
 
 echo "=== test: stage_untracked_as_intent_to_add — git add失敗時は戻り値1を伝播する（回帰テスト。CodeRabbit指摘: 従来は握りつぶして常にreturn 0していた） ==="
@@ -144,8 +159,8 @@ STAGE_FAIL_STATUS=$?
 assert_eq "gitリポジトリ外ではgit add --intent-to-add -Aが失敗し戻り値1が伝播する" "1" "$STAGE_FAIL_STATUS"
 rm -rf "$NON_REPO_DIR"
 
-echo "=== test: write_diff_file — 未コミットの作業ツリー変更 + untracked新規ファイルの両方がdiff本文に含まれる（回帰テスト） ==="
-write_diff_file "$MAIN_HEAD_SHA"
+echo "=== test: write_diff_file(TMP_INDEX_FILE指定) — 未コミットの作業ツリー変更 + untracked新規ファイルの両方がdiff本文に含まれる（回帰テスト） ==="
+write_diff_file "$MAIN_HEAD_SHA" "$TMP_INDEX_FILE"
 assert_eq "diff_fileが生成される" "0" "$([ -f "$DIFF_FILE" ] && echo 0 || echo 1)"
 DIFF_CONTENT="$(cat "$DIFF_FILE")"
 if [[ "$DIFF_CONTENT" == *"line3 uncommitted"* ]]; then
@@ -165,6 +180,7 @@ else
   echo "  NG - untracked新規ファイルの内容がdiffに含まれる（回帰テスト本体）"
 fi
 rm -f "$DIFF_FILE"
+rm -f "$TMP_INDEX_FILE"
 
 echo "=== test: CLIレベル（main()） — BASE明示指定でghを呼ばずJSON1個を出力する ==="
 CLI_OUTPUT=$("$TARGET_SCRIPT" "main")

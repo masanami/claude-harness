@@ -128,12 +128,38 @@ compute_merge_base() {
 
 # 未追跡ファイルをintent-to-addでインデックスに登録する（内容は空のまま）。
 # これにより後続の `git diff` が新規ファイルを追加として検出できるようになる。
+#
+# 実の `.git/index`（呼び出し元＝/self-review 実行環境のstaging状態）を汚さないため、
+# 一時ファイルにコピーした index 上で `git add --intent-to-add -A` を実行する
+# （CodeRabbit指摘の回帰修正。旧実装は実indexへ直接書き込んでいた）。
+# 生成した一時indexのパスは呼び出し元がRESOLVED_BASE/MERGE_BASE等と同じパターンで
+# 参照できるよう、グローバル変数 TMP_INDEX_FILE に格納する。後続の collect_files/
+# write_diff_file にも同じ一時indexを渡す必要がある（intent-to-addで登録した
+# 未追跡ファイルをそれらの `git diff` が検出するため）。
 # git add 自体が失敗した場合（リポジトリ破損等）は呼び出し元に終了ステータスを伝播する。
 stage_untracked_as_intent_to_add() {
-  if ! git add --intent-to-add -A 2>/dev/null; then
-    echo "Error: git add --intent-to-add -A failed" >&2
+  local git_dir
+  if ! git_dir=$(git rev-parse --git-dir 2>/dev/null); then
+    echo "Error: not a git repository (git rev-parse --git-dir failed)" >&2
     return 1
   fi
+
+  local tmp_index
+  tmp_index=$(mktemp "${TMPDIR:-/tmp}/collect-review-diff-index.XXXXXX")
+
+  # 実indexが存在すればコピーして既存のtracked状態を引き継ぐ。存在しない場合
+  # （コミット前の空リポジトリ等）は何もコピーせず、git addが新規に作る挙動に任せる。
+  if [ -f "${git_dir}/index" ]; then
+    cp "${git_dir}/index" "$tmp_index"
+  fi
+
+  if ! GIT_INDEX_FILE="$tmp_index" git add --intent-to-add -A 2>/dev/null; then
+    echo "Error: git add --intent-to-add -A failed" >&2
+    rm -f "$tmp_index"
+    return 1
+  fi
+
+  TMP_INDEX_FILE="$tmp_index"
   return 0
 }
 
@@ -153,12 +179,18 @@ collect_commits() {
 
 # 変更ファイル一覧（作業ツリー込み。merge_base基準）をJSON配列に変換する。
 # git を呼ぶため純粋関数ではない。
-# 引数: merge_base
+# 引数: merge_base, index_file（省略可。stage_untracked_as_intent_to_add が生成した
+#       一時indexのパス。渡された場合はそのindexを GIT_INDEX_FILE として使う）
 # 結果: FILES_JSON
 collect_files() {
   local merge_base="$1"
+  local index_file="${2:-}"
   local lines
-  lines=$(git diff --name-only "$merge_base" 2>/dev/null)
+  if [ -n "$index_file" ]; then
+    lines=$(GIT_INDEX_FILE="$index_file" git diff --name-only "$merge_base" 2>/dev/null)
+  else
+    lines=$(git diff --name-only "$merge_base" 2>/dev/null)
+  fi
   if [ -z "$lines" ]; then
     FILES_JSON="[]"
     return 0
@@ -167,16 +199,25 @@ collect_files() {
 }
 
 # 作業ツリー込みdiff本文を一時ファイルに書き出す。git を呼ぶため純粋関数ではない。
-# 引数: merge_base
+# 引数: merge_base, index_file（省略可。collect_files と同様の一時index指定）
 # 結果: DIFF_FILE（書き出した一時ファイルの絶対パス）
 write_diff_file() {
   local merge_base="$1"
+  local index_file="${2:-}"
   local out
   out=$(mktemp "${TMPDIR:-/tmp}/collect-review-diff.XXXXXX")
-  if ! git diff "$merge_base" >"$out" 2>/dev/null; then
-    echo "Error: git diff failed for merge-base '${merge_base}'" >&2
-    rm -f "$out"
-    return 1
+  if [ -n "$index_file" ]; then
+    if ! GIT_INDEX_FILE="$index_file" git diff "$merge_base" >"$out" 2>/dev/null; then
+      echo "Error: git diff failed for merge-base '${merge_base}'" >&2
+      rm -f "$out"
+      return 1
+    fi
+  else
+    if ! git diff "$merge_base" >"$out" 2>/dev/null; then
+      echo "Error: git diff failed for merge-base '${merge_base}'" >&2
+      rm -f "$out"
+      return 1
+    fi
   fi
   DIFF_FILE="$out"
   return 0
@@ -213,14 +254,17 @@ main() {
   if ! stage_untracked_as_intent_to_add; then
     exit 1
   fi
+  # 一時indexは全終了経路（成功・失敗いずれも）で確実に削除する。
+  # TMP_INDEX_FILE はグローバル変数のため、trap登録以降に上書きされない限りそのまま参照できる。
+  trap 'rm -f "$TMP_INDEX_FILE"' EXIT
 
   collect_commits "$base_ref"
   local commits_json="$COMMITS_JSON"
 
-  collect_files "$merge_base"
+  collect_files "$merge_base" "$TMP_INDEX_FILE"
   local files_json="$FILES_JSON"
 
-  if ! write_diff_file "$merge_base"; then
+  if ! write_diff_file "$merge_base" "$TMP_INDEX_FILE"; then
     exit 1
   fi
   local diff_file="$DIFF_FILE"

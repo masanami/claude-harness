@@ -48,7 +48,9 @@ main() {
   echo ""
 
   echo "=== runtime-restriction guard (no Node builtin imports) ==="
-  if grep -nE 'child_process|node:fs|require\(|^import ' "$WORKFLOW_JS"; then
+  # 空白付きimport（行頭以外のインデント含む）・require前の空白・dynamic import(...)も検出する
+  # （CodeRabbit指摘の回帰修正。旧正規表現は ' import ...' / 'require (...)' / 'import(...)' を見逃していた）。
+  if grep -nE 'child_process|node:fs|require[[:space:]]*\(|(^|[[:space:]])import[[:space:]]*(\(|[[:space:]])' "$WORKFLOW_JS"; then
     echo "NG - self-review-loop.js must not reference Node built-in modules or use import/require (Workflow runtime has no fs/child_process/module access)"
     exit 1
   fi
