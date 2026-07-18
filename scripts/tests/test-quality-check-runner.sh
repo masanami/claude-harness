@@ -197,6 +197,15 @@ assert_eq "--lint に値が無い場合はexit 1" "1" "$?"
 "$TARGET_SCRIPT" --unknown-flag >/dev/null 2>&1
 assert_eq "未知のフラグはexit 1" "1" "$?"
 
+"$TARGET_SCRIPT" --lint "exit 0" --lint "exit 0" >/dev/null 2>&1
+assert_eq "--lint を2回指定した場合はexit 1（無言の上書きを許さない）" "1" "$?"
+
+"$TARGET_SCRIPT" --typecheck "exit 0" --typecheck "exit 0" >/dev/null 2>&1
+assert_eq "--typecheck を2回指定した場合はexit 1" "1" "$?"
+
+"$TARGET_SCRIPT" --test "exit 0" --test "exit 0" >/dev/null 2>&1
+assert_eq "--test を2回指定した場合はexit 1" "1" "$?"
+
 echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"

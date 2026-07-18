@@ -12,11 +12,13 @@
 # 使い方:
 #   quality-check-runner.sh [--auto-fix CMD]... [--lint CMD] [--typecheck CMD] [--test CMD]
 #     --auto-fix CMD   自動修正コマンド。0回以上指定可。指定順に1回ずつ実行する
-#     --lint CMD       リント（チェック用）コマンド
-#     --typecheck CMD  型チェックコマンド
-#     --test CMD       テストコマンド
+#     --lint CMD       リント（チェック用）コマンド。1回のみ指定可
+#     --typecheck CMD  型チェックコマンド。1回のみ指定可
+#     --test CMD       テストコマンド。1回のみ指定可
 #   lint/typecheck/test は該当コマンドを特定できなかった場合、フラグごと省略する
 #   （その場合そのゲートは status: "skip" として扱われ、失敗とはしない）。
+#   lint/typecheck/test を2回以上指定した場合はエラー（exit 1）とする
+#   （後勝ちで無言に上書きすると、呼び出し側の指定ミスに気付けないため）。
 #
 # 出力（stdout にJSON1個。skills/quality-check/SKILL.md の機械可読JSON契約と互換）:
 #   {
@@ -251,9 +253,9 @@ print_usage() {
 Usage: ${prog} [--auto-fix CMD]... [--lint CMD] [--typecheck CMD] [--test CMD]
 
   --auto-fix CMD   自動修正コマンド（0回以上指定可。検出順に実行）
-  --lint CMD       リントコマンド（省略時は lint ゲートを skip 扱い）
-  --typecheck CMD  型チェックコマンド（省略時は typecheck ゲートを skip 扱い）
-  --test CMD       テストコマンド（省略時は test ゲートを skip 扱い）
+  --lint CMD       リントコマンド（省略時は lint ゲートを skip 扱い。1回のみ指定可）
+  --typecheck CMD  型チェックコマンド（省略時は typecheck ゲートを skip 扱い。1回のみ指定可）
+  --test CMD       テストコマンド（省略時は test ゲートを skip 扱い。1回のみ指定可）
 
 コマンドは呼び出し側（LLM）がプロジェクト設定（CLAUDE.md / package.json 等）から
 特定した上で渡す。このスクリプトはコマンドの意味を解釈せず、実行してexit codeで
@@ -282,6 +284,11 @@ main() {
           print_usage
           exit 1
         fi
+        if [ -n "$lint_cmd" ]; then
+          echo "Error: --lint specified more than once" >&2
+          print_usage
+          exit 1
+        fi
         lint_cmd="$2"
         shift 2
         ;;
@@ -291,12 +298,22 @@ main() {
           print_usage
           exit 1
         fi
+        if [ -n "$typecheck_cmd" ]; then
+          echo "Error: --typecheck specified more than once" >&2
+          print_usage
+          exit 1
+        fi
         typecheck_cmd="$2"
         shift 2
         ;;
       --test)
         if [ "$#" -lt 2 ]; then
           echo "Error: --test requires a value" >&2
+          print_usage
+          exit 1
+        fi
+        if [ -n "$test_cmd" ]; then
+          echo "Error: --test specified more than once" >&2
           print_usage
           exit 1
         fi
