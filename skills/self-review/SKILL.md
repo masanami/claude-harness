@@ -35,15 +35,15 @@ Workflow ツールを、スクリプトの絶対パスと `args` を指定して
 }
 ```
 
-> **`scriptPath` の解決について（重要）**: `scriptPath` はプレースホルダ文字列 `${CLAUDE_PLUGIN_ROOT}` をそのまま渡しても展開されない（環境変数展開が行われるのは Bash ツール上のみ）。Workflow ツールを呼ぶ**前**に、Bash で `echo "$CLAUDE_PLUGIN_ROOT"` 等を実行してプラグインルートの絶対パスを取得し、その絶対パスと `/skills/self-review/scripts/self-review-loop.js` を連結した文字列を `scriptPath` に渡すこと。`args.collectDiffScript` / `args.extractHunkScript` も同じ絶対パス解決が必要で、同じ手順で取得した `CLAUDE_PLUGIN_ROOT` の絶対パスにそれぞれ `/scripts/collect-review-diff.sh` / `/scripts/extract-hunk.sh` を連結した文字列を渡すこと。
+> **`scriptPath` の解決について（重要）**: `<CLAUDE_PLUGIN_ROOTの絶対パス>` は本ドキュメント内の表記上のプレースホルダであり、環境変数ではない（`CLAUDE_PLUGIN_ROOT` はメインセッションの Bash でも未設定であり、`echo "$CLAUDE_PLUGIN_ROOT"` 等では取得できない）。実際の絶対パスは、本スキル起動時にコンテキストへ与えられる「Base directory for this skill」（`<プラグインルート>/skills/self-review`）から**親ディレクトリを2階層**辿ることで得られる（`<Base directory for this skill>/../..` がプラグインルート）。この絶対パスと `/skills/self-review/scripts/self-review-loop.js` を連結した文字列を `scriptPath` に渡すこと。`args.collectDiffScript` / `args.extractHunkScript` も同じ絶対パス解決が必要で、同じプラグインルートの絶対パスにそれぞれ `/scripts/collect-review-diff.sh` / `/scripts/extract-hunk.sh` を連結した文字列を渡すこと。
 
 `args` の各フィールドの型と由来:
 
 | フィールド | 型 | 由来 |
 |---|---|---|
 | `base` | `string \| null`（省略可） | 差分の基準ブランチ。省略時は `scripts/collect-review-diff.sh` 内部で `gh pr view --json baseRefName` → `gh repo view --json defaultBranchRef` の順にフォールバック解決される（`main` 決め打ちにしない）。呼び出し元が base を把握している場合（例: `/pr-merge` や `para-impl` から base が既知の場合）は明示的に渡してよい |
-| `collectDiffScript` | `string`（必須） | `scripts/collect-review-diff.sh` の絶対パス。`${CLAUDE_PLUGIN_ROOT}` を Bash で解決した絶対パス＋ `/scripts/collect-review-diff.sh`。未指定だと Workflow スクリプトが早期に `throw` する |
-| `extractHunkScript` | `string`（必須） | `scripts/extract-hunk.sh` の絶対パス。`${CLAUDE_PLUGIN_ROOT}` を Bash で解決した絶対パス＋ `/scripts/extract-hunk.sh`。未指定だと Workflow スクリプトが早期に `throw` する |
+| `collectDiffScript` | `string`（必須） | `scripts/collect-review-diff.sh` の絶対パス。上記手順で得たプラグインルートの絶対パス＋ `/scripts/collect-review-diff.sh`。未指定だと Workflow スクリプトが早期に `throw` する |
+| `extractHunkScript` | `string`（必須） | `scripts/extract-hunk.sh` の絶対パス。上記手順で得たプラグインルートの絶対パス＋ `/scripts/extract-hunk.sh`。未指定だと Workflow スクリプトが早期に `throw` する |
 
 > **オプトイン要件について**: Dynamic Workflows はオプトイン機能であり、SKILL の指示文が明示的に Workflow を呼び出す形にすることでオプトイン要件を満たす。上記の「Workflow の起動」がそのオプトインに当たる。
 
