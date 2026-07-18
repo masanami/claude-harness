@@ -75,39 +75,9 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 ### Phase 2: コンフリクト解消（必要な場合）
 
-`block_reasons` に `conflicting` が含まれる場合（`mergeable` が `CONFLICTING`）：
+`block_reasons` に `conflicting` を含む場合のみ、`${CLAUDE_PLUGIN_ROOT}/skills/pr-merge/references/conflict-resolution.md` を Read してその手順に従う（相対パス `skills/pr-merge/references/...` では導入先プロジェクトから解決できないため、必ずプラグインルート起点で参照する）。
 
-1. **PRのブランチをローカルに取得**
-   ```bash
-   git fetch origin
-   gh pr checkout "$PR_NUM"
-   ```
-
-2. **PR の base（Phase 0-1 で取得済みの `$BASE`）の最新を取り込んでコンフリクト解消**
-
-   統合ブランチ方式では PR の base が `main` とは限らないため、**Phase 0-1 で取得した `$BASE`** を対象に rebase する（`main` 固定にせず、再取得もしない）:
-   ```bash
-   git fetch origin "$BASE"
-   git rebase "origin/$BASE"
-   ```
-   - コンフリクトが発生したファイルを確認
-   - 各ファイルのコンフリクトを手動で解消
-   - 解消後: `git add <ファイル> && git rebase --continue`
-
-3. **解消結果をプッシュ**
-   ```bash
-   git push --force-with-lease
-   ```
-
-4. **CI再確認・preflightの再実行**
-
-   rebase + push で PR の状態（CI・`mergeable`・レビュー）が変わるため、**Phase 0-1 の判定結果はここで無効になる**。CI完了を待った上で preflight を再実行し、値を取り直す（`$GATE`/`$BASE` はブランチ構成由来のため不変）:
-   ```bash
-   gh pr checks "$PR_NUM" --watch
-   PREFLIGHT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh" "$PR_NUM")
-   BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")
-   ```
-   Phase 4 のマージ実行は、この再実行後の値で判断する（Phase 2 に入る前の古い値を使い回さない）。
+> **規律フック**: rebase + push 後は preflight の再実行が必須（Phase 0-1 の判定結果は無効になる）。Phase 4 のマージ判断は、この再実行後の値で行うこと（古い値を使い回さない）。
 
 ### Phase 3: コードレビュー
 
