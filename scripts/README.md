@@ -1,6 +1,6 @@
 # scripts/ 共通規約
 
-`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。
+`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が LLM 判断を要さない決定的な git/テキスト処理をループ内で呼び出す実例（Issue #44）。
 
 ## 前提
 
@@ -26,6 +26,7 @@
 - テストは `scripts/tests/` 配下に bash スクリプトとして置き、`bash scripts/tests/xxx.sh` で実行できるようにする。失敗時は非0 exit で終了し、要約を出力する
 - スクリプトを `source` するテストファイルは、スクリプト側が定義するグローバル変数（例: `SCRIPT_DIR`）と名前が衝突しないよう注意する。衝突すると `source` 時にテスト側の変数が上書きされる。スクリプト側は極力スクリプト固有の変数名（例: `PR_MERGE_PREFLIGHT_DIR`）を使う
 - 外部呼び出し関数をテストからスタブ関数で上書きする場合、`command_substitution="$(fn)"` 経由の呼び出しはサブシェルで実行されるため、スタブ内でのプレーンな変数インクリメントは呼び出し元へ伝搬しない（戻り値/stdout は伝搬する）。呼び出し回数などをテストで検証したい場合は一時ファイル等サブシェルを跨げる手段を使う
+- git操作そのものを検証する必要があるスクリプト（`collect-review-diff.sh` 等）は、gh呼び出しのみ引数明示でスキップし、git操作は `mktemp -d` で作った一時gitリポジトリ上で実際に実行して検証する（モックでは merge-base 算出やintent-to-addの実効果を検証できないため）。テスト終了時は `trap cleanup EXIT` で一時ディレクトリを確実に削除する
 
 ## 設定ファイル
 
@@ -132,3 +133,33 @@ stdout JSON:
 
 - exit code は「チェックが正常に実行できたか」を表す。`issues_found` は検知の正常動作なので exit 0
 - 真の異常系（jq不在、入力ファイル不存在、不正JSON、必須キー欠如、両方stdin指定等）は stderr にメッセージを出し exit 非0
+
+## collect-review-diff.sh / extract-hunk.sh の出力仕様（正本）
+
+`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が、レビューの各ラウンド開始時にこの2スクリプトを `child_process` 経由で呼び出す（LLM 判断を要さない決定的な git/テキスト処理のため。詳細は同スクリプト冒頭のコメントを参照）。
+
+### `scripts/collect-review-diff.sh [BASE]`
+
+| フィールド | 型 | 意味 |
+|---|---|---|
+| `base` | string | 解決されたBASEブランチ名。引数省略時は `gh pr view --json baseRefName` → `gh repo view --json defaultBranchRef` の順にフォールバック解決される |
+| `merge_base` | string | `git merge-base origin/<base> HEAD`（またはローカル `<base>`）で算出したコミットSHA |
+| `commits` | `[string]` | `merge_base..HEAD` の `git log --oneline` 相当 |
+| `files` | `[string]` | `merge_base` から**作業ツリー込み**で変更されたファイル一覧（未追跡の新規ファイルを含む） |
+| `diff_file` | string | `merge_base` から作業ツリー込みのunified diff本文を書き出した一時ファイルの絶対パス |
+
+挙動の要点:
+
+- レビュー対象diffの基準は「merge-base → 作業ツリー」に統一されている（Issue #44 クリティカル設計決定）。修正エージェントはコミットしない設計のため、毎周本スクリプトを呼び直すことで行番号のズレに追従する
+- 未追跡ファイルは `git diff` のデフォルト挙動では検出されないため、diff採取前に `git add --intent-to-add -A` を実行し、新規ファイルもdiffに含める（内容はワーキングツリー側に残ったまま、追跡対象フラグのみが立つ）
+- gh呼び出しの失敗・jq不在・git操作の失敗は stderr にメッセージを出し exit 非0
+
+### `scripts/extract-hunk.sh <diff_file> <file> <line> [context_lines=3]`
+
+| フィールド | 型 | 意味 |
+|---|---|---|
+| `file` / `line` | string / integer | 入力の値をそのまま返す |
+| `found` | bool | 指定行を含むhunkが見つかったか |
+| `snippet` | string | 該当hunk（＋前後 `context_lines` 行）。`found: false` の場合は最も近いhunk（無ければ空文字） |
+
+gh/gitを呼ばない純粋なテキスト処理のみで完結する（diff_fileの中身だけを見る）。呼び出し元（`finding-verifier`）には Read/Grep を残しており、本スクリプトの一次スライスで不十分な場合は懐疑者自身がファイルを読みに行く設計を前提とする。
