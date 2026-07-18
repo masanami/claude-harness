@@ -14,85 +14,64 @@ effort: low
 
 ## 手順
 
-### 1. プロジェクト設定の確認
+### 1. プロジェクト設定の確認（コマンド特定）
 
-CLAUDE.md および `package.json` 等から、以下のコマンドを特定:
+CLAUDE.md および `package.json` 等から、以下のコマンドを特定する（意味理解が必要なため LLM が行う）:
 
-- **auto-fix 系コマンド**: lint --fix / format / organize-imports など、機械的に直せる範囲を直すコマンド
+- **auto-fix 系コマンド**（0個以上）: lint --fix / format / organize-imports など、機械的に直せる範囲を直すコマンド
 - リントコマンド（チェック用）
 - 型チェックコマンド
 - テストコマンド
 
-> 該当するコマンドが存在しないものは「スキップ」として扱い、失敗とはしない。
+該当するコマンドが存在しないものは省略する（次ステップのスクリプトが「スキップ」として扱い、失敗とはしない）。
 
-### 2. 自動修正の事前適用
+### 2. quality-check-runner.sh の実行
 
-`/quality-check` は「ゲートを通すための手続き」として、検査の前に **機械的に直せる範囲は自動修正する**。
+**自動修正の事前適用 → lint → 型チェック → テストの順序実行**、exit code に基づく `gates.*.status` 判定、機械可読 JSON の構築は、決定的な処理として `scripts/quality-check-runner.sh` に切り出されている。
 
-| 種別 | 役割 |
-|---|---|
-| Lint 自動修正 | unused imports・style 違反・quote 等を機械的に解消 |
-| フォーマット | インデント・改行・空白・並びを統一 |
-| インポート整理 | 未使用・順序違反の整理 |
+> スクリプトはユーザーのプロジェクトではなく**プラグイン配下**にある。必ず `${CLAUDE_PLUGIN_ROOT}/scripts/quality-check-runner.sh` で参照すること（cwd 起点の相対パス `scripts/...` は導入先プロジェクトでは解決できない）。
 
-各コマンドを検出順に1回ずつ実行する。検出できないコマンドはスキップ。**型エラー・テスト失敗は auto-fix の対象外**（次ステップで検査）。
+```bash
+RESULT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/quality-check-runner.sh" \
+  --auto-fix "<auto-fixコマンド1>" \
+  --auto-fix "<auto-fixコマンド2>" \
+  --lint "<リントコマンド>" \
+  --typecheck "<型チェックコマンド>" \
+  --test "<テストコマンド>")
+```
 
-### 3. 品質チェック実行
+- 手順1で特定できなかったコマンドは、対応する `--auto-fix`/`--lint`/`--typecheck`/`--test` フラグごと省略する（0個以上の `--auto-fix` を検出順に指定）
+- スクリプトの exit code: `result` が `pass` なら 0、`fail` なら 1、jq不在等の致命的エラーなら 2
+- 各コマンドの生出力（lintエラー箇所・型エラー内容・失敗テストの詳細）は stderr に転記される。**手順4の失敗分析はこの stderr 出力を使う**
 
-以下の順序で実行:
+出力 JSON の**フィールド定義と件数抽出の仕様の正本は `scripts/README.md`「quality-check-runner.sh の出力仕様」**（ここには複製しない）。
 
-#### Step 1: リント
-プロジェクトのリントコマンドを実行。
+### 3. 結果サマリー
 
-#### Step 2: 型チェック
-プロジェクトの型チェックコマンドを実行（TypeScript等の場合）。
+`$RESULT`（`{result, auto_fix, gates: {lint, typecheck, test}}`）を最後に**機械可読な結果としてそのまま出力**する（呼び出し元のスキル/エージェントが判定に使う）。
 
-#### Step 3: テスト
-プロジェクトのテストコマンドを実行。
-
-### 4. 結果サマリー
-
-**人間向けサマリー**（✅ パス / ❌ 失敗 / ⊘ スキップ）:
+あわせて `gates.*` の内容から**人間向けサマリー**（✅ パス / ❌ 失敗 / ⊘ スキップ）を組み立てて提示する:
 
 ```text
 ## 品質ゲートチェック結果
 
 ### 自動修正 (適用された場合)
-- {種別}: {N件修正}
+- {auto_fix.summary}
 
 | チェック | 結果 | 詳細 |
 |---------|------|------|
-| リント | ✅/❌/⊘ | エラー数、警告数 |
-| 型チェック | ✅/❌/⊘ | エラー数 |
-| テスト | ✅/❌/⊘ | パス/失敗/スキップ |
+| リント | ✅/❌/⊘ | errors, warnings |
+| 型チェック | ✅/❌/⊘ | errors |
+| テスト | ✅/❌/⊘ | passed/failed/skipped |
 
 ### 総合判定: ✅ PASS / ❌ FAIL
 ```
 
-**機械可読な結果**（呼び出し元のスキル/エージェントが判定に使う。最後に必ず出力する）:
+### 4. 失敗時の対応
 
-```json
-{
-  "result": "pass",
-  "auto_fix": { "applied": true, "summary": "lint:fix → format" },
-  "gates": {
-    "lint":      { "status": "pass", "errors": 0, "warnings": 0 },
-    "typecheck": { "status": "pass", "errors": 0 },
-    "test":      { "status": "pass", "passed": 0, "failed": 0, "skipped": 0 }
-  }
-}
-```
-
-- `result`: いずれかのゲートが `fail` なら `fail`、それ以外（全て `pass`/`skip`）は `pass`
-- 各ゲートの `status`: `pass` / `fail` / `skip`（該当コマンドが未設定）
-- **`status` の判定は errors のみで行う**: lint の警告は `warnings` 件数に載せるが `status` には影響しない。lint で `errors == 0` なら `pass`。型チェックとテストも同様に errors / failed が 0 なら `pass`
-- `auto_fix.applied`: auto-fix を実行したかどうか。`summary` に実行したコマンドの概要を記す
-
-### 5. 失敗時の対応
-
-失敗したチェックがある場合:
-1. エラー内容を分析
+`gates.*.status` が `fail` のゲートがある場合:
+1. スクリプト実行時に stderr へ転記された生出力（`--- <gate>: <cmd> ---` 区切り）からエラー内容を分析
 2. 修正方法を提案
-3. ユーザーの指示に応じて修正を実施
+3. ユーザーの指示に応じて修正を実施し、手順2から再実行
 
 > 自律実行コンテキスト（feature-implementer などのサブエージェント呼び出し）では、呼び出し元が機械可読な結果を見て修正ループを管理する。
