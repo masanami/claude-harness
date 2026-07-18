@@ -270,12 +270,13 @@ classify_stack_from_deps() {
 }
 
 # pyproject.toml に [tool.pytest] または [tool.pytest.ini_options] セクションが
-# コメントアウトされずに定義されているかを判定する（行頭一致。"# [tool.pytest]" 等の
-# コメント行を誤検出しないよう ^ アンカーで絞る）
+# コメントアウトされずに定義されているかを判定する（"# [tool.pytest]" 等の
+# コメント行は誤検出しない。TOML はセクション見出しの行頭空白を許すため
+# 先頭の空白は許容する）
 _pyproject_has_pytest_config() {
   local file="$1"
   [ -f "$file" ] || return 1
-  grep -Eq '^\[tool\.pytest(\.ini_options)?\]' "$file" 2>/dev/null
+  grep -Eq '^[[:space:]]*\[tool\.pytest(\.ini_options)?\]' "$file" 2>/dev/null
 }
 
 # ルート直下の設定ファイル存在からdb/test/infraの追加証跡を検出する（純粋関数: 存在フラグ群を受け取る）

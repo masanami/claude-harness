@@ -332,6 +332,16 @@ assert_eq "pytest.ini無しでもcommands.testはpytest" "pytest" "$(jq -r '.tes
 fetch_stack_evidence "$PY_DIR_PYPROJECT_ONLY"
 assert_eq "pytest.ini無し+pyproject.tomlの[tool.pytest]でstack.testにpytestを含む(commands.testとの矛盾回帰)" "true" "$(jq '.test | any(. == "pytest")' <<<"$STACK_JSON")"
 
+echo "=== test: _pyproject_has_pytest_config (行頭空白付きセクション見出しも検出、コメント行は非検出) ==="
+PY_DIR_INDENTED="${TMP_ROOT}/python-project-indented"
+mkdir -p "$PY_DIR_INDENTED"
+printf '[project]\nname = "x"\n\n  [tool.pytest.ini_options]\naddopts = "-ra"\n' > "$PY_DIR_INDENTED/pyproject.toml"
+if _pyproject_has_pytest_config "$PY_DIR_INDENTED/pyproject.toml"; then INDENTED_DETECTED=true; else INDENTED_DETECTED=false; fi
+assert_eq "行頭空白付き [tool.pytest.ini_options] を検出する" "true" "$INDENTED_DETECTED"
+printf '[project]\nname = "x"\n# [tool.pytest]\n' > "$PY_DIR_INDENTED/pyproject.toml"
+if _pyproject_has_pytest_config "$PY_DIR_INDENTED/pyproject.toml"; then COMMENT_DETECTED=true; else COMMENT_DETECTED=false; fi
+assert_eq "コメント行 '# [tool.pytest]' は検出しない" "false" "$COMMENT_DETECTED"
+
 echo "=== test: _pyproject_has_pytest_config ([tool.pytest.ini_options]も正の検出、回帰) ==="
 PY_DIR_INI_OPTIONS="${TMP_ROOT}/python-project-ini-options"
 mkdir -p "$PY_DIR_INI_OPTIONS"
