@@ -61,20 +61,7 @@ effort: medium
 
 コンテナ内の Claude Code に決定論的な安全ゲートとして `permissions.deny` を設定する。`/init-project` と同じ最小限のベース（ブラスト半径が広く取り返しのつかない操作）を含める。
 
-```json
-{
-  "permissions": {
-    "deny": [
-      "Bash(rm -rf:*)",
-      "Bash(rm -r:*)",
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
-      "Bash(git clean -f:*)",
-      "Bash(gh repo delete:*)"
-    ]
-  }
-}
-```
+ベース deny の正本は `${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/base-deny.json`（JSON配列。init-project の `generate-settings.sh` が参照するものと同一ファイル。`${CLAUDE_PLUGIN_ROOT}` は本スキルがプラグインとして配布されるため、ユーザーのプロジェクトrootではなくプラグイン配下へ実行時に展開されるパス）。このファイルを読み込み、`{"permissions": {"deny": <配列の内容>}}` の形に埋め込んで `.devcontainer/claude-settings.json` を生成する（例: `jq -n --argjson deny "$(cat "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/base-deny.json")" '{permissions: {deny: $deny}}'`）。
 
 > プロジェクト固有の破壊的操作は `permissions.deny` に追記してください（例: `Bash(terraform destroy:*)`）。コマンドの文脈的な安全判断は Claude Code ネイティブの auto-mode が担うため、独自のコマンドブロックスクリプトは設定しない。
 
