@@ -70,7 +70,7 @@ effort: medium
 
 検出結果をまとめてユーザーに提示し、以下を確認・補完する。提示テンプレートは `templates/detection-report.md` を Read し、プレースホルダー（`{detected_name}` 等）を検出結果・分析結果で埋めてユーザーに提示する。
 
-> 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/templates/detection-report.md`）。Base directory が得られない場合は Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立てる（Read ツールは環境変数を展開しない）。
+> 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/templates/detection-report.md`）。
 
 > **ポイント**: 自動判定した軸（DB中心性・API外部公開度・テスト戦略の複雑度）はそのまま提示し、ユーザーは判定不能な軸（規模・複雑度、ドメイン、コード規約、データ、運用、規制）と修正点だけを答えればよい形にする。全項目の逐一確認は避ける。固定リストにない**プロジェクト固有のドキュメント**（例: SLO定義、データフロー図、リリース手順）もここで追加できる。
 

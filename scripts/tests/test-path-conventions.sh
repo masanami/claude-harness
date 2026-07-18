@@ -142,10 +142,20 @@ else
       fi
 
       # 同一行に docs/features/... と docs/adr/... 等が併記されるケースを見逃さないよう、
-      # 行単位ではなく行内の docs/*.md 参照ごとに判定する。docs/features/ 以外の参照が
-      # 1つでもあれば違反とする。
-      non_features_match="$(echo "$content" | grep -oE 'docs/[A-Za-z0-9_./-]*\.md' | grep -v '^docs/features/' | head -1)"
-      if [ -z "$non_features_match" ]; then
+      # 行単位ではなく行内の docs/*.md 参照ごとに判定する。docs/features/ 以外で、かつ
+      # **プラグインリポジトリに実在する設計文書**への参照が1つでもあれば違反とする。
+      # （導入先プロジェクトの成果物パスの例示——例: docs/coding-guidelines.md——は
+      #  プラグインの docs/ に実在しないため違反にしない）
+      plugin_doc_match=""
+      while IFS= read -r ref; do
+        [ -z "$ref" ] && continue
+        case "$ref" in docs/features/*) continue ;; esac
+        if [ -f "$ref" ]; then
+          plugin_doc_match="$ref"
+          break
+        fi
+      done <<<"$(echo "$content" | grep -oE 'docs/[A-Za-z0-9_./-]*\.md')"
+      if [ -z "$plugin_doc_match" ]; then
         continue
       fi
 
