@@ -1,6 +1,6 @@
 # scripts/ 共通規約
 
-`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。
+`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。
 
 ## 前提
 
