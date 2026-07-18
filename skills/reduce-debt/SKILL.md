@@ -97,7 +97,7 @@ find . -maxdepth 2 -type d \
 
 Workflow ツールを、スクリプトの絶対パスと `args` を指定して起動する:
 
-```
+```text
 {
   scriptPath: "<CLAUDE_PLUGIN_ROOTの絶対パス>/skills/reduce-debt/scripts/reduce-debt-scan.js",
   args: {
