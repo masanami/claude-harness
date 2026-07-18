@@ -36,7 +36,8 @@ PR番号: $ARGUMENTS
 
 base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeable の取得、外部レビュー待機のポーリングは、決定的な処理として preflight スクリプトに切り出されている。**このフェーズでは生の gh JSON をメインのコンテキストに滞留させず、スクリプトが返す構造化済みJSONのみを扱う。**
 
-> スクリプトはユーザーのプロジェクトではなく**プラグイン配下**にある。必ず `${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh` で参照すること（cwd 起点の相対パス `scripts/...` は導入先プロジェクトでは解決できない）。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh" <PR番号>` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/pr-merge-preflight.sh` では呼び出さないこと。
+<!-- 正本: docs/plugin-path-conventions.md -->
 
 1. **PR番号の解決**（`$ARGUMENTS` が空の場合は現在のブランチのPRを自動検出する）
    ```bash
@@ -57,7 +58,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 3. **preflight結果の読み取り**
 
-   出力 JSON の**フィールド定義と `block_reasons` の意味論の正本は `scripts/README.md`「pr-merge-preflight.sh の出力仕様」**（ここには複製しない）。後続フェーズで使う値だけ展開する:
+   出力 JSON の**フィールド定義と `block_reasons` の意味論の正本は、プラグイン配下の `scripts/README.md`「pr-merge-preflight.sh の出力仕様」**（ここには複製しない）。**cwd 起点の相対パス `scripts/README.md` では導入先プロジェクトの同名ファイルを誤って参照しうるため、Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/README.md` として解決すること。** 後続フェーズで使う値だけ展開する:
    ```bash
    GATE=$(jq -r '.gate' <<<"$PREFLIGHT")          # production=本番ゲート / integration=統合ブランチゲート
    BASE=$(jq -r '.base' <<<"$PREFLIGHT")          # 以降のフェーズで再取得せず再利用
@@ -77,7 +78,8 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 `block_reasons` に `conflicting` を含む場合のみ、`${CLAUDE_PLUGIN_ROOT}/skills/pr-merge/references/conflict-resolution.md` を Read してその手順に従う。
 
-> 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/conflict-resolution.md`）。Base directory が得られない場合は Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立てる（Read ツールは環境変数を展開しない）。
+> **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/conflict-resolution.md`）。Base directory が得られない場合は Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立てる（Read ツールは環境変数を展開しない）。
+<!-- 正本: docs/plugin-path-conventions.md -->
 
 > **規律フック**: rebase + push 後は preflight の再実行が必須（Phase 0-1 の判定結果は無効になる）。Phase 4 のマージ判断は、この再実行後の値で行うこと（古い値を使い回さない）。再実行後の `.base`/`.gate` が初回値と異なる場合は、値を更新して続行せず**処理を中断して Phase 0-1 からやり直す**。
 

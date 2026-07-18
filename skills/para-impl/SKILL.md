@@ -59,7 +59,8 @@ fi
 | 1件 | **通常実装**: リードエージェントが「1チケットの実装フロー」を実行 |
 | 複数 | **star 型並列実装**: `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` を Read してから Phase 3 へ。リードがオーケストレーターとなり、各 `ticket-worker` が独立に「1チケットの実装フロー」を実行 |
 
-> 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/star-parallel.md`）。Base directory が得られない場合は Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立てる（Read ツールは環境変数を展開しない）。
+> **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/star-parallel.md`）。Base directory が得られない場合は Bash で `echo "$CLAUDE_PLUGIN_ROOT"` を実行して絶対パスを組み立てる（Read ツールは環境変数を展開しない）。
+<!-- 正本: docs/plugin-path-conventions.md -->
 
 ---
 
