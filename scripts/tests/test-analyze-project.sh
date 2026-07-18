@@ -151,6 +151,28 @@ assert_eq "dbにmongooseが含まれる" "true" "$(jq 'any(. == "mongoose")' <<<
 assert_eq "dbにkyselyが含まれる" "true" "$(jq 'any(. == "kysely")' <<<"$STACK_DB_DEPS_JSON")"
 assert_eq "dbにknexが含まれる" "true" "$(jq 'any(. == "knex")' <<<"$STACK_DB_DEPS_JSON")"
 
+echo "=== test: classify_stack_from_deps (スコープ付きパッケージの実名/ファミリー照合、回帰) ==="
+DEPS_SCOPED='["@nestjs/core","@hapi/hapi","@remix-run/react","@builder.io/qwik"]'
+classify_stack_from_deps "$DEPS_SCOPED"
+assert_eq "@nestjs/coreでbackendにnestが含まれる(完全一致では拾えない回帰)" "true" "$(jq 'any(. == "nest")' <<<"$STACK_BACKEND_JSON")"
+assert_eq "@hapi/hapiでbackendにhapiが含まれる(完全一致では拾えない回帰)" "true" "$(jq 'any(. == "hapi")' <<<"$STACK_BACKEND_JSON")"
+assert_eq "@remix-run/reactでfrontendにremixが含まれる(ファミリー前方一致、回帰)" "true" "$(jq 'any(. == "remix")' <<<"$STACK_FRONTEND_JSON")"
+assert_eq "@builder.io/qwikでfrontendにqwikが含まれる(完全一致では拾えない回帰)" "true" "$(jq 'any(. == "qwik")' <<<"$STACK_FRONTEND_JSON")"
+
+echo "=== test: classify_stack_from_deps (無関係な非スコープ依存はremix等を誤検出しない) ==="
+DEPS_UNRELATED='["remixed-icons","@other-scope/hapi-helper"]'
+classify_stack_from_deps "$DEPS_UNRELATED"
+assert_eq "remixed-iconsはremixとして誤検出されない" "false" "$(jq 'any(. == "remix")' <<<"$STACK_FRONTEND_JSON")"
+assert_eq "@other-scope/hapi-helperはhapiとして誤検出されない" "false" "$(jq 'any(. == "hapi")' <<<"$STACK_BACKEND_JSON")"
+
+echo "=== test: _dep_family_matches (純粋関数の直接検証) ==="
+DEPS_NEST='["nest"]'
+DEPS_REMIX_NODE='["@remix-run/node"]'
+DEPS_LODASH='["lodash"]'
+assert_eq "完全一致パターンが一致する" "0" "$(_dep_family_matches "$DEPS_NEST" 'nest,@nestjs/core'; echo $?)"
+assert_eq "前方一致パターン(@remix-run/)が一致する" "0" "$(_dep_family_matches "$DEPS_REMIX_NODE" 'remix,@remix-run/'; echo $?)"
+assert_eq "どちらにも一致しない場合は非0" "1" "$(_dep_family_matches "$DEPS_LODASH" 'remix,@remix-run/'; echo $?)"
+
 # ====================================================================
 # 純粋関数: classify_merge_style_line
 # ====================================================================
@@ -309,6 +331,38 @@ fetch_commands "$PY_DIR_PYPROJECT_ONLY" "pip"
 assert_eq "pytest.ini無しでもcommands.testはpytest" "pytest" "$(jq -r '.test' <<<"$COMMANDS_JSON")"
 fetch_stack_evidence "$PY_DIR_PYPROJECT_ONLY"
 assert_eq "pytest.ini無し+pyproject.tomlの[tool.pytest]でstack.testにpytestを含む(commands.testとの矛盾回帰)" "true" "$(jq '.test | any(. == "pytest")' <<<"$STACK_JSON")"
+
+echo "=== test: _pyproject_has_pytest_config ([tool.pytest.ini_options]も正の検出、回帰) ==="
+PY_DIR_INI_OPTIONS="${TMP_ROOT}/python-project-ini-options"
+mkdir -p "$PY_DIR_INI_OPTIONS"
+cat > "$PY_DIR_INI_OPTIONS/pyproject.toml" <<'EOF'
+[project]
+name = "sample-python-app-ini-options"
+version = "0.1.0"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+EOF
+assert_eq "[tool.pytest.ini_options]を正しく検出する" "0" "$(_pyproject_has_pytest_config "$PY_DIR_INI_OPTIONS/pyproject.toml"; echo $?)"
+fetch_commands "$PY_DIR_INI_OPTIONS" "pip"
+assert_eq "[tool.pytest.ini_options]でもcommands.testはpytest" "pytest" "$(jq -r '.test' <<<"$COMMANDS_JSON")"
+
+echo "=== test: _pyproject_has_pytest_config (コメントアウトされた[tool.pytest]は誤検出しない、回帰) ==="
+PY_DIR_COMMENTED="${TMP_ROOT}/python-project-commented-pytest"
+mkdir -p "$PY_DIR_COMMENTED"
+cat > "$PY_DIR_COMMENTED/pyproject.toml" <<'EOF'
+[project]
+name = "sample-python-app-commented-pytest"
+version = "0.1.0"
+
+# [tool.pytest]
+[tool.other]
+EOF
+assert_eq "コメントアウトされた[tool.pytest]は検出しない" "1" "$(_pyproject_has_pytest_config "$PY_DIR_COMMENTED/pyproject.toml"; echo $?)"
+fetch_commands "$PY_DIR_COMMENTED" "pip"
+assert_eq "コメントアウトされた[tool.pytest]ではcommands.testがpytestにならない" "null" "$(jq -r '.test' <<<"$COMMANDS_JSON")"
+fetch_stack_evidence "$PY_DIR_COMMENTED" "pip"
+assert_eq "コメントアウトされた[tool.pytest]ではstack.testにpytestを含まない" "false" "$(jq '.test | any(. == "pytest")' <<<"$STACK_JSON")"
 
 # ====================================================================
 # fetch系: Rust プロジェクトのフィクスチャ
@@ -499,6 +553,29 @@ mkdir -p "$COLOCATED_EXCLUDED_DIR/node_modules/some-pkg"
 : > "$COLOCATED_EXCLUDED_DIR/node_modules/some-pkg/lib.test.js"
 fetch_colocated_tests "$COLOCATED_EXCLUDED_DIR"
 assert_eq "node_modules配下のtestファイルはcolocatedTests判定に含めない" "false" "$COLOCATED_TESTS_JSON"
+
+echo "=== test: fetch_colocated_tests (専用テストディレクトリ配下は co-located 扱いしない、回帰) ==="
+COLOCATED_DEDICATED_DIR="${TMP_ROOT}/colocated-dedicated-test-dirs-project"
+mkdir -p "$COLOCATED_DEDICATED_DIR/tests" "$COLOCATED_DEDICATED_DIR/src/__tests__"
+: > "$COLOCATED_DEDICATED_DIR/tests/foo.test.ts"
+: > "$COLOCATED_DEDICATED_DIR/src/__tests__/foo.spec.ts"
+fetch_colocated_tests "$COLOCATED_DEDICATED_DIR"
+assert_eq "tests/foo.test.tsとsrc/__tests__/foo.spec.tsのみではcolocatedTestsがfalse" "false" "$COLOCATED_TESTS_JSON"
+
+echo "=== test: fetch_colocated_tests (専用テストディレクトリ配下と実co-locatedが混在する場合はtrue) ==="
+COLOCATED_MIXED_DIR="${TMP_ROOT}/colocated-mixed-project"
+mkdir -p "$COLOCATED_MIXED_DIR/tests" "$COLOCATED_MIXED_DIR/src"
+: > "$COLOCATED_MIXED_DIR/tests/foo.test.ts"
+: > "$COLOCATED_MIXED_DIR/src/bar.test.ts"
+fetch_colocated_tests "$COLOCATED_MIXED_DIR"
+assert_eq "専用ディレクトリ配下に加えsrc配下にも co-located テストがあればtrue" "true" "$COLOCATED_TESTS_JSON"
+
+echo "=== test: fetch_colocated_tests (test/testsを部分文字列に含むディレクトリ名は誤って除外しない、回帰) ==="
+COLOCATED_PARTIAL_NAME_DIR="${TMP_ROOT}/colocated-partial-name-project"
+mkdir -p "$COLOCATED_PARTIAL_NAME_DIR/latest"
+: > "$COLOCATED_PARTIAL_NAME_DIR/latest/foo.test.ts"
+fetch_colocated_tests "$COLOCATED_PARTIAL_NAME_DIR"
+assert_eq "latest配下(testを部分文字列に含むが専用ディレクトリではない)は除外されずtrue" "true" "$COLOCATED_TESTS_JSON"
 
 # ====================================================================
 # fetch系: ブランチ運用の証拠収集

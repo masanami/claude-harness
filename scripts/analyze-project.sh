@@ -195,35 +195,87 @@ fetch_project_name() {
 # 2b. 技術スタックの検出
 # ------------------------------------------------------------------
 
+# deps_json（依存名の配列）に対して、カンマ区切りのパターン群のいずれかが一致するか判定する。
+# パターンが "/" で終わる場合はスコープ付きパッケージのファミリー判定（前方一致）、
+# それ以外は完全一致。例: "nest,@nestjs/core" は "nest" または "@nestjs/core" の完全一致、
+# "remix,@remix-run/" は "remix" の完全一致 または "@remix-run/" 前方一致（@remix-run/react 等を拾う）。
+_dep_family_matches() {
+  local deps_json="$1"
+  local patterns="$2"
+  local IFS=','
+  # shellcheck disable=SC2206
+  local -a pats=($patterns)
+  local p
+  for p in "${pats[@]}"; do
+    if [[ "$p" == */ ]]; then
+      if jq -e --arg pfx "$p" 'any(.[]?; startswith($pfx))' >/dev/null 2>&1 <<<"$deps_json"; then
+        return 0
+      fi
+    else
+      if jq -e --arg d "$p" 'any(.[]?; . == $d)' >/dev/null 2>&1 <<<"$deps_json"; then
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
 # 引数: 依存パッケージ名のJSON配列（jq array of strings）
 # グローバル変数 STACK_FRONTEND_JSON / STACK_BACKEND_JSON / STACK_DB_DEPS_JSON に結果を格納する純粋関数
+#
+# 各候補は "ラベル:パターン1,パターン2,..." 形式。ラベルは出力に載せる表示名、
+# パターンは実際の依存キー照合に使う（スコープ付きパッケージは実名/ファミリーで照合する）。
 classify_stack_from_deps() {
   local deps_json="$1"
-  local frontend_candidates=(react vue next nuxt svelte astro remix "solid-js" qwik)
-  local backend_candidates=(express fastify nest hono koa hapi)
-  local db_candidates=(prisma typeorm sequelize "drizzle-orm" "@prisma/client" mongoose kysely knex)
+  local frontend_candidates=(
+    "react:react" "vue:vue" "next:next" "nuxt:nuxt" "svelte:svelte" "astro:astro"
+    "remix:remix,@remix-run/" "solid-js:solid-js" "qwik:qwik,@builder.io/qwik"
+  )
+  local backend_candidates=(
+    "express:express" "fastify:fastify" "nest:nest,@nestjs/core" "hono:hono" "koa:koa"
+    "hapi:hapi,@hapi/hapi"
+  )
+  local db_candidates=(
+    "prisma:prisma" "typeorm:typeorm" "sequelize:sequelize" "drizzle-orm:drizzle-orm"
+    "@prisma/client:@prisma/client" "mongoose:mongoose" "kysely:kysely" "knex:knex"
+  )
 
   local -a frontend=() backend=() db=()
-  local dep
-  for dep in "${frontend_candidates[@]}"; do
-    if jq -e --arg d "$dep" 'any(.[]?; . == $d)' >/dev/null 2>&1 <<<"$deps_json"; then
-      frontend+=("$dep")
+  local entry label patterns
+  for entry in "${frontend_candidates[@]}"; do
+    label="${entry%%:*}"
+    patterns="${entry#*:}"
+    if _dep_family_matches "$deps_json" "$patterns"; then
+      frontend+=("$label")
     fi
   done
-  for dep in "${backend_candidates[@]}"; do
-    if jq -e --arg d "$dep" 'any(.[]?; . == $d)' >/dev/null 2>&1 <<<"$deps_json"; then
-      backend+=("$dep")
+  for entry in "${backend_candidates[@]}"; do
+    label="${entry%%:*}"
+    patterns="${entry#*:}"
+    if _dep_family_matches "$deps_json" "$patterns"; then
+      backend+=("$label")
     fi
   done
-  for dep in "${db_candidates[@]}"; do
-    if jq -e --arg d "$dep" 'any(.[]?; . == $d)' >/dev/null 2>&1 <<<"$deps_json"; then
-      db+=("$dep")
+  for entry in "${db_candidates[@]}"; do
+    label="${entry%%:*}"
+    patterns="${entry#*:}"
+    if _dep_family_matches "$deps_json" "$patterns"; then
+      db+=("$label")
     fi
   done
 
   STACK_FRONTEND_JSON=$(printf '%s\n' "${frontend[@]:-}" | awk 'NF' | jq -R -s 'split("\n") | map(select(length>0))')
   STACK_BACKEND_JSON=$(printf '%s\n' "${backend[@]:-}" | awk 'NF' | jq -R -s 'split("\n") | map(select(length>0))')
   STACK_DB_DEPS_JSON=$(printf '%s\n' "${db[@]:-}" | awk 'NF' | jq -R -s 'split("\n") | map(select(length>0))')
+}
+
+# pyproject.toml に [tool.pytest] または [tool.pytest.ini_options] セクションが
+# コメントアウトされずに定義されているかを判定する（行頭一致。"# [tool.pytest]" 等の
+# コメント行を誤検出しないよう ^ アンカーで絞る）
+_pyproject_has_pytest_config() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  grep -Eq '^\[tool\.pytest(\.ini_options)?\]' "$file" 2>/dev/null
 }
 
 # ルート直下の設定ファイル存在からdb/test/infraの追加証跡を検出する（純粋関数: 存在フラグ群を受け取る）
@@ -268,7 +320,7 @@ fetch_stack_evidence() {
   compgen -G "$dir/jest.config.*" >/dev/null 2>&1 && has_jest_config="true"
   compgen -G "$dir/vitest.config.*" >/dev/null 2>&1 && has_vitest_config="true"
   compgen -G "$dir/playwright.config.*" >/dev/null 2>&1 && has_playwright_config="true"
-  if [ -f "$dir/pytest.ini" ] || grep -q '\[tool.pytest' "$dir/pyproject.toml" 2>/dev/null; then
+  if [ -f "$dir/pytest.ini" ] || _pyproject_has_pytest_config "$dir/pyproject.toml"; then
     has_pytest_ini="true"
   fi
 
@@ -373,7 +425,7 @@ fetch_non_node_commands() {
       fi
       ;;
     pip)
-      if [ -f "$dir/pytest.ini" ] || grep -q '\[tool.pytest' "$dir/pyproject.toml" 2>/dev/null; then
+      if [ -f "$dir/pytest.ini" ] || _pyproject_has_pytest_config "$dir/pyproject.toml"; then
         test_cmd='"pytest"'
       fi
       if [ -f "$dir/ruff.toml" ] || grep -q '\[tool.ruff\]' "$dir/pyproject.toml" 2>/dev/null; then
@@ -540,10 +592,16 @@ fetch_e2e_dirs() {
 fetch_colocated_tests() {
   local dir="$1"
   local hit
+  # fetch_test_dirs が検出する専用テストディレクトリ（__tests__/test/tests/spec）配下の
+  # *.test.*/*.spec.* は「co-located」ではなく通常のテスト配置なので除外する
+  # （(^|/)(name)/ でパス区切り境界を厳密化し、"latest/" 等の部分一致誤検出を防ぐ）
   hit=$(cd "$dir" 2>/dev/null && find . \
     \( -path "./.git" -o -path "./node_modules" -o -path "./dist" -o -path "./.next" \
        -o -path "./target" -o -path "./__pycache__" -o -path "./.venv" -o -path "./vendor" \) -prune \
-    -o -type f \( -iname "*.test.*" -o -iname "*.spec.*" \) -print 2>/dev/null | head -1)
+    -o -type f \( -iname "*.test.*" -o -iname "*.spec.*" \) -print 2>/dev/null \
+    | sed 's|^\./||' \
+    | grep -Ev '(^|/)(__tests__|test|tests|spec)/' \
+    | head -1)
   if [ -n "$hit" ]; then
     COLOCATED_TESTS_JSON="true"
   else
