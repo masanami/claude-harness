@@ -274,7 +274,9 @@ emit_progress_line() {
     line="[${index}] failed: ${title} (${error})"
   fi
 
-  echo "$line" >&2
+  # title や gh のエラーメッセージに改行が含まれても進捗を必ず1行に保つ
+  # （複数行になると中断時の「どこまで起票済みか」の判定を誤らせる）
+  echo "${line//$'\n'/ }" >&2
 }
 
 # manifest全体（JSON配列文字列）を処理し、対応表JSON全体を組み立てる。

@@ -303,6 +303,14 @@ assert_contains "index1（failed）の進捗行がstderrに出る" "$PROGRESS_ST
 assert_contains "index2（created・警告あり）の進捗行がstderrに出る" "$PROGRESS_STDERR" "[2] created"
 assert_contains "index3（failed・gh失敗）の進捗行がstderrに出る" "$PROGRESS_STDERR" "[3] failed"
 
+echo "=== test: emit_progress_line - title/error に改行が含まれても進捗は必ず1行 ==="
+MULTILINE_ITEM='{"title":"1行目\n2行目のタイトル"}'
+MULTILINE_RESULT='{"status":"failed","error":"error line1\nerror line2"}'
+MULTILINE_OUT=$( { emit_progress_line 7 "$MULTILINE_ITEM" "$MULTILINE_RESULT"; } 2>&1 )
+assert_eq "出力が1行である" "1" "$(printf '%s\n' "$MULTILINE_OUT" | wc -l | tr -d ' ')"
+assert_contains "改行が空白に正規化されタイトル全体を含む" "$MULTILINE_OUT" "1行目 2行目のタイトル"
+assert_contains "エラーも1行に正規化される" "$MULTILINE_OUT" "error line1 error line2"
+
 echo "=== test: CLIレベル（main関数直接呼び出し、ghはモック） - 全件成功でexit 0 ==="
 create_github_issue() { mock_create_github_issue "$@"; }
 MOCK_ISSUE_COUNTER=300
