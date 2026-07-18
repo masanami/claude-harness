@@ -206,6 +206,9 @@ assert_eq "--typecheck を2回指定した場合はexit 1" "1" "$?"
 "$TARGET_SCRIPT" --test "exit 0" --test "exit 0" >/dev/null 2>&1
 assert_eq "--test を2回指定した場合はexit 1" "1" "$?"
 
+"$TARGET_SCRIPT" --lint "" --lint "exit 0" >/dev/null 2>&1
+assert_eq "1回目が空文字でも2回目の--lintはexit 1（値の中身でなくフラグ指定回数で重複判定）" "1" "$?"
+
 echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"

@@ -266,6 +266,10 @@ EOF
 main() {
   local auto_fix_cmds=()
   local lint_cmd="" typecheck_cmd="" test_cmd=""
+  # 値の中身（空文字か否か）でなく「フラグを見たか」を独立に追跡する。
+  # lint_cmd等の非空判定で重複検出すると、1回目に空文字を渡した場合
+  # （="" は skip 相当の指定）に2回目を誤って上書き許可してしまうため。
+  local lint_seen="false" typecheck_seen="false" test_seen="false"
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -284,11 +288,12 @@ main() {
           print_usage
           exit 1
         fi
-        if [ -n "$lint_cmd" ]; then
+        if [ "$lint_seen" = "true" ]; then
           echo "Error: --lint specified more than once" >&2
           print_usage
           exit 1
         fi
+        lint_seen="true"
         lint_cmd="$2"
         shift 2
         ;;
@@ -298,11 +303,12 @@ main() {
           print_usage
           exit 1
         fi
-        if [ -n "$typecheck_cmd" ]; then
+        if [ "$typecheck_seen" = "true" ]; then
           echo "Error: --typecheck specified more than once" >&2
           print_usage
           exit 1
         fi
+        typecheck_seen="true"
         typecheck_cmd="$2"
         shift 2
         ;;
@@ -312,11 +318,12 @@ main() {
           print_usage
           exit 1
         fi
-        if [ -n "$test_cmd" ]; then
+        if [ "$test_seen" = "true" ]; then
           echo "Error: --test specified more than once" >&2
           print_usage
           exit 1
         fi
+        test_seen="true"
         test_cmd="$2"
         shift 2
         ;;
