@@ -87,6 +87,38 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 - `agents/*.md` 本文中で自身の `agentType` 呼び出され方を自己記述する箇所（`description:` フロントマターや Step 記述）も、同じプレフィックス付き表記に揃える（実際の呼び出しコードと表記が食い違うとドキュメントとして信頼できなくなるため）
 - 新しい Dynamic Workflow スクリプトやサブエージェントを追加する際も、この規約に従う
 
+## (h) Workflow スクリプトへ渡す `args` の JSON 文字列正規化
+
+Dynamic Workflow スクリプト（`skills/*/scripts/*.js`）の本文が受け取る `args` パラメータは、呼び出し環境によっては**JSON文字列として届くことがある**。オブジェクトとして直接渡ってくる前提で `const { foo } = args;` のように分割代入すると、文字列が渡ってきた場合に `foo` が常に `undefined` になり、必須引数の欠落として実行時エラーになる、あるいは黙って空扱いされる。
+
+> **検証済み事実（Issue #91 実機フォローアップ）**: `skills/self-review/scripts/self-review-loop.js` の `args` が文字列として渡るケースが実機で確認された。
+
+- スクリプト冒頭で `resolvedArgs` 正規化パターンを必ず適用する（模範実装: `self-review-loop.js` の `resolvedArgs`）:
+  - `typeof args === 'string'` なら `JSON.parse(args)` を試みる
+  - パースに失敗した場合は**空オブジェクトへフォールバックせず**、明示的に `throw new Error(...)` する（必須引数の欠落を握りつぶさないため）
+  - それ以外（オブジェクト）の場合は `args || {}` をそのまま使う
+- 以降の分割代入は `args` ではなく `resolvedArgs` から行う
+
+## (i) `agent()` の `schema` オプションはトップレベル `object` 必須
+
+Dynamic Workflow スクリプトが `agent(prompt, { schema, ... })` に渡す JSON Schema は、API 側で `input_schema` として実体化される制約により、**最上位の `type` が `object` でなければならない**。`type: 'array'` をトップレベルに置くと 400 エラーになる。
+
+> **検証済み事実（Issue #91 実機フォローアップ）**: `agent()` の `schema` オプションにトップレベル `type: 'array'` を渡すと 400 エラーになることが実機で確認された。
+
+- 配列そのものを返したい場合は、1プロパティ（例: `findings` / `verdicts`）へラップした `{ type: 'object', additionalProperties: false, required: [...], properties: { <フィールド名>: { type: 'array', items: {...} } } }` 形の schema にする（模範実装: `self-review-loop.js` の `FINDINGS_SCHEMA`、`reduce-debt-scan.js` の `SCAN_SCHEMA`）
+- 受け側コードも合わせて戻り値を配列としてではなく `{ <フィールド名>: [...] }` として受け取る（例: `const output = await agent(...); const findings = output.findings;` であり、`const findings = await agent(...);` ではない）点に注意する
+
+## (j) エージェントの terminal 失敗（`agent()` が `null` を返す）の扱い
+
+`agent()` はサブエージェントの terminal 失敗時に `null` を返す。この `null` を `filter(Boolean)` や `Array.isArray(x) ? x : []` 等で静かに「空」として扱うと、実際にはそのステージが未実施であるにもかかわらず「指摘0件」「タスク0件」等として集計され、**偽の収束報告**になる。
+
+> **検証済み事実（Issue #91 実機フォローアップ）**: `self-review-loop.js` のレビュアー呼び出しで、レビュアー2体が terminal 失敗しても null を「指摘ゼロ」として集計すると `converged: true` を報告してしまう実例が実機確認された。この事実に基づき、同種の構造（fan-out したエージェントの出力が収束・完全性判定の入力になる設計）を持つ懐疑者・スキャナー・レンズ批評・分解案生成の各呼び出しにも、同じ握りつぶし防止方針を予防的に適用している。
+
+方針は null の性質によって使い分ける:
+
+- **収束・完全性の判定に関わる null**（レビュアー・批評レンズ・分解案生成・judge 等。そのステージの出力が欠けると全体の収束判定自体が信頼できなくなるもの）は**明示 throw** する（模範実装: `self-review-loop.js` の `runReviewStage`、`decompose-judge.js` の Generate/Judge フェーズ、`spec-critique.js` の Critique フェーズ）
+- **部分結果が有用な null**（fan-out したスキャンバケットの一部・懐疑者の一部。他の並列項目の結果は引き続き有用なもの）は、結果 JSON に明示フィールド（`meta.failedBuckets` / `finding.failed_verifiers` 等）で可視化し、残りの結果は握りつぶさずそのまま返す（模範実装: `reduce-debt-scan.js` の `scanStage`/`verifyStage`）
+
 ## (f) 実行時ファイルから docs/ 設計文書への参照禁止
 
 `skills/` と `agents/`（実行時にモデルへロードされるファイル）から、`docs/` 配下の設計文書（ADR・戦略文書・経緯記録。本文書 `docs/plugin-path-conventions.md` 自身を含む）を参照しない。

@@ -311,11 +311,26 @@ function buildJudgePrompt(candidates, previousAttempt) {
 // phase, log, args, budget — see file header "実行環境の制約"/契約コメント). There is no
 // wrapper function here: `export default async function (...) { ... }` is NOT supported by
 // the runtime, which is why this file no longer declares one (Issue #89).
+// args は呼び出し環境によって JSON 文字列として届くことがある（実機確認: Issue #91）。
+// オブジェクト/文字列の双方を受け付けるよう入口で正規化する（self-review-loop.js の
+// resolvedArgs パターンと同一。パース失敗を空オブジェクトへフォールバックすると
+// 必須引数の欠落が握りつぶされ得るため、明示的に throw する）。
+const resolvedArgs = (() => {
+  if (typeof args === 'string') {
+    try {
+      return JSON.parse(args);
+    } catch (e) {
+      throw new Error(`decompose-judge: args is a string but not valid JSON: ${e.message}`);
+    }
+  }
+  return args || {};
+})();
+
 const {
   parentIssueBody = '',
   codebaseAnalysis = [],
   acceptanceCriteria = { issue: null, criteria: [], parse_status: 'no_checklist_found' },
-} = args || {};
+} = resolvedArgs;
 
 const criteria = Array.isArray(acceptanceCriteria && acceptanceCriteria.criteria)
   ? acceptanceCriteria.criteria
@@ -334,6 +349,13 @@ const rawCandidates = await parallel(
       phase: 'Generate',
       label: `generate:${lens.id}`,
     });
+    // agent() は ticket-decomposer のterminal失敗時に null を返す。この案が「タスク0件」
+    // として静かに握りつぶされると、AC網羅・依存グラフ指標の計算がその案を「独立タスク無し」
+    // として扱ってしまい、Judgeフェーズが本来存在すべき案の欠落に気付けない偽の完全性報告に
+    // なる（収束・完全性の判定に関わるnullのため明示throw。実機確認: Issue #91 発見）。
+    if (output === null) {
+      throw new Error(`decompose-judge: ticket-decomposer agent failed terminally for lens "${lens.id}". 分解案生成が未完了のため候補集合を確定できない。`);
+    }
     const tasks = Array.isArray(output && output.tasks) ? output.tasks : [];
     return { lens: lens.id, tasks };
   }),
@@ -371,6 +393,14 @@ for (let i = 0; i < 1 + MAX_JUDGE_RETRIES; i += 1) {
     phase: 'Judge',
     label: `judge:round-${judgeRounds}`,
   });
+  // agent() は decompose-judge のterminal失敗時に null を返す。「タスク0件」として
+  // 握りつぶすと、AC網羅計算が「AC全件uncovered」を返すだけでjudgeが実際には
+  // 何も判断していない事実が隠れ、次周の再試行に不完全な合成結果が previousAttempt
+  // として渡ってしまう（収束・完全性の判定に関わるnullのため明示throw。
+  // 実機確認: Issue #91 発見）。
+  if (output === null) {
+    throw new Error(`decompose-judge: decompose-judge agent failed terminally at judge round ${judgeRounds}. 合成結果が得られないため収束判定を行わない。`);
+  }
   const tasks = Array.isArray(output && output.tasks) ? output.tasks : [];
   const coverage = computeAcCoverage(criteria, tasks);
   const graphMetrics = computeGraphMetrics(tasks);

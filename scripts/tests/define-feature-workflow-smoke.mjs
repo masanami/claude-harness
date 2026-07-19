@@ -740,6 +740,57 @@ console.log('=== default export: same needs_user_input finding returned by the s
   assertEq('residual.needs_user_inputは2周で重複せず1件のみ', 1, result.residual.needs_user_input.length);
 }
 
+// --- default export: args を JSON.stringify() した文字列で渡しても、オブジェクトで
+//     渡した場合と同じ結果になること（Issue #91: resolvedArgs 正規化パターンの回帰テスト） ---
+console.log('=== default export: args as a JSON string behaves the same as args as an object ===');
+{
+  const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') return { findings: [] };
+    throw new Error(`unexpected agentType: ${opts.agentType}`);
+  }
+
+  const objectResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
+  const stringResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, JSON.stringify(BASE_ARGS), undefined);
+  assertEq('args を文字列で渡してもオブジェクトで渡した場合と同じ結果になる', objectResult, stringResult);
+
+  let threw = false;
+  try {
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, '{not valid json', undefined);
+  } catch (e) {
+    threw = true;
+  }
+  assertEq('args が不正なJSON文字列だとthrowする(空オブジェクトへフォールバックしない)', true, threw);
+}
+
+// --- default export: Critique フェーズで spec-critic の1レンズが null を返した場合
+//     （terminal失敗）、指摘0件として握りつぶさずthrowすること（Issue #91: 収束・完全性の
+//     判定に関わるnullの明示throw） ---
+console.log('=== default export: a null from spec-critic (Critique phase) throws instead of being swallowed as zero findings ===');
+{
+  const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
+      const lens = opts.label.split(':')[1];
+      if (lens === 'internal-consistency') return null; // terminal failure for this lens only
+      return { findings: [] };
+    }
+    throw new Error(`unexpected agentType: ${opts.agentType}`);
+  }
+  let threw = false;
+  let errMessage = '';
+  try {
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
+  } catch (e) {
+    threw = true;
+    errMessage = e.message;
+  }
+  assertEq('Critiqueフェーズでのnull(terminal失敗)はthrowする', true, threw);
+  assertEq('エラーメッセージに失敗したレンズ名が含まれる', true, errMessage.includes('internal-consistency'));
+}
+
 console.log('');
 console.log('=== summary ===');
 console.log(`pass: ${passCount}, fail: ${failCount}`);

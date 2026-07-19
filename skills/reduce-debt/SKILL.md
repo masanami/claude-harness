@@ -145,6 +145,7 @@ Workflow の返り値（`{meta, confirmed, needsHumanJudgment, appendix: {refute
 - 親Issue: #{番号} {タイトル}
 - 変更範囲: {変更ディレクトリ一覧}
 - スキャン範囲: {確認済みディレクトリ一覧}
+- スキャン失敗バケット: {meta.failedBuckets の一覧}（無ければ「なし」）
 
 ### 今回の実装で導入された技術負債（confirmed かつ introducedByParent = true）
 

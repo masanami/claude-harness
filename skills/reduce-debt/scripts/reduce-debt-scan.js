@@ -35,19 +35,29 @@ const CATEGORIES = ['code_quality', 'dependencies', 'design', 'tests', 'document
 
 // --- JSON Schema（agent() の schema オプションに渡す。出力検証・自動リトライに使われる） ---
 
+// トップレベルは object 必須（agent() の schema はツールの input_schema として実体化され、
+// API 制約で最上位 type は 'object' でなければならない — 実機確認: Issue #91 発見。
+// self-review-loop.js の FINDINGS_SCHEMA と同型に配列を1プロパティへラップする）。
 const SCAN_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      file: { type: 'string' },
-      summary: { type: 'string' },
-      detail: { type: 'string' },
-      severity: { type: 'string', enum: ['high', 'medium', 'low'] },
-      category: { type: 'string', enum: CATEGORIES },
+  type: 'object',
+  additionalProperties: false,
+  required: ['findings'],
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          file: { type: 'string' },
+          summary: { type: 'string' },
+          detail: { type: 'string' },
+          severity: { type: 'string', enum: ['high', 'medium', 'low'] },
+          category: { type: 'string', enum: CATEGORIES },
+        },
+        required: ['file', 'summary', 'detail', 'severity', 'category'],
+      },
     },
-    required: ['file', 'summary', 'detail', 'severity', 'category'],
   },
 };
 
@@ -192,17 +202,32 @@ function buildVerifyPrompt(file, batch) {
 // phase, log, args, budget — see file header "実行環境の制約"/契約コメント). There is no
 // wrapper function here: `export default async function (...) { ... }` is NOT supported by
 // the runtime, which is why this file no longer declares one (Issue #89).
+// args は呼び出し環境によって JSON 文字列として届くことがある（実機確認: Issue #91）。
+// オブジェクト/文字列の双方を受け付けるよう入口で正規化する（self-review-loop.js の
+// resolvedArgs パターンと同一。パース失敗を空オブジェクトへフォールバックすると
+// 必須引数の欠落が握りつぶされ得るため、明示的に throw する）。
+const resolvedArgs = (() => {
+  if (typeof args === 'string') {
+    try {
+      return JSON.parse(args);
+    } catch (e) {
+      throw new Error(`reduce-debt-scan: args is a string but not valid JSON: ${e.message}`);
+    }
+  }
+  return args || {};
+})();
+
 const {
   directories = [],
   parentIssue = null,
   changedFiles = [],
   changedDirs = [],
-} = args;
+} = resolvedArgs;
 
 const buckets = planScanBuckets(directories);
 
 const emptyResult = {
-  meta: { parentIssue, scannedDirectories: directories, bucketCount: 0 },
+  meta: { parentIssue, scannedDirectories: directories, bucketCount: 0, failedBuckets: [] },
   confirmed: [],
   needsHumanJudgment: [],
   appendix: { refuted: [], unverified: [] },
@@ -228,17 +253,28 @@ function consumeAgentBudget(n) {
 }
 
 async function scanStage(bucket, originalBucket, index) {
-  const findings = await agent(buildScanPrompt(bucket), {
+  const output = await agent(buildScanPrompt(bucket), {
     agentType: 'claude-harness:debt-scanner',
     schema: SCAN_SCHEMA,
     phase: 'Scan',
     label: `scan:${bucket.id}`,
   });
-  return { bucket, findings: Array.isArray(findings) ? findings : [] };
+  // agent() は terminal エラー時に null を返す。このバケットは「部分結果が有用なnull」
+  // （他バケットのスキャンは継続する価値がある）に分類し、held-out（収束・完全性の判定に
+  // 関わる Generate/Judge/Critique/Review 側の null throw とは異なり）握りつぶさず
+  // bucketFailed: true として明示フィールドで可視化する（実機確認: Issue #91 発見）。
+  if (output === null) {
+    return { bucket, findings: [], bucketFailed: true };
+  }
+  const findings = Array.isArray(output && output.findings) ? output.findings : [];
+  return { bucket, findings, bucketFailed: false };
 }
 
 async function verifyStage(scanResult, originalBucket, index) {
-  const { bucket, findings } = scanResult;
+  // bucketFailed はスキャン段階で確定した事実であり、verifyStage は独自の分岐ロジックを
+  // 持たずそのまま最終結果へ通過させるだけ（Issue #91: 懐疑者による検証の要否とは無関係の
+  // 上流フラグのため、ここで再判定しない）。
+  const { bucket, findings, bucketFailed } = scanResult;
 
   const unverified = [];
   const toVerify = [];
@@ -280,17 +316,24 @@ async function verifyStage(scanResult, originalBucket, index) {
         () => agent(prompt, { agentType: 'claude-harness:debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:3` }),
       ]);
 
+      // agent() は懐疑者(debt-verifier)のterminal失敗時に null を返す。votes配列の
+      // 構築で `out.verdicts` に直接アクセスすると TypeError になるため、まず
+      // `(out && out.verdicts) || []` で例外を防止したうえで（実機確認: Issue #91 発見）、
+      // 懐疑者の一部が落ちた事実は「部分結果が有用なnull」として failed_verifiers に
+      // 明示フィールド化する（filter(Boolean) で黙って票数を減らすだけにしない）。
+      const failedVerifierCount = verifierOutputs.filter((out) => out === null).length;
       batchWithIndex.forEach((finding, i) => {
         const votes = verifierOutputs
-          .map((out) => (out.verdicts || []).find((v) => v.file === file && v.findingIndex === i))
+          .map((out) => (out && out.verdicts) || [])
+          .map((verdicts) => verdicts.find((v) => v.file === file && v.findingIndex === i))
           .filter(Boolean);
         const verdict = decideVerdict(votes);
-        verifiedFindings.push({ ...finding, verdict, votes });
+        verifiedFindings.push({ ...finding, verdict, votes, failed_verifiers: failedVerifierCount });
       });
     }
   }
 
-  return { bucket, findings: [...verifiedFindings, ...unverified] };
+  return { bucket, findings: [...verifiedFindings, ...unverified], bucketFailed };
 }
 
 const bucketResults = await pipeline(buckets, scanStage, verifyStage);
@@ -308,8 +351,16 @@ const needsHumanJudgment = allFindings.filter((f) => f.verdict === 'needs_human_
 const refuted = allFindings.filter((f) => f.verdict === 'refuted');
 const unverifiedLow = allFindings.filter((f) => f.verdict === 'unverified');
 
+// scanStage が bucketFailed: true として明示した（debt-scanner のterminal失敗）バケットは、
+// filter(Boolean) 等で黙って握りつぶさず、呼び出し元(SKILL.md Step 4の報告テンプレ)が
+// 提示できるよう meta.failedBuckets として可視化する（実機確認: Issue #91 発見）。
+const failedBuckets = bucketResults.filter((r) => r.bucketFailed).map((r) => r.bucket.id);
+if (failedBuckets.length > 0 && typeof log === 'function') {
+  log(`reduce-debt-scan: ${failedBuckets.length} bucket(s) failed to scan terminally: ${failedBuckets.join(', ')}`);
+}
+
 return {
-  meta: { parentIssue, scannedDirectories: directories, bucketCount: buckets.length },
+  meta: { parentIssue, scannedDirectories: directories, bucketCount: buckets.length, failedBuckets },
   confirmed,
   needsHumanJudgment,
   appendix: { refuted, unverified: unverifiedLow },

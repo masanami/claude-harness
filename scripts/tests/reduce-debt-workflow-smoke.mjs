@@ -214,8 +214,8 @@ console.log('=== default export (mocked agent/pipeline/parallel) ===');
         agents: 'agents/unrelated.md', // 不一致想定
       };
       const file = fileByBucket[bucketId];
-      if (!file) return [];
-      return [{ file, summary: `finding in ${file}`, detail: 'detail', severity: 'low', category: 'design' }];
+      if (!file) return { findings: [] };
+      return { findings: [{ file, summary: `finding in ${file}`, detail: 'detail', severity: 'low', category: 'design' }] };
     }
     throw new Error('verify phase should not be reached (severity low is skipped in this smoke test)');
   }
@@ -305,8 +305,8 @@ console.log('=== default export: high/medium verify path (3 verifiers majority v
   async function mockAgentConfirmedMajority(prompt, opts) {
     if (opts.phase === 'Scan') {
       const bucketId = opts.label.replace('scan:', '');
-      if (bucketId !== 'scripts') return [];
-      return [{ file: 'scripts/foo.sh', summary: 'medium finding', detail: 'detail', severity: 'medium', category: 'design' }];
+      if (bucketId !== 'scripts') return { findings: [] };
+      return { findings: [{ file: 'scripts/foo.sh', summary: 'medium finding', detail: 'detail', severity: 'medium', category: 'design' }] };
     }
     if (opts.phase === 'Verify') {
       const verifierNum = opts.label.split(':').pop();
@@ -325,8 +325,8 @@ console.log('=== default export: high/medium verify path (3 verifiers majority v
   async function mockAgentRefutedMajority(prompt, opts) {
     if (opts.phase === 'Scan') {
       const bucketId = opts.label.replace('scan:', '');
-      if (bucketId !== 'scripts') return [];
-      return [{ file: 'scripts/foo.sh', summary: 'high finding', detail: 'detail', severity: 'high', category: 'design' }];
+      if (bucketId !== 'scripts') return { findings: [] };
+      return { findings: [{ file: 'scripts/foo.sh', summary: 'high finding', detail: 'detail', severity: 'high', category: 'design' }] };
     }
     if (opts.phase === 'Verify') {
       const verifierNum = opts.label.split(':').pop();
@@ -340,6 +340,126 @@ console.log('=== default export: high/medium verify path (3 verifiers majority v
   const refutedMajorityResult = await workflow(mockAgentRefutedMajority, mockParallel, mockPipeline, 'Test', noopLog, refutedMajorityArgs, undefined);
   assertEq('high/medium経路: 懐疑者3体中1confirmed/2refuted -> refuted（付録行き）', 1, refutedMajorityResult.appendix.refuted.length);
   assertEq('high/medium経路: refuted項目はconfirmedに含まれない', 0, refutedMajorityResult.confirmed.length);
+}
+
+// --- default export: args を JSON.stringify() した文字列で渡しても、オブジェクトで
+//     渡した場合と同じ結果になること（Issue #91: resolvedArgs 正規化パターンの回帰テスト） ---
+console.log('=== default export: args as a JSON string behaves the same as args as an object ===');
+{
+  async function mockAgent(prompt, opts) {
+    if (opts.phase === 'Scan') {
+      const bucketId = opts.label.replace('scan:', '');
+      const fileByBucket = {
+        scripts: 'scripts/foo.sh',
+        'skills/reduce-debt': 'skills/reduce-debt/other.md',
+        agents: 'agents/unrelated.md',
+      };
+      const file = fileByBucket[bucketId];
+      if (!file) return { findings: [] };
+      return { findings: [{ file, summary: `finding in ${file}`, detail: 'detail', severity: 'low', category: 'design' }] };
+    }
+    throw new Error('verify phase should not be reached (severity low is skipped in this smoke test)');
+  }
+  async function mockParallel(thunks) {
+    return Promise.all(thunks.map((t) => t()));
+  }
+  async function mockPipeline(items, stage1, stage2) {
+    const out = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const r1 = await stage1(items[i], items[i], i);
+      const r2 = await stage2(r1, items[i], i);
+      out.push(r2);
+    }
+    return out;
+  }
+  const noopLog = () => {};
+  const args = {
+    directories: ['scripts', 'skills/reduce-debt', 'agents'],
+    parentIssue: 43,
+    changedFiles: ['scripts/foo.sh'],
+    changedDirs: ['scripts', 'skills/reduce-debt'],
+  };
+
+  const objectResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, args, undefined);
+  const stringResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, JSON.stringify(args), undefined);
+  assertEq('args を文字列で渡してもオブジェクトで渡した場合と同じ結果になる', objectResult, stringResult);
+
+  let threw = false;
+  try {
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, '{not valid json', undefined);
+  } catch (e) {
+    threw = true;
+  }
+  assertEq('args が不正なJSON文字列だとthrowする(空オブジェクトへフォールバックしない)', true, threw);
+}
+
+// --- default export: Scan フェーズで agent() が null を返すバケット
+//     (debt-scanner のterminal失敗) を含む場合、meta.failedBuckets に
+//     そのバケットIDが含まれること（Issue #91: 部分結果が有用なnullの明示フィールド化） ---
+console.log('=== default export: a Scan-phase agent() returning null surfaces in meta.failedBuckets ===');
+{
+  async function mockAgent(prompt, opts) {
+    if (opts.phase === 'Scan') {
+      const bucketId = opts.label.replace('scan:', '');
+      if (bucketId === 'agents') return null; // terminal failure for this bucket only
+      return { findings: [] };
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  async function mockParallel(thunks) {
+    return Promise.all(thunks.map((t) => t()));
+  }
+  async function mockPipeline(items, stage1, stage2) {
+    const out = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const r1 = await stage1(items[i], items[i], i);
+      const r2 = await stage2(r1, items[i], i);
+      out.push(r2);
+    }
+    return out;
+  }
+  const noopLog = () => {};
+  const args = { directories: ['scripts', 'agents'], parentIssue: null, changedFiles: [], changedDirs: [] };
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, args, undefined);
+  assertEq('meta.failedBuckets に失敗したバケットIDが含まれる', ['agents'], result.meta.failedBuckets);
+  assertEq('失敗していないバケットはfailedBucketsに含まれない', false, result.meta.failedBuckets.includes('scripts'));
+}
+
+// --- default export: Verify フェーズで懐疑者3体中1体が null を返した場合、
+//     当該findingのfailed_verifiersが1になり、残り2体のverdictで多数決が
+//     通常通り機能すること（Issue #91: 部分結果が有用なnullの明示フィールド化） ---
+console.log('=== default export: one of 3 verifiers returning null surfaces as failed_verifiers without breaking the majority vote ===');
+{
+  async function mockAgent(prompt, opts) {
+    if (opts.phase === 'Scan') {
+      const bucketId = opts.label.replace('scan:', '');
+      if (bucketId !== 'scripts') return { findings: [] };
+      return { findings: [{ file: 'scripts/foo.sh', summary: 'medium finding', detail: 'detail', severity: 'medium', category: 'design' }] };
+    }
+    if (opts.phase === 'Verify') {
+      const verifierNum = opts.label.split(':').pop();
+      if (verifierNum === '3') return null; // terminal failure for this verifier only
+      return { verdicts: [{ file: 'scripts/foo.sh', findingIndex: 0, verdict: 'confirmed', reason: `verifier ${verifierNum}: confirmed` }] };
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  async function mockParallel(thunks) {
+    return Promise.all(thunks.map((t) => t()));
+  }
+  async function mockPipeline(items, stage1, stage2) {
+    const out = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const r1 = await stage1(items[i], items[i], i);
+      const r2 = await stage2(r1, items[i], i);
+      out.push(r2);
+    }
+    return out;
+  }
+  const noopLog = () => {};
+  const args = { directories: ['scripts'], parentIssue: 43, changedFiles: [], changedDirs: [] };
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, args, undefined);
+  assertEq('懐疑者1体がnullでも決を取れた残り2体のconfirmedで多数決通り confirmed になる', 1, result.confirmed.length);
+  assertEq('failed_verifiersが1として記録される', 1, result.confirmed[0]?.failed_verifiers ?? -1);
 }
 
 console.log('');

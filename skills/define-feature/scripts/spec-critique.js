@@ -483,7 +483,22 @@ function isAbsolutePath(p) {
 // phase, log, args, budget — see file header "実行環境の制約"/契約コメント). There is no
 // wrapper function here: `export default async function (...) { ... }` is NOT supported by
 // the runtime, which is why this file no longer declares one (Issue #89).
-const { specPath, specLintScript } = args || {};
+// args は呼び出し環境によって JSON 文字列として届くことがある（実機確認: Issue #91）。
+// オブジェクト/文字列の双方を受け付けるよう入口で正規化する（self-review-loop.js の
+// resolvedArgs パターンと同一。パース失敗を空オブジェクトへフォールバックすると
+// 必須引数の欠落が握りつぶされ得るため、明示的に throw する）。
+const resolvedArgs = (() => {
+  if (typeof args === 'string') {
+    try {
+      return JSON.parse(args);
+    } catch (e) {
+      throw new Error(`spec-critique: args is a string but not valid JSON: ${e.message}`);
+    }
+  }
+  return args || {};
+})();
+
+const { specPath, specLintScript } = resolvedArgs;
 if (!specPath || !specLintScript) {
   throw new Error('spec-critique: args.specPath and args.specLintScript (absolute paths) are required.');
 }
@@ -530,6 +545,14 @@ try {
           phase: 'Critique',
           label: `critique:${lens}:round-${round}`,
         });
+        // agent() は spec-critic のterminal失敗時に null を返す。この失敗を「指摘0件」
+        // として握りつぶすと、そのレンズが実際には未批評であるにもかかわらず blocker 0件・
+        // 収束扱いとして仕様が確定してしまう（収束・完全性の判定に関わるnullのため明示
+        // throw。実機確認: Issue #91 発見）。このthrowは呼び出し元(下のfor文を囲む
+        // try/catch)に捕捉され、snapshotのcleanupを経てから呼び出し元へ再送出される。
+        if (out === null) {
+          throw new Error(`spec-critique: spec-critic agent failed terminally for lens "${lens}" at round ${round}. 批評が未実施のため収束判定を行わない。`);
+        }
         return { lens, findings: Array.isArray(out.findings) ? out.findings : [] };
       }),
     );
