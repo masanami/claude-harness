@@ -8,6 +8,10 @@
 #      併記されている場合は参照ごとに判定し、docs/features/ 以外が1つでもあれば違反とする）
 # (iii) 成立しない `echo "$CLAUDE_PLUGIN_ROOT"` 解決手順の再出現（実機検証によりBash環境では
 #       常にUNSETであることが確認済み。Base directory起点の解決に一本化されている）
+# (iv) skills/*/scripts/*.js（Workflow ランタイムが scriptPath で直接実行するスクリプト）が
+#      `export const meta` 以外の export を持たないこと。ランタイムは `export const meta` のみを
+#      特別扱いし、本文を async 関数体として実行する契約のため、他の export が1つでも残っていると
+#      起動時に `SyntaxError: Unexpected keyword 'export'` で失敗する（Issue #89の実機確認事実）。
 # を検出する。規約の正本は docs/plugin-path-conventions.md。
 #
 # grep の exit code は 0=マッチあり / 1=マッチなし（正常） / 2以上=実行エラー
@@ -212,6 +216,28 @@ else
     echo "  NG - echo \"\$CLAUDE_PLUGIN_ROOT\" 解決手順の再出現を検出"
     print_indented "$dead_echo_violations"
   fi
+fi
+
+echo ""
+echo "=== (iv) Workflow スクリプトの export 制約チェック ==="
+
+workflow_script_export_violations=""
+while IFS= read -r -d '' file; do
+  export_count="$(grep -c '^export ' "$file")"
+  if [ "$export_count" -ne 1 ]; then
+    workflow_script_export_violations="${workflow_script_export_violations}${file}: export行数=${export_count}（期待値=1。export const meta のみ許容）
+"
+  fi
+done < <(find skills -path '*/scripts/*.js' -print0)
+
+if [ -z "$workflow_script_export_violations" ]; then
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - skills/*/scripts/*.js は全て export const meta のみを export している"
+else
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("skills/*/scripts/*.js に export const meta 以外の export を検出")
+  echo "  NG - skills/*/scripts/*.js に export const meta 以外の export を検出"
+  print_indented "$workflow_script_export_violations"
 fi
 
 echo ""
