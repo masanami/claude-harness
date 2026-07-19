@@ -136,6 +136,59 @@ effort: xhigh
 - 該当しないセクションは**セクションごと削除**する（埋めるための水増しは禁止）
 - 機能要件・受入基準はチェックボックス形式で記述する
 
+### 6.5 仕様クリティーク
+
+Step 6 で作成した機能仕様ドキュメントは、後続の `/create-ticket`（本文をそのまま Issue 化）→ `/para-impl`（実装フェーズに人間ゲートなし）へそのまま流れる最上流成果物である。曖昧語・矛盾・実装不能な粒度の混入をここで検出するため、3レンズ批評（受入基準の検証可能性／内部整合／下流実装可能性）と blocker 0件までの有界修正ループを実施する。並列批評・敵対的な観点分けと有界ループは Dynamic Workflows（`skills/define-feature/scripts/spec-critique.js`）に委ね、あなたは Workflow の起動とその結果の後処理に専念する。
+
+#### 6.5-1 Workflow スクリプトについて
+
+3レンズの批評（Lint/Critique/Fix の各フェーズ・ループ制御・レンズの絞り込み仕様）は `skills/define-feature/scripts/spec-critique.js` に実装済みの Dynamic Workflow スクリプトが担う。このファイルはプラグインに同梱されており、モデルが都度書き出す・複写する必要はない（resume 時のキャッシュ安定性のため、Workflow ツールには常に同じ絶対パスをそのまま渡すこと）。
+
+Workflow の内部構造は `skills/define-feature/scripts/spec-critique.js` の冒頭コメントを正本とする。3レンズの観点定義・severity（`blocker`/`minor`/`needs_user_input`）の判定基準は `agents/spec-critic.md`、修正時の制約（クリティカル設計決定セクション不可侵・needs_user_input への即時エスカレーション・創作補完禁止）は `agents/spec-fixer.md` 側に置く（レイヤリング。本 SKILL には重複記載しない）。
+
+呼び出し元の後続動作に直結する内部挙動としてここに明記する点: **Fix ステージの修正エージェントはコミットしない**。修正内容は作業ツリーに残ったままとなる（下記 6.5-3 の差分サマリ提示・確認はこの前提の上で行う）。
+
+#### 6.5-2 Workflow の起動
+
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+Workflow ツールを、スクリプトの絶対パスと `args` を指定して起動する:
+
+```text
+{
+  scriptPath: "<CLAUDE_PLUGIN_ROOTの絶対パス>/skills/define-feature/scripts/spec-critique.js",
+  args: {
+    specPath: "<Step 6 で保存した機能仕様ドキュメントの絶対パス>",
+    specLintScript: "<CLAUDE_PLUGIN_ROOTの絶対パス>/scripts/spec-lint.sh"
+  }
+}
+```
+
+> **`scriptPath` の解決について（重要）**: `<CLAUDE_PLUGIN_ROOTの絶対パス>` は本ドキュメント内の表記上のプレースホルダであり、環境変数ではない（`CLAUDE_PLUGIN_ROOT` はメインセッションの Bash でも未設定であり、環境変数として参照しても空になる）。実際の絶対パスは、本スキル起動時にコンテキストへ与えられる「Base directory for this skill」（`<プラグインルート>/skills/define-feature`）から**親ディレクトリを2階層**辿ることで得られる（`<Base directory for this skill>/../..` がプラグインルート）。この絶対パスと `/skills/define-feature/scripts/spec-critique.js` を連結した文字列を `scriptPath` に渡すこと。`args.specLintScript` も同じ絶対パス解決が必要で、同じプラグインルートの絶対パスに `/scripts/spec-lint.sh` を連結した文字列を渡すこと。
+
+`args` の各フィールドの型と由来:
+
+| フィールド | 型 | 由来 |
+|---|---|---|
+| `specPath` | `string`（必須） | Step 6 で保存した機能仕様ドキュメント（`docs/features/{slug}.md`）の絶対パス。cwd起点の相対パスではなく、保存先の絶対パスを組み立てて渡すこと |
+| `specLintScript` | `string`（必須） | `scripts/spec-lint.sh` の絶対パス。上記手順で得たプラグインルートの絶対パス＋ `/scripts/spec-lint.sh`。未指定だと Workflow スクリプトが早期に `throw` する |
+
+> **オプトイン要件について**: Dynamic Workflows はオプトイン機能であり、SKILL の指示文が明示的に Workflow を呼び出す形にすることでオプトイン要件を満たす。上記の「Workflow の起動」がそのオプトインに当たる。
+
+#### 6.5-3 結果の取得と後処理（必須ゲート）
+
+Workflow の返り値（`{rounds, blockers_resolved, residual: {blockers, minors, needs_user_input}, diff_summary}`）をそのまま以下の後処理に使う。手動での集約・パースは不要（`agent()` の schema 検証により、各エージェントの出力形式は Workflow 側で既に保証されている）。
+
+- `rounds`: 実施した Critique ラウンド数（1 または 2）
+- `blockers_resolved`: 全ラウンドを通じて Fix が正常に対応した blocker 件数の合計
+- `residual.blockers`: 最大ラウンド（2周）に到達しても解消しなかった blocker 指摘。**1件でも残っていれば、内容をユーザーに明示し Step 7 へ進んでよいかを確認する必須ゲートとする**（無視して Step 7 を進めない）
+- `residual.needs_user_input`: ユーザーの意図・ドメイン知識が無いと解消できない指摘（曖昧語の具体化、要件の意味を変えうる修正等）。**1件以上あれば、内容を選択肢としてユーザーに再提示し対話的に解消する**。解消の編集主体（ユーザーの指示に従って Step 6 の該当箇所を直接編集した場合か、対話結果を踏まえて別途 Step 6 を再実行した場合か）にかかわらず、**編集後は必ず Step 6.5 の Workflow を再実行してから**ゲート判定・Step 7 への進行可否を評価すること。直接編集した場合でも Workflow 再実行を省略してはならない（自動修正エージェントは意図的にこの種の指摘を修正しない設計であり、編集後の残存 blocker・新規の指摘混入・古い `residual` のまま Step 7 へ進む事態を防ぐため、再実行なしに古い判定結果を流用しない）
+- `diff_summary`: Fix によって仕様ドキュメントに加えられた最終的な差分（unified diff）。修正が行われた場合（空文字列でない場合）のみ、**Step 7 の完了報告より前の必須確認ゲートとして**「差分サマリ」をユーザーに提示し、承認を得ること（修正が要件の意味を変えうるため、事後の FYI ではなく承認ゲートとして扱う。修正が無ければ提示不要）
+- `residual.minors`: 望ましいが必須ではない改善提案。Step 7 の完了報告に添えるのみでよく、ゲートにはしない
+
+上記いずれのゲートも解消（またはユーザーの明示的な許容）が確認できたら Step 7 へ進む。
+
 ### 7. 完了報告
 
 ```text
