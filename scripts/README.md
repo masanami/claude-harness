@@ -1,6 +1,10 @@
 # scripts/ 共通規約
 
+<<<<<<< HEAD
 `scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が LLM 判断を要さない決定的な git/テキスト処理をループ内で呼び出す実例（Issue #44）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`mutation-run.sh` は `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47）。
+=======
+`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が LLM 判断を要さない決定的な git/テキスト処理をループ内で呼び出す実例（Issue #44）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が `agentType: 'claude-harness:git-ops'` 経由で呼び出す、PRレビューコメントの取得・返信・Resolved化を担う実例（Issue #48）。
+>>>>>>> 8a2d552 (feat(pr-review-respond): コメント対応を Workflow 化)
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 
@@ -198,6 +202,7 @@ stdout JSON:
 - jq不在時は stderr にエラーメッセージ + エラーJSONを出し exit 非0（本ファイル冒頭の出力規約に従う）
 - 入力ファイルが存在しない場合も stderr にメッセージを出し exit 非0
 
+<<<<<<< HEAD
 ## mutation-run.sh の出力仕様（正本）
 
 `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）の Mutation ステージが、`agentType: 'claude-harness:git-ops'` 経由でこのスクリプトを呼び出す（Issue #47）。「意味のある不具合を注入する」判断のみを変異エージェント（`agents/e2e-mutation-injector.md`）に残し、それ以外の全手順（テスト実行・失敗判定・`git checkout --` による復元・復元確認・再実行パス確認）を決定的に行う。
@@ -207,10 +212,42 @@ stdout JSON:
 stdout JSON:
 ```json
 {"testFailed": true, "failureKind": "assertion", "restored": true, "rePassed": true}
+=======
+## fetch-pr-comments.sh / reply-and-resolve.sh の出力仕様（正本）
+
+`skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が、`agentType: 'claude-harness:git-ops'` 経由でこの2スクリプトを呼び出す（Issue #48）。`skills/pr-review-respond/SKILL.md` はこの仕様を参照し、フィールド定義を複製しない。
+
+### `scripts/fetch-pr-comments.sh <PR番号>`
+
+PRのレビューコメントを3経路（レビュー本体/会話タブ/インライン）+ GraphQL reviewThreads + 変更ファイル一覧から取得し、単一の正規化配列へ組み立てる。owner/repoは `gh repo view --json owner,name` で解決する。
+
+stdout JSON:
+```json
+{
+  "pr": 48,
+  "diff_stat": "path/a.js | +12 -3\npath/b.js | +5 -0",
+  "comments": [
+    {
+      "id": "123",
+      "threadId": "PRRT_xxx",
+      "source": "inline",
+      "author": "login",
+      "is_bot": false,
+      "path": "a.js",
+      "line": 10,
+      "diff_hunk": "...",
+      "body": "...",
+      "is_resolved": false,
+      "is_outdated": false
+    }
+  ]
+}
+>>>>>>> 8a2d552 (feat(pr-review-respond): コメント対応を Workflow 化)
 ```
 
 | フィールド | 型 | 意味 |
 |---|---|---|
+<<<<<<< HEAD
 | `testFailed` | bool | `test_command`（`bash -c` で実行）の終了コードが非0だったか |
 | `failureKind` | `"assertion"` \| `"other"` \| `"none"` | `testFailed: false` なら `"none"`。`true` の場合、テスト出力からアサーション起因の失敗らしいかをbest-effortでテキスト判定する（`AssertionError` / `expect(` / `Expected...Received` 等のパターンにマッチすれば `"assertion"`、しなければ `"other"`） |
 | `restored` | bool | `git checkout -- <mutated_file_*>` 実行後、`git status --porcelain -- <mutated_file_*>` が空になったか |
@@ -224,3 +261,46 @@ stdout JSON:
 - 終了コード: `0`（`restored && rePassed`。復元・再パスとも確認できた「安全な」状態）／ `1`（`restored`/`rePassed` のいずれかが `false`。前段の真の異常系＝クリーン確認失敗・引数不正・非gitリポジトリ等も同じ `1` だが、その場合は stdout にJSONを出さない点で区別できる）／ `2`（jq不在）。呼び出し側（`explain-e2e-verify.js`）は、この終了コードと JSON の `restored`/`rePassed` 自己申告を突き合わせることで、シェル実行エージェント側の誤報告を検出できる
 - gh は呼ばない（gh非依存）。`test_command` は呼び出し側が特定済みの文字列をそのまま `bash -c` で実行するだけで、コマンドの意味は解釈しない（`quality-check-runner.sh` の `run_command` と同じ設計）
 - テスト容易性のため、外部コマンド（git/`test_command`）を起動する処理と、外部コマンドを起動しない純粋なテキスト処理（`porcelain_path` / `classify_failure_kind` / `check_dirty_scope` / `normalize_to_repo_relative`）を関数として分離している（`source` して直接テスト可能）。`canonicalize_path`（実ファイルシステムを参照する `cd`/`pwd -P`）はこの分離の対象外（副作用ありの外部コマンド実行側に置く）
+=======
+| `diff_stat` | string | `gh pr view --json files` の additions/deletions から組み立てた `"path \| +N -M"` 形式の行を改行連結した文字列（`build_diff_stat`） |
+| `comments[].id` | string | コメントのDB ID（またはgh/GraphQLが返す識別子）を文字列化したもの。review/conversation/inlineでID空間は別だが、この正規化配列内では一意識別子として扱う |
+| `comments[].threadId` | string \| null | GraphQL reviewThread のnode id。**inlineコメントで対応するスレッドが見つかった場合のみ**値を持つ。review/conversationコメントは常に `null` |
+| `comments[].source` | `"review"` \| `"conversation"` \| `"inline"` | `"review"`（PR全体へのレビュー本体コメント。空bodyのレビューは除外済み）/ `"conversation"`（PR会話タブ、行に紐付かない）/ `"inline"`（個別行コメント） |
+| `comments[].is_bot` | bool | `is_bot_author()`（gh を呼ばない純粋関数）の判定結果。authorのloginが `[bot]` サフィックス、または既知のAIレビュアー名にマッチするか |
+| `comments[].path` / `.line` / `.diff_hunk` | string\|null / integer\|null / string\|null | inlineコメントのみ値を持つ。他は `null` |
+| `comments[].is_resolved` / `.is_outdated` | bool | inlineコメントで対応スレッドが見つかった場合のみそのスレッドの値。他は `false` |
+
+挙動の要点:
+
+- gh を呼ぶ取得系関数（`resolve_repo`/`fetch_reviews_json`/`fetch_conversation_json`/`fetch_inline_json`/`fetch_review_threads_json`/`fetch_pr_files_json`）と、取得済みJSON文字列から正規化配列を組み立てる純粋パース関数（`normalize_comments`/`build_diff_stat`/`is_bot_author`/`build_threads_lookup`）を分離している。パース関数はスクリプトを `source` してフィクスチャJSON（4経路の入力JSON文字列）から直接呼び出してテストできる（`extract-acceptance-criteria.sh` と同じテスト方針）
+- gh呼び出しの失敗・jq不在は stderr にメッセージを出し exit 非0
+
+### `scripts/reply-and-resolve.sh <PR番号> <items_json_file|->`
+
+分類済みコメントへの返信投稿とスレッドのResolved化を、1件ずつ**逐次**行う（GitHub secondary rate limit対策のため並列fan-outしない）。
+
+入力JSON（配列。ファイルまたは `-` でstdin指定）:
+```json
+[{"commentId": "123", "threadId": "PRRT_xxx", "reply_body": "...", "resolve": true}]
+```
+
+stdout JSON:
+```json
+{"pr": 48, "results": [{"commentId": "123", "replied": true, "resolved": true, "error": null}], "succeeded": 1, "failed": 0}
+```
+
+| フィールド | 型 | 意味 |
+|---|---|---|
+| `results[].replied` | bool | 返信投稿（新規 or 冪等性スキップにより既に完了済み）が成立したか |
+| `results[].resolved` | bool \| `"skipped_not_applicable"` | `true`/`false`＝実際にResolved化mutationを試行した結果（`resolve:false`、または返信自体が成立しなかった場合は試行せず `false`）。`"skipped_not_applicable"`＝threadIdがnullのため対象外。冪等性チェックで「既に返信済み」と判定された項目（`replied: true`）についても、`resolve:true` であれば mutation は実際に実行する（GitHubの `resolveReviewThread` はidempotentなため再実行しても安全であり、前回実行時のresolve失敗を見逃さないための設計） |
+| `results[].error` | string \| null | 返信投稿またはResolved化のいずれかで失敗した場合の理由。両方成功、またはスキップのみの場合は `null` |
+| `failed` | integer | `results` 内で `error` が非nullの項目数 |
+
+挙動の要点:
+
+- **冪等性（返信済みスキップ）**: 投稿する返信本文の末尾に隠しマーカー `<!-- pr-review-respond:{commentId} -->` を付与する（`build_marker`/`build_reply_body_with_marker`）。処理開始時に一度、既存コメント一覧（threadIdが非nullの項目向けは `gh api .../pulls/{pr}/comments`、threadIdがnullの項目向けは `gh pr view {pr} --json comments`）を取得し、このマーカーを含む既存コメントがあれば新規投稿をスキップする（`body_list_contains_marker`）
+- 返信は threadId の有無で投稿先を切り替える: 非null（インラインコメント）は `gh api -X POST .../pulls/{pr}/comments -F in_reply_to={commentId}` への返信、null（会話タブ/レビュー本体コメント）は `gh pr comment {pr}` での新規投稿
+- Resolved化は、返信が成立している（`replied: true`。冪等性スキップ含む）、かつ `resolve:true`、かつ threadId が非nullの場合に GraphQL `resolveReviewThread` mutation（`build_resolve_mutation_query`）を実行する。冪等性スキップの項目でも呼び出し自体は省略しない（前回実行のresolveが失敗していた場合を検知できるようにするため）
+- `failed > 0` なら exit 1、それ以外は exit 0（本ファイル冒頭の出力規約: exit code と JSON の両方で成否を表現する）
+- gh を呼ぶ関数（`resolve_repo`/`fetch_existing_inline_bodies`/`fetch_existing_conversation_bodies`/`post_inline_reply`/`post_conversation_reply`/`resolve_thread`）は、テストからスタブ関数で上書きして `main()` 全体の分岐（返信/Resolved化/冪等性スキップ/エラー集計）を検証する。`main()` はテスト容易性のため `exit` を直接呼ばず、常に `return` で終了コード相当の値を返す（直接実行時のみ、末尾の呼び出しが戻り値で実際に `exit` する）
+>>>>>>> 8a2d552 (feat(pr-review-respond): コメント対応を Workflow 化)
