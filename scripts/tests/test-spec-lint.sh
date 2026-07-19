@@ -171,6 +171,12 @@ FIXTURE_REFS_PLACEHOLDER=$'# サンプル機能\n\n- テンプレート変数 `d
 detect_broken_references "$FIXTURE_REFS_PLACEHOLDER" "$REPO_ROOT_RESOLVED"
 assert_eq "プレースホルダを含むパスは検出対象外" "0" "$(jq 'length' <<<"$BROKEN_REFS_JSON")"
 
+echo "=== test: 相対パス参照のファイル存在チェック（URIスキーム・絶対パスは除外。CodeRabbit指摘対応） ==="
+FIXTURE_REFS_URI=$'# サンプル機能\n\n- 外部リンク `https://example.com/path` は除外される\n- 連絡先 `mailto:user@example.com` は除外される（"/"を含まないため別ロジックでも除外されるが念のため確認）\n- 絶対パス `/etc/passwd` は除外される\n- 存在しない相対パスは通常どおり検出される `scripts/still-missing-file.sh`\n'
+detect_broken_references "$FIXTURE_REFS_URI" "$REPO_ROOT_RESOLVED"
+assert_eq "URIスキーム・絶対パスを除外し、相対パスのみ1件検出される" "1" "$(jq 'length' <<<"$BROKEN_REFS_JSON")"
+assert_eq "検出された1件は相対パスのみ" "scripts/still-missing-file.sh" "$(jq -r '.[0].path' <<<"$BROKEN_REFS_JSON")"
+
 echo "=== test: resolve_repo_root（gitが使えない場合のフォールバック） ==="
 NON_GIT_DIR="$(mktemp -d)"
 FALLBACK_ROOT="$(resolve_repo_root "${NON_GIT_DIR}/spec.md")"

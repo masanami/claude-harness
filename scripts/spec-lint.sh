@@ -27,7 +27,8 @@
 #      パスのうち `/` を含み `{` `}` を含まない（プレースホルダ由来でない）ものを対象に、
 #      spec ファイルの位置から `git rev-parse --show-toplevel` で解決したリポジトリルート
 #      起点で存在確認する（git不可の場合は spec ファイルのディレクトリにフォールバック）。
-#      存在しないパスのみを返す。
+#      存在しないパスのみを返す。URIスキーム付き文字列（`https:` `mailto:` 等）と
+#      `/` で始まる絶対パスは対象外として除外する（誤検出防止）。
 #   4. チェックボックス形式検証: 「## 機能要件」「## 受入基準」セクション（次の `## ` 見出し
 #      まで）配下のリスト項目（`- ` 始まり）が `- [ ] ` / `- [x] ` / `- [X] ` 形式でない行を検出する。
 #
@@ -160,6 +161,16 @@ detect_broken_references() {
         continue
       fi
       if [[ "$candidate" =~ [[:space:]] ]]; then
+        continue
+      fi
+      # URIスキーム付き文字列（https:, http:, mailto: 等）は相対パス参照ではないため除外。
+      # 除外しないと `` `https://example.com/path` `` のようなURIが `/` を含むため
+      # <repo_root>/https://... として存在確認され broken_references に誤検出される。
+      if [[ "$candidate" =~ ^[A-Za-z][A-Za-z0-9+.-]*: ]]; then
+        continue
+      fi
+      # "/" で始まる絶対パスも相対パス参照のファイル存在チェック対象外として除外
+      if [[ "$candidate" == /* ]]; then
         continue
       fi
 

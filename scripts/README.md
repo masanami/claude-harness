@@ -188,7 +188,7 @@ stdout JSON:
 | `spec_file` | string | 入力パスそのまま |
 | `ambiguous_words` | `[{line, word, text}]` | スクリプト内蔵の単一定義の曖昧語辞書（「適切に」「必要に応じて」「など」「等」「柔軟に」等）でのマッチ候補。1行に複数語がマッチした場合は複数エントリを返す |
 | `template_placeholders` | `[{line, text}]` | `{...}`（中身が空でない）形式のテンプレートプレースホルダ残骸の候補 |
-| `broken_references` | `[{line, path, exists}]` | 本文中のバッククォート囲み（`` `path/to/file` `` 形式）のパス参照のうち、`/` を含み `{` `}` を含まないものを対象に、spec ファイルの位置から `git rev-parse --show-toplevel` で解決したリポジトリルート起点で存在確認した結果。**存在しないパスのみ**を返す（`exists` は常に `false`） |
+| `broken_references` | `[{line, path, exists}]` | 本文中のバッククォート囲み（`` `path/to/file` `` 形式）のパス参照のうち、`/` を含み `{` `}` を含まないものを対象に、spec ファイルの位置から `git rev-parse --show-toplevel` で解決したリポジトリルート起点で存在確認した結果。**存在しないパスのみ**を返す（`exists` は常に `false`）。**URIスキーム付き文字列**（`https:` `http:` `mailto:` 等。`^[A-Za-z][A-Za-z0-9+.-]*:` にマッチするもの）と**`/` で始まる絶対パス**は対象外として存在確認前に除外する（誤検出防止） |
 | `checklist_format_issues` | `[{line, section, text}]` | 「## 機能要件」「## 受入基準」セクション（次の `## ` 見出しまで）配下のリスト項目（`- ` 始まり）のうち、`- [ ] ` / `- [x] ` / `- [X] ` 形式になっていない行 |
 
 挙動の要点:
