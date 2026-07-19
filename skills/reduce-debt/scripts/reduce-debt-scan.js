@@ -229,7 +229,7 @@ function consumeAgentBudget(n) {
 
 async function scanStage(bucket, originalBucket, index) {
   const findings = await agent(buildScanPrompt(bucket), {
-    agentType: 'debt-scanner',
+    agentType: 'claude-harness:debt-scanner',
     schema: SCAN_SCHEMA,
     phase: 'Scan',
     label: `scan:${bucket.id}`,
@@ -275,9 +275,9 @@ async function verifyStage(scanResult, originalBucket, index) {
 
       const prompt = buildVerifyPrompt(file, batchWithIndex);
       const verifierOutputs = await parallel([
-        () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:1` }),
-        () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:2` }),
-        () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:3` }),
+        () => agent(prompt, { agentType: 'claude-harness:debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:1` }),
+        () => agent(prompt, { agentType: 'claude-harness:debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:2` }),
+        () => agent(prompt, { agentType: 'claude-harness:debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:3` }),
       ]);
 
       batchWithIndex.forEach((finding, i) => {

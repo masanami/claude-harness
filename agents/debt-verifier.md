@@ -1,6 +1,6 @@
 ---
 name: debt-verifier
-description: "debt-scanner が検出した技術負債の指摘に対して懐疑的に反証を試みる際に使用。skills/reduce-debt/SKILL.md が起動する Dynamic Workflow（`.claude/workflows/reduce-debt-scan.js`）から `agentType: 'debt-verifier'` として呼び出され、3体並列・多数決の一角を担う。"
+description: "debt-scanner が検出した技術負債の指摘に対して懐疑的に反証を試みる際に使用。skills/reduce-debt/SKILL.md が起動する Dynamic Workflow（`.claude/workflows/reduce-debt-scan.js`）から `agentType: 'claude-harness:debt-verifier'` として呼び出され、3体並列・多数決の一角を担う。"
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

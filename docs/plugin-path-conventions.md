@@ -77,6 +77,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 - 変数名はスクリプト固有にする（`scripts/tests/` で `source` する際に他スクリプトの同名グローバル変数と衝突させないため。詳細は `scripts/README.md`「テスト」節）
 
+## (g) `agentType` / `subagent_type` のプラグイン名前空間プレフィックス
+
+サブエージェントを識別する文字列（Task ツールの `subagent_type`、Dynamic Workflow の `agent()` に渡す `agentType`）は、いずれも**プラグイン名前空間プレフィックス付き**（`claude-harness:` + `agents/*.md` の `name:` フロントマター値。例: `claude-harness:feature-implementer`）で指定する。プレフィックス無しの裸の名前（例: `feature-implementer`）は名称解決エラーになる。
+
+> **検証済み事実（Issue #41 実機プローブ）**: サブエージェントから Task ツールで別のサブエージェントを spawn する際、`subagent_type` にプレフィックス無しの `feature-implementer` を指定すると名称解決エラーになることを確認済み（`agents/ticket-worker.md` の委譲記述、コミット a1b5196 参照）。Dynamic Workflow の `agent()` が受け取る `agentType` も同じサブエージェント名前解決の仕組みを用いるため、同様にプレフィックス付き指定が必要（`skills/self-review/scripts/self-review-loop.js` 等で採用）。
+
+- Dynamic Workflow スクリプト（`skills/*/scripts/*.js`）が `agent(prompt, { agentType: '...' })` を呼ぶ箇所は、必ず `'claude-harness:<agents/*.mdのname>'` の形式にする
+- `agents/*.md` 本文中で自身の `agentType` 呼び出され方を自己記述する箇所（`description:` フロントマターや Step 記述）も、同じプレフィックス付き表記に揃える（実際の呼び出しコードと表記が食い違うとドキュメントとして信頼できなくなるため）
+- 新しい Dynamic Workflow スクリプトやサブエージェントを追加する際も、この規約に従う
+
 ## (f) 実行時ファイルから docs/ 設計文書への参照禁止
 
 `skills/` と `agents/`（実行時にモデルへロードされるファイル）から、`docs/` 配下の設計文書（ADR・戦略文書・経緯記録。本文書 `docs/plugin-path-conventions.md` 自身を含む）を参照しない。
@@ -101,5 +111,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 - 裸の `scripts/` 参照（`${CLAUDE_PLUGIN_ROOT}` も `<base>` も `SCRIPT_DIR` 自己解決も伴わない bash 実行）
 - `docs/` 配下の設計文書への参照（HTML コメント内は除外）
 - 成立しない `echo "$CLAUDE_PLUGIN_ROOT"` 解決手順の再出現
+- `skills/*/scripts/*.js` の `agentType: '...'` および `agents/*.md` の自己記述が `claude-harness:` プレフィックス付きであること（(g) の規約）
 
 既知の許容パターンはテストファイル内でホワイトリストとして管理する。

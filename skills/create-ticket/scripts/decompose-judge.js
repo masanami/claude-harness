@@ -329,7 +329,7 @@ if (typeof log === 'function') {
 const rawCandidates = await parallel(
   LENSES.map((lens) => async () => {
     const output = await agent(buildGeneratePrompt(lens, parentIssueBody, codebaseAnalysis, criteria), {
-      agentType: 'ticket-decomposer',
+      agentType: 'claude-harness:ticket-decomposer',
       schema: PLAN_SCHEMA,
       phase: 'Generate',
       label: `generate:${lens.id}`,
@@ -366,7 +366,7 @@ for (let i = 0; i < 1 + MAX_JUDGE_RETRIES; i += 1) {
   judgeRounds += 1;
   const prompt = buildJudgePrompt(candidates, previousAttempt);
   const output = await agent(prompt, {
-    agentType: 'decompose-judge',
+    agentType: 'claude-harness:decompose-judge',
     schema: PLAN_SCHEMA,
     phase: 'Judge',
     label: `judge:round-${judgeRounds}`,

@@ -39,9 +39,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-acceptance-criteria.sh" {親Issue番
 
 スクリプトの構造:
 
-- **Generate フェーズ**: `agentType: 'ticket-decomposer'` の分解案エージェント3体を `parallel` で fan-out する。それぞれ「依存最小優先」「垂直スライス優先」「レイヤ分割優先」の異なるレンズを与える（レンズの解釈指針は `agents/ticket-decomposer.md` 側の責務）
+- **Generate フェーズ**: `agentType: 'claude-harness:ticket-decomposer'` の分解案エージェント3体を `parallel` で fan-out する。それぞれ「依存最小優先」「垂直スライス優先」「レイヤ分割優先」の異なるレンズを与える（レンズの解釈指針は `agents/ticket-decomposer.md` 側の責務）
 - **網羅マトリクス・グラフ指標の算出（コード側）**: 3候補案それぞれについて、AC全集合と `tasks[].acceptance_criteria_covered` の和集合との差集合演算で未網羅（`uncovered`）・幻覚ID（`hallucinated`）を検出し、`depends_on`（計画内インデックス参照のDAG）から最大並列幅・クリティカルパス長・循環検出・範囲外インデックス参照（`invalidRefs`）をトポロジカルに算出する。いずれも judge に計算させず、**計算済みの事実**として注入する
-- **Judge フェーズ**: `agentType: 'decompose-judge'` の judge 1体が、3候補案＋計算済みの網羅結果・グラフ指標を基に採点・合成し、候補と同型のschema（`tasks` 配列）で最終分解計画を返す。judge出力にも同じ網羅マトリクス関数・依存グラフ検証関数を適用し、**未網羅・幻覚ID・循環依存・範囲外インデックス参照のいずれか1つでも残っていれば** judge を再実行する（上限付き。AC網羅性が満たされていても、最終計画に循環や存在しないタスクへの依存が残っていれば非収束として扱う。上限に達しても解決しない場合はエラーにせず `converged: false` を返す）
+- **Judge フェーズ**: `agentType: 'claude-harness:decompose-judge'` の judge 1体が、3候補案＋計算済みの網羅結果・グラフ指標を基に採点・合成し、候補と同型のschema（`tasks` 配列）で最終分解計画を返す。judge出力にも同じ網羅マトリクス関数・依存グラフ検証関数を適用し、**未網羅・幻覚ID・循環依存・範囲外インデックス参照のいずれか1つでも残っていれば** judge を再実行する（上限付き。AC網羅性が満たされていても、最終計画に循環や存在しないタスクへの依存が残っていれば非収束として扱う。上限に達しても解決しない場合はエラーにせず `converged: false` を返す）
 - 「最良案がコードで保証される」わけではない点に注意: コードが保証するのは**プロセス**（3案生成・ルーブリック採点・網羅検証）であり、割当の網羅性はコードで決定的に検証されるが、意味的な正しさ（分解の質そのもの）は judge の定性評価に委ねられる
 
 #### 3-3. Workflow の起動

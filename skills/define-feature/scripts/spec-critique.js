@@ -18,7 +18,7 @@
 //   持たない。spec-lint.sh の実行、spec ファイルのスナップショット保存・最終diff算出・
 //   スナップショットのcleanupは、LLM判断を要さない決定的なgit/シェル操作であっても、
 //   このファイル自身が子プロセスを起動して直接実行することはできない。代わりに、Bashツール
-//   のみを持つ薄いシェル実行専用エージェント（agentType: 'git-ops'。agents/git-ops.md）を
+//   のみを持つ薄いシェル実行専用エージェント（agentType: 'claude-harness:git-ops'。agents/git-ops.md）を
 //   agent() 経由で呼び出し、実行を委譲する。
 //   加えて、ランタイムは `export const meta` のみを特別扱いし本文を async 関数体として
 //   実行するため、本文に他の export を書かない（正本: docs/plugin-path-conventions.md。Issue #89）。
@@ -412,11 +412,11 @@ function buildGitOpsCleanupPrompt(snapshotPath) {
   ].join('\n');
 }
 
-// --- git-ops 呼び出しヘルパー（agent() を agentType: 'git-ops' で呼ぶ） ---
+// --- git-ops 呼び出しヘルパー（agent() を agentType: 'claude-harness:git-ops' で呼ぶ） ---
 
 async function runLintViaAgent(agent, { specLintScript, specPath, round, log }) {
   const result = await agent(buildGitOpsLintPrompt(specLintScript, specPath), {
-    agentType: 'git-ops',
+    agentType: 'claude-harness:git-ops',
     schema: LINT_SCHEMA,
     phase: 'Lint',
     label: `lint:round-${round}`,
@@ -429,7 +429,7 @@ async function runLintViaAgent(agent, { specLintScript, specPath, round, log }) 
 
 async function snapshotViaAgent(agent, { specPath, log }) {
   const result = await agent(buildGitOpsSnapshotPrompt(specPath), {
-    agentType: 'git-ops',
+    agentType: 'claude-harness:git-ops',
     schema: GITOPS_SNAPSHOT_SCHEMA,
     phase: 'Lint',
     label: 'snapshot:initial',
@@ -442,7 +442,7 @@ async function snapshotViaAgent(agent, { specPath, log }) {
 
 async function diffViaAgent(agent, { snapshotPath, specPath, log }) {
   const result = await agent(buildGitOpsDiffPrompt(snapshotPath, specPath), {
-    agentType: 'git-ops',
+    agentType: 'claude-harness:git-ops',
     schema: GITOPS_DIFF_SCHEMA,
     phase: 'Fix',
     label: 'diff:final',
@@ -456,7 +456,7 @@ async function diffViaAgent(agent, { snapshotPath, specPath, log }) {
 async function cleanupViaAgent(agent, { snapshotPath, log }) {
   if (!snapshotPath) return;
   const result = await agent(buildGitOpsCleanupPrompt(snapshotPath), {
-    agentType: 'git-ops',
+    agentType: 'claude-harness:git-ops',
     schema: GITOPS_CLEANUP_SCHEMA,
     phase: 'Fix',
     label: 'cleanup:final',
@@ -525,7 +525,7 @@ try {
       lensesToRun.map((lens) => async () => {
         const lensLintFindings = selectLintFindingsForLens(lintResult, lens);
         const out = await agent(buildCritiquePrompt(specPath, lens, lensLintFindings), {
-          agentType: 'spec-critic',
+          agentType: 'claude-harness:spec-critic',
           schema: CRITIQUE_FINDINGS_SCHEMA,
           phase: 'Critique',
           label: `critique:${lens}:round-${round}`,
@@ -568,7 +568,7 @@ try {
     }
 
     const fixResult = await agent(buildFixPrompt(specPath, blockers), {
-      agentType: 'spec-fixer',
+      agentType: 'claude-harness:spec-fixer',
       schema: FIX_SCHEMA,
       phase: 'Fix',
       label: `fix:round-${round}`,

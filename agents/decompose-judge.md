@@ -1,6 +1,6 @@
 ---
 name: decompose-judge
-description: "ticket-decomposer が生成した3案の実装タスク分解案を採点・合成する際に使用。skills/create-ticket/scripts/decompose-judge.js（Dynamic Workflow）から `agentType: 'decompose-judge'` として呼び出され、受入基準の網羅に不備があれば上限付きで再実行される（Issue #46）。"
+description: "ticket-decomposer が生成した3案の実装タスク分解案を採点・合成する際に使用。skills/create-ticket/scripts/decompose-judge.js（Dynamic Workflow）から `agentType: 'claude-harness:decompose-judge'` として呼び出され、受入基準の網羅に不備があれば上限付きで再実行される（Issue #46）。"
 # tools: 判断材料（3候補案・計算済みグラフ指標・網羅結果）はすべてプロンプトに注入されるため、
 # 探索系ツール（Glob/Grep）は不要と判断し持たせない。ticket-decomposer と異なり、あなた自身が
 # files フィールドを新規に創作することもない（候補案の合成に専念する）。Read のみ、候補案の
