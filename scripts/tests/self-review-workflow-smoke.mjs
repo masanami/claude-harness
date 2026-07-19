@@ -489,6 +489,51 @@ console.log('=== default export: needs_human_judgment findings surface in residu
   assertEq('残った指摘はsrc/y.js', 'src/y.js', result.residualFindings[0]?.file);
 }
 
+// --- default export: 懐疑者(finding-verifier)3体中1体が agent() の terminal失敗で null を
+//     返した場合、残り2体の票で通常どおり多数決を行いつつ、failed_verifiers が
+//     結果の finding に明示フィールドとして残ること（CodeRabbit指摘の回帰テスト。
+//     reduce-debt-scan.js 側の同種テストと対をなす） ---
+console.log('=== default export: one of 3 finding-verifiers returning null surfaces as failed_verifiers ===');
+{
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/z.js'], diff_file: 'mock-diff-verifier-null' };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/z.js:9', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') {
+      if (opts.label.startsWith('review:code')) {
+        return { findings: [{ file: 'src/z.js', line: 9, severity: 'high', claim: 'maybe bug', evidence: 'ev', verdict: 'PLAUSIBLE' }] };
+      }
+      return { findings: [] };
+    }
+    if (opts.phase === 'Verify') {
+      const findingId = opts.label.split(':').slice(1, -1).join(':');
+      const verifierNum = opts.label.split(':').pop();
+      // verifier 3 は terminal 失敗(null)。残り(1: confirmed, 2: refuted)は割れるため
+      // needs_human_judgmentとなり、failed_verifiersが1として残ることを確認する。
+      if (verifierNum === '3') return null;
+      const verdictByNum = { 1: 'confirmed', 2: 'refuted' };
+      return { verdicts: [{ findingId, verdict: verdictByNum[verifierNum], reason: `v${verifierNum}` }] };
+    }
+    throw new Error(`Fix stage should not be reached: ${opts.phase}`);
+  }
+
+  const noopLog = () => {};
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
+
+  assertEq('converged: false (要人間判断の残指摘があるため)', false, result.converged);
+  assertEq('residualFindingsに1件残る(needs_human_judgment)', 1, result.residualFindings.length);
+  assertEq('failed_verifiersが1として記録される(懐疑者3体中1体がterminal失敗)', 1, result.residualFindings[0]?.failed_verifiers);
+}
+
 // --- default export: 指摘0件で即座に収束（レビュー1回で完了） ---
 console.log('=== default export: zero findings converges immediately ===');
 {
