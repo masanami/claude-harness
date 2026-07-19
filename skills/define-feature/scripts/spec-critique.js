@@ -20,6 +20,8 @@
 //   このファイル自身が子プロセスを起動して直接実行することはできない。代わりに、Bashツール
 //   のみを持つ薄いシェル実行専用エージェント（agentType: 'git-ops'。agents/git-ops.md）を
 //   agent() 経由で呼び出し、実行を委譲する。
+//   加えて、ランタイムは `export const meta` のみを特別扱いし本文を async 関数体として
+//   実行するため、本文に他の export を書かない（正本: docs/plugin-path-conventions.md。Issue #89）。
 //
 // 設計メモ（レイヤリング）:
 //   - 3レンズの観点定義・severity判定基準（blocker/minor/needs_user_input の切り分け）は
@@ -93,7 +95,7 @@ const LENSES = ['acceptance-criteria-testability', 'internal-consistency', 'down
 // --- JSON Schema（agent() の schema オプションに渡す。出力検証・自動リトライに使われる） ---
 
 // git-ops が実行する scripts/spec-lint.sh の出力そのままの形（scripts/README.md の正本と同一フィールド）。
-export const LINT_SCHEMA = {
+const LINT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -138,7 +140,7 @@ export const LINT_SCHEMA = {
   required: ['spec_file', 'ambiguous_words', 'template_placeholders', 'broken_references', 'checklist_format_issues'],
 };
 
-export const CRITIQUE_FINDINGS_SCHEMA = {
+const CRITIQUE_FINDINGS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -161,7 +163,7 @@ export const CRITIQUE_FINDINGS_SCHEMA = {
   required: ['findings'],
 };
 
-export const FIX_SCHEMA = {
+const FIX_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -192,21 +194,21 @@ export const FIX_SCHEMA = {
   required: ['appliedFixes', 'escalatedToUserInput'],
 };
 
-export const GITOPS_SNAPSHOT_SCHEMA = {
+const GITOPS_SNAPSHOT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: { path: { type: 'string' } },
   required: ['path'],
 };
 
-export const GITOPS_DIFF_SCHEMA = {
+const GITOPS_DIFF_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: { diff: { type: 'string' } },
   required: ['diff'],
 };
 
-export const GITOPS_CLEANUP_SCHEMA = {
+const GITOPS_CLEANUP_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: { removed: { type: 'boolean' } },
@@ -237,7 +239,7 @@ function wrapDataBlock(data) {
 // 批評指摘の配列を severity ごとに分類する。severity 判定基準そのもの（blocker/minor/
 // needs_user_input の切り分け）は agents/spec-critic.md の責務であり、ここでは
 // 分類のみを行う。想定外の severity 値（スキーマ違反時のフォールバック）は minor に含める。
-export function partitionFindingsBySeverity(findings) {
+function partitionFindingsBySeverity(findings) {
   const blockers = [];
   const minors = [];
   const needsUserInput = [];
@@ -261,7 +263,7 @@ export function partitionFindingsBySeverity(findings) {
 // round1・round2それぞれの「そのラウンドで新たに確定したもの」を累積する現在の設計だと
 // 同一指摘が2件重複してresidualに残ってしまうため、最終的にresidualへ格納する直前に
 // このヘルパーで重複を除去する（CodeRabbit指摘対応: PR #88）。
-export function dedupeFindingsBySectionAndQuote(findings) {
+function dedupeFindingsBySectionAndQuote(findings) {
   const seen = new Set();
   const result = [];
   for (const f of findings || []) {
@@ -276,7 +278,7 @@ export function dedupeFindingsBySectionAndQuote(findings) {
 // 各レンズの批評結果（[{lens, findings}]）から、blocker を1件以上含むレンズの一覧を返す。
 // 次周に再実行すべき focus 一覧として使う（Issue #51: 2周目のCritiqueはblockerが
 // 出たレンズのみに絞る）。
-export function lensesWithBlockers(perLensResults) {
+function lensesWithBlockers(perLensResults) {
   return (perLensResults || [])
     .filter(({ findings }) => Array.isArray(findings) && findings.some((f) => f.severity === 'blocker'))
     .map(({ lens }) => lens);
@@ -289,7 +291,7 @@ export function lensesWithBlockers(perLensResults) {
 //     抽出できず完了条件トレーサビリティが破綻するため、強い blocker 候補として渡す）
 //   - internal-consistency -> broken_references
 //   - downstream-implementability -> ambiguous_words, template_placeholders
-export function selectLintFindingsForLens(lintResult, lens) {
+function selectLintFindingsForLens(lintResult, lens) {
   const safe = lintResult || {};
   if (lens === 'acceptance-criteria-testability') {
     return { checklist_format_issues: safe.checklist_format_issues || [] };
@@ -306,7 +308,7 @@ export function selectLintFindingsForLens(lintResult, lens) {
   return {};
 }
 
-export function buildCritiquePrompt(specPath, lens, lintFindings) {
+function buildCritiquePrompt(specPath, lens, lintFindings) {
   return [
     `以下のデータブロックの specPath を Read し、focus="${lens}" の観点で仕様ドキュメントを批評してください。`,
     'データブロックの lintFindings は決定的スクリプト（spec-lint.sh）が検出した候補です。',
@@ -320,7 +322,7 @@ export function buildCritiquePrompt(specPath, lens, lintFindings) {
   ].join('\n');
 }
 
-export function buildFixPrompt(specPath, blockerFindings) {
+function buildFixPrompt(specPath, blockerFindings) {
   return [
     'これは /define-feature Step 6.5 の Fix ステージからのスコープ付き呼び出しです。',
     '以下のデータブロックの specPath を対象に、blockerFindings に列挙された blocker 指摘のみを',
@@ -354,7 +356,7 @@ const SHELL_QUOTING_INSTRUCTIONS = [
   "例: 値が O'Brien.js の場合 -> 'O'\\''Brien.js' として埋め込む（数値のみのフィールドはこの手順は不要でそのまま埋め込んでよい）",
 ].join('\n');
 
-export function buildGitOpsLintPrompt(specLintScript, specPath) {
+function buildGitOpsLintPrompt(specLintScript, specPath) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行し、その標準出力をそのまま返すことだけが仕事です。内容の解釈・要約・加工は一切行わないでください。',
     '',
@@ -368,7 +370,7 @@ export function buildGitOpsLintPrompt(specLintScript, specPath) {
   ].join('\n');
 }
 
-export function buildGitOpsSnapshotPrompt(specPath) {
+function buildGitOpsSnapshotPrompt(specPath) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。以下の手順を機械的に実行するだけが仕事です。',
     '',
@@ -384,7 +386,7 @@ export function buildGitOpsSnapshotPrompt(specPath) {
   ].join('\n');
 }
 
-export function buildGitOpsDiffPrompt(snapshotPath, specPath) {
+function buildGitOpsDiffPrompt(snapshotPath, specPath) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行し、その標準出力をそのまま返すことだけが仕事です。',
     '',
@@ -398,7 +400,7 @@ export function buildGitOpsDiffPrompt(snapshotPath, specPath) {
   ].join('\n');
 }
 
-export function buildGitOpsCleanupPrompt(snapshotPath) {
+function buildGitOpsCleanupPrompt(snapshotPath) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行するだけが仕事です。',
     '',
@@ -475,171 +477,175 @@ function isAbsolutePath(p) {
   return typeof p === 'string' && p.startsWith('/');
 }
 
-export default async function ({ agent, parallel, pipeline, log, args }) {
-  const { specPath, specLintScript } = args || {};
-  if (!specPath || !specLintScript) {
-    throw new Error('spec-critique: args.specPath and args.specLintScript (absolute paths) are required.');
-  }
-  if (!isAbsolutePath(specPath) || !isAbsolutePath(specLintScript)) {
-    throw new Error('spec-critique: args.specPath and args.specLintScript must be absolute paths (starting with "/").');
-  }
-
-  let lintResult = await runLintViaAgent(agent, { specLintScript, specPath, round: 1, log });
-  const snapshotPath = await snapshotViaAgent(agent, { specPath, log });
-
-  const appliedFixes = [];
-  const needsUserInput = [];
-  let minors = [];
-  let blockers = [];
-  let lensesToRun = LENSES.slice();
-  let roundsRun = 0;
-  let diffSummary = '';
-
-  // レンズごとの最新の批評結果を保持する。2周目に再実行しなかったレンズの結果は
-  // 1周目の値を引き継ぐ（Issue #51: blockerが出たレンズのみ再実行する設計）。
-  const lensFindingsMap = new Map();
-
-  // snapshot作成後の処理（ループ〜diff取得）は try/catch で囲み、途中で例外が発生しても
-  // （Critique/Fix/次周Lintいずれかのagent()呼び出しが失敗しても）一時ファイル（snapshot）が
-  // 残留しないよう、必ずcleanupViaAgentを実行してから元の例外を呼び出し元へ再送出する
-  // （握りつぶさない。CodeRabbit指摘対応: PR #88）。単純な try/finally だと、finally 内の
-  // cleanupViaAgent 自体が例外を投げた場合（例: git-ops の応答がスキーマ検証に失敗する等）に
-  // finally 側の例外がループ内の元の例外を上書きしてしまい、呼び出し元には無関係な
-  // cleanup失敗のエラーしか伝わらなくなる（コードレビューで確認された懸念）。そのため
-  // ここでは try/finally を使わず、ループ側の例外を変数に捕捉したうえで cleanup を実行し、
-  // cleanup 自体が失敗した場合はログに残すのみに留め、ループ側の元の例外を優先して
-  // 再送出する（ループ側が成功していた場合のみ cleanup の例外をそのまま伝播させる）。
-  let loopError = null;
-  try {
-    for (let round = 1; round <= MAX_ROUNDS; round += 1) {
-      roundsRun = round;
-
-      const critiqueOutputs = await parallel(
-        lensesToRun.map((lens) => async () => {
-          const lensLintFindings = selectLintFindingsForLens(lintResult, lens);
-          const out = await agent(buildCritiquePrompt(specPath, lens, lensLintFindings), {
-            agentType: 'spec-critic',
-            schema: CRITIQUE_FINDINGS_SCHEMA,
-            phase: 'Critique',
-            label: `critique:${lens}:round-${round}`,
-          });
-          return { lens, findings: Array.isArray(out.findings) ? out.findings : [] };
-        }),
-      );
-
-      if (typeof log === 'function') {
-        log(`spec-critique: round ${round} critiqued lens(es) [${lensesToRun.join(', ')}]`);
-      }
-
-      for (const { lens, findings } of critiqueOutputs) {
-        lensFindingsMap.set(lens, findings);
-      }
-
-      const merged = Array.from(lensFindingsMap.values()).flat();
-      const partitioned = partitionFindingsBySeverity(merged);
-      blockers = partitioned.blockers;
-      minors = partitioned.minors;
-      // needs_user_input は「このラウンドで実際に批評されたレンズ（critiqueOutputs）」由来分の
-      // みを累積する。merged は再実行されなかったレンズの前ラウンド結果を持ち越して含むため、
-      // merged（partitioned.needsUserInput）をそのまま累積すると、blockerが出ずに再実行対象
-      // から外れたレンズの needs_user_input が毎ラウンド重複して push されてしまう
-      // （設計/コードレビューで確認された回帰。例: レンズAがblocker・レンズBがneeds_user_input
-      // のみの場合、2周目はAのみ再実行されるが、Bの1周目findingsはmergedに残り続ける）。
-      // critiqueOutputs はこのラウンドで実際にAgentへ問い合わせた結果のみを含むため、これを
-      // 起点にすることで「各ラウンドで新たに確定したもの」のみが累積される。
-      const freshFindingsThisRound = critiqueOutputs.flatMap(({ findings }) => findings);
-      const { needsUserInput: freshNeedsUserInput } = partitionFindingsBySeverity(freshFindingsThisRound);
-      needsUserInput.push(...freshNeedsUserInput);
-
-      if (blockers.length === 0) {
-        break;
-      }
-
-      if (round === MAX_ROUNDS) {
-        // 上限到達。Fixは行わず、残った blockers は呼び出し元へ residual として返す。
-        break;
-      }
-
-      const fixResult = await agent(buildFixPrompt(specPath, blockers), {
-        agentType: 'spec-fixer',
-        schema: FIX_SCHEMA,
-        phase: 'Fix',
-        label: `fix:round-${round}`,
-      });
-      const fixApplied = Array.isArray(fixResult.appliedFixes) ? fixResult.appliedFixes : [];
-      const escalated = Array.isArray(fixResult.escalatedToUserInput) ? fixResult.escalatedToUserInput : [];
-      appliedFixes.push(...fixApplied);
-      needsUserInput.push(...escalated.map((f) => ({ ...f, source: 'fix-escalation' })));
-
-      if (typeof log === 'function') {
-        log(`spec-critique: round ${round} fix applied ${fixApplied.length} fix(es), escalated ${escalated.length} finding(s) to user input`);
-      }
-
-      // escalation発生後は、その指摘の元となったレンズを次周も再実行すると、未修正のまま
-      // 残ったテキストが次周のCritiqueで同一blocker/needs_user_inputとして再検出され、
-      // 今回のescalation分と重複してresidualへ積まれてしまう（CodeRabbit指摘対応: PR #88）。
-      // escalationが発生した時点でその周の残り作業は人間判断待ちが確定しており追加ラウンドの
-      // 価値が低いため、次周のLint/Critiqueを行わずここでループを終了する
-      // （Issue #51の設計方針「needs_user_inputの指摘はリトライせず即座に返却値へ」の延長）。
-      if (escalated.length > 0) {
-        // この break 経路では次周の再Lint/再Critiqueを行わないため、blockers配列は
-        // このFixフェーズで実際に修正済み・エスカレーション済みになったfindingを含んだ
-        // ままになってしまう（設計/コードレビューで確認された回帰）。何もしないと
-        // (a) appliedFixesで修正済みのblockerが「未解消のblocker」としてresidualに残る
-        // （blockers_resolvedの集計と矛盾する）、(b) escalated分がresidual.blockersと
-        // residual.needs_user_inputの両方に重複して積まれる（この break 自体が防ごうと
-        // していた重複が別の形で残ってしまう）、という2つの問題が起きる。
-        // Fixフェーズは渡されたblockers全件についてappliedFixesかescalatedToUserInputの
-        // いずれかで応答する契約（agents/spec-fixer.md）のため、両方に該当するfindingを
-        // blockersから除外する。escalatedはquoteを保持するため厳密一致で除外できるが、
-        // appliedFixesはFIX_SCHEMA上sectionのみでquoteを持たないため、安全側に倒して
-        // 同一section内の他blockerもあわせて除外する（「修正済みblockerをresidualへ
-        // 誤って残す」方が「無関係な同一sectionのblockerを一時的に見逃す」より実害が
-        // 大きいと判断）。
-        const escalatedQuotes = new Set(escalated.map((f) => f.quote));
-        const fixedSections = new Set(fixApplied.map((f) => f.section));
-        blockers = blockers.filter((f) => !escalatedQuotes.has(f.quote) && !fixedSections.has(f.section));
-        break;
-      }
-
-      // 次周のLint再実行（修正後の状態に追従する）。
-      lintResult = await runLintViaAgent(agent, { specLintScript, specPath, round: round + 1, log });
-
-      // 次周のCritiqueは、今回blockerが出たレンズのみに絞る。
-      lensesToRun = lensesWithBlockers(critiqueOutputs);
-    }
-
-    diffSummary = await diffViaAgent(agent, { snapshotPath, specPath, log });
-  } catch (e) {
-    loopError = e;
-  }
-
-  try {
-    await cleanupViaAgent(agent, { snapshotPath, log });
-  } catch (cleanupError) {
-    if (typeof log === 'function') {
-      log(`spec-critique: WARNING - snapshot cleanup itself threw during error handling (${cleanupError && cleanupError.message}); the temporary file may remain`);
-    }
-    // ループ側で既に元の例外を捕捉している場合は、そちらを優先して再送出するため
-    // cleanup側の例外はログのみに留めて握りつぶす（元の例外を上書きしない）。
-    // ループ側が成功していた場合のみ、cleanup失敗をそのまま呼び出し元へ伝播させる。
-    if (!loopError) {
-      throw cleanupError;
-    }
-  }
-
-  if (loopError) {
-    throw loopError;
-  }
-
-  return {
-    rounds: roundsRun,
-    blockers_resolved: appliedFixes.length,
-    residual: {
-      blockers,
-      minors,
-      needs_user_input: dedupeFindingsBySectionAndQuote(needsUserInput),
-    },
-    diff_summary: diffSummary,
-  };
+// === WORKFLOW ENTRY POINT ===
+// Everything below this marker runs as top-level statements in the async function body
+// the Workflow runtime constructs for this script (parameters: agent, parallel, pipeline,
+// phase, log, args, budget — see file header "実行環境の制約"/契約コメント). There is no
+// wrapper function here: `export default async function (...) { ... }` is NOT supported by
+// the runtime, which is why this file no longer declares one (Issue #89).
+const { specPath, specLintScript } = args || {};
+if (!specPath || !specLintScript) {
+  throw new Error('spec-critique: args.specPath and args.specLintScript (absolute paths) are required.');
 }
+if (!isAbsolutePath(specPath) || !isAbsolutePath(specLintScript)) {
+  throw new Error('spec-critique: args.specPath and args.specLintScript must be absolute paths (starting with "/").');
+}
+
+let lintResult = await runLintViaAgent(agent, { specLintScript, specPath, round: 1, log });
+const snapshotPath = await snapshotViaAgent(agent, { specPath, log });
+
+const appliedFixes = [];
+const needsUserInput = [];
+let minors = [];
+let blockers = [];
+let lensesToRun = LENSES.slice();
+let roundsRun = 0;
+let diffSummary = '';
+
+// レンズごとの最新の批評結果を保持する。2周目に再実行しなかったレンズの結果は
+// 1周目の値を引き継ぐ（Issue #51: blockerが出たレンズのみ再実行する設計）。
+const lensFindingsMap = new Map();
+
+// snapshot作成後の処理（ループ〜diff取得）は try/catch で囲み、途中で例外が発生しても
+// （Critique/Fix/次周Lintいずれかのagent()呼び出しが失敗しても）一時ファイル（snapshot）が
+// 残留しないよう、必ずcleanupViaAgentを実行してから元の例外を呼び出し元へ再送出する
+// （握りつぶさない。CodeRabbit指摘対応: PR #88）。単純な try/finally だと、finally 内の
+// cleanupViaAgent 自体が例外を投げた場合（例: git-ops の応答がスキーマ検証に失敗する等）に
+// finally 側の例外がループ内の元の例外を上書きしてしまい、呼び出し元には無関係な
+// cleanup失敗のエラーしか伝わらなくなる（コードレビューで確認された懸念）。そのため
+// ここでは try/finally を使わず、ループ側の例外を変数に捕捉したうえで cleanup を実行し、
+// cleanup 自体が失敗した場合はログに残すのみに留め、ループ側の元の例外を優先して
+// 再送出する（ループ側が成功していた場合のみ cleanup の例外をそのまま伝播させる）。
+let loopError = null;
+try {
+  for (let round = 1; round <= MAX_ROUNDS; round += 1) {
+    roundsRun = round;
+
+    const critiqueOutputs = await parallel(
+      lensesToRun.map((lens) => async () => {
+        const lensLintFindings = selectLintFindingsForLens(lintResult, lens);
+        const out = await agent(buildCritiquePrompt(specPath, lens, lensLintFindings), {
+          agentType: 'spec-critic',
+          schema: CRITIQUE_FINDINGS_SCHEMA,
+          phase: 'Critique',
+          label: `critique:${lens}:round-${round}`,
+        });
+        return { lens, findings: Array.isArray(out.findings) ? out.findings : [] };
+      }),
+    );
+
+    if (typeof log === 'function') {
+      log(`spec-critique: round ${round} critiqued lens(es) [${lensesToRun.join(', ')}]`);
+    }
+
+    for (const { lens, findings } of critiqueOutputs) {
+      lensFindingsMap.set(lens, findings);
+    }
+
+    const merged = Array.from(lensFindingsMap.values()).flat();
+    const partitioned = partitionFindingsBySeverity(merged);
+    blockers = partitioned.blockers;
+    minors = partitioned.minors;
+    // needs_user_input は「このラウンドで実際に批評されたレンズ（critiqueOutputs）」由来分の
+    // みを累積する。merged は再実行されなかったレンズの前ラウンド結果を持ち越して含むため、
+    // merged（partitioned.needsUserInput）をそのまま累積すると、blockerが出ずに再実行対象
+    // から外れたレンズの needs_user_input が毎ラウンド重複して push されてしまう
+    // （設計/コードレビューで確認された回帰。例: レンズAがblocker・レンズBがneeds_user_input
+    // のみの場合、2周目はAのみ再実行されるが、Bの1周目findingsはmergedに残り続ける）。
+    // critiqueOutputs はこのラウンドで実際にAgentへ問い合わせた結果のみを含むため、これを
+    // 起点にすることで「各ラウンドで新たに確定したもの」のみが累積される。
+    const freshFindingsThisRound = critiqueOutputs.flatMap(({ findings }) => findings);
+    const { needsUserInput: freshNeedsUserInput } = partitionFindingsBySeverity(freshFindingsThisRound);
+    needsUserInput.push(...freshNeedsUserInput);
+
+    if (blockers.length === 0) {
+      break;
+    }
+
+    if (round === MAX_ROUNDS) {
+      // 上限到達。Fixは行わず、残った blockers は呼び出し元へ residual として返す。
+      break;
+    }
+
+    const fixResult = await agent(buildFixPrompt(specPath, blockers), {
+      agentType: 'spec-fixer',
+      schema: FIX_SCHEMA,
+      phase: 'Fix',
+      label: `fix:round-${round}`,
+    });
+    const fixApplied = Array.isArray(fixResult.appliedFixes) ? fixResult.appliedFixes : [];
+    const escalated = Array.isArray(fixResult.escalatedToUserInput) ? fixResult.escalatedToUserInput : [];
+    appliedFixes.push(...fixApplied);
+    needsUserInput.push(...escalated.map((f) => ({ ...f, source: 'fix-escalation' })));
+
+    if (typeof log === 'function') {
+      log(`spec-critique: round ${round} fix applied ${fixApplied.length} fix(es), escalated ${escalated.length} finding(s) to user input`);
+    }
+
+    // escalation発生後は、その指摘の元となったレンズを次周も再実行すると、未修正のまま
+    // 残ったテキストが次周のCritiqueで同一blocker/needs_user_inputとして再検出され、
+    // 今回のescalation分と重複してresidualへ積まれてしまう（CodeRabbit指摘対応: PR #88）。
+    // escalationが発生した時点でその周の残り作業は人間判断待ちが確定しており追加ラウンドの
+    // 価値が低いため、次周のLint/Critiqueを行わずここでループを終了する
+    // （Issue #51の設計方針「needs_user_inputの指摘はリトライせず即座に返却値へ」の延長）。
+    if (escalated.length > 0) {
+      // この break 経路では次周の再Lint/再Critiqueを行わないため、blockers配列は
+      // このFixフェーズで実際に修正済み・エスカレーション済みになったfindingを含んだ
+      // ままになってしまう（設計/コードレビューで確認された回帰）。何もしないと
+      // (a) appliedFixesで修正済みのblockerが「未解消のblocker」としてresidualに残る
+      // （blockers_resolvedの集計と矛盾する）、(b) escalated分がresidual.blockersと
+      // residual.needs_user_inputの両方に重複して積まれる（この break 自体が防ごうと
+      // していた重複が別の形で残ってしまう）、という2つの問題が起きる。
+      // Fixフェーズは渡されたblockers全件についてappliedFixesかescalatedToUserInputの
+      // いずれかで応答する契約（agents/spec-fixer.md）のため、両方に該当するfindingを
+      // blockersから除外する。escalatedはquoteを保持するため厳密一致で除外できるが、
+      // appliedFixesはFIX_SCHEMA上sectionのみでquoteを持たないため、安全側に倒して
+      // 同一section内の他blockerもあわせて除外する（「修正済みblockerをresidualへ
+      // 誤って残す」方が「無関係な同一sectionのblockerを一時的に見逃す」より実害が
+      // 大きいと判断）。
+      const escalatedQuotes = new Set(escalated.map((f) => f.quote));
+      const fixedSections = new Set(fixApplied.map((f) => f.section));
+      blockers = blockers.filter((f) => !escalatedQuotes.has(f.quote) && !fixedSections.has(f.section));
+      break;
+    }
+
+    // 次周のLint再実行（修正後の状態に追従する）。
+    lintResult = await runLintViaAgent(agent, { specLintScript, specPath, round: round + 1, log });
+
+    // 次周のCritiqueは、今回blockerが出たレンズのみに絞る。
+    lensesToRun = lensesWithBlockers(critiqueOutputs);
+  }
+
+  diffSummary = await diffViaAgent(agent, { snapshotPath, specPath, log });
+} catch (e) {
+  loopError = e;
+}
+
+try {
+  await cleanupViaAgent(agent, { snapshotPath, log });
+} catch (cleanupError) {
+  if (typeof log === 'function') {
+    log(`spec-critique: WARNING - snapshot cleanup itself threw during error handling (${cleanupError && cleanupError.message}); the temporary file may remain`);
+  }
+  // ループ側で既に元の例外を捕捉している場合は、そちらを優先して再送出するため
+  // cleanup側の例外はログのみに留めて握りつぶす（元の例外を上書きしない）。
+  // ループ側が成功していた場合のみ、cleanup失敗をそのまま呼び出し元へ伝播させる。
+  if (!loopError) {
+    throw cleanupError;
+  }
+}
+
+if (loopError) {
+  throw loopError;
+}
+
+return {
+  rounds: roundsRun,
+  blockers_resolved: appliedFixes.length,
+  residual: {
+    blockers,
+    minors,
+    needs_user_input: dedupeFindingsBySectionAndQuote(needsUserInput),
+  },
+  diff_summary: diffSummary,
+};
