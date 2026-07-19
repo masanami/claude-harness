@@ -5,16 +5,36 @@
 //
 // 実行方法: node scripts/tests/create-ticket-workflow-smoke.mjs
 // 失敗時は非0 exitし、要約を出力する（他の scripts/tests/*.sh の pass/fail 集計スタイルに合わせる）。
+//
+// decompose-judge.js は通常の ESM import では読み込まない。Workflow ランタイムは
+// `export const meta = {...}` のみを特別扱いし、本文を async 関数体として実行する契約
+// （export default async function ラッパーは非対応）のため、scripts/tests/workflow-harness.mjs
+// 経由でその契約と同じ方法（meta置換 + AsyncFunction化）で読み込む（Issue #89）。
 
-import {
+import { loadWorkflow, loadPureFunctions } from './workflow-harness.mjs';
+
+const WORKFLOW_PATH = new URL('../../skills/create-ticket/scripts/decompose-judge.js', import.meta.url).pathname;
+
+const {
   computeAcCoverage,
   computeGraphMetrics,
   isGraphValid,
   buildGeneratePrompt,
   buildJudgePrompt,
   LENSES,
-} from '../../skills/create-ticket/scripts/decompose-judge.js';
-import workflow from '../../skills/create-ticket/scripts/decompose-judge.js';
+} = loadPureFunctions(WORKFLOW_PATH, [
+  'computeAcCoverage',
+  'computeGraphMetrics',
+  'isGraphValid',
+  'buildGeneratePrompt',
+  'buildJudgePrompt',
+  'LENSES',
+]);
+
+// loadWorkflow().run は (agent, parallel, pipeline, phase, log, args, budget) の位置引数を
+// 取る（ランタイムの実際の呼び出し契約と同じ）。decompose-judge.js は pipeline を使わないが、
+// ランタイムは常に7引数を渡すため、テストの呼び出し側もそれに合わせて渡す。
+const { run: workflow } = loadWorkflow(WORKFLOW_PATH);
 
 let passCount = 0;
 let failCount = 0;
@@ -272,7 +292,7 @@ console.log('=== default export: judge retry loop is bounded and returns converg
     codebaseAnalysis: [],
     acceptanceCriteria: { issue: 1, criteria: [{ id: 'AC-1', text: 'x', checked: false }], parse_status: 'ok' },
   };
-  const result = await workflow({ agent: alwaysIncompleteAgent, parallel: mockParallel, pipeline: async () => [], log: noopLog, args });
+  const result = await workflow(alwaysIncompleteAgent, mockParallel, async () => [], 'Test', noopLog, args, undefined);
 
   assertEq('Generateは3レンズ分呼ばれる', 3, generateCallCount);
   assertEq('judgeは上限(初回+2リトライ=3回)までしか呼ばれない', 3, judgeCallCount);
@@ -311,7 +331,7 @@ console.log('=== default export: judge converges on retry once coverage gap is f
       parse_status: 'ok',
     },
   };
-  const result = await workflow({ agent: eventuallyCompleteAgent, parallel: mockParallel, pipeline: async () => [], log: noopLog, args });
+  const result = await workflow(eventuallyCompleteAgent, mockParallel, async () => [], 'Test', noopLog, args, undefined);
 
   assertEq('judgeは2回で収束する', 2, judgeCallCount);
   assertEq('converged: true', true, result.meta.converged);
@@ -349,7 +369,7 @@ console.log('=== default export: judge retry loop also gates on cyclic final pla
     codebaseAnalysis: [],
     acceptanceCriteria: { issue: 1, criteria: [{ id: 'AC-1', text: 'x', checked: false }], parse_status: 'ok' },
   };
-  const result = await workflow({ agent: cyclicJudgeAgent, parallel: mockParallel, pipeline: async () => [], log: noopLog, args });
+  const result = await workflow(cyclicJudgeAgent, mockParallel, async () => [], 'Test', noopLog, args, undefined);
 
   assertEq('judgeは上限(初回+2リトライ=3回)まで再実行される(AC網羅済みでも循環があるため)', 3, judgeCallCount);
   assertEq('converged: false (AC網羅済みだが循環依存が解消しないため)', false, result.meta.converged);
@@ -383,7 +403,7 @@ console.log('=== default export: judge converges on retry once invalid depends_o
     codebaseAnalysis: [],
     acceptanceCriteria: { issue: 1, criteria: [{ id: 'AC-1', text: 'x', checked: false }], parse_status: 'ok' },
   };
-  const result = await workflow({ agent: invalidRefJudgeAgent, parallel: mockParallel, pipeline: async () => [], log: noopLog, args });
+  const result = await workflow(invalidRefJudgeAgent, mockParallel, async () => [], 'Test', noopLog, args, undefined);
 
   assertEq('judgeは2回で収束する(範囲外参照が解消されたため)', 2, judgeCallCount);
   assertEq('converged: true', true, result.meta.converged);
@@ -417,17 +437,11 @@ console.log('=== default export: end-to-end smoke (Generate x3 -> Judge converge
   }
 
   const noopLog = () => {};
-  const result = await workflow({
-    agent: e2eAgent,
-    parallel: mockParallel,
-    pipeline: async () => [],
-    log: noopLog,
-    args: {
-      parentIssueBody: '## 要件\nダミー要件',
-      codebaseAnalysis: [{ path: 'src/foo.js', role: 'エントリポイント' }],
-      acceptanceCriteria: { issue: 46, criteria: CRITERIA, parse_status: 'ok' },
-    },
-  });
+  const result = await workflow(e2eAgent, mockParallel, async () => [], 'Test', noopLog, {
+    parentIssueBody: '## 要件\nダミー要件',
+    codebaseAnalysis: [{ path: 'src/foo.js', role: 'エントリポイント' }],
+    acceptanceCriteria: { issue: 46, criteria: CRITERIA, parse_status: 'ok' },
+  }, undefined);
 
   assertEq('Generateフェーズは3レンズ全て呼ばれる', 3, generateLabels.length);
   assertEq(
@@ -455,17 +469,11 @@ console.log('=== default export: empty acceptance criteria converges trivially =
     throw new Error(`unexpected phase: ${opts.phase}`);
   }
   const noopLog = () => {};
-  const result = await workflow({
-    agent: noAcAgent,
-    parallel: mockParallel,
-    pipeline: async () => [],
-    log: noopLog,
-    args: {
-      parentIssueBody: 'body',
-      codebaseAnalysis: [],
-      acceptanceCriteria: { issue: 1, criteria: [], parse_status: 'no_checklist_found' },
-    },
-  });
+  const result = await workflow(noAcAgent, mockParallel, async () => [], 'Test', noopLog, {
+    parentIssueBody: 'body',
+    codebaseAnalysis: [],
+    acceptanceCriteria: { issue: 1, criteria: [], parse_status: 'no_checklist_found' },
+  }, undefined);
   assertEq('AC空 -> judge一発で収束', true, result.meta.converged);
   assertEq('AC空 -> judgeRoundsは1', 1, result.meta.judgeRounds);
 }

@@ -5,15 +5,33 @@
 //
 // 実行方法: node scripts/tests/reduce-debt-workflow-smoke.mjs
 // 失敗時は非0 exitし、要約を出力する（他の scripts/tests/*.sh の pass/fail 集計スタイルに合わせる）。
+//
+// reduce-debt-scan.js は通常の ESM import では読み込まない。Workflow ランタイムは
+// `export const meta = {...}` のみを特別扱いし、本文を async 関数体として実行する契約
+// （export default async function ラッパーは非対応）のため、scripts/tests/workflow-harness.mjs
+// 経由でその契約と同じ方法（meta置換 + AsyncFunction化）で読み込む（Issue #89）。
 
-import {
+import { loadWorkflow, loadPureFunctions } from './workflow-harness.mjs';
+
+const WORKFLOW_PATH = new URL('../../skills/reduce-debt/scripts/reduce-debt-scan.js', import.meta.url).pathname;
+
+const {
   planScanBuckets,
   classifyParentRelation,
   decideVerdict,
   buildScanPrompt,
   buildVerifyPrompt,
-} from '../../skills/reduce-debt/scripts/reduce-debt-scan.js';
-import workflow from '../../skills/reduce-debt/scripts/reduce-debt-scan.js';
+} = loadPureFunctions(WORKFLOW_PATH, [
+  'planScanBuckets',
+  'classifyParentRelation',
+  'decideVerdict',
+  'buildScanPrompt',
+  'buildVerifyPrompt',
+]);
+
+// loadWorkflow().run は (agent, parallel, pipeline, phase, log, args, budget) の位置引数を
+// 取る（ランタイムの実際の呼び出し契約と同じ）。
+const { run: workflow } = loadWorkflow(WORKFLOW_PATH);
 
 let passCount = 0;
 let failCount = 0;
@@ -225,7 +243,7 @@ console.log('=== default export (mocked agent/pipeline/parallel) ===');
     changedDirs: ['scripts', 'skills/reduce-debt'],
   };
 
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, args, undefined);
   const all = [...result.confirmed, ...result.needsHumanJudgment, ...result.appendix.refuted, ...result.appendix.unverified];
   const findByFile = (file) => all.find((f) => f.file === file);
 
@@ -254,13 +272,7 @@ console.log('=== default export (mocked agent/pipeline/parallel) ===');
     })(),
   );
 
-  const emptyResult = await workflow({
-    agent: mockAgent,
-    parallel: mockParallel,
-    pipeline: mockPipeline,
-    log: noopLog,
-    args: { directories: [], parentIssue: null, changedFiles: [], changedDirs: [] },
-  });
+  const emptyResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, { directories: [], parentIssue: null, changedFiles: [], changedDirs: [] }, undefined);
   assertEq('空ディレクトリ入力 -> confirmed/needsHumanJudgment/appendixすべて空', true, (() => (
     emptyResult.confirmed.length === 0
     && emptyResult.needsHumanJudgment.length === 0
@@ -305,13 +317,7 @@ console.log('=== default export: high/medium verify path (3 verifiers majority v
   }
 
   const confirmedMajorityArgs = { directories: ['scripts'], parentIssue: 43, changedFiles: [], changedDirs: [] };
-  const confirmedMajorityResult = await workflow({
-    agent: mockAgentConfirmedMajority,
-    parallel: mockParallel,
-    pipeline: mockPipeline,
-    log: noopLog,
-    args: confirmedMajorityArgs,
-  });
+  const confirmedMajorityResult = await workflow(mockAgentConfirmedMajority, mockParallel, mockPipeline, 'Test', noopLog, confirmedMajorityArgs, undefined);
   assertEq('high/medium経路: 懐疑者3体中2confirmed/1refuted -> confirmed', 1, confirmedMajorityResult.confirmed.length);
   assertEq('high/medium経路: confirmedの検証内訳(votes)に3体分記録される', 3, confirmedMajorityResult.confirmed[0]?.votes.length ?? -1);
 
@@ -331,13 +337,7 @@ console.log('=== default export: high/medium verify path (3 verifiers majority v
   }
 
   const refutedMajorityArgs = { directories: ['scripts'], parentIssue: 43, changedFiles: [], changedDirs: [] };
-  const refutedMajorityResult = await workflow({
-    agent: mockAgentRefutedMajority,
-    parallel: mockParallel,
-    pipeline: mockPipeline,
-    log: noopLog,
-    args: refutedMajorityArgs,
-  });
+  const refutedMajorityResult = await workflow(mockAgentRefutedMajority, mockParallel, mockPipeline, 'Test', noopLog, refutedMajorityArgs, undefined);
   assertEq('high/medium経路: 懐疑者3体中1confirmed/2refuted -> refuted（付録行き）', 1, refutedMajorityResult.appendix.refuted.length);
   assertEq('high/medium経路: refuted項目はconfirmedに含まれない', 0, refutedMajorityResult.confirmed.length);
 }

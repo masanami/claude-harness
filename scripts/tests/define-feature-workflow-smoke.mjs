@@ -12,8 +12,17 @@
 //
 // 実行方法: node scripts/tests/define-feature-workflow-smoke.mjs
 // 失敗時は非0 exitし、要約を出力する（他の scripts/tests/*.sh の pass/fail 集計スタイルに合わせる）。
+//
+// spec-critique.js は通常の ESM import では読み込まない。Workflow ランタイムは
+// `export const meta = {...}` のみを特別扱いし、本文を async 関数体として実行する契約
+// （export default async function ラッパーは非対応）のため、scripts/tests/workflow-harness.mjs
+// 経由でその契約と同じ方法（meta置換 + AsyncFunction化）で読み込む（Issue #89）。
 
-import {
+import { loadWorkflow, loadPureFunctions } from './workflow-harness.mjs';
+
+const WORKFLOW_PATH = new URL('../../skills/define-feature/scripts/spec-critique.js', import.meta.url).pathname;
+
+const {
   partitionFindingsBySeverity,
   lensesWithBlockers,
   selectLintFindingsForLens,
@@ -24,8 +33,22 @@ import {
   buildGitOpsSnapshotPrompt,
   buildGitOpsDiffPrompt,
   buildGitOpsCleanupPrompt,
-} from '../../skills/define-feature/scripts/spec-critique.js';
-import workflow from '../../skills/define-feature/scripts/spec-critique.js';
+} = loadPureFunctions(WORKFLOW_PATH, [
+  'partitionFindingsBySeverity',
+  'lensesWithBlockers',
+  'selectLintFindingsForLens',
+  'dedupeFindingsBySectionAndQuote',
+  'buildCritiquePrompt',
+  'buildFixPrompt',
+  'buildGitOpsLintPrompt',
+  'buildGitOpsSnapshotPrompt',
+  'buildGitOpsDiffPrompt',
+  'buildGitOpsCleanupPrompt',
+]);
+
+// loadWorkflow().run は (agent, parallel, pipeline, phase, log, args, budget) の位置引数を
+// 取る（ランタイムの実際の呼び出し契約と同じ）。
+const { run: workflow } = loadWorkflow(WORKFLOW_PATH);
 
 let passCount = 0;
 let failCount = 0;
@@ -197,7 +220,7 @@ console.log('=== default export: missing specPath/specLintScript throws early ==
   }
   let threw = false;
   try {
-    await workflow({ agent: unreachableAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: { specPath: SPEC_PATH } });
+    await workflow(unreachableAgent, mockParallel, mockPipeline, 'Test', () => {}, { specPath: SPEC_PATH }, undefined);
   } catch (e) {
     threw = true;
   }
@@ -218,13 +241,7 @@ console.log('=== default export: relative specPath/specLintScript throws without
   }
   let threw = false;
   try {
-    await workflow({
-      agent: countingAgent,
-      parallel: mockParallel,
-      pipeline: mockPipeline,
-      log: () => {},
-      args: { specPath: 'docs/features/sample.md', specLintScript: SPEC_LINT_SCRIPT },
-    });
+    await workflow(countingAgent, mockParallel, mockPipeline, 'Test', () => {}, { specPath: 'docs/features/sample.md', specLintScript: SPEC_LINT_SCRIPT }, undefined);
   } catch (e) {
     threw = true;
   }
@@ -233,13 +250,7 @@ console.log('=== default export: relative specPath/specLintScript throws without
 
   let threw2 = false;
   try {
-    await workflow({
-      agent: countingAgent,
-      parallel: mockParallel,
-      pipeline: mockPipeline,
-      log: () => {},
-      args: { specPath: SPEC_PATH, specLintScript: 'scripts/spec-lint.sh' },
-    });
+    await workflow(countingAgent, mockParallel, mockPipeline, 'Test', () => {}, { specPath: SPEC_PATH, specLintScript: 'scripts/spec-lint.sh' }, undefined);
   } catch (e) {
     threw2 = true;
   }
@@ -294,7 +305,7 @@ console.log('=== default export: both rounds have blockers -> stops at MAX_ROUND
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
 
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('roundsが2', 2, result.rounds);
   assertEq('residual.blockersに1件残る', 1, result.residual.blockers.length);
@@ -340,7 +351,7 @@ console.log('=== default export: needs_user_input findings never reach the Fix s
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
 
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('Fixステージは呼ばれる(blockerが別にあるため)', true, fixCalled);
   assertEq('Fixプロンプトにneeds_user_input指摘(適切に処理する)は含まれない', false, !!fixPromptSeen && fixPromptSeen.includes('適切に処理する'));
@@ -386,7 +397,7 @@ console.log('=== default export: needs_user_input from a non-rerun lens is not d
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
 
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('residual.needs_user_inputは重複せず1件のみ', 1, result.residual.needs_user_input.length);
 }
@@ -414,7 +425,7 @@ console.log('=== default export: round1 blocker -> fix -> round2 zero blockers c
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
 
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('converged相当: residual.blockersが空', 0, result.residual.blockers.length);
   assertEq('blockers_resolvedが1', 1, result.blockers_resolved);
@@ -445,7 +456,7 @@ console.log('=== default export: round2 only re-critiques lenses that had a bloc
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
 
-  await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('2周目はblockerが出たレンズ(acceptance-criteria-testability)のみ呼ばれる', ['acceptance-criteria-testability'], round2Labels);
 }
@@ -459,7 +470,7 @@ console.log('=== default export: zero findings converges immediately (round1 onl
     if (opts.agentType === 'spec-critic') return { findings: [] };
     throw new Error(`Fix should not be called: ${opts.agentType}`);
   }
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
   assertEq('roundsが1', 1, result.rounds);
   assertEq('blockers_resolvedが0', 0, result.blockers_resolved);
   assertEq('residual全て空', true, result.residual.blockers.length === 0 && result.residual.minors.length === 0 && result.residual.needs_user_input.length === 0);
@@ -486,7 +497,7 @@ console.log('=== default export: minor findings never reach Fix, only surface in
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
   assertEq('Fixステージは呼ばれない(blockerが無いため)', false, fixCalled);
   assertEq('residual.minorsに1件残る', 1, result.residual.minors.length);
   assertEq('roundsが1', 1, result.rounds);
@@ -505,7 +516,7 @@ console.log('=== default export: cleanup is always called exactly once ===');
     if (opts.agentType === 'spec-critic') return { findings: [] };
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
-  await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
   assertEq('cleanup:finalが1回呼ばれる', 1, cleanupCount);
 }
 
@@ -529,7 +540,7 @@ console.log('=== default export: exception during Critique still triggers cleanu
   let threw = false;
   let errMessage = '';
   try {
-    await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
   } catch (e) {
     threw = true;
     errMessage = e.message;
@@ -564,7 +575,7 @@ console.log('=== default export: exception during Fix still triggers cleanup exa
   let threw = false;
   let errMessage = '';
   try {
-    await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
   } catch (e) {
     threw = true;
     errMessage = e.message;
@@ -598,7 +609,7 @@ console.log('=== default export: when both the loop and cleanup:final throw, the
   let threw = false;
   let errMessage = '';
   try {
-    await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
   } catch (e) {
     threw = true;
     errMessage = e.message;
@@ -637,7 +648,7 @@ console.log('=== default export: escalation in Fix stage stops the loop before r
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
 
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('escalation後、round-2ラベルのgit-ops/spec-critic呼び出しは一切発生しない', 0, round2Calls.length);
   assertEq('residual.needs_user_inputは重複せず1件のみ残る', 1, result.residual.needs_user_input.length);
@@ -679,7 +690,7 @@ console.log('=== default export: fix-and-escalate mixed outcome does not leave t
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
 
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('blockers_resolvedが1(修正されたblocker分)', 1, result.blockers_resolved);
   assertEq('修正済み・escalation済みのblockerはどちらもresidual.blockersに残らない', 0, result.residual.blockers.length);
@@ -724,7 +735,7 @@ console.log('=== default export: same needs_user_input finding returned by the s
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
 
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('residual.needs_user_inputは2周で重複せず1件のみ', 1, result.residual.needs_user_input.length);
 }
