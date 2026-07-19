@@ -774,6 +774,73 @@ console.log('=== default export: quality-check failure after fix stops the loop 
   assertEq('roundHistoryは初回のみ1件(quality-check失敗で確認レビューへ進まない)', 1, result.roundHistory.length);
 }
 
+// --- default export: args を JSON 文字列で渡しても、オブジェクトで渡した場合と同じ結果になる
+//     （CodeRabbit指摘の回帰テスト。resolvedArgs 正規化パターンそのものにはこれまで
+//     直接のテストが無かった） ---
+console.log('=== default export: args as a JSON string is normalized the same as an object ===');
+{
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: [], diff_file: 'mock-diff-empty' };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') return { findings: [] };
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  const noopLog = () => {};
+
+  const objectResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
+  const stringResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, JSON.stringify(BASE_ARGS), undefined);
+
+  assertEq('JSON文字列argsでもconverged:trueになる(オブジェクト版と同じ)', objectResult.converged, stringResult.converged);
+  assertEq('JSON文字列argsでもresidualFindings件数が同じ', objectResult.residualFindings.length, stringResult.residualFindings.length);
+
+  let threw = false;
+  try {
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, '{not valid json', undefined);
+  } catch (e) {
+    threw = true;
+  }
+  assertEq('不正なJSON文字列argsは空オブジェクトへフォールバックせず明示throwする', true, threw);
+}
+
+// --- default export: レビュアー(code-reviewer/design-reviewer)のいずれかが agent() の
+//     terminal失敗で null を返した場合、指摘ゼロとして握りつぶさず throw する
+//     （CodeRabbit指摘の回帰テスト。runReviewStage のこの分岐にこれまで直接のテストが無かった） ---
+console.log('=== default export: a null reviewer result (terminal failure) throws instead of converging falsely ===');
+{
+  async function mockAgentNullDesign(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/a.js'], diff_file: 'mock-diff-nullreviewer' };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') {
+      if (opts.label.startsWith('review:design')) return null;
+      return { findings: [] };
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  const noopLog = () => {};
+
+  let threw = false;
+  let threwMessageMentionsDesignReviewer = false;
+  try {
+    await workflow(mockAgentNullDesign, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
+  } catch (e) {
+    threw = true;
+    threwMessageMentionsDesignReviewer = String(e && e.message).includes('design-reviewer');
+  }
+  assertEq('design-reviewerがnullを返すとthrowする(指摘ゼロとして握りつぶさない)', true, threw);
+  assertEq('エラーメッセージに失敗したレビュアー名が含まれる', true, threwMessageMentionsDesignReviewer);
+}
+
 console.log('');
 console.log('=== summary ===');
 console.log(`pass: ${passCount}, fail: ${failCount}`);

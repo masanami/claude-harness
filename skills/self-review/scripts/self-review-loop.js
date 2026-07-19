@@ -390,7 +390,7 @@ function buildReviewPrompt(diffInfo, mode, previousFindings = []) {
       'データブロックの diff_file を Read し、各指摘が解消されているかを確認してください。',
       '今回はフルレビューではありません。前回confirmedだった指摘の解消検証と、修正によって',
       '新たな問題が生じていないか（修正後hunk周辺）の確認に限定してください。',
-      '解消されている、かつ新たな問題も無い指摘は結果に含めないこと（空配列を返してよい）。',
+      '解消されている、かつ新たな問題も無い指摘は結果に含めないこと（該当する指摘が無い場合は {findings: []} を返してよい。裸の配列 [] ではなく findings プロパティを持つオブジェクトで返すこと）。',
       '',
       wrapDataBlock({
         base: diffInfo.base,
@@ -619,26 +619,34 @@ async function verifyFindingsStage(toVerify, diffInfo, { agent, parallel, pipeli
         label: `verify:${findingId}:${idx + 1}`,
       })),
     );
+    // agent() は懐疑者(finding-verifier)のterminal失敗時に null を返す。votes配列の構築で
+    // `out.verdicts` に直接アクセスすると TypeError になり残りの票まで失われるため、まず
+    // `(out && out.verdicts) || []` で例外を防止したうえで（CodeRabbit指摘。reduce-debt-scan.js
+    // の debt-verifier 側と同一の防御パターン）、懐疑者の一部が落ちた事実は「部分結果が
+    // 有用なnull」として failed_verifiers に明示フィールド化する（filter(Boolean) で
+    // 黙って票数を減らすだけにしない。実機確認: Issue #91 発見）。
+    const failedVerifierCount = verifierOutputs.filter((out) => out === null).length;
     const votes = verifierOutputs
-      .map((out) => (out.verdicts || []).find((v) => v.findingId === findingId))
+      .map((out) => (out && out.verdicts) || [])
+      .map((verdicts) => verdicts.find((v) => v.findingId === findingId))
       .filter(Boolean);
     const verdict = decideVerifyVerdict(votes);
-    return { finding, verdict, votes };
+    return { finding, verdict, votes, failedVerifierCount };
   }
 
   const outcomes = await pipeline(toVerify, attachHunkStage, voteStage);
 
   const confirmed = [];
   const needsHumanJudgment = [];
-  for (const { finding, verdict, votes } of outcomes) {
+  for (const { finding, verdict, votes, failedVerifierCount } of outcomes) {
     if (verdict === 'confirmed') {
-      confirmed.push({ ...finding, votes });
+      confirmed.push({ ...finding, votes, failed_verifiers: failedVerifierCount });
     } else if (verdict === 'refuted') {
       if (typeof log === 'function') {
         log(`self-review-loop: finding ${findingKey(finding)} refuted by verifiers, dropping.`);
       }
     } else {
-      needsHumanJudgment.push({ ...finding, votes });
+      needsHumanJudgment.push({ ...finding, votes, failed_verifiers: failedVerifierCount });
     }
   }
 

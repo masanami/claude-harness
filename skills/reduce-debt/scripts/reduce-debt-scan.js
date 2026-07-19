@@ -175,7 +175,7 @@ function buildScanPrompt(bucket) {
     '',
     wrapDataBlock({ directories: bucket.directories }),
     '',
-    '指定された JSON Schema（file, summary, detail, severity, category の配列）に厳密に準拠したJSONのみを返してください。',
+    '指定された JSON Schema（{findings: [{file, summary, detail, severity, category}, ...]} の形のオブジェクト。裸の配列ではなく findings プロパティを持つオブジェクトで返すこと）に厳密に準拠したJSONのみを返してください。',
   ].join('\n');
 }
 
