@@ -6,8 +6,8 @@
 //
 // Workflow ランタイムはnode:fs/node:child_processにアクセスできないサンドボックスで
 // 実行されるため、spec-critique.js は spec-lint.sh 実行・spec ファイルのスナップショット
-// 保存/diff/cleanupを agent() 経由で agentType: 'git-ops'（薄いシェル実行専用エージェント）に
-// 委譲する設計になっている。このスモークテストのモック agent() は opts.agentType === 'git-ops'
+// 保存/diff/cleanupを agent() 経由で agentType: 'claude-harness:git-ops'（薄いシェル実行専用エージェント）に
+// 委譲する設計になっている。このスモークテストのモック agent() は opts.agentType === 'claude-harness:git-ops'
 // と opts.label を見て応答を返す（self-review-workflow-smoke.mjs の既存パターンを踏襲する）。
 //
 // 実行方法: node scripts/tests/define-feature-workflow-smoke.mjs
@@ -290,8 +290,8 @@ console.log('=== default export: both rounds have blockers -> stops at MAX_ROUND
     },
   });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       critiqueCalls.push(opts.label);
       const lens = opts.label.split(':')[1];
       if (lens === 'acceptance-criteria-testability') {
@@ -299,7 +299,7 @@ console.log('=== default export: both rounds have blockers -> stops at MAX_ROUND
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       return { appliedFixes: [], escalatedToUserInput: [] };
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
@@ -326,8 +326,8 @@ console.log('=== default export: needs_user_input findings never reach the Fix s
     },
   });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const lens = opts.label.split(':')[1];
       const round = opts.label.split('round-')[1];
       if (lens === 'downstream-implementability' && round === '1') {
@@ -343,7 +343,7 @@ console.log('=== default export: needs_user_input findings never reach the Fix s
       // 専念するため、round2では修正済みとして空配列を返す（無限周回や二重計上を避ける）。
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       fixCalled = true;
       fixPromptSeen = prompt;
       return { appliedFixes: [{ section: '技術的な制約', summary: '対象APIを明記した' }], escalatedToUserInput: [] };
@@ -371,8 +371,8 @@ console.log('=== default export: needs_user_input from a non-rerun lens is not d
     lintResultsByRound: { 1: EMPTY_LINT_RESULT, 2: EMPTY_LINT_RESULT },
   });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const lens = opts.label.split(':')[1];
       const round = opts.label.split('round-')[1];
       if (lens === 'acceptance-criteria-testability' && round === '1') {
@@ -391,7 +391,7 @@ console.log('=== default export: needs_user_input from a non-rerun lens is not d
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       return { appliedFixes: [{ section: '受入基準', summary: '修正した' }], escalatedToUserInput: [] };
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
@@ -410,8 +410,8 @@ console.log('=== default export: round1 blocker -> fix -> round2 zero blockers c
     lintResultsByRound: { 1: EMPTY_LINT_RESULT, 2: EMPTY_LINT_RESULT },
   });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const round = opts.label.split('round-')[1];
       const lens = opts.label.split(':')[1];
       if (round === '1' && (lens === 'internal-consistency')) {
@@ -419,7 +419,7 @@ console.log('=== default export: round1 blocker -> fix -> round2 zero blockers c
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       return { appliedFixes: [{ section: 'クリティカル設計決定', summary: '矛盾を解消した' }], escalatedToUserInput: [] };
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
@@ -440,8 +440,8 @@ console.log('=== default export: round2 only re-critiques lenses that had a bloc
     lintResultsByRound: { 1: EMPTY_LINT_RESULT, 2: EMPTY_LINT_RESULT },
   });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const round = opts.label.split('round-')[1];
       const lens = opts.label.split(':')[1];
       if (round === '2') round2Labels.push(lens);
@@ -450,7 +450,7 @@ console.log('=== default export: round2 only re-critiques lenses that had a bloc
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       return { appliedFixes: [{ section: '受入基準', summary: '修正した' }], escalatedToUserInput: [] };
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
@@ -466,8 +466,8 @@ console.log('=== default export: zero findings converges immediately (round1 onl
 {
   const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') return { findings: [] };
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') return { findings: [] };
     throw new Error(`Fix should not be called: ${opts.agentType}`);
   }
   const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
@@ -483,15 +483,15 @@ console.log('=== default export: minor findings never reach Fix, only surface in
   let fixCalled = false;
   const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const lens = opts.label.split(':')[1];
       if (lens === 'downstream-implementability') {
         return { findings: [{ section: '機能要件', quote: 'x', problem: '軽微な言い回し', severity: 'minor', suggested_fix: 'y' }] };
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       fixCalled = true;
       return { appliedFixes: [], escalatedToUserInput: [] };
     }
@@ -509,11 +509,11 @@ console.log('=== default export: cleanup is always called exactly once ===');
   let cleanupCount = 0;
   const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label === 'cleanup:final') cleanupCount += 1;
       return gitOpsHandler(opts);
     }
-    if (opts.agentType === 'spec-critic') return { findings: [] };
+    if (opts.agentType === 'claude-harness:spec-critic') return { findings: [] };
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
   await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
@@ -528,11 +528,11 @@ console.log('=== default export: exception during Critique still triggers cleanu
   let cleanupCount = 0;
   const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label === 'cleanup:final') cleanupCount += 1;
       return gitOpsHandler(opts);
     }
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:spec-critic') {
       throw new Error('intentional critique failure');
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
@@ -556,18 +556,18 @@ console.log('=== default export: exception during Fix still triggers cleanup exa
   let cleanupCount = 0;
   const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label === 'cleanup:final') cleanupCount += 1;
       return gitOpsHandler(opts);
     }
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const lens = opts.label.split(':')[1];
       if (lens === 'internal-consistency') {
         return { findings: [{ section: 'x', quote: 'y', problem: 'z', severity: 'blocker', suggested_fix: 'w' }] };
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       throw new Error('intentional fix failure');
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
@@ -593,7 +593,7 @@ console.log('=== default export: exception during Fix still triggers cleanup exa
 console.log('=== default export: when both the loop and cleanup:final throw, the original loop error still propagates (not masked by the cleanup error) ===');
 {
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label === 'cleanup:final') {
         throw new Error('intentional cleanup failure');
       }
@@ -601,7 +601,7 @@ console.log('=== default export: when both the loop and cleanup:final throw, the
       if (opts.label.startsWith('lint:round-')) return EMPTY_LINT_RESULT;
       throw new Error(`unexpected git-ops label: ${opts.label}`);
     }
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:spec-critic') {
       throw new Error('intentional critique failure');
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
@@ -630,8 +630,8 @@ console.log('=== default export: escalation in Fix stage stops the loop before r
     if (opts.label && opts.label.includes('round-2')) {
       round2Calls.push(opts.label);
     }
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const lens = opts.label.split(':')[1];
       const round = opts.label.split('round-')[1];
       if (lens === 'internal-consistency' && round === '1') {
@@ -639,7 +639,7 @@ console.log('=== default export: escalation in Fix stage stops the loop before r
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       return {
         appliedFixes: [],
         escalatedToUserInput: [{ section: 'クリティカル設計決定', quote: 'x', problem: 'unclear', reason: 'ユーザー判断が必要なため' }],
@@ -667,8 +667,8 @@ console.log('=== default export: fix-and-escalate mixed outcome does not leave t
 {
   const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT, 2: EMPTY_LINT_RESULT } });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const lens = opts.label.split(':')[1];
       const round = opts.label.split('round-')[1];
       if (lens === 'internal-consistency' && round === '1') {
@@ -681,7 +681,7 @@ console.log('=== default export: fix-and-escalate mixed outcome does not leave t
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       return {
         appliedFixes: [{ section: '受入基準', summary: '検証可能な形式に修正した' }],
         escalatedToUserInput: [{ section: 'クリティカル設計決定', quote: 'escalate-quote', problem: 'unclear', reason: 'ユーザー判断が必要なため' }],
@@ -709,8 +709,8 @@ console.log('=== default export: same needs_user_input finding returned by the s
     lintResultsByRound: { 1: EMPTY_LINT_RESULT, 2: EMPTY_LINT_RESULT },
   });
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') return gitOpsHandler(opts);
-    if (opts.agentType === 'spec-critic') {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
       const lens = opts.label.split(':')[1];
       const round = opts.label.split('round-')[1];
       if (lens === 'internal-consistency') {
@@ -727,7 +727,7 @@ console.log('=== default export: same needs_user_input finding returned by the s
       }
       return { findings: [] };
     }
-    if (opts.agentType === 'spec-fixer') {
+    if (opts.agentType === 'claude-harness:spec-fixer') {
       // blockerのみFixし、escalationは発生させない（needs_user_input側はFix対象に渡らないため
       // 自動修正されず、次周も同じテキストのまま残る）。
       return { appliedFixes: [{ section: 'クリティカル設計決定', summary: '矛盾を解消した' }], escalatedToUserInput: [] };
@@ -738,6 +738,57 @@ console.log('=== default export: same needs_user_input finding returned by the s
   const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
 
   assertEq('residual.needs_user_inputは2周で重複せず1件のみ', 1, result.residual.needs_user_input.length);
+}
+
+// --- default export: args を JSON.stringify() した文字列で渡しても、オブジェクトで
+//     渡した場合と同じ結果になること（Issue #91: resolvedArgs 正規化パターンの回帰テスト） ---
+console.log('=== default export: args as a JSON string behaves the same as args as an object ===');
+{
+  const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') return { findings: [] };
+    throw new Error(`unexpected agentType: ${opts.agentType}`);
+  }
+
+  const objectResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
+  const stringResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, JSON.stringify(BASE_ARGS), undefined);
+  assertEq('args を文字列で渡してもオブジェクトで渡した場合と同じ結果になる', objectResult, stringResult);
+
+  let threw = false;
+  try {
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, '{not valid json', undefined);
+  } catch (e) {
+    threw = true;
+  }
+  assertEq('args が不正なJSON文字列だとthrowする(空オブジェクトへフォールバックしない)', true, threw);
+}
+
+// --- default export: Critique フェーズで spec-critic の1レンズが null を返した場合
+//     （terminal失敗）、指摘0件として握りつぶさずthrowすること（Issue #91: 収束・完全性の
+//     判定に関わるnullの明示throw） ---
+console.log('=== default export: a null from spec-critic (Critique phase) throws instead of being swallowed as zero findings ===');
+{
+  const gitOpsHandler = makeGitOpsHandler({ lintResultsByRound: { 1: EMPTY_LINT_RESULT } });
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') return gitOpsHandler(opts);
+    if (opts.agentType === 'claude-harness:spec-critic') {
+      const lens = opts.label.split(':')[1];
+      if (lens === 'internal-consistency') return null; // terminal failure for this lens only
+      return { findings: [] };
+    }
+    throw new Error(`unexpected agentType: ${opts.agentType}`);
+  }
+  let threw = false;
+  let errMessage = '';
+  try {
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', () => {}, BASE_ARGS, undefined);
+  } catch (e) {
+    threw = true;
+    errMessage = e.message;
+  }
+  assertEq('Critiqueフェーズでのnull(terminal失敗)はthrowする', true, threw);
+  assertEq('エラーメッセージに失敗したレンズ名が含まれる', true, errMessage.includes('internal-consistency'));
 }
 
 console.log('');

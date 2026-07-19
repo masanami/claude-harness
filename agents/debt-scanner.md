@@ -1,6 +1,6 @@
 ---
 name: debt-scanner
-description: "プロジェクトの担当ディレクトリ配下を技術負債の観点でスキャンする際に使用。skills/reduce-debt/SKILL.md が起動する Dynamic Workflow（`.claude/workflows/reduce-debt-scan.js`）から `agentType: 'debt-scanner'` として呼び出される。"
+description: "プロジェクトの担当ディレクトリ配下を技術負債の観点でスキャンする際に使用。skills/reduce-debt/SKILL.md が起動する Dynamic Workflow（`.claude/workflows/reduce-debt-scan.js`）から `agentType: 'claude-harness:debt-scanner'` として呼び出される。"
 # tools: スキャン専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

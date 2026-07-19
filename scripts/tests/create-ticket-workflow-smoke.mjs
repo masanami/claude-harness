@@ -478,6 +478,109 @@ console.log('=== default export: empty acceptance criteria converges trivially =
   assertEq('AC空 -> judgeRoundsは1', 1, result.meta.judgeRounds);
 }
 
+// --- default export: args を JSON.stringify() した文字列で渡しても、オブジェクトで
+//     渡した場合と同じ結果になること（Issue #91: resolvedArgs 正規化パターンの回帰テスト） ---
+console.log('=== default export: args as a JSON string behaves the same as args as an object ===');
+{
+  async function e2eAgent(prompt, opts) {
+    if (opts.phase === 'Generate') {
+      const lens = opts.label.replace('generate:', '');
+      return {
+        tasks: [
+          { title: `${lens} task`, summary: 's', files: ['a.js'], depends_on: [], acceptance_criteria_covered: ['AC-1', 'AC-2', 'AC-3'] },
+        ],
+      };
+    }
+    if (opts.phase === 'Judge') {
+      return {
+        tasks: [
+          { title: 'synthesized task 1', summary: 's1', files: ['a.js'], depends_on: [], acceptance_criteria_covered: ['AC-1'] },
+          { title: 'synthesized task 2', summary: 's2', files: ['b.js'], depends_on: [0], acceptance_criteria_covered: ['AC-2', 'AC-3'] },
+        ],
+      };
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  const noopLog = () => {};
+  const args = {
+    parentIssueBody: '## 要件\nダミー要件',
+    codebaseAnalysis: [{ path: 'src/foo.js', role: 'エントリポイント' }],
+    acceptanceCriteria: { issue: 46, criteria: CRITERIA, parse_status: 'ok' },
+  };
+
+  const objectResult = await workflow(e2eAgent, mockParallel, async () => [], 'Test', noopLog, args, undefined);
+  const stringResult = await workflow(e2eAgent, mockParallel, async () => [], 'Test', noopLog, JSON.stringify(args), undefined);
+  assertEq('args を文字列で渡してもオブジェクトで渡した場合と同じ結果になる', objectResult, stringResult);
+
+  let threw = false;
+  try {
+    await workflow(e2eAgent, mockParallel, async () => [], 'Test', noopLog, '{not valid json', undefined);
+  } catch (e) {
+    threw = true;
+  }
+  assertEq('args が不正なJSON文字列だとthrowする(空オブジェクトへフォールバックしない)', true, threw);
+}
+
+// --- default export: Generate フェーズで ticket-decomposer の1レンズが null を
+//     返した場合（terminal失敗）、タスク0件として握りつぶさずthrowすること
+//     （Issue #91: 収束・完全性の判定に関わるnullの明示throw） ---
+console.log('=== default export: a null from ticket-decomposer (Generate phase) throws instead of being swallowed as zero tasks ===');
+{
+  async function nullGenerateAgent(prompt, opts) {
+    if (opts.phase === 'Generate') {
+      const lens = opts.label.replace('generate:', '');
+      if (lens === 'vertical-slice') return null; // terminal failure for this lens only
+      return { tasks: [{ title: 't', summary: 's', files: [], depends_on: [], acceptance_criteria_covered: [] }] };
+    }
+    throw new Error('Judge should not be reached when a Generate lens fails terminally');
+  }
+  const noopLog = () => {};
+  let threw = false;
+  let errMessage = '';
+  try {
+    await workflow(nullGenerateAgent, mockParallel, async () => [], 'Test', noopLog, {
+      parentIssueBody: 'body',
+      codebaseAnalysis: [],
+      acceptanceCriteria: { issue: 1, criteria: CRITERIA, parse_status: 'ok' },
+    }, undefined);
+  } catch (e) {
+    threw = true;
+    errMessage = e.message;
+  }
+  assertEq('Generateフェーズでのnull(terminal失敗)はthrowする', true, threw);
+  assertEq('エラーメッセージに失敗したレンズ名が含まれる', true, errMessage.includes('vertical-slice'));
+}
+
+// --- default export: Judge フェーズで decompose-judge が null を返した場合
+//     （terminal失敗）、throwすること（Issue #91: 収束・完全性の判定に関わるnullの明示throw） ---
+console.log('=== default export: a null from decompose-judge (Judge phase) throws ===');
+{
+  async function nullJudgeAgent(prompt, opts) {
+    if (opts.phase === 'Generate') {
+      return { tasks: [{ title: 't', summary: 's', files: [], depends_on: [], acceptance_criteria_covered: ['AC-1'] }] };
+    }
+    if (opts.phase === 'Judge') {
+      return null; // terminal failure
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  const noopLog = () => {};
+  let threw = false;
+  let errMessage = '';
+  try {
+    await workflow(nullJudgeAgent, mockParallel, async () => [], 'Test', noopLog, {
+      parentIssueBody: 'body',
+      codebaseAnalysis: [],
+      acceptanceCriteria: { issue: 1, criteria: [{ id: 'AC-1', text: 'x', checked: false }], parse_status: 'ok' },
+    }, undefined);
+  } catch (e) {
+    threw = true;
+    errMessage = e.message;
+  }
+  assertEq('Judgeフェーズでのnull(terminal失敗)はthrowする', true, threw);
+  assertEq('エラーメッセージにラウンド番号が含まれる', true, errMessage.includes('round 1'));
+}
+
 console.log('');
 console.log('=== summary ===');
 console.log(`pass: ${passCount}, fail: ${failCount}`);

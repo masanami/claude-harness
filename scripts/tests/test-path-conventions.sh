@@ -16,6 +16,11 @@
 #      ことも検証する（`export default async function () {}` のみのファイルは総数1で通過して
 #      しまうが起動には失敗するため、総数チェックだけでは不十分。先頭空白付きの export も
 #      見逃さないよう `^[[:space:]]*export ` で数える）。
+# (v)  skills/*/scripts/*.js の `agentType: '...'` / `subagent_type: '...'` と agents/*.md 内の
+#      自己記述（同表記のバッククォート表記）が、プラグイン名前空間プレフィックス
+#      `claude-harness:` 付きであること（Issue #41 実機プローブ: プレフィックス無しの
+#      subagent_type/agentType は名称解決エラーになる。CodeRabbit指摘対応(PR #92)で
+#      subagent_type も検査対象に追加）。
 # を検出する。規約の正本は docs/plugin-path-conventions.md。
 #
 # grep の exit code は 0=マッチあり / 1=マッチなし（正常） / 2以上=実行エラー
@@ -247,6 +252,46 @@ else
   FAILED_TESTS+=("skills/*/scripts/*.js に export const meta 以外の export を検出")
   echo "  NG - skills/*/scripts/*.js に export const meta 以外の export を検出"
   print_indented "$workflow_script_export_violations"
+fi
+
+echo ""
+echo "=== (v) agentType/subagent_type プラグイン名前空間プレフィックスチェック ==="
+
+# CodeRabbit指摘対応（PR #92）: agentType だけでなく subagent_type（Task ツールが受け取る
+# 引数名。docs/plugin-path-conventions.md (g) は両方をプレフィックス必須の対象としている）も
+# 検査しないと、裸の subagent_type が名称解決エラーになる契約なのにこの再発防止テストが
+# 見逃してしまう。
+# shellcheck disable=SC2016
+agenttype_pattern="(agentType|subagent_type):[[:space:]]*'[^']+'"
+agenttype_hits="$(grep -rnoE "$agenttype_pattern" skills agents --include='*.js' --include='*.md')"
+agenttype_exit=$?
+
+if [ "$agenttype_exit" -ge 2 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("agentType/subagent_type 名前空間プレフィックスチェックの grep 実行に失敗")
+  echo "  NG - grep 実行エラー（exit ${agenttype_exit}）のため判定不能"
+else
+  agenttype_violations=""
+  if [ -n "$agenttype_hits" ]; then
+    while IFS= read -r hit; do
+      [ -z "$hit" ] && continue
+      case "$hit" in
+        *"agentType: 'claude-harness:"*|*"subagent_type: 'claude-harness:"*) continue ;;
+      esac
+      agenttype_violations="${agenttype_violations}${hit}
+"
+    done <<<"$agenttype_hits"
+  fi
+
+  if [ -z "$agenttype_violations" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - agentType/subagent_type はすべて claude-harness: プレフィックス付き"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("claude-harness: プレフィックス無しの agentType/subagent_type を検出")
+    echo "  NG - claude-harness: プレフィックス無しの agentType/subagent_type を検出"
+    print_indented "$agenttype_violations"
+  fi
 fi
 
 echo ""

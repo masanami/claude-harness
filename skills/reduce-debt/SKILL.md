@@ -88,7 +88,7 @@ find . -maxdepth 2 -type d \
 スクリプトの構造:
 
 - **fan-out（バケット分割）**: `planScanBuckets()` が確認済みディレクトリ一覧をスロット上限（`MAX_BUCKETS = 10`）内のバケットへ分割する純関数
-- **`pipeline(buckets, scanStage, verifyStage)`**: バケット単位で `scanStage`（`agentType: 'debt-scanner'` によるスキャン） → `verifyStage`（懐疑者3体 `parallel` + 多数決）を**バリアなし**で流す。あるバケットが verify に進んでいる間、他のバケットはまだ scan 中でもよい
+- **`pipeline(buckets, scanStage, verifyStage)`**: バケット単位で `scanStage`（`agentType: 'claude-harness:debt-scanner'` によるスキャン） → `verifyStage`（懐疑者3体 `parallel` + 多数決）を**バリアなし**で流す。あるバケットが verify に進んでいる間、他のバケットはまだ scan 中でもよい
 - **バッチ化**: `verifyStage` は severity: low の検出は検証をスキップして「未検証」のまま付録行きにし、high/medium はファイル単位でバッチ化（`VERIFY_BATCH_SIZE = 5`）してから懐疑者3体に渡す
 - **多数決**: `decideVerdict()` が confirmed 2票以上→confirmed、refuted 2票以上→refuted、それ以外（1-1-1 割れ・uncertain 過半数等）→`needs_human_judgment` の3分類を行う
 - **分類**: `classifyParentRelation()` が `args.changedFiles` との**ファイル完全一致**のみを「今回導入」（`introducedByParent: true`）とする。ディレクトリのみ一致（`args.changedDirs` に含まれるがファイル自体は不一致）は「今回導入」に含めず、`relatedDir: true` を付けて「既存（親実装の関連ディレクトリ）」として区別する（ディレクトリ一致だけで今回導入扱いにすると過剰分類になるため）
@@ -145,6 +145,7 @@ Workflow の返り値（`{meta, confirmed, needsHumanJudgment, appendix: {refute
 - 親Issue: #{番号} {タイトル}
 - 変更範囲: {変更ディレクトリ一覧}
 - スキャン範囲: {確認済みディレクトリ一覧}
+- スキャン失敗バケット: {meta.failedBuckets の一覧}（無ければ「なし」）
 
 ### 今回の実装で導入された技術負債（confirmed かつ introducedByParent = true）
 

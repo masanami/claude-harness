@@ -12,7 +12,7 @@
 # (c) 純粋関数（findingKey/dedupFindings/dedupByKey/dedupExactFindings/
 #     mergeReviewFindings/partitionFindingsForVerification/decideVerifyVerdict/
 #     buildXxxPrompt）と default export（mock した agent/parallel/pipeline 経由。
-#     agent() が opts.agentType === 'git-ops' を見て diff収集・hunk抽出の
+#     agent() が opts.agentType === 'claude-harness:git-ops' を見て diff収集・hunk抽出の
 #     モック応答を返す）を scripts/tests/self-review-workflow-smoke.mjs で検証する
 #
 # node が不在の環境では、format-on-save.sh の防御的スタイル（機能をスキップしても

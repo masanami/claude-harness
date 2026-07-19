@@ -5,10 +5,18 @@
 //
 // Workflow ランタイムはnode:fs/node:child_processにアクセスできないサンドボックスで
 // 実行されるため、self-review-loop.js は diff収集・hunk抽出を agent() 経由で
-// agentType: 'git-ops'（薄いシェル実行専用エージェント）に委譲する設計になっている。
-// このスモークテストのモック agent() は opts.agentType === 'git-ops' と opts.label を見て
+// agentType: 'claude-harness:git-ops'（薄いシェル実行専用エージェント）に委譲する設計になっている。
+// このスモークテストのモック agent() は opts.agentType === 'claude-harness:git-ops' と opts.label を見て
 // 応答を返す（reduce-debt-scan.js のスモークテストが opts.phase/opts.label で分岐する
 // 既存パターンをそのまま踏襲する）。
+//
+// このモックはあくまで opts.agentType の文字列リテラル一致で応答を切り替えるだけであり、
+// 本番の Workflow ランタイムが `agentType: 'claude-harness:git-ops'` を実在サブエージェント
+// （agents/git-ops.md の name: git-ops をプラグイン名前空間 `claude-harness:` で修飾したもの）
+// へ実際に解決できるかどうかまでは検証しない（このスクリプト単体の限界）。プレフィックスの
+// 付け忘れ・タイポは、リポジトリ全体の agentType 表記を静的に検査する
+// scripts/tests/test-path-conventions.sh の (v) チェックで別途検出する
+// （docs/plugin-path-conventions.md (g) が正本）。
 //
 // 実行方法: node scripts/tests/self-review-workflow-smoke.mjs
 // 失敗時は非0 exitし、要約を出力する（他の scripts/tests/*.sh の pass/fail 集計スタイルに合わせる）。
@@ -345,7 +353,7 @@ console.log('=== default export: converges within 1 fix round ===');
   let diffCollectCallCount = 0;
   let cleanupCallCount = 0;
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         diffCollectCallCount += 1;
         return { base: 'main', merge_base: `sha-${diffCollectCallCount}`, commits: ['abc msg'], files: ['src/a.js', 'src/b.js'], diff_file: `mock-diff-round-${diffCollectCallCount}` };
@@ -363,15 +371,15 @@ console.log('=== default export: converges within 1 fix round ===');
       reviewCallCount += 1;
       if (opts.label.includes('confirm')) {
         // 2巡目のレビューでは解消済みとして空配列を返す
-        return [];
+        return { findings: [] };
       }
       if (opts.label.startsWith('review:code')) {
-        return [
+        return { findings: [
           { file: 'src/a.js', line: 10, severity: 'high', claim: 'bug', evidence: 'ev', verdict: 'PLAUSIBLE' },
           { file: 'src/b.js', line: 5, severity: 'low', claim: 'style', evidence: 'ev2', verdict: 'CONFIRMED' },
-        ];
+        ] };
       }
-      return [];
+      return { findings: [] };
     }
     if (opts.phase === 'Verify') {
       const findingId = opts.label.split(':').slice(1, -1).join(':');
@@ -406,7 +414,7 @@ console.log('=== default export: converges within 1 fix round ===');
 console.log('=== default export: all high+PLAUSIBLE findings refuted -> converges (dropped as false positive) ===');
 {
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/x.js'], diff_file: 'mock-diff-refuted-1' };
       }
@@ -420,9 +428,9 @@ console.log('=== default export: all high+PLAUSIBLE findings refuted -> converge
     }
     if (opts.phase === 'Review') {
       if (opts.label.startsWith('review:code')) {
-        return [{ file: 'src/x.js', line: 1, severity: 'high', claim: 'maybe bug', evidence: 'ev', verdict: 'PLAUSIBLE' }];
+        return { findings: [{ file: 'src/x.js', line: 1, severity: 'high', claim: 'maybe bug', evidence: 'ev', verdict: 'PLAUSIBLE' }] };
       }
-      return [];
+      return { findings: [] };
     }
     if (opts.phase === 'Verify') {
       const findingId = opts.label.split(':').slice(1, -1).join(':');
@@ -446,7 +454,7 @@ console.log('=== default export: all high+PLAUSIBLE findings refuted -> converge
 console.log('=== default export: needs_human_judgment findings surface in residualFindings ===');
 {
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/y.js'], diff_file: 'mock-diff-uncertain-1' };
       }
@@ -460,9 +468,9 @@ console.log('=== default export: needs_human_judgment findings surface in residu
     }
     if (opts.phase === 'Review') {
       if (opts.label.startsWith('review:code')) {
-        return [{ file: 'src/y.js', line: 7, severity: 'high', claim: 'unclear', evidence: 'ev', verdict: 'PLAUSIBLE' }];
+        return { findings: [{ file: 'src/y.js', line: 7, severity: 'high', claim: 'unclear', evidence: 'ev', verdict: 'PLAUSIBLE' }] };
       }
-      return [];
+      return { findings: [] };
     }
     if (opts.phase === 'Verify') {
       const findingId = opts.label.split(':').slice(1, -1).join(':');
@@ -481,11 +489,56 @@ console.log('=== default export: needs_human_judgment findings surface in residu
   assertEq('残った指摘はsrc/y.js', 'src/y.js', result.residualFindings[0]?.file);
 }
 
+// --- default export: 懐疑者(finding-verifier)3体中1体が agent() の terminal失敗で null を
+//     返した場合、残り2体の票で通常どおり多数決を行いつつ、failed_verifiers が
+//     結果の finding に明示フィールドとして残ること（CodeRabbit指摘の回帰テスト。
+//     reduce-debt-scan.js 側の同種テストと対をなす） ---
+console.log('=== default export: one of 3 finding-verifiers returning null surfaces as failed_verifiers ===');
+{
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/z.js'], diff_file: 'mock-diff-verifier-null' };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/z.js:9', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') {
+      if (opts.label.startsWith('review:code')) {
+        return { findings: [{ file: 'src/z.js', line: 9, severity: 'high', claim: 'maybe bug', evidence: 'ev', verdict: 'PLAUSIBLE' }] };
+      }
+      return { findings: [] };
+    }
+    if (opts.phase === 'Verify') {
+      const findingId = opts.label.split(':').slice(1, -1).join(':');
+      const verifierNum = opts.label.split(':').pop();
+      // verifier 3 は terminal 失敗(null)。残り(1: confirmed, 2: refuted)は割れるため
+      // needs_human_judgmentとなり、failed_verifiersが1として残ることを確認する。
+      if (verifierNum === '3') return null;
+      const verdictByNum = { 1: 'confirmed', 2: 'refuted' };
+      return { verdicts: [{ findingId, verdict: verdictByNum[verifierNum], reason: `v${verifierNum}` }] };
+    }
+    throw new Error(`Fix stage should not be reached: ${opts.phase}`);
+  }
+
+  const noopLog = () => {};
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
+
+  assertEq('converged: false (要人間判断の残指摘があるため)', false, result.converged);
+  assertEq('residualFindingsに1件残る(needs_human_judgment)', 1, result.residualFindings.length);
+  assertEq('failed_verifiersが1として記録される(懐疑者3体中1体がterminal失敗)', 1, result.residualFindings[0]?.failed_verifiers);
+}
+
 // --- default export: 指摘0件で即座に収束（レビュー1回で完了） ---
 console.log('=== default export: zero findings converges immediately ===');
 {
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         return { base: 'main', merge_base: 'sha1', commits: [], files: [], diff_file: 'mock-diff-empty' };
       }
@@ -494,7 +547,7 @@ console.log('=== default export: zero findings converges immediately ===');
       }
       throw new Error(`unexpected git-ops label: ${opts.label}`);
     }
-    if (opts.phase === 'Review') return [];
+    if (opts.phase === 'Review') return { findings: [] };
     throw new Error(`unexpected phase: ${opts.phase}`);
   }
   const noopLog = () => {};
@@ -512,7 +565,7 @@ console.log('=== default export: does not converge within MAX_ROUNDS(3) -> retur
   let fixCallCount = 0;
   let diffCollectCallCount = 0;
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         diffCollectCallCount += 1;
         return { base: 'main', merge_base: `sha-${diffCollectCallCount}`, commits: [], files: ['src/stubborn.js'], diff_file: `mock-diff-stubborn-${diffCollectCallCount}` };
@@ -528,9 +581,9 @@ console.log('=== default export: does not converge within MAX_ROUNDS(3) -> retur
     if (opts.phase === 'Review') {
       if (opts.label.startsWith('review:code')) {
         // 毎回同じ指摘を返し続ける（修正しても解消しない状況を模す）
-        return [{ file: 'src/stubborn.js', line: 42, severity: 'high', claim: 'still broken', evidence: 'ev', verdict: 'CONFIRMED' }];
+        return { findings: [{ file: 'src/stubborn.js', line: 42, severity: 'high', claim: 'still broken', evidence: 'ev', verdict: 'CONFIRMED' }] };
       }
-      return [];
+      return { findings: [] };
     }
     if (opts.phase === 'Fix') {
       fixCallCount += 1;
@@ -559,7 +612,7 @@ console.log('=== default export: re-appearing high+PLAUSIBLE finding after prior
 {
   let fixCallCount = 0;
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         return { base: 'main', merge_base: 'sha-x', commits: [], files: ['src/stubborn.js'], diff_file: 'mock-diff-reappear' };
       }
@@ -575,9 +628,9 @@ console.log('=== default export: re-appearing high+PLAUSIBLE finding after prior
       if (opts.label.startsWith('review:code')) {
         // 初回・confirmation双方で同じ(file,line)をhigh+PLAUSIBLEとして報告し続ける
         // （修正が効いていない状況を模す）
-        return [{ file: 'src/stubborn.js', line: 42, severity: 'high', claim: 'still there', evidence: 'ev', verdict: 'PLAUSIBLE' }];
+        return { findings: [{ file: 'src/stubborn.js', line: 42, severity: 'high', claim: 'still there', evidence: 'ev', verdict: 'PLAUSIBLE' }] };
       }
-      return [];
+      return { findings: [] };
     }
     if (opts.phase === 'Verify') {
       // 1巡目の検証では多数決でconfirmedにする
@@ -616,7 +669,7 @@ console.log('=== default export: a different claim re-appearing at the same (fil
   let diffCollectCallCount = 0;
   let confirmationReviewCallCount = 0;
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         diffCollectCallCount += 1;
         return { base: 'main', merge_base: `sha-${diffCollectCallCount}`, commits: [], files: ['src/dup.js'], diff_file: `mock-diff-dup-${diffCollectCallCount}` };
@@ -631,18 +684,18 @@ console.log('=== default export: a different claim re-appearing at the same (fil
     }
     if (opts.phase === 'Review') {
       if (opts.label.startsWith('review:code:full')) {
-        return [{ file: 'src/dup.js', line: 10, severity: 'high', claim: 'Claim A: null pointer dereference in handler', evidence: 'ev-a', verdict: 'PLAUSIBLE' }];
+        return { findings: [{ file: 'src/dup.js', line: 10, severity: 'high', claim: 'Claim A: null pointer dereference in handler', evidence: 'ev-a', verdict: 'PLAUSIBLE' }] };
       }
       if (opts.label.startsWith('review:code:confirmation')) {
         confirmationReviewCallCount += 1;
         // 1回目のconfirmationレビューでのみ、同じ(file,line)に対する別claim(B)を新規指摘として返す。
         // 2回目以降は解消済みとして空配列を返す(無限ループ回避)。
         if (confirmationReviewCallCount === 1) {
-          return [{ file: 'src/dup.js', line: 10, severity: 'high', claim: 'Claim B: unrelated resource leak on close path', evidence: 'ev-b', verdict: 'PLAUSIBLE' }];
+          return { findings: [{ file: 'src/dup.js', line: 10, severity: 'high', claim: 'Claim B: unrelated resource leak on close path', evidence: 'ev-b', verdict: 'PLAUSIBLE' }] };
         }
-        return [];
+        return { findings: [] };
       }
-      return [];
+      return { findings: [] };
     }
     if (opts.phase === 'Verify') {
       verifyCallCount += 1;
@@ -677,7 +730,7 @@ console.log('=== default export: same (file,line) flagged by both reviewers for 
 {
   let capturedFixPrompt = null;
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/shared.js'], diff_file: 'mock-diff-shared' };
       }
@@ -689,15 +742,15 @@ console.log('=== default export: same (file,line) flagged by both reviewers for 
     if (opts.phase === 'Review') {
       if (opts.label.includes('confirm')) {
         // 2巡目のconfirmationレビューでは解消済みとして空配列を返す
-        return [];
+        return { findings: [] };
       }
       if (opts.label.startsWith('review:code')) {
-        return [{ file: 'src/shared.js', line: 20, severity: 'medium', claim: 'code issue', evidence: 'ev1', verdict: 'CONFIRMED' }];
+        return { findings: [{ file: 'src/shared.js', line: 20, severity: 'medium', claim: 'code issue', evidence: 'ev1', verdict: 'CONFIRMED' }] };
       }
       if (opts.label.startsWith('review:design')) {
-        return [{ file: 'src/shared.js', line: 20, severity: 'medium', claim: 'design issue', evidence: 'ev2', verdict: 'CONFIRMED' }];
+        return { findings: [{ file: 'src/shared.js', line: 20, severity: 'medium', claim: 'design issue', evidence: 'ev2', verdict: 'CONFIRMED' }] };
       }
-      return [];
+      return { findings: [] };
     }
     if (opts.phase === 'Fix') {
       capturedFixPrompt = prompt;
@@ -726,7 +779,7 @@ console.log('=== default export: quality-check failure after fix stops the loop 
 {
   let fixCallCount = 0;
   async function mockAgent(prompt, opts) {
-    if (opts.agentType === 'git-ops') {
+    if (opts.agentType === 'claude-harness:git-ops') {
       if (opts.label.startsWith('collect:round-')) {
         return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/qcfail.js'], diff_file: 'mock-diff-qcfail' };
       }
@@ -743,9 +796,9 @@ console.log('=== default export: quality-check failure after fix stops the loop 
         throw new Error('re-review after quality-check failure must not happen');
       }
       if (opts.label.startsWith('review:code')) {
-        return [{ file: 'src/qcfail.js', line: 1, severity: 'medium', claim: 'needs fix', evidence: 'ev', verdict: 'CONFIRMED' }];
+        return { findings: [{ file: 'src/qcfail.js', line: 1, severity: 'medium', claim: 'needs fix', evidence: 'ev', verdict: 'CONFIRMED' }] };
       }
-      return [];
+      return { findings: [] };
     }
     if (opts.phase === 'Fix') {
       fixCallCount += 1;
@@ -764,6 +817,73 @@ console.log('=== default export: quality-check failure after fix stops the loop 
   assertEq('residualFindingsが空でない', true, result.residualFindings.length > 0);
   assertEq('Fixは1回のみ実行され、再レビューは行われない', 1, fixCallCount);
   assertEq('roundHistoryは初回のみ1件(quality-check失敗で確認レビューへ進まない)', 1, result.roundHistory.length);
+}
+
+// --- default export: args を JSON 文字列で渡しても、オブジェクトで渡した場合と同じ結果になる
+//     （CodeRabbit指摘の回帰テスト。resolvedArgs 正規化パターンそのものにはこれまで
+//     直接のテストが無かった） ---
+console.log('=== default export: args as a JSON string is normalized the same as an object ===');
+{
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: [], diff_file: 'mock-diff-empty' };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') return { findings: [] };
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  const noopLog = () => {};
+
+  const objectResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
+  const stringResult = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, JSON.stringify(BASE_ARGS), undefined);
+
+  assertEq('JSON文字列argsでもconverged:trueになる(オブジェクト版と同じ)', objectResult.converged, stringResult.converged);
+  assertEq('JSON文字列argsでもresidualFindings件数が同じ', objectResult.residualFindings.length, stringResult.residualFindings.length);
+
+  let threw = false;
+  try {
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, '{not valid json', undefined);
+  } catch (e) {
+    threw = true;
+  }
+  assertEq('不正なJSON文字列argsは空オブジェクトへフォールバックせず明示throwする', true, threw);
+}
+
+// --- default export: レビュアー(code-reviewer/design-reviewer)のいずれかが agent() の
+//     terminal失敗で null を返した場合、指摘ゼロとして握りつぶさず throw する
+//     （CodeRabbit指摘の回帰テスト。runReviewStage のこの分岐にこれまで直接のテストが無かった） ---
+console.log('=== default export: a null reviewer result (terminal failure) throws instead of converging falsely ===');
+{
+  async function mockAgentNullDesign(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/a.js'], diff_file: 'mock-diff-nullreviewer' };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') {
+      if (opts.label.startsWith('review:design')) return null;
+      return { findings: [] };
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  const noopLog = () => {};
+
+  let threw = false;
+  let threwMessageMentionsDesignReviewer = false;
+  try {
+    await workflow(mockAgentNullDesign, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
+  } catch (e) {
+    threw = true;
+    threwMessageMentionsDesignReviewer = String(e && e.message).includes('design-reviewer');
+  }
+  assertEq('design-reviewerがnullを返すとthrowする(指摘ゼロとして握りつぶさない)', true, threw);
+  assertEq('エラーメッセージに失敗したレビュアー名が含まれる', true, threwMessageMentionsDesignReviewer);
 }
 
 console.log('');

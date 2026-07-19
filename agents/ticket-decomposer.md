@@ -1,6 +1,6 @@
 ---
 name: ticket-decomposer
-description: "親要件チケットを実装タスクへ分解する際に使用。skills/create-ticket/scripts/decompose-judge.js（Dynamic Workflow）から `agentType: 'ticket-decomposer'` として、異なるレンズ（依存最小優先／垂直スライス優先／レイヤ分割優先）を与えられた3体が並列で呼び出される（Issue #46）。"
+description: "親要件チケットを実装タスクへ分解する際に使用。skills/create-ticket/scripts/decompose-judge.js（Dynamic Workflow）から `agentType: 'claude-harness:ticket-decomposer'` として、異なるレンズ（依存最小優先／垂直スライス優先／レイヤ分割優先）を与えられた3体が並列で呼び出される（Issue #46）。"
 # tools: 分解案生成専用エージェントのため読み取り系のみ。コード修正・Issue作成は行わない。
 # 注入されたcodebaseAnalysisリストに加え、filesフィールドの幻覚防止のため自己に
 # Glob/Grepでの存在確認を許可する。
