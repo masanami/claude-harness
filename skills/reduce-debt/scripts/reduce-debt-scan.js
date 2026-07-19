@@ -11,6 +11,9 @@
 //   changedDirs:  string[]  親Issueの変更ディレクトリ一覧（collect-impl-context.sh の changedDirs）
 //
 // resume 安全性のため、このスクリプトは Date.now()/Math.random()/引数無し new Date() を使わない。
+//
+// export 制約（重要）: ランタイムは `export const meta` のみを特別扱いし本文を async 関数体として
+// 実行するため、本文に他の export を書かない（正本: docs/plugin-path-conventions.md。Issue #89）。
 
 export const meta = {
   name: 'reduce-debt-scan',
@@ -32,7 +35,7 @@ const CATEGORIES = ['code_quality', 'dependencies', 'design', 'tests', 'document
 
 // --- JSON Schema（agent() の schema オプションに渡す。出力検証・自動リトライに使われる） ---
 
-export const SCAN_SCHEMA = {
+const SCAN_SCHEMA = {
   type: 'array',
   items: {
     type: 'object',
@@ -48,7 +51,7 @@ export const SCAN_SCHEMA = {
   },
 };
 
-export const VERIFY_SCHEMA = {
+const VERIFY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -75,7 +78,7 @@ export const VERIFY_SCHEMA = {
 
 // 確認済みディレクトリ一覧を、fan-out 上限（MAX_BUCKETS）内に収まるようバケットへ分割する。
 // ディレクトリ数が上限以下ならディレクトリ1個 = バケット1個。上限超過時は均等にまとめる。
-export function planScanBuckets(directories) {
+function planScanBuckets(directories) {
   const dirs = Array.from(new Set(directories)).sort();
   if (dirs.length === 0) return [];
   if (dirs.length <= MAX_BUCKETS) {
@@ -90,7 +93,7 @@ export function planScanBuckets(directories) {
     .map((b, i) => ({ id: `bucket-${i + 1}`, directories: b }));
 }
 
-export function chunkArray(arr, size) {
+function chunkArray(arr, size) {
   const chunks = [];
   for (let i = 0; i < arr.length; i += size) {
     chunks.push(arr.slice(i, i + size));
@@ -104,7 +107,7 @@ export function chunkArray(arr, size) {
 // 過剰分類になるため、ファイル完全一致のみを introducedByParent = true とする。
 // ディレクトリのみ一致は relatedDir = true として区別し、「既存（親実装の関連ディレクトリ）」
 // として報告表で識別できるようにする（両方不一致なら relatedDir も false の素の既存負債）。
-export function classifyParentRelation(file, changedFileSet, changedDirs) {
+function classifyParentRelation(file, changedFileSet, changedDirs) {
   if (changedFileSet.has(file)) {
     return { introducedByParent: true, relatedDir: false };
   }
@@ -115,7 +118,7 @@ export function classifyParentRelation(file, changedFileSet, changedDirs) {
 // 3体の懐疑者の verdict 配列から、1件の検出項目の最終判定を多数決で決める。
 // confirmed が2票以上 -> confirmed。refuted が2票以上 -> refuted。
 // それ以外（1-1-1 割れ、uncertain 過半数等）は要人間判断として扱う。
-export function decideVerdict(votes) {
+function decideVerdict(votes) {
   const counts = { confirmed: 0, refuted: 0, uncertain: 0 };
   for (const vote of votes) {
     if (Object.prototype.hasOwnProperty.call(counts, vote.verdict)) {
@@ -156,7 +159,7 @@ function wrapDataBlock(data) {
   ].join('\n');
 }
 
-export function buildScanPrompt(bucket) {
+function buildScanPrompt(bucket) {
   return [
     '以下のデータブロックに列挙された担当ディレクトリ配下のみを対象に技術負債をスキャンしてください。',
     '',
@@ -166,7 +169,7 @@ export function buildScanPrompt(bucket) {
   ].join('\n');
 }
 
-export function buildVerifyPrompt(file, batch) {
+function buildVerifyPrompt(file, batch) {
   const findings = batch.map((finding) => ({
     findingIndex: finding.findingIndex,
     severity: finding.severity,
@@ -183,127 +186,131 @@ export function buildVerifyPrompt(file, batch) {
   ].join('\n');
 }
 
-export default async function ({ agent, parallel, pipeline, log, args }) {
-  const {
-    directories = [],
-    parentIssue = null,
-    changedFiles = [],
-    changedDirs = [],
-  } = args;
+// === WORKFLOW ENTRY POINT ===
+// Everything below this marker runs as top-level statements in the async function body
+// the Workflow runtime constructs for this script (parameters: agent, parallel, pipeline,
+// phase, log, args, budget — see file header "実行環境の制約"/契約コメント). There is no
+// wrapper function here: `export default async function (...) { ... }` is NOT supported by
+// the runtime, which is why this file no longer declares one (Issue #89).
+const {
+  directories = [],
+  parentIssue = null,
+  changedFiles = [],
+  changedDirs = [],
+} = args;
 
-  const buckets = planScanBuckets(directories);
+const buckets = planScanBuckets(directories);
 
-  const emptyResult = {
-    meta: { parentIssue, scannedDirectories: directories, bucketCount: 0 },
-    confirmed: [],
-    needsHumanJudgment: [],
-    appendix: { refuted: [], unverified: [] },
-  };
+const emptyResult = {
+  meta: { parentIssue, scannedDirectories: directories, bucketCount: 0 },
+  confirmed: [],
+  needsHumanJudgment: [],
+  appendix: { refuted: [], unverified: [] },
+};
 
-  if (buckets.length === 0) {
-    log('reduce-debt-scan: no directories to scan, skipping.');
-    return emptyResult;
-  }
-
-  log(`reduce-debt-scan: planned ${buckets.length} bucket(s) from ${directories.length} confirmed director(y/ies).`);
-
-  // 総エージェント数上限のガード。scanStage 側で1バケット1エージェントを消費し、
-  // verifyStage 側で1バッチにつき VERIFIER_COUNT 体を消費する。
-  // pipeline はアイテム単位で非同期に進行するが、この関数自体は同期的に
-  // チェック&デクリメントするため（await を挟まない）競合状態は起きない。
-  let remainingAgentBudget = MAX_TOTAL_AGENTS - buckets.length;
-
-  function consumeAgentBudget(n) {
-    if (remainingAgentBudget < n) return false;
-    remainingAgentBudget -= n;
-    return true;
-  }
-
-  async function scanStage(bucket, originalBucket, index) {
-    const findings = await agent(buildScanPrompt(bucket), {
-      agentType: 'debt-scanner',
-      schema: SCAN_SCHEMA,
-      phase: 'Scan',
-      label: `scan:${bucket.id}`,
-    });
-    return { bucket, findings: Array.isArray(findings) ? findings : [] };
-  }
-
-  async function verifyStage(scanResult, originalBucket, index) {
-    const { bucket, findings } = scanResult;
-
-    const unverified = [];
-    const toVerify = [];
-    findings.forEach((finding) => {
-      if (finding.severity === 'low') {
-        unverified.push({ ...finding, verdict: 'unverified', votes: [], bucketId: bucket.id });
-      } else {
-        toVerify.push({ ...finding, bucketId: bucket.id });
-      }
-    });
-
-    const byFile = new Map();
-    for (const finding of toVerify) {
-      if (!byFile.has(finding.file)) byFile.set(finding.file, []);
-      byFile.get(finding.file).push(finding);
-    }
-
-    const verifiedFindings = [];
-    for (const [file, fileFindings] of byFile) {
-      for (const batch of chunkArray(fileFindings, VERIFY_BATCH_SIZE)) {
-        const batchWithIndex = batch.map((finding, i) => ({ ...finding, findingIndex: i }));
-
-        if (!consumeAgentBudget(VERIFIER_COUNT)) {
-          batchWithIndex.forEach((finding) => {
-            verifiedFindings.push({
-              ...finding,
-              verdict: 'needs_human_judgment',
-              votes: [],
-              reason: 'agent budget cap reached before verification',
-            });
-          });
-          continue;
-        }
-
-        const prompt = buildVerifyPrompt(file, batchWithIndex);
-        const verifierOutputs = await parallel([
-          () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:1` }),
-          () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:2` }),
-          () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:3` }),
-        ]);
-
-        batchWithIndex.forEach((finding, i) => {
-          const votes = verifierOutputs
-            .map((out) => (out.verdicts || []).find((v) => v.file === file && v.findingIndex === i))
-            .filter(Boolean);
-          const verdict = decideVerdict(votes);
-          verifiedFindings.push({ ...finding, verdict, votes });
-        });
-      }
-    }
-
-    return { bucket, findings: [...verifiedFindings, ...unverified] };
-  }
-
-  const bucketResults = await pipeline(buckets, scanStage, verifyStage);
-
-  const changedFileSet = new Set(changedFiles);
-  const allFindings = bucketResults.flatMap((result) =>
-    result.findings.map((finding) => ({
-      ...finding,
-      ...classifyParentRelation(finding.file, changedFileSet, changedDirs),
-    })),
-  );
-
-  const confirmed = allFindings.filter((f) => f.verdict === 'confirmed');
-  const needsHumanJudgment = allFindings.filter((f) => f.verdict === 'needs_human_judgment');
-  const refuted = allFindings.filter((f) => f.verdict === 'refuted');
-  const unverifiedLow = allFindings.filter((f) => f.verdict === 'unverified');
-
-  return {
-    meta: { parentIssue, scannedDirectories: directories, bucketCount: buckets.length },
-    confirmed,
-    needsHumanJudgment,
-    appendix: { refuted, unverified: unverifiedLow },
-  };
+if (buckets.length === 0) {
+  log('reduce-debt-scan: no directories to scan, skipping.');
+  return emptyResult;
 }
+
+log(`reduce-debt-scan: planned ${buckets.length} bucket(s) from ${directories.length} confirmed director(y/ies).`);
+
+// 総エージェント数上限のガード。scanStage 側で1バケット1エージェントを消費し、
+// verifyStage 側で1バッチにつき VERIFIER_COUNT 体を消費する。
+// pipeline はアイテム単位で非同期に進行するが、この関数自体は同期的に
+// チェック&デクリメントするため（await を挟まない）競合状態は起きない。
+let remainingAgentBudget = MAX_TOTAL_AGENTS - buckets.length;
+
+function consumeAgentBudget(n) {
+  if (remainingAgentBudget < n) return false;
+  remainingAgentBudget -= n;
+  return true;
+}
+
+async function scanStage(bucket, originalBucket, index) {
+  const findings = await agent(buildScanPrompt(bucket), {
+    agentType: 'debt-scanner',
+    schema: SCAN_SCHEMA,
+    phase: 'Scan',
+    label: `scan:${bucket.id}`,
+  });
+  return { bucket, findings: Array.isArray(findings) ? findings : [] };
+}
+
+async function verifyStage(scanResult, originalBucket, index) {
+  const { bucket, findings } = scanResult;
+
+  const unverified = [];
+  const toVerify = [];
+  findings.forEach((finding) => {
+    if (finding.severity === 'low') {
+      unverified.push({ ...finding, verdict: 'unverified', votes: [], bucketId: bucket.id });
+    } else {
+      toVerify.push({ ...finding, bucketId: bucket.id });
+    }
+  });
+
+  const byFile = new Map();
+  for (const finding of toVerify) {
+    if (!byFile.has(finding.file)) byFile.set(finding.file, []);
+    byFile.get(finding.file).push(finding);
+  }
+
+  const verifiedFindings = [];
+  for (const [file, fileFindings] of byFile) {
+    for (const batch of chunkArray(fileFindings, VERIFY_BATCH_SIZE)) {
+      const batchWithIndex = batch.map((finding, i) => ({ ...finding, findingIndex: i }));
+
+      if (!consumeAgentBudget(VERIFIER_COUNT)) {
+        batchWithIndex.forEach((finding) => {
+          verifiedFindings.push({
+            ...finding,
+            verdict: 'needs_human_judgment',
+            votes: [],
+            reason: 'agent budget cap reached before verification',
+          });
+        });
+        continue;
+      }
+
+      const prompt = buildVerifyPrompt(file, batchWithIndex);
+      const verifierOutputs = await parallel([
+        () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:1` }),
+        () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:2` }),
+        () => agent(prompt, { agentType: 'debt-verifier', schema: VERIFY_SCHEMA, phase: 'Verify', label: `verify:${bucket.id}:${file}:${index}:3` }),
+      ]);
+
+      batchWithIndex.forEach((finding, i) => {
+        const votes = verifierOutputs
+          .map((out) => (out.verdicts || []).find((v) => v.file === file && v.findingIndex === i))
+          .filter(Boolean);
+        const verdict = decideVerdict(votes);
+        verifiedFindings.push({ ...finding, verdict, votes });
+      });
+    }
+  }
+
+  return { bucket, findings: [...verifiedFindings, ...unverified] };
+}
+
+const bucketResults = await pipeline(buckets, scanStage, verifyStage);
+
+const changedFileSet = new Set(changedFiles);
+const allFindings = bucketResults.flatMap((result) =>
+  result.findings.map((finding) => ({
+    ...finding,
+    ...classifyParentRelation(finding.file, changedFileSet, changedDirs),
+  })),
+);
+
+const confirmed = allFindings.filter((f) => f.verdict === 'confirmed');
+const needsHumanJudgment = allFindings.filter((f) => f.verdict === 'needs_human_judgment');
+const refuted = allFindings.filter((f) => f.verdict === 'refuted');
+const unverifiedLow = allFindings.filter((f) => f.verdict === 'unverified');
+
+return {
+  meta: { parentIssue, scannedDirectories: directories, bucketCount: buckets.length },
+  confirmed,
+  needsHumanJudgment,
+  appendix: { refuted, unverified: unverifiedLow },
+};

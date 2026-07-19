@@ -21,6 +21,9 @@
 // resume 安全性のため、このスクリプトは Date.now()/Math.random()/引数無し new Date() や、
 // ファイルシステム操作・子プロセス起動のモジュールを使わない。
 //
+// export 制約（重要）: ランタイムは `export const meta` のみを特別扱いし本文を async 関数体として
+// 実行するため、本文に他の export を書かない（正本: docs/plugin-path-conventions.md。Issue #89）。
+//
 // 設計メモ（レイヤリング）:
 //   - 粒度基準（1エージェントで完結・1PR・明確な完了条件・依存最小、3レンズの解釈指針）は
 //     agents/ticket-decomposer.md 側の責務。このファイルには書かない
@@ -60,7 +63,7 @@ const MAX_JUDGE_RETRIES = 2;
 
 // 3レンズの定義。レンズの解釈指針そのものは agents/ticket-decomposer.md 側の責務のため、
 // ここでは呼び出し用の短いidとプロンプトに埋め込むラベルのみを持つ。
-export const LENSES = [
+const LENSES = [
   { id: 'dependency-minimal', label: '依存最小優先' },
   { id: 'vertical-slice', label: '垂直スライス優先' },
   { id: 'layer-split', label: 'レイヤ分割優先' },
@@ -70,7 +73,7 @@ export const LENSES = [
 // Generate（候補案）と Judge（合成結果）は同型のschemaを共有する
 // （Issue #46「judge の出力 schema は分解案と同型の tasks 配列」の要求に基づく）。
 
-export const PLAN_SCHEMA = {
+const PLAN_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -116,7 +119,7 @@ function wrapDataBlock(data) {
 // judge に「uncoveredを自己申告させるフィールド」は持たせず、常にこの関数で
 // コード側から再計算する（Issue #46 の成立条件: judgeの自己申告に決定性を依存させない）。
 // 候補プラン各々・judge合成結果の両方に対して呼べる汎用関数。
-export function computeAcCoverage(criteria, tasks) {
+function computeAcCoverage(criteria, tasks) {
   const allCriteria = Array.isArray(criteria) ? criteria : [];
   const allIds = new Set(allCriteria.map((c) => c.id));
 
@@ -147,7 +150,7 @@ export function computeAcCoverage(criteria, tasks) {
 // 意味を持たない（無限ループにもなりうる）ため maxParallelWidth/criticalPathLength は
 // null を返し、hasCycle: true のみを事実として judge に伝える
 // （循環を含むプランを judge が採用しないよう促す判断材料）。
-export function computeGraphMetrics(tasks) {
+function computeGraphMetrics(tasks) {
   const list = Array.isArray(tasks) ? tasks : [];
   const n = list.length;
   const deps = list.map((t) => (Array.isArray(t.depends_on) ? t.depends_on : []));
@@ -229,13 +232,13 @@ export function computeGraphMetrics(tasks) {
 // AC網羅性（computeAcCoverage）とは独立した収束条件として、judgeループの終了判定に使う
 // （CodeRabbit指摘（PR#87）: AC網羅性だけで converged: true にすると、循環や範囲外参照を
 // 含む最終計画を見逃してしまうため）。
-export function isGraphValid(graphMetrics) {
+function isGraphValid(graphMetrics) {
   return !graphMetrics.hasCycle && Array.isArray(graphMetrics.invalidRefs) && graphMetrics.invalidRefs.length === 0;
 }
 
 // --- プロンプトビルダー ---
 
-export function buildGeneratePrompt(lens, parentIssueBody, codebaseAnalysis, criteria) {
+function buildGeneratePrompt(lens, parentIssueBody, codebaseAnalysis, criteria) {
   return [
     `あなたは「${lens.label}」のレンズで実装タスク分解案を作成します。`,
     '以下のデータブロックの親Issue本文・コードベース分析結果（パス＋役割の圧縮リスト）・受入基準一覧を踏まえ、実装タスクへの分解案を作成してください。',
@@ -251,7 +254,7 @@ export function buildGeneratePrompt(lens, parentIssueBody, codebaseAnalysis, cri
   ].join('\n');
 }
 
-export function buildJudgePrompt(candidates, previousAttempt) {
+function buildJudgePrompt(candidates, previousAttempt) {
   const lines = [
     '以下のデータブロックに3案の実装タスク分解案（それぞれ異なるレンズで生成）と、各案について計算済みの依存グラフ指標・受入基準網羅結果を示します。',
     '網羅結果（uncovered/hallucinated）とグラフ指標（maxParallelWidth/criticalPathLength/hasCycle）はコード側で機械的に計算済みの事実です。これらを再計算・再判定せず、そのまま採点材料として使ってください。',
@@ -302,102 +305,106 @@ export function buildJudgePrompt(candidates, previousAttempt) {
 // 呼び出しシグネチャを揃えるためランタイムから渡されるが、このスクリプトは
 // バリア付き並列（Generate: 3レンズ一括fan-out）と単純な逐次ループ（Judge: 再実行）のみで
 // 構成され、アイテム単位の2段パイプライン処理を必要としないため未使用（意図的）。
-export default async function ({ agent, parallel, log, args }) {
-  const {
-    parentIssueBody = '',
-    codebaseAnalysis = [],
-    acceptanceCriteria = { issue: null, criteria: [], parse_status: 'no_checklist_found' },
-  } = args || {};
+// === WORKFLOW ENTRY POINT ===
+// Everything below this marker runs as top-level statements in the async function body
+// the Workflow runtime constructs for this script (parameters: agent, parallel, pipeline,
+// phase, log, args, budget — see file header "実行環境の制約"/契約コメント). There is no
+// wrapper function here: `export default async function (...) { ... }` is NOT supported by
+// the runtime, which is why this file no longer declares one (Issue #89).
+const {
+  parentIssueBody = '',
+  codebaseAnalysis = [],
+  acceptanceCriteria = { issue: null, criteria: [], parse_status: 'no_checklist_found' },
+} = args || {};
 
-  const criteria = Array.isArray(acceptanceCriteria && acceptanceCriteria.criteria)
-    ? acceptanceCriteria.criteria
-    : [];
+const criteria = Array.isArray(acceptanceCriteria && acceptanceCriteria.criteria)
+  ? acceptanceCriteria.criteria
+  : [];
 
-  if (typeof log === 'function') {
-    log(`decompose-judge: generating ${LENSES.length} candidate decomposition plans in parallel (${criteria.length} acceptance criteria to cover).`);
-  }
+if (typeof log === 'function') {
+  log(`decompose-judge: generating ${LENSES.length} candidate decomposition plans in parallel (${criteria.length} acceptance criteria to cover).`);
+}
 
-  // --- Generate フェーズ: 3レンズ並列生成 ---
-  const rawCandidates = await parallel(
-    LENSES.map((lens) => async () => {
-      const output = await agent(buildGeneratePrompt(lens, parentIssueBody, codebaseAnalysis, criteria), {
-        agentType: 'ticket-decomposer',
-        schema: PLAN_SCHEMA,
-        phase: 'Generate',
-        label: `generate:${lens.id}`,
-      });
-      const tasks = Array.isArray(output && output.tasks) ? output.tasks : [];
-      return { lens: lens.id, tasks };
-    }),
-  );
-
-  const candidates = rawCandidates.map((c) => ({
-    lens: c.lens,
-    tasks: c.tasks,
-    coverage: computeAcCoverage(criteria, c.tasks),
-    graphMetrics: computeGraphMetrics(c.tasks),
-  }));
-
-  if (typeof log === 'function') {
-    candidates.forEach((c) => {
-      log(`decompose-judge: candidate[${c.lens}] tasks=${c.tasks.length} uncovered=${c.coverage.uncovered.length} hallucinated=${c.coverage.hallucinated.length} hasCycle=${c.graphMetrics.hasCycle}`);
-    });
-  }
-
-  // --- Judge フェーズ: 採点・合成。網羅マトリクスまたは依存グラフの妥当性のいずれかが
-  // 満たされなければ上限付きで再実行する（CodeRabbit指摘（PR#87）: AC網羅性だけを収束条件に
-  // すると、循環・範囲外参照を含む最終計画を見逃す） ---
-  let finalTasks = [];
-  let finalCoverage = computeAcCoverage(criteria, []);
-  let finalGraphMetrics = computeGraphMetrics([]);
-  let judgeRounds = 0;
-  let converged = false;
-  let previousAttempt = null;
-
-  for (let i = 0; i < 1 + MAX_JUDGE_RETRIES; i += 1) {
-    judgeRounds += 1;
-    const prompt = buildJudgePrompt(candidates, previousAttempt);
-    const output = await agent(prompt, {
-      agentType: 'decompose-judge',
+// --- Generate フェーズ: 3レンズ並列生成 ---
+const rawCandidates = await parallel(
+  LENSES.map((lens) => async () => {
+    const output = await agent(buildGeneratePrompt(lens, parentIssueBody, codebaseAnalysis, criteria), {
+      agentType: 'ticket-decomposer',
       schema: PLAN_SCHEMA,
-      phase: 'Judge',
-      label: `judge:round-${judgeRounds}`,
+      phase: 'Generate',
+      label: `generate:${lens.id}`,
     });
     const tasks = Array.isArray(output && output.tasks) ? output.tasks : [];
-    const coverage = computeAcCoverage(criteria, tasks);
-    const graphMetrics = computeGraphMetrics(tasks);
-    const graphValid = isGraphValid(graphMetrics);
+    return { lens: lens.id, tasks };
+  }),
+);
 
-    finalTasks = tasks;
-    finalCoverage = coverage;
-    finalGraphMetrics = graphMetrics;
+const candidates = rawCandidates.map((c) => ({
+  lens: c.lens,
+  tasks: c.tasks,
+  coverage: computeAcCoverage(criteria, c.tasks),
+  graphMetrics: computeGraphMetrics(c.tasks),
+}));
 
-    if (coverage.uncovered.length === 0 && coverage.hallucinated.length === 0 && graphValid) {
-      converged = true;
-      if (typeof log === 'function') {
-        log(`decompose-judge: judge round ${judgeRounds} converged (tasks=${tasks.length}).`);
-      }
-      break;
-    }
-
-    if (typeof log === 'function') {
-      log(`decompose-judge: judge round ${judgeRounds} incomplete (uncovered=${coverage.uncovered.length}, hallucinated=${coverage.hallucinated.length}, hasCycle=${graphMetrics.hasCycle}, invalidRefs=${graphMetrics.invalidRefs.length}).`);
-    }
-    previousAttempt = { tasks, coverage, graphMetrics };
-  }
-
-  if (!converged && typeof log === 'function') {
-    log(`decompose-judge: gave up after ${judgeRounds} judge round(s); returning converged:false with residual coverage/graph issues.`);
-  }
-
-  return {
-    tasks: finalTasks,
-    meta: {
-      candidates: candidates.map((c) => ({ lens: c.lens, coverage: c.coverage, graphMetrics: c.graphMetrics })),
-      finalCoverage,
-      finalGraphMetrics,
-      judgeRounds,
-      converged,
-    },
-  };
+if (typeof log === 'function') {
+  candidates.forEach((c) => {
+    log(`decompose-judge: candidate[${c.lens}] tasks=${c.tasks.length} uncovered=${c.coverage.uncovered.length} hallucinated=${c.coverage.hallucinated.length} hasCycle=${c.graphMetrics.hasCycle}`);
+  });
 }
+
+// --- Judge フェーズ: 採点・合成。網羅マトリクスまたは依存グラフの妥当性のいずれかが
+// 満たされなければ上限付きで再実行する（CodeRabbit指摘（PR#87）: AC網羅性だけを収束条件に
+// すると、循環・範囲外参照を含む最終計画を見逃す） ---
+let finalTasks = [];
+let finalCoverage = computeAcCoverage(criteria, []);
+let finalGraphMetrics = computeGraphMetrics([]);
+let judgeRounds = 0;
+let converged = false;
+let previousAttempt = null;
+
+for (let i = 0; i < 1 + MAX_JUDGE_RETRIES; i += 1) {
+  judgeRounds += 1;
+  const prompt = buildJudgePrompt(candidates, previousAttempt);
+  const output = await agent(prompt, {
+    agentType: 'decompose-judge',
+    schema: PLAN_SCHEMA,
+    phase: 'Judge',
+    label: `judge:round-${judgeRounds}`,
+  });
+  const tasks = Array.isArray(output && output.tasks) ? output.tasks : [];
+  const coverage = computeAcCoverage(criteria, tasks);
+  const graphMetrics = computeGraphMetrics(tasks);
+  const graphValid = isGraphValid(graphMetrics);
+
+  finalTasks = tasks;
+  finalCoverage = coverage;
+  finalGraphMetrics = graphMetrics;
+
+  if (coverage.uncovered.length === 0 && coverage.hallucinated.length === 0 && graphValid) {
+    converged = true;
+    if (typeof log === 'function') {
+      log(`decompose-judge: judge round ${judgeRounds} converged (tasks=${tasks.length}).`);
+    }
+    break;
+  }
+
+  if (typeof log === 'function') {
+    log(`decompose-judge: judge round ${judgeRounds} incomplete (uncovered=${coverage.uncovered.length}, hallucinated=${coverage.hallucinated.length}, hasCycle=${graphMetrics.hasCycle}, invalidRefs=${graphMetrics.invalidRefs.length}).`);
+  }
+  previousAttempt = { tasks, coverage, graphMetrics };
+}
+
+if (!converged && typeof log === 'function') {
+  log(`decompose-judge: gave up after ${judgeRounds} judge round(s); returning converged:false with residual coverage/graph issues.`);
+}
+
+return {
+  tasks: finalTasks,
+  meta: {
+    candidates: candidates.map((c) => ({ lens: c.lens, coverage: c.coverage, graphMetrics: c.graphMetrics })),
+    finalCoverage,
+    finalGraphMetrics,
+    judgeRounds,
+    converged,
+  },
+};

@@ -12,8 +12,17 @@
 //
 // 実行方法: node scripts/tests/self-review-workflow-smoke.mjs
 // 失敗時は非0 exitし、要約を出力する（他の scripts/tests/*.sh の pass/fail 集計スタイルに合わせる）。
+//
+// self-review-loop.js は通常の ESM import では読み込まない。Workflow ランタイムは
+// `export const meta = {...}` のみを特別扱いし、本文を async 関数体として実行する契約
+// （export default async function ラッパーは非対応）のため、scripts/tests/workflow-harness.mjs
+// 経由でその契約と同じ方法（meta置換 + AsyncFunction化）で読み込む（Issue #89）。
 
-import {
+import { loadWorkflow, loadPureFunctions } from './workflow-harness.mjs';
+
+const WORKFLOW_PATH = new URL('../../skills/self-review/scripts/self-review-loop.js', import.meta.url).pathname;
+
+const {
   findingKey,
   dedupFindings,
   dedupByKey,
@@ -29,8 +38,28 @@ import {
   buildFixPrompt,
   buildGitOpsCollectPrompt,
   buildGitOpsHunkPrompt,
-} from '../../skills/self-review/scripts/self-review-loop.js';
-import workflow from '../../skills/self-review/scripts/self-review-loop.js';
+} = loadPureFunctions(WORKFLOW_PATH, [
+  'findingKey',
+  'dedupFindings',
+  'dedupByKey',
+  'dedupExactFindings',
+  'normalizeClaimPrefix',
+  'roundDedupKey',
+  'dedupByRoundKey',
+  'mergeReviewFindings',
+  'partitionFindingsForVerification',
+  'decideVerifyVerdict',
+  'buildReviewPrompt',
+  'buildVerifyPrompt',
+  'buildFixPrompt',
+  'buildGitOpsCollectPrompt',
+  'buildGitOpsHunkPrompt',
+]);
+
+// loadWorkflow().run は (agent, parallel, pipeline, phase, log, args, budget) の位置引数を
+// 取る（ランタイムの実際の呼び出し契約と同じ）。既存の `workflow({ agent, ... })` 形の
+// 呼び出し箇所はそのままの位置引数呼び出しへ書き換え済み（Issue #89）。
+const { run: workflow } = loadWorkflow(WORKFLOW_PATH);
 
 let passCount = 0;
 let failCount = 0;
@@ -302,7 +331,7 @@ console.log('=== default export: missing collectDiffScript/extractHunkScript thr
 
   let threw = false;
   try {
-    await workflow({ agent: unreachableAgent, parallel: mockParallel, pipeline: mockPipeline, log: () => {}, args: { base: null } });
+    await workflow(unreachableAgent, mockParallel, mockPipeline, 'Test', () => {}, { base: null }, undefined);
   } catch (e) {
     threw = true;
   }
@@ -358,7 +387,7 @@ console.log('=== default export: converges within 1 fix round ===');
   }
 
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   assertEq('converged: true (2巡目レビューで指摘0件)', true, result.converged);
   assertEq('residualFindings は空', 0, result.residualFindings.length);
@@ -405,7 +434,7 @@ console.log('=== default export: all high+PLAUSIBLE findings refuted -> converge
   }
 
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   assertEq('converged: true (refutedは偽陽性として棄却され、修正対象が無いためそのまま収束)', true, result.converged);
   assertEq('residualFindingsは空(refutedは残指摘として報告しない)', 0, result.residualFindings.length);
@@ -445,7 +474,7 @@ console.log('=== default export: needs_human_judgment findings surface in residu
   }
 
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   assertEq('converged: false (要人間判断の残指摘があるため)', false, result.converged);
   assertEq('residualFindingsに1件残る(needs_human_judgment)', 1, result.residualFindings.length);
@@ -469,7 +498,7 @@ console.log('=== default export: zero findings converges immediately ===');
     throw new Error(`unexpected phase: ${opts.phase}`);
   }
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   assertEq('converged: true', true, result.converged);
   assertEq('residualFindings空', 0, result.residualFindings.length);
@@ -514,7 +543,7 @@ console.log('=== default export: does not converge within MAX_ROUNDS(3) -> retur
   }
 
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   assertEq('converged: false (3周経っても指摘が残る)', false, result.converged);
   assertEq('residualFindingsに指摘が残る', 1, result.residualFindings.length);
@@ -563,7 +592,7 @@ console.log('=== default export: re-appearing high+PLAUSIBLE finding after prior
   }
 
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   // 1巡目: high+PLAUSIBLE -> 懐疑者検証でconfirmed -> Fix実行 -> 2巡目レビューで再度同じ(file,line)がhigh+PLAUSIBLEとして再出現。
   // seenKeysに載っているため懐疑者への再fan-outはスキップされるが、needs_human_judgmentとして残指摘に残るべき
@@ -628,7 +657,7 @@ console.log('=== default export: a different claim re-appearing at the same (fil
   }
 
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   assertEq(
     'finding-verifierはclaim Aで3回・claim Bで3回、計6回呼ばれる(claim Bが黙って握りつぶされず再検証される)',
@@ -678,7 +707,7 @@ console.log('=== default export: same (file,line) flagged by both reviewers for 
   }
 
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   // 初回レビューの指摘数(roundHistory[0])には両方のfindingが残っているはず(2件)。
   assertEq('初回レビューでは同一(file,line)でも両reviewerの指摘が両方残る(2件)', 2, result.roundHistory[0].findingsCount);
@@ -729,7 +758,7 @@ console.log('=== default export: quality-check failure after fix stops the loop 
   }
 
   const noopLog = () => {};
-  const result = await workflow({ agent: mockAgent, parallel: mockParallel, pipeline: mockPipeline, log: noopLog, args: BASE_ARGS });
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
 
   assertEq('converged: false (quality-check失敗で打ち切り)', false, result.converged);
   assertEq('residualFindingsが空でない', true, result.residualFindings.length > 0);
