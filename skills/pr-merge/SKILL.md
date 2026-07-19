@@ -85,12 +85,18 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 ### Phase 3: コードレビュー
 
-1. **PR概要と会話の確認**（preflight は title/body/会話コメントを取得しない。意味判断の材料はここで取得する）
+1. **PR概要と会話の確認**（preflight は title/body/会話コメントを取得しない。意味判断の材料はここで取得する。以下すべての分岐で共通の手順）
    ```bash
    gh pr view "$PR_NUM" --json title,body,comments
    ```
    - PR 本文と紐づく Issue から**要件**を把握する（レビュー観点「要件を満たしているか」の材料）
    - 会話タブのコメントに**人間の保留指示・未対応の依頼**が無いか確認する。あればマージを保留し内容を報告する
+
+続く手順は Phase 0-1 で確定済みの `$GATE` により3分岐する。
+
+#### 分岐A: 本番ゲート（`GATE == "production"`）
+
+> **設計判断（意図的）**: 本番ゲートは人間承認が最終バックストップになるため、低effortのインラインレビューのままとする（judge panel化・単発委譲への置換の対象外）。
 
 2. **変更差分の確認**
    ```bash
@@ -103,12 +109,56 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    - テストが適切に書かれているか
    - セキュリティ上の問題がないか
 
-4. **問題がある場合**
-   - PRにコメントを残す
-   ```bash
-   gh pr comment "$PR_NUM" --body "修正依頼: {内容}"
-   ```
-   - 実装エージェントに修正を依頼
+4. 問題があれば後述「問題がある場合の共通ステップ」に進む。無ければ Phase 4 へ進む。
+
+#### 分岐B: 統合ブランチゲート・リスクゲート非該当時
+
+`GATE == "integration"` かつ、以下のリスクゲート発動条件が**偽**の場合（Phase 0-1 で取得済みの `$PREFLIGHT` から判定）:
+```bash
+RISK_GATE_TRIGGERED=$(jq -r '(.risk.touches_sensitive == true) or ((.commented_bodies | length) > 0)' <<<"$PREFLIGHT")
+```
+
+Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だけ**起動する。Workflow を経由しないため出力の schema 強制はできず、`agents/code-reviewer.md` Step 3 の prose 形式の報告を受け取る。プロンプトには以下を明記する:
+- `gh pr diff` ベースのレビューに限定すること（ローカルチェックアウト・品質チェックコマンド実行を前提にしないこと）
+- 手順1で取得済みの PR title/body と、`gh pr diff "$PR_NUM"` の変更差分を渡す
+
+報告内容にブロッカーがあれば「問題がある場合の共通ステップ」に進む。無ければ Phase 4 へ進む。
+
+#### 分岐C: 統合ブランチゲート・リスクゲート該当時
+
+`GATE == "integration"` かつ上記 `RISK_GATE_TRIGGERED` が**真**の場合、Dynamic Workflow（`skills/pr-merge/scripts/merge-judge.js`）を起動する。
+
+> **スクリプトの所在・起動方法（重要）**: Workflow ツールに渡す `scriptPath`/`args` はプレースホルダの展開が行われない。`<CLAUDE_PLUGIN_ROOTの絶対パス>` は本ドキュメント内の表記上のプレースホルダであり環境変数ではない。実際の絶対パスは、本スキル起動時にコンテキストへ与えられる「Base directory for this skill」（`<プラグインルート>/skills/pr-merge`）から**親ディレクトリを2階層**辿ることで得る（`<Base directory for this skill>/../..` がプラグインルート）。この絶対パスと `/skills/pr-merge/scripts/merge-judge.js` を連結した文字列を `scriptPath` に渡し、`args.extractHunkScript` も同じプラグインルートの絶対パスに `/scripts/extract-hunk.sh` を連結した文字列を渡す。resume 時のキャッシュ安定性のため、同一セッション内では常に同じ絶対パスをそのまま渡すこと。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+```text
+{
+  scriptPath: "<CLAUDE_PLUGIN_ROOTの絶対パス>/skills/pr-merge/scripts/merge-judge.js",
+  args: {
+    prNumber: <PR_NUM を数値化したもの>,
+    prTitle: <手順1で取得した title>,
+    prBody: <手順1で取得した body>,
+    extractHunkScript: "<CLAUDE_PLUGIN_ROOTの絶対パス>/scripts/extract-hunk.sh"
+  }
+}
+```
+
+Workflow の内部構造（Diff/Panel/Verify の各フェーズ・any-veto集約・単一懐疑者による反証）は `skills/pr-merge/scripts/merge-judge.js` の冒頭コメントを正本とする。3レンズの判定基準・懐疑的検証の反証規範の中身は `agents/code-reviewer.md` / `agents/finding-verifier.md` 側に置く（レイヤリング。本 SKILL には重複記載しない）。
+
+> **レイテンシに関する注記**: 統合ブランチゲートはリスクゲート該当時、3レンズ並列＋条件付き敵対的検証の分だけ分岐Bの単発委譲より数分程度レイテンシが増えるが、統合ブランチは可逆かつ本番ゲートの人間承認が最終バックストップになるため許容する。
+
+Workflow の返り値（`{verdict, confirmedBlockers, refutedBlockers, panelSummary}`）で分岐する:
+- `verdict === 'merge'` → Phase 4 へ進む
+- `verdict === 'hold'` → `confirmedBlockers`（`{file, line, reason, verificationStatus}` の一覧）の内容を使って「問題がある場合の共通ステップ」に進む。Phase 4 には進まない
+
+#### 問題がある場合の共通ステップ（分岐A/B/Cで共有）
+
+- PRにコメントを残す
+  ```bash
+  gh pr comment "$PR_NUM" --body "修正依頼: {内容}"
+  ```
+  - 分岐Cの場合は `confirmedBlockers` の file:line・reason の一覧を構造化して「内容」に含める
+- 実装エージェントに修正を依頼
 
 ### Phase 4: マージ
 
