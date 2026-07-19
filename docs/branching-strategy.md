@@ -100,8 +100,13 @@ git checkout feat/issue-<親>
 git merge origin/main            # or: git rebase origin/main
 git push
 
-# 2. 統合ブランチで最終動作確認（人間ゲート）
+# 2. 昇格前検証パッケージの生成（AI・任意だが推奨）
+#    /promote-verify で受入基準×実装の全数チェック表（証跡付き）・サブタスク完了突合・
+#    全E2E/QC結果を生成し、人間ゲートの判断材料とする
+
+# 2b. 統合ブランチで最終動作確認（人間ゲート）
 #    /walkthrough で親 Issue の完了条件をハッピーパス中心に通し、人間が OK/NG を判断する
+#    （2 の検証パッケージがあれば、人間は walkthrough と承認に集中できる）
 
 # 3. 昇格 PR を作成（base = main）
 gh pr create --base main --head feat/issue-<親> \
