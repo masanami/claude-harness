@@ -21,6 +21,12 @@
 #      `claude-harness:` 付きであること（Issue #41 実機プローブ: プレフィックス無しの
 #      subagent_type/agentType は名称解決エラーになる。CodeRabbit指摘対応(PR #92)で
 #      subagent_type も検査対象に追加）。
+# (vi) skills/*/scripts/*.js（Dynamic Workflow スクリプト）に、ハードコードされた `scripts/`
+#      への相対パス文字列リテラル（引用符 '/"/` に直接続く `scripts/...`）が無いこと（Issue #80
+#      由来のパス規約違反パターンの一種。Workflow スクリプトが cwd 起点の裸の相対パスを
+#      ハードコードしていると、導入先プロジェクトの同名パスと衝突する・cwd がプラグイン
+#      ルートである保証がない、という問題の再発防止）。コメントや説明文中の言及（引用符に
+#      直接続かない形）は誤検出しない。
 # を検出する。規約の正本は docs/plugin-path-conventions.md。
 #
 # grep の exit code は 0=マッチあり / 1=マッチなし（正常） / 2以上=実行エラー
@@ -60,6 +66,11 @@ skills/init-project/SKILL.md:137
 
 # (iii) echo "$CLAUDE_PLUGIN_ROOT" 解決手順の許容リスト。現時点では既知の例外は無い。
 DEAD_ECHO_ALLOWLIST="
+"
+
+# (vi) skills/*/scripts/*.js 内のハードコードされた scripts/ 相対パス文字列リテラルの許容リスト。
+# 現時点では既知の例外は無い。
+BARE_JS_SCRIPT_ALLOWLIST="
 "
 
 is_allowlisted() {
@@ -292,6 +303,49 @@ else
     echo "  NG - claude-harness: プレフィックス無しの agentType/subagent_type を検出"
     print_indented "$agenttype_violations"
   fi
+fi
+
+echo ""
+echo "=== (vi) Workflow スクリプトのハードコードされた scripts/ 相対パスチェック ==="
+
+# 対象: 引用符（'/"/`）に直接続く scripts/ から始まる文字列リテラルのみ。コメントや説明文中の
+# 言及（例: meta.description 内の「... runs scripts/mutation-run.sh to ...」）は引用符に直接
+# 続かないため誤検出しない。
+# shellcheck disable=SC2016 # バッククォートは正規表現の文字クラス内リテラルであり、シェル展開の対象ではない
+bare_js_script_pattern="['\"\`]scripts/"
+
+bare_js_script_violations=""
+bare_js_script_grep_error=0
+while IFS= read -r -d '' file; do
+  hits="$(grep -nE "$bare_js_script_pattern" "$file")"
+  grep_exit=$?
+  if [ "$grep_exit" -ge 2 ]; then
+    bare_js_script_grep_error=1
+    echo "  NG - ${file}: grep 実行エラー（exit ${grep_exit}）のため判定不能"
+    continue
+  fi
+  [ -z "$hits" ] && continue
+  while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    lineno="${hit%%:*}"
+    if ! is_allowlisted "${file}:${lineno}" "$BARE_JS_SCRIPT_ALLOWLIST"; then
+      bare_js_script_violations="${bare_js_script_violations}${file}:${hit}
+"
+    fi
+  done <<<"$hits"
+done < <(find skills -path '*/scripts/*.js' -print0)
+
+if [ "$bare_js_script_grep_error" -eq 1 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("skills/*/scripts/*.js のハードコードされた scripts/ 相対パスチェックの grep 実行に失敗")
+elif [ -z "$bare_js_script_violations" ]; then
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - skills/*/scripts/*.js にハードコードされた scripts/ 相対パス文字列リテラルは無い"
+else
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("skills/*/scripts/*.js にハードコードされた scripts/ 相対パス文字列リテラルを検出")
+  echo "  NG - skills/*/scripts/*.js にハードコードされた scripts/ 相対パス文字列リテラルを検出"
+  print_indented "$bare_js_script_violations"
 fi
 
 echo ""

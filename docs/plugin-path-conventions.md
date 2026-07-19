@@ -144,5 +144,6 @@ Dynamic Workflow スクリプトが `agent(prompt, { schema, ... })` に渡す J
 - `docs/` 配下の設計文書への参照（HTML コメント内は除外）
 - 成立しない `echo "$CLAUDE_PLUGIN_ROOT"` 解決手順の再出現
 - `skills/*/scripts/*.js` の `agentType: '...'` および `agents/*.md` の自己記述が `claude-harness:` プレフィックス付きであること（(g) の規約）
+- `skills/*/scripts/*.js` に、引用符に直接続くハードコードされた `scripts/` 相対パス文字列リテラルが無いこと
 
 既知の許容パターンはテストファイル内でホワイトリストとして管理する。
