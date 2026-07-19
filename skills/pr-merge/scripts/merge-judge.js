@@ -279,7 +279,8 @@ function buildGitOpsDiffPrompt(prNumber) {
     '',
     '1. Bash で `mktemp` を実行し、一時ファイルパスを得る。',
     '2. Bash で `gh pr diff <prNumberの値（数値のためそのまま埋め込んでよい）> > <手順1で得た一時ファイルパスをシングルクォートで安全に埋め込んだもの>` を実行する。',
-    '3. 手順1で得た一時ファイルパスを diff_file として返す（内容の解釈は不要）。',
+    '3. 手順2のコマンドの終了コードを確認する。終了コードが非ゼロ、または出力ファイルが空（`test -s <手順1のパス>` が失敗）の場合は、`rm -f <手順1のパスをシングルクォートで安全に埋め込んだもの>` で一時ファイルを削除したうえで、diff_file を返さずこの呼び出し自体を失敗として終了する（PR不存在・gh認証エラー・ネットワーク障害等で空diffが「レビュー対象なし」としてそのままmerge判定に流れる事故を防ぐため。CodeRabbit指摘対応）。',
+    '4. 手順1で得た一時ファイルパスを diff_file として返す（内容の解釈は不要）。',
     '',
     SHELL_QUOTING_INSTRUCTIONS,
     '',
@@ -310,7 +311,9 @@ function buildGitOpsCleanupPrompt(diffFile) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行するだけが仕事です。',
     '',
-    'Bash で `rm -f "<diffFileの値>"` を実行し（対象が既に存在しなくてもエラーとして扱わない）、成功したら removed: true を返してください。',
+    'Bash で `rm -f <diffFileの値をシングルクォートで安全に埋め込んだもの>` を実行し（対象が既に存在しなくてもエラーとして扱わない）、成功したら removed: true を返してください。',
+    '',
+    SHELL_QUOTING_INSTRUCTIONS,
     '',
     wrapDataBlock({ diffFile }),
     '',
@@ -327,6 +330,15 @@ async function collectPrDiffViaAgent(agent, { prNumber, log }) {
     phase: 'Diff',
     label: 'diff:collect',
   });
+  // agent() は git-ops の terminal 失敗時（`gh pr diff` の非ゼロ終了・空出力を
+  // buildGitOpsDiffPrompt の手順3で検知した場合を含む）に null を返す。ここを
+  // 素通りさせると「diff取得なし」のまま後続のPanelフェーズが実質空diffをレビューし、
+  // 未実施のレビューがそのままmerge判定に流れる偽陽性（偽merge）になる（収束・完全性の
+  // 判定に関わるnullのため明示throw。runPanelStageの失敗レンズthrowと同じ理由。
+  // CodeRabbit指摘対応）。
+  if (result === null) {
+    throw new Error(`merge-judge: failed to collect \`gh pr diff\` for PR #${prNumber} (git-ops agent terminal failure, or \`gh pr diff\` returned non-zero/empty output). diff取得なしのままパネル判定を行わない。`);
+  }
   if (typeof log === 'function') {
     log(`merge-judge: collected PR #${prNumber} diff to ${result.diff_file}`);
   }
@@ -509,31 +521,37 @@ try {
   const panelResult = await runPanelStage(diffFile, { prNumber, prTitle, prBody }, { agent, parallel, log });
   panelSummary = panelResult.panelSummary;
 
+  // panel-level hold救済: あるレンズが「verdict: hold だが具体的な file:line を伴う
+  // blocker が1件も無い」（例:「要件がどこにも実装されていない」のような、特定のhunkに
+  // 結び付けにくい指摘）場合、Verifyフェーズへ渡すべき対象が無いためfinding-verifierには
+  // 回せない。この救済ロジックは「他のレンズにblockersが1件も無い」ケースに限定してはならない
+  // （限定すると、他レンズにblockersがあり、それらが全てfinding-verifierにrefutedされた場合、
+  // hold+blockers空のレンズの判定が黙って消えてmergeへ化ける — セルフレビュー→CodeRabbit指摘の
+  // 両方で確認された、混在ケースを取りこぼすfalse-merge欠陥）。allBlockers の有無に関わらず
+  // 常にholdingLensesWithoutBlockersを算出し、Verifyの結果と合成する。
+  const holdingLensesWithoutBlockers = panelResult.panelSummary
+    .filter((p) => p.verdict === 'hold' && p.blockerCount === 0)
+    .map((p) => p.lens);
+  const panelLevelBlockers = holdingLensesWithoutBlockers.map((lens) => ({
+    file: '(panel-level)',
+    line: 0,
+    reason: `${lens} レンズが具体的な file:line を伴わず verdict: hold を返しました（要人間判断）`,
+    verificationStatus: 'unverifiable_panel_level_hold',
+  }));
+
   // any-veto: 1レンズでもhold/blockers非空ならVerifyへ。全員mergeかつblockers空ならVerifyを
-  // スキップして即merge（confirmedBlockersが空のままのため、下のverdict算出で自然にmergeになる）。
+  // スキップして即merge（confirmedBlockers/panelLevelBlockersが共に空のままのため、
+  // 下のverdict算出で自然にmergeになる）。
   if (panelResult.vetoed) {
     if (panelResult.allBlockers.length > 0) {
       const verifyResult = await verifyBlockersStage(panelResult.allBlockers, diffFile, { agent, extractHunkScript, log });
-      confirmedBlockers = verifyResult.confirmedBlockers;
+      confirmedBlockers = [...verifyResult.confirmedBlockers, ...panelLevelBlockers];
       refutedBlockersResult = verifyResult.refutedBlockers;
     } else {
-      // veto は成立している（1レンズ以上が verdict: 'hold'）が、具体的な file:line を伴う
-      // blocker が1件も無い（例: 「要件がどこにも実装されていない」のような、特定のhunkに
-      // 結び付けにくい指摘）。Verifyフェーズへ渡すべき対象が無いためfinding-verifierには
-      // 回せないが、ここでveto自体を握りつぶしてmergeへ倒すと「明示的にholdしたレンズを
-      // 無視してマージする」false-mergeという安全性上の欠陥になる（セルフレビューで
-      // code-reviewerが指摘: isPanelVetoed自体は「holdまたはblockers非空」でveto成立と
-      // 定義しているのに、旧実装はここで `&& allBlockers.length > 0` という追加ガードを
-      // 課しており、hold+blockers空のレンズが黙ってmergeに化けていた）。安全側に倒し、
-      // holdを返したレンズ名を理由として構造化したうえでhold側に残す
-      // （uncertain/null と同じ「未確証のまま安全にmergeを許可しない」設計判断）。
-      const holdingLenses = panelResult.panelSummary.filter((p) => p.verdict === 'hold').map((p) => p.lens);
-      confirmedBlockers = holdingLenses.map((lens) => ({
-        file: '(panel-level)',
-        line: 0,
-        reason: `${lens} レンズが具体的な file:line を伴わず verdict: hold を返しました（要人間判断）`,
-        verificationStatus: 'unverifiable_panel_level_hold',
-      }));
+      // 具体的なblockerが1件も無い（全レンズがhold+blockers空、または全員merge）ケース。
+      // vetoed=true はこの分岐では「1件以上のレンズがhold+blockers空」を意味する
+      // （blockers非空でvetoedならallBlockers.length>0のため上のifに入る）。
+      confirmedBlockers = panelLevelBlockers;
     }
   }
   verdict = confirmedBlockers.length > 0 ? 'hold' : 'merge';

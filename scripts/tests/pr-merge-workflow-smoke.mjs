@@ -30,6 +30,7 @@ const {
   buildVerifyPrompt,
   buildGitOpsDiffPrompt,
   buildGitOpsHunkPrompt,
+  buildGitOpsCleanupPrompt,
 } = loadPureFunctions(WORKFLOW_PATH, [
   'findingKey',
   'isRiskGateTriggered',
@@ -39,6 +40,7 @@ const {
   'buildVerifyPrompt',
   'buildGitOpsDiffPrompt',
   'buildGitOpsHunkPrompt',
+  'buildGitOpsCleanupPrompt',
 ]);
 
 // loadWorkflow().run は (agent, parallel, pipeline, phase, log, args, budget) の位置引数を
@@ -227,6 +229,24 @@ console.log('=== git-ops prompts: shell single-quote escaping discipline is inst
     true,
     hunkPrompt.includes('ダブルクォートでの埋め込み') && hunkPrompt.includes('そのまま連結'),
   );
+
+  // CodeRabbit指摘対応の回帰テスト: buildGitOpsCleanupPromptだけが安全埋め込み手順への
+  // 参照を欠いており、`rm -f "<diffFileの値>"` とダブルクォートで直接埋め込む指示になっていた
+  // （diffFileはgit-opsエージェント経由で往復する値のため、想定外の内容混入時にコマンド
+  // インジェクションの余地を残す）。他の2プロンプトと同じ規律に揃っていることを検証する。
+  const cleanupPrompt = buildGitOpsCleanupPrompt('/tmp/some-diff-file');
+  assertEq('buildGitOpsCleanupPrompt: シングルクォート安全埋め込み手順への言及がある', true, cleanupPrompt.includes('シングルクォート'));
+  assertEq("buildGitOpsCleanupPrompt: '\\'' エスケープパターンの明記がある", true, cleanupPrompt.includes("'\\''"));
+  assertEq(
+    'buildGitOpsCleanupPrompt: ダブルクォートでの埋め込み・無加工連結の禁止が明記されている',
+    true,
+    cleanupPrompt.includes('ダブルクォートでの埋め込み') && cleanupPrompt.includes('そのまま連結'),
+  );
+  assertEq(
+    'buildGitOpsCleanupPrompt: rm -f コマンド自体はダブルクォートで直接埋め込まれていない（シングルクォート手順に従う指示文になっている）',
+    false,
+    /rm -f "<.*>"/.test(cleanupPrompt),
+  );
 }
 
 // --- default export: 必須引数の欠落は早期にthrowする ---
@@ -243,6 +263,90 @@ console.log('=== default export: missing required args throws early ===');
     threw = true;
   }
   assertEq('prTitle/prBody/extractHunkScript未指定でthrowする', true, threw);
+}
+
+// --- default export: 回帰テスト(diff収集失敗) — `gh pr diff` の失敗（非ゼロ終了・空出力）を
+//     git-opsが検知した場合、diff:collectはnullを返す(terminal失敗)。これを素通りさせず
+//     明示throwし、空diffのままPanelフェーズがレビュー未実施を「merge」と誤判定しないこと
+//     （CodeRabbit指摘対応: PR不存在・gh認証エラー・ネットワーク障害等での偽merge防止）。 ---
+console.log('=== default export: regression - diff collection failure (gh pr diff non-zero/empty) throws instead of proceeding to a false merge ===');
+{
+  let panelCallCount = 0;
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      if (opts.label === 'diff:collect') return null; // gh pr diff 失敗を模擬
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Panel') {
+      panelCallCount += 1;
+      return { blockers: [], verdict: 'merge' };
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+  const noopLog = () => {};
+
+  let threw = false;
+  try {
+    await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
+  } catch (e) {
+    threw = true;
+  }
+  assertEq('gh pr diff 失敗(diff:collectがnull)でthrowする(空diffのままmerge判定に進まない)', true, threw);
+  assertEq('throw前にPanelフェーズは一切呼ばれない', 0, panelCallCount);
+}
+
+// --- default export: 回帰テスト(混在ケースのfalse-merge) — 1レンズが「hold+blockers空
+//     (panel-level)」、別レンズが「hold+具体的blocker」を返し、そのblockerがfinding-verifier
+//     にrefutedされるケース。allBlockers.length > 0 のためVerifyフェーズへは入るが、
+//     panel-level側のhold理由（blockers空のレンズのhold）はVerifyの結果とは無関係に
+//     常に保持されなければならない。修正前の実装は
+//     `if (allBlockers.length > 0) { confirmedBlockers = verifyResult.confirmedBlockers }`
+//     のように panelLevelBlockers を合成しておらず、refuted一色でconfirmedBlockersが空に
+//     なると、panel-level holdの理由が跡形もなく消えてverdictがmergeに化けていた
+//     （CodeRabbit指摘: セルフレビューで直した「全レンズblockers空」ケースの修正だけでは、
+//     この「他レンズにblockersがある混在ケース」を取りこぼしていた）。 ---
+console.log('=== default export: regression - mixed case (panel-level hold + refuted concrete blocker) must not silently become merge ===');
+{
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      if (opts.label === 'diff:collect') return { diff_file: '/tmp/mock-diff-mixedpanel' };
+      if (opts.label === 'hunks:verify') {
+        return { hunks: [{ findingId: 'src/mix.js:9', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') return { removed: true };
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Panel') {
+      if (opts.label === 'panel:requirement-fulfillment') {
+        // 具体的なfile:lineに結び付けにくい「要件未実装」指摘。blockers空のままhold。
+        return { blockers: [], verdict: 'hold' };
+      }
+      if (opts.label === 'panel:security') {
+        return { blockers: [{ file: 'src/mix.js', line: 9, reason: 'possible false-positive concern' }], verdict: 'hold' };
+      }
+      return { blockers: [], verdict: 'merge' };
+    }
+    if (opts.phase === 'Verify') {
+      // securityレンズのblockerはfinding-verifierにrefutedされる想定
+      // （旧実装ではこの結果だけでconfirmedBlockersが空になりmergeに化けていた）。
+      return { verdicts: [{ findingId: 'src/mix.js:9', verdict: 'refuted', reason: 'not actually exploitable' }] };
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+
+  const noopLog = () => {};
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, BASE_ARGS, undefined);
+
+  assertEq('verdict: hold (panel-level holdはrefuted判定の影響を受けず残る)', 'hold', result.verdict);
+  assertEq('confirmedBlockersに1件残る(panel-levelのhold理由のみ)', 1, result.confirmedBlockers.length);
+  assertEq(
+    'confirmedBlockersの中身はrequirement-fulfillmentのpanel-level hold理由',
+    'unverifiable_panel_level_hold',
+    result.confirmedBlockers[0].verificationStatus,
+  );
+  assertEq('reasonにholdを返したレンズ名(requirement-fulfillment)が含まれる', true, result.confirmedBlockers[0].reason.includes('requirement-fulfillment'));
+  assertEq('refutedBlockersにsecurityレンズのblockerが1件記録される', 1, result.refutedBlockers.length);
+  assertEq('refutedBlockersの中身はsrc/mix.js', 'src/mix.js', result.refutedBlockers[0].file);
 }
 
 // --- default export: any-veto集約 — 3レンズ全員merge・blockers空 -> Verifyをスキップして即merge ---
