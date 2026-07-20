@@ -29,7 +29,7 @@ CLAUDE.md および `package.json` 等から、以下のコマンドを特定す
 
 **自動修正の事前適用 → lint → 型チェック → テストの順序実行**、exit code に基づく `gates.*.status` 判定、機械可読 JSON の構築は、決定的な処理として `scripts/quality-check-runner.sh` に切り出されている。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/quality-check-runner.sh"` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/quality-check-runner.sh` では呼び出さないこと。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/quality-check-runner.sh"` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/quality-check-runner.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 ```bash
