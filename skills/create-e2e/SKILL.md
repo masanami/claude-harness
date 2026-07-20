@@ -127,7 +127,9 @@ Issue/PRが対象なのに `check-e2e-traceability.sh` が `status: no_criteria`
 
 `e2e-engineer` に委譲していた場合は、メインに戻ってから `/explain-e2e` を実行する。その際、e2e-engineer の返却内容（テストファイル一覧・実行結果・トレーサビリティ表）を `/explain-e2e` の入力コンテキストとして渡す。
 
-> **呼び出し元がサブエージェントの場合**（star 型並列実装の `ticket-worker` 等）: `/explain-e2e` は Phase 1 が対話前提のため実行せず、上記の返却内容をリードに返す。リードがメインセッションで実施する。
+> **呼び出し元がサブエージェントの場合**: `/explain-e2e` は Phase 1 が対話前提のため実行せず、上記の返却内容を呼び出し元に返す。呼び出し元がメインセッションで実施する。
+>
+> **star 型並列実装（`/para-impl` 複数Issue）の場合**: E2E対象チケットの `/create-e2e` は Dynamic Workflow（`skills/para-impl/scripts/para-impl-tickets.js`）の対象外であり、リードが Workflow 完了後に当該チケットの worktree で直接実行する（対話前提の `/explain-e2e` Phase 1 と合わせてメインセッションで完結させるため）。詳細は `skills/para-impl/references/star-parallel.md` 参照。
 
 ---
 

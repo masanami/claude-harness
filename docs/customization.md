@@ -188,7 +188,7 @@ model: opus
 | code-reviewer | agent | `xhigh` | バグ・正確性・設計の深い検討 |
 | design-reviewer | agent | `xhigh` | 依存方向・境界の構造的判断 |
 | feature-implementer | agent | `high` | 実装の中核ロジック |
-| ticket-worker | agent | `high` | 1チケットのフロー統括（CI失敗分析・差し戻し判断） |
+| issue-conflict-predictor | agent | `low` | 1Issueあたりのファイル衝突予測に限定した軽量タスク |
 | e2e-engineer | agent | `medium` | パターン踏襲が中心 |
 | doc-verifier | agent | `medium` | 整合性チェック |
 | define-feature | skill | `xhigh` | 要件・クリティカル設計の意思決定 |
