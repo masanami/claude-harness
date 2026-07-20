@@ -25,7 +25,7 @@ effort: medium
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh [対象ディレクトリ]`（所在は直後の注記を参照）を実行し、プロジェクト情報を検出する。検出規則（ロックファイル→PM対応、技術スタック判定、コマンド優先順位、除外ディレクトリ、設計ドキュメントglob、9軸の定義・判定ルール等）はすべてスクリプト側に実装されており、決定的に判定される。本セクションではスクリプトの入出力契約と、LLM側が担う補完のみを記す。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh"` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/analyze-project.sh` では呼び出さないこと。分析対象ディレクトリ（引数）にはユーザープロジェクトの対象パスを渡す。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh"` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/analyze-project.sh` では呼び出さないこと。分析対象ディレクトリ（引数）にはユーザープロジェクトの対象パスを渡す。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 - 実行例: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh" .`

@@ -35,7 +35,7 @@ $ARGUMENTS
 
 親Issueと関連PR・変更ファイルを把握する。決定的な収集処理は `${CLAUDE_PLUGIN_ROOT}/scripts/collect-impl-context.sh` に委ねる。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/collect-impl-context.sh" <親Issue番号>` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/collect-impl-context.sh` では呼び出さないこと。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/collect-impl-context.sh" <親Issue番号>` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/collect-impl-context.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 > **前提条件（jq 必須）**: このスクリプトは jq の存在を前提とする。jq が不在の環境では stderr にエラーメッセージとエラーJSONを出して exit 非0 になる。その場合は `gh issue view {番号} --json title,body,state,labels,number` と `gh pr view {PR番号} --json files --jq '.files[].path'` による手動収集にフォールバックしてよい。
@@ -226,7 +226,7 @@ Workflow の返り値（`{meta, confirmed, needsHumanJudgment, appendix: {refute
 
 技術負債が検出された場合、ユーザーにIssue化の要否を確認する。起票そのものは `${CLAUDE_PLUGIN_ROOT}/scripts/create-debt-issues.sh` に委ね、リード（あなた）は manifest の生成と粒度判断、ユーザー確認に専念する。**Issue化の対象は「今回の実装で導入された技術負債」「既存の技術負債」（confirmed）と、必要に応じて「要人間判断」の項目のうちユーザーが Issue 化を望んだもの**とする。refuted・未検証（付録）はデフォルトでは起票候補に含めない。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/create-debt-issues.sh" <manifest.jsonファイルパス>` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/create-debt-issues.sh` では呼び出さないこと。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/create-debt-issues.sh" <manifest.jsonファイルパス>` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/create-debt-issues.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 > **前提条件（jq 必須）**: このスクリプトは jq の存在を前提とする。jq が不在の環境では `check_jq` がエラーメッセージとエラーJSONを stderr に出して exit 非0 になる。その場合は本スクリプトの利用を諦め、旧来のインラインな `gh issue create --label tech-debt --title "..." --body "..."` による個別起票にフォールバックしてよい（本文には5-3に記載のテンプレート要素を手動で含めること）。

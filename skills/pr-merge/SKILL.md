@@ -36,7 +36,7 @@ PR番号: $ARGUMENTS
 
 base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeable の取得、外部レビュー待機のポーリングは、決定的な処理として preflight スクリプトに切り出されている。**このフェーズでは生の gh JSON をメインのコンテキストに滞留させず、スクリプトが返す構造化済みJSONのみを扱う。**
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh" <PR番号>` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/pr-merge-preflight.sh` では呼び出さないこと。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh" <PR番号>` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/pr-merge-preflight.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 1. **PR番号の解決**（`$ARGUMENTS` が空の場合は現在のブランチのPRを自動検出する）

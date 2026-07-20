@@ -31,7 +31,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/xxx.sh" <引数>
 各 SKILL.md でスクリプトを初めて実行する箇所には、以下の定型文を配置する（スクリプト名・引数は該当箇所に合わせて置き換える）:
 
 ```text
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/xxx.sh" <引数>` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/xxx.sh` では呼び出さないこと。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/xxx.sh" <引数>` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/xxx.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 ```
 

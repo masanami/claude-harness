@@ -27,6 +27,9 @@
 #      ハードコードしていると、導入先プロジェクトの同名パスと衝突する・cwd がプラグイン
 #      ルートである保証がない、という問題の再発防止）。コメントや説明文中の言及（引用符に
 #      直接続かない形）は誤検出しない。
+# (vii) 「実行時にプラグインルートへ展開される」という誤説明の再出現（CLAUDE_PLUGIN_ROOT は
+#       Bash 環境変数として存在せず展開されない — 実機検証済み。正しくは「表記上の
+#       プレースホルダであり、実行前に Base directory から解決した絶対パスに置換する」）
 # を検出する。規約の正本は docs/plugin-path-conventions.md。
 #
 # grep の exit code は 0=マッチあり / 1=マッチなし（正常） / 2以上=実行エラー
@@ -346,6 +349,27 @@ else
   FAILED_TESTS+=("skills/*/scripts/*.js にハードコードされた scripts/ 相対パス文字列リテラルを検出")
   echo "  NG - skills/*/scripts/*.js にハードコードされた scripts/ 相対パス文字列リテラルを検出"
   print_indented "$bare_js_script_violations"
+fi
+
+echo ""
+echo "=== (vii) 誤った「実行時に展開」説明の再出現チェック ==="
+
+misexp_pattern='実行時にプラグインルートへ展開'
+misexp_hits="$(grep -rn "$misexp_pattern" skills agents docs --include='*.md')"
+misexp_exit=$?
+
+if [ "$misexp_exit" -ge 2 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("誤った「実行時に展開」説明チェックの grep 実行に失敗")
+  echo "  NG - grep 実行エラー（exit ${misexp_exit}）のため判定不能"
+elif [ -n "$misexp_hits" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("誤った「実行時にプラグインルートへ展開される」説明を検出")
+  echo "  NG - 誤った「実行時にプラグインルートへ展開される」説明を検出"
+  print_indented "$misexp_hits"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 誤った「実行時に展開」説明は無い"
 fi
 
 echo ""

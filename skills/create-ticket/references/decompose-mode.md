@@ -24,7 +24,7 @@ gh issue view {親Issue番号} --json title,body,number
 
 `scripts/extract-acceptance-criteria.sh {親Issue番号}` で受入基準に安定ID（`AC-1` 等）を振る。**この抽出は Workflow 起動前に行う**（Workflow ランタイムは Bash/gh を実行できないため、AC抽出をループ内で再実行する設計は取らず、起動時に1回だけ固定する）。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-acceptance-criteria.sh" {親Issue番号}` の形式（`${CLAUDE_PLUGIN_ROOT}` は実行時にプラグインルートへ展開される）を用い、相対パス `scripts/extract-acceptance-criteria.sh` では呼び出さないこと。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-acceptance-criteria.sh" {親Issue番号}` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/extract-acceptance-criteria.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 ```bash
