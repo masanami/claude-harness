@@ -1,6 +1,6 @@
 ---
 name: design-deviation-verifier
-description: "feature-implementer が Phase 2-3 で自己申告した『クリティカル設計整合』（✅表明）に対して独立に反証を試みる際に使用する。2つの呼び出し経路がある: (1) Task文脈——feature-implementer から Phase 5（5-1/5-2 の判定確定後の 5-3）で、Task ツール経由で `subagent_type: 'claude-harness:design-deviation-verifier'` として直接 spawn される（Dynamic Workflow を介さない直接呼び出し）。(2) Workflow文脈——`/para-impl` 複数Issue時、`skills/para-impl/scripts/para-impl-tickets.js`（Dynamic Workflow）の DesignVerify ステージから `agentType: 'claude-harness:design-deviation-verifier'` として `agent()` 経由で起動される（Workflow が spawn したエージェントは Task を使えないため、feature-implementer 自身は Phase 5-3 を実行せず、この独立ステージが代わりに担う）。いずれの経路でも既定1体で判定し、violation（決定への違反）と判定した場合のみ追加2体（計3体）で多数決する（多数決の制御は呼び出し元——Task文脈ではfeature-implementer自身、Workflow文脈ではpara-impl-tickets.js——が担う）。反証対象は『実装は機能仕様のクリティカル設計決定に従っている』という自己申告であり、finding-verifier（レビュー指摘の偽陽性除去。逆方向）とは異なり、見逃されている違反の発見（偽陰性の是正）を目指す。"
+description: "feature-implementer が Phase 2-3 で自己申告した『クリティカル設計整合』（✅表明）に対して独立に反証を試みる際に使用する。feature-implementer から Phase 5（5-1/5-2 の判定確定後の 5-3）で、Task ツール経由で `subagent_type: 'claude-harness:design-deviation-verifier'` として直接 spawn される（Dynamic Workflow を介さない直接呼び出し）。既定1体で判定し、violation（決定への違反）と判定した場合のみ追加2体（計3体）で多数決する。反証対象は『実装は機能仕様のクリティカル設計決定に従っている』という自己申告であり、finding-verifier（レビュー指摘の偽陽性除去。逆方向）とは異なり、見逃されている違反の発見（偽陰性の是正）を目指す。"
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

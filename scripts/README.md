@@ -1,6 +1,6 @@
 # scripts/ 共通規約
 
-`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が LLM 判断を要さない決定的な git/テキスト処理をループ内で呼び出す実例（Issue #44）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`mutation-run.sh` は `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が `agentType: 'claude-harness:git-ops'` 経由で呼び出す、PRレビューコメントの取得・返信・Resolved化を担う実例（Issue #48）。`ci-wait.sh` / `worktree-setup.sh` / `worktree-cleanup.sh` は `skills/para-impl/scripts/para-impl-tickets.js`（Dynamic Workflow）が呼び出す、CI待ち・worktree作成・worktree削除を担う実例（Issue #45。`worktree-setup.sh`/`worktree-cleanup.sh` はリード側スキルからも直接呼ばれる）。
+`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が LLM 判断を要さない決定的な git/テキスト処理をループ内で呼び出す実例（Issue #44）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`mutation-run.sh` は `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が `agentType: 'claude-harness:git-ops'` 経由で呼び出す、PRレビューコメントの取得・返信・Resolved化を担う実例（Issue #48）。`ci-wait.sh` / `worktree-setup.sh` / `worktree-cleanup.sh` は para-impl の star型並列実装が呼び出す、CI待ち・worktree作成・worktree削除を担う実例（Issue #45・#105。`ci-wait.sh` は `ticket-worker` が、`worktree-setup.sh`/`worktree-cleanup.sh` はリード側スキルが呼ぶ。gh系スクリプトだが LLM 判断を挟まない決定的処理としてスキルフローから直接実行される）。
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 
@@ -292,7 +292,7 @@ stdout JSON:
 
 ## ci-wait.sh の出力仕様（正本）
 
-`skills/para-impl/scripts/para-impl-tickets.js`（Dynamic Workflow）が、CIステージで `agentType: 'claude-harness:git-ops'` 経由でこのスクリプトを呼び出す（Issue #45）。`gh pr checks` を上限付きでポーリングし、失敗時は `gh run view --log-failed` から失敗ジョブのログ末尾を抽出する。gh を呼ぶ処理と、スナップショットの分類・ポーリング継続可否判定（`classify_checks`/`ci_wait_decision`）等の純粋関数を分離している。
+para-impl の star型並列実装で、`ticket-worker` が Phase 9（CI確認）でこのスクリプトを呼び出す（Issue #45 で新設、#105 で呼び出し元を Dynamic Workflow から ticket-worker へ変更）。`gh pr checks` を上限付きでポーリングし、失敗時は `gh run view --log-failed` から失敗ジョブのログ末尾を抽出する。gh を呼ぶ処理と、スナップショットの分類・ポーリング継続可否判定（`classify_checks`/`ci_wait_decision`）等の純粋関数を分離している。
 
 ### `scripts/ci-wait.sh <PR番号 or ブランチ名> [timeout秒（既定900。0でsingle-shot）] [poll間隔秒（既定30）]`
 
@@ -310,7 +310,7 @@ stdout JSON:
 
 | フィールド | 型 / 値 | 意味 |
 |---|---|---|
-| `pr_exists` | bool | `gh pr view <selector>` でPRが解決できたか。`false` の場合は他フィールドは空/nullで即終了する（ポーリングしない）。para-impl-tickets.js の attempt≥2 冪等分岐（PR未作成なら `gh pr create`、既存ならpushのみ）の判定材料 |
+| `pr_exists` | bool | `gh pr view <selector>` でPRが解決できたか。`false` の場合は他フィールドは空/nullで即終了する（ポーリングしない）。ticket-worker の attempt≥2 冪等分岐（PR未作成なら `gh pr create`、既存ならpushのみ）の判定材料 |
 | `ci` | `"green"` \| `"red"` \| `"timeout"` \| `"none"` | `pass`（全checks成功）/ `fail・cancel検出`（他がpendingでも待たずに確定） / `pending のまま時間切れ` / `checksが1件も無い`。checks未設定リポジトリでの永久ブロックを避けるため、呼び出し側は `none` を green相当（ブロックしない）として扱ってよい |
 | `failed_checks` | `[{name, workflow, link}]` | `ci: "red"` の場合のみ非空。fail/cancel状態のcheckのみ |
 | `failure_log_excerpt` | string | `ci: "red"` の場合のみ、失敗checkのlinkから抽出したrun_idごとに `gh run view --log-failed` を実行し、末尾100行ずつ連結後、全体で約4000文字に切り詰めたもの |
