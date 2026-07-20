@@ -10,9 +10,12 @@
 //   collectDiffScript:  string  必須。scripts/collect-review-diff.sh の絶対パス
 //                                （${CLAUDE_PLUGIN_ROOT} を呼び出し側で解決して渡す）
 //   extractHunkScript:  string  必須。scripts/extract-hunk.sh の絶対パス（同上）
-//   workdir:            string | null  任意。para-impl-tickets.js が `workflow()` で
-//                        本スクリプトを子Workflowとして起動する際、当該チケットの
-//                        worktree絶対パスを渡す（Issue #45）。指定時、(1) git-opsへの
+//   workdir:            string | null  任意。呼び出し元がメインチェックアウト以外の
+//                        ディレクトリ（git worktree等）を対象にレビューさせたい場合に、
+//                        その絶対パスを渡す（Issue #45 で para-impl の子Workflow合成用に
+//                        追加。#105 で para-impl は Task 委譲へ戻ったため、現在この args を
+//                        渡す呼び出し元は無いが、機能としては有効なまま残す）。
+//                        指定時、(1) git-opsへの
 //                        Bashコマンドはすべて先頭に `cd '<workdir>' && ` を付加してから
 //                        実行し（buildWorkdirInstruction）、(2) Fixステージの
 //                        feature-implementerには、ファイル操作を`<workdir>`起点の絶対パスで

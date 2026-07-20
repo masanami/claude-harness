@@ -1,7 +1,7 @@
 #!/bin/bash
 # ci-wait.sh
-# para-impl-tickets.js（Dynamic Workflow。Issue #45）の CI ステージが
-# agentType: 'claude-harness:git-ops' 経由で呼び出す決定的スクリプト。
+# para-impl の star型並列実装で ticket-worker が Phase 9（CI確認）に使う決定的スクリプト
+# （Issue #45 で新設、#105 で呼び出し元を Dynamic Workflow から ticket-worker へ変更）。
 # `gh pr checks` を上限付きでポーリングし、失敗時は失敗ジョブのログ末尾を抽出する。
 #
 # 使い方:
@@ -12,7 +12,7 @@
 #   pr_exists: false, ci: 'none' を返して即座に終了する（ポーリングしない）。
 #
 #   timeout秒に 0 を指定すると「1回だけスナップショットを取得して即終了する」
-#   single-shot モードになる（sleep しない）。para-impl-tickets.js の attempt>=2
+#   single-shot モードになる（sleep しない）。ticket-worker の attempt>=2
 #   冪等分岐（PR作成済みかどうかだけを素早く確認したい場合）はこの用法を使う。
 #
 # 出力（stdout にJSON1個）:
@@ -30,7 +30,7 @@
 #   設定されていない」のか「ポーリング開始直後でまだチェックが登録されていない」のか
 #   を1回のスナップショットだけでは区別できない。本スクリプトは連続
 #   NONE_CONFIRM_ATTEMPTS 回（既定2回）空を観測して初めて `ci: 'none'` を確定する
-#   （呼び出し側 para-impl-tickets.js は 'none' を green 相当としてブロックしない扱いに
+#   （呼び出し側 ticket-worker は 'none' を green 相当としてブロックしない扱いに
 #   してよい。実行不能なゲートで永久にブロックしないため）。ループが timeout に達した
 #   時点でまだ「空」だった場合も（チェックがpendingだったわけではないため）'timeout'
 #   ではなく 'none' として確定する。'timeout' は「チェックはあるが完了を待ちきれなかった

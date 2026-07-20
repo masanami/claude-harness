@@ -53,10 +53,11 @@ const ENTRY_POINT_MARKER = '// === WORKFLOW ENTRY POINT ===';
  * verified against the real runtime for Issue #45: parent -> child startup, args passthrough,
  * and agent() spawning from within the child all work). Scripts that don't reference `workflow`
  * (e.g. self-review-loop.js, reduce-debt-scan.js) are unaffected since it's simply an unused free
- * variable for them; this parameter exists so scripts that DO compose child workflows
- * (para-impl-tickets.js) can be exercised by tests via a mock, without changing the calling
- * convention for scripts that don't need it (backward compatible: existing callers that invoke
- * `run(...)` with only 7 positional args still work, `workflow` is simply `undefined` for them).
+ * variable for them; this parameter exists so scripts that DO compose child workflows can be
+ * exercised by tests via a mock, without changing the calling convention for scripts that don't
+ * need it (backward compatible: existing callers that invoke `run(...)` with only 7 positional
+ * args still work, `workflow` is simply `undefined` for them). The original consumer
+ * (para-impl-tickets.js) was removed in Issue #105; the parameter is kept because it is inert.
  *
  * @param {string} scriptPath absolute path to the workflow script
  * @returns {{

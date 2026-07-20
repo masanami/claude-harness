@@ -1,6 +1,6 @@
 ---
 name: para-impl
-description: "GitHub Issueを分析し、設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認の1チケットフローを実装フェーズの人間ゲートなしで実行する。クリティカル設計は要件チケット側で決定済み前提。複数Issue時は star 型（orchestrator-worker）で Dynamic Workflow（para-impl-tickets.js）へチケットごとに並列委譲する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
+description: "GitHub Issueを分析し、設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認の1チケットフローを実装フェーズの人間ゲートなしで実行する。クリティカル設計は要件チケット側で決定済み前提。複数Issue時は star 型（orchestrator-worker）で ticket-worker に並列委譲する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
 argument-hint: "<Issue番号> [Issue番号...] [--base <統合ブランチ>]"
 model: opus
 # effort: 設計〜TDD実装〜PRの自走フローを担うため high。
@@ -11,7 +11,7 @@ effort: high
 
 **あなたは実装を統括するリードエージェントです。**
 
-GitHub Issueを分析し、1チケット実行フロー（設計→TDD実装→必須ゲート→コミット→E2E→PR→CI確認）に沿って実装を進めます。**クリティカル設計の意思決定は要件チケット側で完了している前提**のため、実装フェーズには人間ゲートを置きません。Issueが複数の場合は star 型（orchestrator-worker）で、チケットごとの実装フロー（設計+TDD実装→クリティカル設計逸脱検証→セルフレビュー→コミット・PR・CI確認）を Dynamic Workflow（`skills/para-impl/scripts/para-impl-tickets.js`）へ一括委譲します（resume耐性・loop-until-green・衝突検出ヒントをコードで保証する。v2.0.0で `ticket-worker` サブエージェント経由の委譲から刷新）。
+GitHub Issueを分析し、1チケット実行フロー（設計→TDD実装→必須ゲート→コミット→E2E→PR→CI確認）に沿って実装を進めます。**クリティカル設計の意思決定は要件チケット側で完了している前提**のため、実装フェーズには人間ゲートを置きません。Issueが複数の場合は star 型（orchestrator-worker）で `ticket-worker` サブエージェントに並列委譲します（v2.0.0 の Dynamic Workflow 委譲はヘッドレス（`claude -p`）で機能しないリグレッションが確認されたため、v2.1.0 で Task 委譲へ戻した。Issue #105）。
 
 ---
 
@@ -57,7 +57,7 @@ fi
 | Issue数 | フロー |
 |---------|--------|
 | 1件 | **通常実装**: リードエージェントが「1チケットの実装フロー」を実行 |
-| 複数 | **star 型並列実装**: `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` を Read してから Phase 3 へ。リードがオーケストレーターとなり、Dynamic Workflow（`para-impl-tickets.js`）がチケットごとに独立して「1チケットの実装フロー」相当を実行 |
+| 複数 | **star 型並列実装**: `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` を Read してから Phase 3 へ。リードがオーケストレーターとなり、各 `ticket-worker` が独立に「1チケットの実装フロー」を実行 |
 
 > **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/star-parallel.md`）。
 <!-- 正本: docs/plugin-path-conventions.md -->
@@ -88,7 +88,7 @@ fi
 
 ## 1チケットの実装フロー（Phase 3〜9）
 
-**単一Issue**はリードエージェントが本セクションの Phase 3〜9 をそのまま実行する（現行のまま変更なし）。
+単一Issueはリードエージェントが Phase 3〜9 を実行する。複数Issueでは **Phase 3（worktree・ブランチ作成）をリードが担い**、各 `ticket-worker` が worktree で Phase 4-5〜9 を実行する（worker の Phase 7 は `/create-e2e` まで。`/explain-e2e` は worker 完了後にリードがメインセッションで実施する。**1チケット = 1ブランチ = 1PR**。詳細は `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` 参照。解決手順は上記参照）。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CIの順で進める。**実装フェーズに人間ゲートは無い**。
 
 ```text
 Phase 3 ブランチ準備
@@ -107,8 +107,6 @@ Phase 9 CI確認（必須ゲート）
 > **クリティカル設計レビューは要件チケット段階で完了済み**。要件チケットの「クリティカル設計決定」セクションに従って実装する。
 >
 > **E2Eシナリオ設計レビュー**は AI セルフレビュー（完了条件↔シナリオのトレーサビリティ確認）で完結。人間の E2E チェックは Phase 7 後の `/explain-e2e`（テストシナリオ解説 + 独立検証）で行う。
-
-**複数Issue（star型並列実装）**では、この Phase 3〜9 の内容は同じフェーズ番号のまま **Phase 3 のみリードがスクリプト実行で担い**、**Phase 4-5〜9 相当は Dynamic Workflow（`para-impl-tickets.js`）へ一括委譲**する（1フェーズ=1エージェント委譲ではなく、Implement→DesignVerify→Review→CIの4ステージとして Workflow 内でコード化されている）。詳細は `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` を参照（解決手順は上記「参照ファイルの所在」参照）。**1チケット = 1ブランチ = 1PR** の原則は変わらない。
 
 ### Phase 3: ブランチ準備
 
