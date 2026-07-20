@@ -1,7 +1,8 @@
 #!/bin/bash
 # reply-and-resolve.sh
-# skills/pr-review-respond/scripts/review-respond.js（Dynamic Workflow、mode: 'respond'）が
-# git-ops エージェント（agentType: 'claude-harness:git-ops'）経由で実行する決定的スクリプト。
+# skills/pr-review-respond/SKILL.md（Step 12）が Bash ツールで直接実行する決定的スクリプト
+# （Issue #108 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の
+# 直接実行に一本化した）。
 # 分類済みコメントへの返信投稿とスレッドのResolved化を、1件ずつ**逐次**行う
 # （GitHub secondary rate limit対策のため並列fan-outしない）。
 #
