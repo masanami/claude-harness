@@ -227,7 +227,7 @@ stdout JSON:
 
 ## collect-promotion-context.sh / check-subtask-completion.sh の出力仕様（正本）
 
-`skills/promote-verify/scripts/promote-verify.js`（Dynamic Workflow）が、Context フェーズで `agentType: 'claude-harness:git-ops'` 経由でこの2スクリプトを呼び出す（Issue #52）。`skills/promote-verify/SKILL.md` はこの仕様を参照し、フィールド定義を複製しない。
+`/promote-verify`（`skills/promote-verify/SKILL.md`）が、Step 3（コンテキスト収集）でこの2スクリプトを Bash ツールから直接呼び出す（Issue #52。Issue #110 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の直接実行に一本化した）。`skills/promote-verify/SKILL.md` はこの仕様を参照し、フィールド定義を複製しない。
 
 ### `scripts/collect-promotion-context.sh <base_branch> <integration_branch>`
 
