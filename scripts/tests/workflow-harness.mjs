@@ -52,7 +52,7 @@ const ENTRY_POINT_MARKER = '// === WORKFLOW ENTRY POINT ===';
  * call to start another Workflow script as a child (`workflow({ scriptPath, args, ... })` —
  * verified against the real runtime for Issue #45: parent -> child startup, args passthrough,
  * and agent() spawning from within the child all work). Scripts that don't reference `workflow`
- * (e.g. reduce-debt-scan.js) are unaffected since it's simply an unused free
+ * (e.g. decompose-judge.js) are unaffected since it's simply an unused free
  * variable for them; this parameter exists so scripts that DO compose child workflows can be
  * exercised by tests via a mock, without changing the calling convention for scripts that don't
  * need it (backward compatible: existing callers that invoke `run(...)` with only 7 positional
