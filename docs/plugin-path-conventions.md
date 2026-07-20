@@ -116,7 +116,7 @@ Dynamic Workflow スクリプトが `agent(prompt, { schema, ... })` に渡す J
 
 方針は null の性質によって使い分ける:
 
-- **収束・完全性の判定に関わる null**（レビュアー・批評レンズ・分解案生成・judge 等。そのステージの出力が欠けると全体の収束判定自体が信頼できなくなるもの）は**明示 throw** する（模範実装: `merge-judge.js` の `runPanelStage`、`decompose-judge.js` の Generate/Judge フェーズ、`spec-critique.js` の Critique フェーズ）
+- **収束・完全性の判定に関わる null**（レビュアー・批評レンズ・分解案生成・judge 等。そのステージの出力が欠けると全体の収束判定自体が信頼できなくなるもの）は**明示 throw** する（模範実装: `merge-judge.js` の `runPanelStage`、`decompose-judge.js` の Generate/Judge フェーズ）
 - **部分結果が有用な null**（fan-out したスキャンバケットの一部・懐疑者の一部。他の並列項目の結果は引き続き有用なもの）は、結果 JSON に明示フィールド（`meta.failedBuckets` / `finding.failed_verifiers` 等）で可視化し、残りの結果は握りつぶさずそのまま返す（模範実装: `reduce-debt-scan.js` の `scanStage`/`verifyStage`）
 
 ## (f) 実行時ファイルから docs/ 設計文書への参照禁止

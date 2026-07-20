@@ -1,6 +1,6 @@
 ---
 name: spec-critic
-description: "機能仕様ドキュメント（docs/features/{slug}.md）を3レンズ（受入基準の検証可能性/内部整合/下流実装可能性）のいずれかの観点で批評する際に使用。skills/define-feature/scripts/spec-critique.js（Dynamic Workflow）から `agentType: 'claude-harness:spec-critic'` として、focus値を変えて3体 parallel 起動される。"
+description: "機能仕様ドキュメント（docs/features/{slug}.md）を3レンズ（受入基準の検証可能性/内部整合/下流実装可能性）のいずれかの観点で批評する際に使用。`/define-feature`（skills/define-feature/SKILL.md）Step 6.5-2 から Task ツールで `subagent_type: 'claude-harness:spec-critic'` として、focus値を変えて3体・1メッセージで並列起動される（Issue #111）。"
 tools: Read, Grep
 model: sonnet
 # effort: メイン（define-feature=opus/xhigh）より軽量にしてトークン単価を抑える。批評は
