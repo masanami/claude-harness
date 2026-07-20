@@ -352,8 +352,8 @@ console.log('=== default export: single ticket happy path (done) ===');
     }
     throw new Error(`unexpected agentType: ${opts.agentType}`);
   }
-  async function mockWorkflow(opts) {
-    capturedWorkflowCall = opts;
+  async function mockWorkflow(ref, childArgs) {
+    capturedWorkflowCall = { ...ref, args: childArgs };
     return { rounds: 1, converged: true, residualFindings: [] };
   }
 

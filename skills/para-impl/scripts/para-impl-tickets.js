@@ -633,14 +633,24 @@ async function ticketStage(ticket, { agent, parallel, log, workflow, ciWaitScrip
       }
     }
 
-    const review = await workflow({
-      scriptPath: selfReviewLoopScript,
-      args: { base: ticket.base, collectDiffScript, extractHunkScript, workdir: ticket.worktree },
-    });
+    // workflow() のシグネチャは workflow(ref, args) の2引数形式（実機検証済み: 第1引数に
+    // args を同梱すると子には届かない）。また workflow() はエラー時に null を返さず throw する
+    // 仕様のため、子の失敗は try/catch で捕捉して failure に写像する。
+    let review;
+    try {
+      review = await workflow(
+        { scriptPath: selfReviewLoopScript },
+        { base: ticket.base, collectDiffScript, extractHunkScript, workdir: ticket.worktree },
+      );
+    } catch (e) {
+      failedStages.push('Review');
+      const detail = String(e && e.message ? e.message : e);
+      return buildTicketResult(ticket, { status: 'failure', blockingReason: `self-review child workflow failed: ${detail}`, failedStages, impl, designVerify: lastDesignVerify, review: null, ci: lastCi });
+    }
     lastReview = review;
     if (review === null) {
       failedStages.push('Review');
-      return buildTicketResult(ticket, { status: 'failure', blockingReason: 'self-review child workflow failed terminally.', failedStages, impl, designVerify: lastDesignVerify, review, ci: lastCi });
+      return buildTicketResult(ticket, { status: 'failure', blockingReason: 'self-review child workflow returned null.', failedStages, impl, designVerify: lastDesignVerify, review, ci: lastCi });
     }
     // agents/feature-implementer.md Phase5-2の優先判定と同じ方針: 修正後のquality-check失敗に
     // 起因する残指摘が1件でもあれば無条件でfailureにする。それ以外の残指摘（要人間判断・
