@@ -4,6 +4,8 @@
 
 本文書はパス参照メカニズムごとの規約を1箇所に集約する正本。`scripts/README.md` は scripts/ 配下の実装規約（jq前提・出力規約・テスト方針等）のみを扱い、プラグイン内ファイル参照のパス解決はここを参照する。
 
+> **Dynamic Workflow の全廃について（Issue #106、2026-07-20）**: 本プラグインは `claude -p`（ヘッドレス）呼び出しを一級の利用形態とするため、Dynamic Workflow を全スキルで廃止し Task ツールによる直接委譲へ統一した（#105 で確定した構造的不適合による。permissions.allow に Workflow の許可記法が無い／ヘッドレスでメインループ終了とともに孤児化する）。以下のセクションのうち **(b)(h)(i)(j) と (k) の Workflow 行は、Workflow ランタイムの実機検証記録として残す歴史的記録**であり、現行の実装ガイダンスではない。**新規の Dynamic Workflow スクリプトは追加しない。**
+
 ## `${CLAUDE_PLUGIN_ROOT}` の位置づけ（重要）
 
 `skills/` `agents/` の文中に現れる `${CLAUDE_PLUGIN_ROOT}` は**プラグインルートの絶対パスを表すプレースホルダ表記**であり、Bash の環境変数ではない。
@@ -83,9 +85,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 > **検証済み事実（Issue #41 実機プローブ）**: サブエージェントから Task ツールで別のサブエージェントを spawn する際、`subagent_type` にプレフィックス無しの `feature-implementer` を指定すると名称解決エラーになることを確認済み（`agents/ticket-worker.md` の委譲記述、コミット a1b5196 参照）。Dynamic Workflow の `agent()` が受け取る `agentType` も同じサブエージェント名前解決の仕組みを用いるため、同様にプレフィックス付き指定が必要（`skills/explain-e2e/scripts/explain-e2e-verify.js` 等で採用）。
 
-- Dynamic Workflow スクリプト（`skills/*/scripts/*.js`）が `agent(prompt, { agentType: '...' })` を呼ぶ箇所は、必ず `'claude-harness:<agents/*.mdのname>'` の形式にする
-- `agents/*.md` 本文中で自身の `agentType` 呼び出され方を自己記述する箇所（`description:` フロントマターや Step 記述）も、同じプレフィックス付き表記に揃える（実際の呼び出しコードと表記が食い違うとドキュメントとして信頼できなくなるため）
-- 新しい Dynamic Workflow スクリプトやサブエージェントを追加する際も、この規約に従う
+- `agents/*.md` 本文中で自身の `subagent_type` 呼び出され方を自己記述する箇所（`description:` フロントマターや Step 記述）も、同じプレフィックス付き表記に揃える（実際の呼び出し表記と食い違うとドキュメントとして信頼できなくなるため）
+- 新しいサブエージェントを追加する際も、この規約に従う（Dynamic Workflow の `agent()`/`agentType` に関する記述は歴史的記録。#106 で全廃済み）
 
 ## (h) Workflow スクリプトへ渡す `args` の JSON 文字列正規化
 
@@ -146,7 +147,7 @@ Dynamic Workflow スクリプトが `agent(prompt, { schema, ... })` に渡す J
 
 - **Workflow-spawned エージェントは Task ツールを使えない**（frontmatter の `tools:` 宣言に Task を含めていても与えられない）。これは Dynamic Workflow スクリプト（`skills/*/scripts/*.js`）から `agent()` 経由で起動されるエージェントすべてに当てはまる制約であり、「サブエージェントが内部でさらに Task 委譲する」設計は Workflow 文脈では成立しない
 - **`workflow()` による子 Workflow 合成は成立する**（親→子起動・子への `args` 受け渡し・子 Workflow からの `agent()` spawn まで動作確認済み）。Task 委譲が使えない Workflow 文脈で、既存の Workflow スクリプト（例: `skills/explain-e2e/scripts/explain-e2e-verify.js`）が実装するステージ構成を再利用したい場合、独立ステージへの分解（`agentType` を直接呼ぶ）または子 Workflow 合成のいずれかで吸収する
-- **Workflow-spawned エージェントも Skill ツールは使える**（例: `/quality-check` の呼び出し）。判断を伴わないシェル実行は `agentType: 'claude-harness:git-ops'`（Bash のみ）に委譲し、Skill 経由の定型処理（品質ゲート等）はそのまま呼び出してよい
+- **Workflow-spawned エージェントも Skill ツールは使える**（例: `/quality-check` の呼び出し）ことが確認されていた。判断を伴わないシェル実行は当時 `git-ops` エージェント（Bash のみ。#106 の全廃完了に伴い削除済み）へ委譲していた
 - スキル・サブエージェントが「Workflow が使える文脈」「使えない文脈」の両方から呼ばれうる場合、実行文脈の検知（自分が使えるツール一覧に Task または Workflow が含まれるかを見る）と、文脈に応じた経路の切り替えを明記する。ただし単一スキルが常に Task 委譲のみで完結できる設計（`/self-review` が #107 でこの形に移行済み。`skills/self-review/SKILL.md`）であれば、そもそも実行文脈の判定・分岐自体が不要になる。分岐を残す場合と無くす場合のどちらが妥当かは、そのスキルの全呼び出し経路がいずれも Task ベースの手順で表現しきれるかどうかで判断する
 
 ---
