@@ -46,6 +46,9 @@ const {
   buildFixPrompt,
   buildGitOpsCollectPrompt,
   buildGitOpsHunkPrompt,
+  buildGitOpsCleanupPrompt,
+  buildWorkdirInstruction,
+  buildFixWorkdirInstruction,
 } = loadPureFunctions(WORKFLOW_PATH, [
   'findingKey',
   'dedupFindings',
@@ -62,6 +65,9 @@ const {
   'buildFixPrompt',
   'buildGitOpsCollectPrompt',
   'buildGitOpsHunkPrompt',
+  'buildGitOpsCleanupPrompt',
+  'buildWorkdirInstruction',
+  'buildFixWorkdirInstruction',
 ]);
 
 // loadWorkflow().run は (agent, parallel, pipeline, phase, log, args, budget) の位置引数を
@@ -328,6 +334,100 @@ console.log('=== git-ops prompts: shell single-quote escaping discipline is inst
     true,
     hunkPrompt.includes('ダブルクォートでの埋め込み') && hunkPrompt.includes('そのまま連結'),
   );
+}
+
+// --- workdir(Issue #45): 未指定時はプロンプトへcdプレフィックス指示が追加されず、
+//     指定時のみ固定文言で `cd '<workdir>' && ` 指示が追加されること ---
+console.log('=== workdir: buildWorkdirInstruction / prompt builders respect args.workdir ===');
+{
+  assertEq('buildWorkdirInstruction: workdir未指定は空文字', '', buildWorkdirInstruction(null));
+  assertEq('buildWorkdirInstruction: workdir指定時はcd指示を含む', true, buildWorkdirInstruction('/path/to/worktree').includes('cd'));
+
+  const collectNoWorkdir = buildGitOpsCollectPrompt('/plugin/scripts/collect-review-diff.sh', 'main', null, null);
+  assertEq('buildGitOpsCollectPrompt: workdir未指定ではcd指示が含まれない', false, collectNoWorkdir.includes('作業ディレクトリ指定あり'));
+
+  const collectWithWorkdir = buildGitOpsCollectPrompt('/plugin/scripts/collect-review-diff.sh', 'main', null, '/path/to/worktree');
+  assertEq('buildGitOpsCollectPrompt: workdir指定時はcd指示が含まれる', true, collectWithWorkdir.includes('作業ディレクトリ指定あり'));
+  assertEq('buildGitOpsCollectPrompt: workdirの値がデータブロックに含まれる', true, collectWithWorkdir.includes('/path/to/worktree'));
+
+  const hunkWithWorkdir = buildGitOpsHunkPrompt('/plugin/scripts/extract-hunk.sh', '/tmp/diff', [{ file: 'a.js', line: 1 }], 3, '/path/to/worktree');
+  assertEq('buildGitOpsHunkPrompt: workdir指定時はcd指示が含まれる', true, hunkWithWorkdir.includes('作業ディレクトリ指定あり'));
+
+  const cleanupNoWorkdir = buildGitOpsCleanupPrompt('/tmp/diff', null);
+  assertEq('buildGitOpsCleanupPrompt: workdir未指定ではcd指示が含まれない', false, cleanupNoWorkdir.includes('作業ディレクトリ指定あり'));
+  const cleanupWithWorkdir = buildGitOpsCleanupPrompt('/tmp/diff', '/path/to/worktree');
+  assertEq('buildGitOpsCleanupPrompt: workdir指定時はcd指示が含まれる', true, cleanupWithWorkdir.includes('作業ディレクトリ指定あり'));
+
+  // self-review 指摘の回帰テスト: Fixステージ(feature-implementer)へもworkdirが伝播すること
+  // （修正前は buildFixPrompt が workdir を一切受け取らず、git-ops向けの3プロンプトにしか
+  // 伝わっていなかった）。
+  assertEq('buildFixWorkdirInstruction: workdir未指定は空文字', '', buildFixWorkdirInstruction(null));
+  assertEq('buildFixWorkdirInstruction: workdir指定時はファイル操作の絶対パス化を指示する', true, buildFixWorkdirInstruction('/path/to/worktree').includes('絶対パス'));
+  assertEq('buildFixWorkdirInstruction: workdir指定時はBashのcd複合形式を指示する', true, buildFixWorkdirInstruction('/path/to/worktree').includes('cd'));
+
+  const diffInfoForFix = { diff_file: '/tmp/diff' };
+  const findingForFix = [{ file: 'a.js', line: 1, severity: 'high', claim: 'c', evidence: 'e' }];
+  const fixNoWorkdir = buildFixPrompt(findingForFix, diffInfoForFix, null);
+  assertEq('buildFixPrompt: workdir未指定では作業ディレクトリ指定の文言が含まれない', false, fixNoWorkdir.includes('作業ディレクトリ指定あり'));
+  const fixWithWorkdir = buildFixPrompt(findingForFix, diffInfoForFix, '/path/to/worktree');
+  assertEq('buildFixPrompt: workdir指定時は作業ディレクトリ指定の文言が含まれる', true, fixWithWorkdir.includes('作業ディレクトリ指定あり'));
+  assertEq('buildFixPrompt: workdirの値がデータブロックにも含まれる', true, fixWithWorkdir.includes('/path/to/worktree'));
+}
+
+// --- workdir(Issue #45): default export に args.workdir を渡すと、git-opsへの実際の
+//     プロンプト（collect/hunks/cleanup全て）にworkdirのcd指示が伝搬すること ---
+console.log('=== workdir: propagates through the full default export run to all git-ops prompts AND the Fix stage ===');
+{
+  const capturedGitOpsPrompts = [];
+  let capturedFixPrompt = null;
+  async function mockAgent(prompt, opts) {
+    if (opts.agentType === 'claude-harness:git-ops') {
+      capturedGitOpsPrompts.push({ label: opts.label, prompt });
+      if (opts.label.startsWith('collect:round-')) {
+        return { base: 'main', merge_base: 'sha1', commits: [], files: ['src/w.js'], diff_file: 'mock-diff-workdir' };
+      }
+      if (opts.label.startsWith('hunks:round-')) {
+        return { hunks: [{ findingId: 'src/w.js:3', found: true, snippet: 'hunk' }] };
+      }
+      if (opts.label === 'cleanup:final') {
+        return { removed: true };
+      }
+      throw new Error(`unexpected git-ops label: ${opts.label}`);
+    }
+    if (opts.phase === 'Review') {
+      if (opts.label.includes('confirm')) return { findings: [] };
+      if (opts.label.startsWith('review:code')) {
+        return { findings: [{ file: 'src/w.js', line: 3, severity: 'high', claim: 'bug', evidence: 'ev', verdict: 'PLAUSIBLE' }] };
+      }
+      return { findings: [] };
+    }
+    if (opts.phase === 'Verify') {
+      const findingId = opts.label.split(':').slice(1, -1).join(':');
+      return { verdicts: [{ findingId, verdict: 'confirmed', reason: 'reproduced' }] };
+    }
+    if (opts.phase === 'Fix') {
+      capturedFixPrompt = prompt;
+      return { appliedFixes: [{ file: 'src/w.js', line: 3, summary: 'fixed' }], qc: { result: 'pass', gates: {} } };
+    }
+    throw new Error(`unexpected phase: ${opts.phase}`);
+  }
+
+  const noopLog = () => {};
+  const workdirArgs = { ...BASE_ARGS, workdir: '/path/to/ticket-worktree' };
+  const result = await workflow(mockAgent, mockParallel, mockPipeline, 'Test', noopLog, workdirArgs, undefined);
+
+  assertEq('converged: true (workdir指定時もフロー自体は正常に完了する)', true, result.converged);
+  assertEq('git-opsへの呼び出しが1件以上記録される', true, capturedGitOpsPrompts.length > 0);
+  const allContainCd = capturedGitOpsPrompts.every((c) => c.prompt.includes("cd <workdirの値をシングルクォートで安全に埋め込んだもの> && "));
+  assertEq('全てのgit-opsプロンプトにcdプレフィックス指示が含まれる(collect/hunks/cleanup全て)', true, allContainCd);
+  const allContainWorkdirValue = capturedGitOpsPrompts.every((c) => c.prompt.includes('/path/to/ticket-worktree'));
+  assertEq('全てのgit-opsプロンプトのデータブロックにworkdirの実際の値が含まれる', true, allContainWorkdirValue);
+
+  // self-review 指摘の回帰テスト本体: Fixステージ(feature-implementer)呼び出しのプロンプトにも
+  // workdirの絶対パス指示・実際の値が含まれること。
+  assertEq('Fixステージのプロンプトが記録される', true, capturedFixPrompt !== null);
+  assertEq('Fixステージのプロンプトに作業ディレクトリ指定の文言が含まれる', true, capturedFixPrompt.includes('作業ディレクトリ指定あり'));
+  assertEq('Fixステージのプロンプトにworkdirの実際の値が含まれる', true, capturedFixPrompt.includes('/path/to/ticket-worktree'));
 }
 
 // --- default export: args.collectDiffScript/extractHunkScript 未指定時は早期にthrowする ---

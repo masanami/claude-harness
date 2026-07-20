@@ -81,7 +81,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 サブエージェントを識別する文字列（Task ツールの `subagent_type`、Dynamic Workflow の `agent()` に渡す `agentType`）は、いずれも**プラグイン名前空間プレフィックス付き**（`claude-harness:` + `agents/*.md` の `name:` フロントマター値。例: `claude-harness:feature-implementer`）で指定する。プレフィックス無しの裸の名前（例: `feature-implementer`）は名称解決エラーになる。
 
-> **検証済み事実（Issue #41 実機プローブ）**: サブエージェントから Task ツールで別のサブエージェントを spawn する際、`subagent_type` にプレフィックス無しの `feature-implementer` を指定すると名称解決エラーになることを確認済み（`agents/ticket-worker.md` の委譲記述、コミット a1b5196 参照）。Dynamic Workflow の `agent()` が受け取る `agentType` も同じサブエージェント名前解決の仕組みを用いるため、同様にプレフィックス付き指定が必要（`skills/self-review/scripts/self-review-loop.js` 等で採用）。
+> **検証済み事実（Issue #41 実機プローブ）**: サブエージェントから Task ツールで別のサブエージェントを spawn する際、`subagent_type` にプレフィックス無しの `feature-implementer` を指定すると名称解決エラーになることを確認済み（発見時の委譲記述はコミット a1b5196 の `agents/ticket-worker.md` に存在したが、同ファイルは Issue #45 で `ticket-worker` サブエージェント自体が廃止されたことに伴い削除済み。コミット a1b5196 自体は git 履歴として参照可能）。Dynamic Workflow の `agent()` が受け取る `agentType` も同じサブエージェント名前解決の仕組みを用いるため、同様にプレフィックス付き指定が必要（`skills/self-review/scripts/self-review-loop.js` 等で採用）。
 
 - Dynamic Workflow スクリプト（`skills/*/scripts/*.js`）が `agent(prompt, { agentType: '...' })` を呼ぶ箇所は、必ず `'claude-harness:<agents/*.mdのname>'` の形式にする
 - `agents/*.md` 本文中で自身の `agentType` 呼び出され方を自己記述する箇所（`description:` フロントマターや Step 記述）も、同じプレフィックス付き表記に揃える（実際の呼び出しコードと表記が食い違うとドキュメントとして信頼できなくなるため）
@@ -133,6 +133,21 @@ Dynamic Workflow スクリプトが `agent(prompt, { schema, ... })` に渡す J
   ```
 
   このコメントは「この定型文の正本がどこにあるか」を人間の開発者が追えるようにするための目印であり、規範そのものは常にコメントの直前に**インラインで書き切る**（コメントを読まないと規範が分からない状態にしない）。
+
+## (k) 実行文脈ごとのツール可用性マトリクス
+
+実行文脈（メインセッション／Task ツールで spawn されたサブエージェント／Dynamic Workflow の `agent()` で spawn されたエージェント）によって、利用できるツールの組み合わせが異なる。Workflow・Task・Skill・Bash の可用性は以下のとおり（2026-07-20 実機検証済み。Issue #45）:
+
+| 文脈 | Workflow | Task | Skill | Bash |
+|---|---|---|---|---|
+| メインセッション | ✅ | ✅ | ✅ | ✅ |
+| Task-spawned サブエージェント | ❌ | ✅（3〜4段実証） | ✅ | ✅ |
+| Workflow-spawned エージェント | ❌ | ❌ | ✅ | ✅ |
+
+- **Workflow-spawned エージェントは Task ツールを使えない**（frontmatter の `tools:` 宣言に Task を含めていても与えられない）。これは Dynamic Workflow スクリプト（`skills/*/scripts/*.js`）から `agent()` 経由で起動されるエージェントすべてに当てはまる制約であり、「サブエージェントが内部でさらに Task 委譲する」設計は Workflow 文脈では成立しない
+- **`workflow()` による子 Workflow 合成は成立する**（親→子起動・子への `args` 受け渡し・子 Workflow からの `agent()` spawn まで動作確認済み）。Task 委譲が使えない Workflow 文脈で、既存の Workflow スクリプト（例: `skills/self-review/scripts/self-review-loop.js`）が実装するステージ構成を再利用したい場合、独立ステージへの分解（`agentType` を直接呼ぶ）または子 Workflow 合成のいずれかで吸収する
+- **Workflow-spawned エージェントも Skill ツールは使える**（例: `/quality-check` の呼び出し）。判断を伴わないシェル実行は `agentType: 'claude-harness:git-ops'`（Bash のみ）に委譲し、Skill 経由の定型処理（品質ゲート等）はそのまま呼び出してよい
+- サブエージェント定義（`agents/*.md`）が「Task文脈」「Workflow文脈」の両方から呼ばれうる場合、実行文脈の検知（自分が使えるツール一覧に Task または Workflow が含まれるかを見る）と、文脈に応じた責務の縮小（内側委譲を前提とする手順のスキップ）を明記する（模範実装: `agents/feature-implementer.md` の「実行文脈の検知」節）
 
 ---
 
