@@ -10,6 +10,23 @@
 //   collectDiffScript:  string  必須。scripts/collect-review-diff.sh の絶対パス
 //                                （${CLAUDE_PLUGIN_ROOT} を呼び出し側で解決して渡す）
 //   extractHunkScript:  string  必須。scripts/extract-hunk.sh の絶対パス（同上）
+//   workdir:            string | null  任意。para-impl-tickets.js が `workflow()` で
+//                        本スクリプトを子Workflowとして起動する際、当該チケットの
+//                        worktree絶対パスを渡す（Issue #45）。指定時、(1) git-opsへの
+//                        Bashコマンドはすべて先頭に `cd '<workdir>' && ` を付加してから
+//                        実行し（buildWorkdirInstruction）、(2) Fixステージの
+//                        feature-implementerには、ファイル操作を`<workdir>`起点の絶対パスで
+//                        行い、Bashは`cd '<workdir>' && <コマンド>`の複合形式で実行するよう
+//                        指示する（buildFixWorkdirInstruction。Fixステージは実際に
+//                        Edit/Writeでコードを書き換える唯一のステージであり、workdirが
+//                        伝わらないと多worktree並列実行時に誤ったworktreeを編集しうる。
+//                        自己レビューで検出された伝播漏れの修正）。このプラグインは複数の
+//                        git worktreeを同時に扱いうるため、cwd/対象を誤ると別worktreeの
+//                        状態を参照・編集してしまう（skills/explain-e2e/scripts/
+//                        explain-e2e-verify.js の workingDirectory と同じ考え方）。
+//                        未指定時は従来どおりcwd変更・絶対パス化を行わない。resume安定性の
+//                        ため、workdirの有無で固定テンプレート自体の構造を変えず、
+//                        1文の条件付き指示を追加するに留める。
 //
 // resume 安全性のため、このスクリプトは Date.now()/Math.random()/引数無し new Date() を使わない。
 //
@@ -436,7 +453,18 @@ function buildVerifyPrompt(finding, hunkInfo) {
   ].join('\n');
 }
 
-function buildFixPrompt(toFix, diffInfo) {
+// Fixステージ（feature-implementer。Read/Edit/Write/Bash/Skillを持つ）向けのworkdir指示。
+// buildWorkdirInstruction（git-ops向け。Bashコマンドの先頭にcdを付加する指示のみ）とは
+// 対象読者・必要な指示範囲が異なる（ファイル操作の絶対パス化も必要）ため別関数にする。
+// resume安定性のため、workdirの有無で固定テンプレート自体の構造は変えず、この1文の
+// 有無だけが呼び出しごとに変わりうる差分になるよう最小限に留める（buildWorkdirInstruction
+// と同じ設計方針。self-review 指摘の回帰修正: Fixステージにworkdirが伝播していなかった）。
+function buildFixWorkdirInstruction(workdir) {
+  if (!workdir) return '';
+  return "**作業ディレクトリ指定あり**: すべての作業を worktree の絶対パス `<workdirの値>` 配下で行ってください（このプラグインは複数のgit worktreeを同時に扱いうるため、対象を誤ると別worktreeを編集してしまいます）。ファイル操作（Read/Edit/Write/Glob/Grep）は `<workdirの値>` を先頭に付けた絶対パスを使い、Bashコマンドは毎回 `cd <workdirの値をシングルクォートで安全に埋め込んだもの> && <コマンド>` の複合形式で実行してください（サブエージェントのBashは呼び出しごとにcwdがリセットされ、単独のcdは次の呼び出しに引き継がれません）。";
+}
+
+function buildFixPrompt(toFix, diffInfo, workdir) {
   return [
     'これは /self-review の Fix ステージからのスコープ付き呼び出しです。',
     '以下のデータブロックに列挙された確定指摘（CONFIRMED）の修正と、',
@@ -448,9 +476,12 @@ function buildFixPrompt(toFix, diffInfo) {
     '全ての指摘への対応が完了したら、Skillツール経由で /quality-check を実行し、',
     '機械可読な結果（result/gates を含むJSON）を取得してください。',
     '',
+    buildFixWorkdirInstruction(workdir),
+    '',
     wrapDataBlock({
       diff_file: diffInfo.diff_file,
       findings: toFix.map((f) => ({ file: f.file, line: f.line, severity: f.severity, claim: f.claim, evidence: f.evidence })),
+      workdir: workdir || null,
     }),
     '',
     '指定された JSON Schema（appliedFixes配列と、/quality-check の機械可読結果をそのまま格納した qc）に厳密に準拠したJSONのみを返してください。',
@@ -471,10 +502,19 @@ const SHELL_QUOTING_INSTRUCTIONS = [
   "例: 値が O'Brien.js の場合 -> 'O'\\''Brien.js' として埋め込む（数値のみのフィールドはこの手順は不要でそのまま埋め込んでよい）",
 ].join('\n');
 
-function buildGitOpsCollectPrompt(collectDiffScript, base, previousDiffFile) {
+// workdir が指定されている場合のみ、固定の1文をプロンプトへ追加する（未指定時は空文字で
+// 何も追加しない）。resume安定性のため、テンプレート自体の構造（行の並び）は変えず、
+// この1文の有無だけが呼び出しごとに変わりうる差分になるよう最小限に留める。
+function buildWorkdirInstruction(workdir) {
+  if (!workdir) return '';
+  return "**作業ディレクトリ指定あり**: 以下の手順に列挙された全てのBashコマンドは、実行前に必ず先頭へ `cd <workdirの値をシングルクォートで安全に埋め込んだもの> && ` を付加してから実行してください（このプラグインは複数のgit worktreeを同時に扱いうるため、cwdを誤ると別worktreeのgit状態を参照してしまいます）。";
+}
+
+function buildGitOpsCollectPrompt(collectDiffScript, base, previousDiffFile, workdir) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行し、その標準出力をそのまま返すことだけが仕事です。内容の解釈・要約・加工は一切行わないでください。',
     '',
+    buildWorkdirInstruction(workdir),
     '実行手順（この順で機械的に実行する）:',
     '1. データブロックの previousDiffFile が null でなければ Bash で `rm -f <previousDiffFileの値をシングルクォートで安全に埋め込んだもの>` を実行する（対象が既に存在しなくてもエラーとして扱わない）。',
     '2. データブロックの base が null なら Bash で `bash <collectDiffScriptの値をシングルクォートで安全に埋め込んだもの>` を、null でなければ `bash <collectDiffScriptの値をシングルクォートで安全に埋め込んだもの> <baseの値をシングルクォートで安全に埋め込んだもの>` を実行する。',
@@ -482,28 +522,30 @@ function buildGitOpsCollectPrompt(collectDiffScript, base, previousDiffFile) {
     '',
     SHELL_QUOTING_INSTRUCTIONS,
     '',
-    wrapDataBlock({ collectDiffScript, base, previousDiffFile }),
+    wrapDataBlock({ collectDiffScript, base, previousDiffFile, workdir: workdir || null }),
     '',
     '指定された JSON Schema（base, merge_base, commits, files, diff_file）に厳密に準拠したJSONのみを返してください。',
   ].join('\n');
 }
 
-function buildGitOpsCleanupPrompt(diffFile) {
+function buildGitOpsCleanupPrompt(diffFile, workdir) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。以下のコマンドを実行するだけが仕事です。',
     '',
+    buildWorkdirInstruction(workdir),
     'Bash で `rm -f "<diffFileの値>"` を実行し（対象が既に存在しなくてもエラーとして扱わない）、成功したら removed: true を返してください。',
     '',
-    wrapDataBlock({ diffFile }),
+    wrapDataBlock({ diffFile, workdir: workdir || null }),
     '',
     '指定された JSON Schema（removed のみ）に厳密に準拠したJSONのみを返してください。',
   ].join('\n');
 }
 
-function buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, contextLines) {
+function buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, contextLines, workdir) {
   return [
     'あなたは判断を行わない薄いシェル実行者です。データブロックの findings に列挙された各項目について、以下のコマンドをそれぞれ実行し、その標準出力（JSON）を集約して返すだけが仕事です。hunkの内容を解釈・要約・加工しないでください。',
     '',
+    buildWorkdirInstruction(workdir),
     'findings の各項目について実行するコマンド:',
     'Bash で `bash <extractHunkScriptの値をシングルクォートで安全に埋め込んだもの> <diff_fileの値をシングルクォートで安全に埋め込んだもの> <その項目のfileの値をシングルクォートで安全に埋め込んだもの> <その項目のlineの値（数値なのでそのまま）> <context_linesの値（数値なのでそのまま）>` を実行する。',
     '',
@@ -511,7 +553,7 @@ function buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, contextLin
     '',
     SHELL_QUOTING_INSTRUCTIONS,
     '',
-    wrapDataBlock({ extractHunkScript, diff_file: diffFile, context_lines: contextLines, findings: findings.map((f) => ({ findingId: findingKey(f), file: f.file, line: f.line })) }),
+    wrapDataBlock({ extractHunkScript, diff_file: diffFile, context_lines: contextLines, findings: findings.map((f) => ({ findingId: findingKey(f), file: f.file, line: f.line })), workdir: workdir || null }),
     '',
     '指定された JSON Schema（hunks配列。各要素は findingId, found, snippet）に厳密に準拠したJSONのみを返してください。',
   ].join('\n');
@@ -519,8 +561,8 @@ function buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, contextLin
 
 // --- git-ops 呼び出しヘルパー（agent() を agentType: 'claude-harness:git-ops' で呼ぶ。フェーズは 'Collect'） ---
 
-async function collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile, round, log }) {
-  const result = await agent(buildGitOpsCollectPrompt(collectDiffScript, base, previousDiffFile), {
+async function collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile, round, log, workdir }) {
+  const result = await agent(buildGitOpsCollectPrompt(collectDiffScript, base, previousDiffFile, workdir), {
     agentType: 'claude-harness:git-ops',
     schema: GITOPS_COLLECT_SCHEMA,
     phase: 'Collect',
@@ -532,9 +574,9 @@ async function collectDiffViaAgent(agent, { collectDiffScript, base, previousDif
   return result;
 }
 
-async function cleanupDiffFileViaAgent(agent, diffFile, log) {
+async function cleanupDiffFileViaAgent(agent, diffFile, log, workdir) {
   if (!diffFile) return;
-  await agent(buildGitOpsCleanupPrompt(diffFile), {
+  await agent(buildGitOpsCleanupPrompt(diffFile, workdir), {
     agentType: 'claude-harness:git-ops',
     schema: GITOPS_CLEANUP_SCHEMA,
     phase: 'Collect',
@@ -545,9 +587,9 @@ async function cleanupDiffFileViaAgent(agent, diffFile, log) {
   }
 }
 
-async function extractHunksViaAgent(agent, { extractHunkScript, diffFile, findings, round, log }) {
+async function extractHunksViaAgent(agent, { extractHunkScript, diffFile, findings, round, log, workdir }) {
   if (findings.length === 0) return new Map();
-  const result = await agent(buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, HUNK_CONTEXT_LINES), {
+  const result = await agent(buildGitOpsHunkPrompt(extractHunkScript, diffFile, findings, HUNK_CONTEXT_LINES, workdir), {
     agentType: 'claude-harness:git-ops',
     schema: GITOPS_HUNK_SCHEMA,
     phase: 'Collect',
@@ -596,12 +638,12 @@ async function runReviewStage(diffInfo, mode, previousFindings, { agent, paralle
 // 軽い関数にする（pipeline を使う二段構成自体は維持する。理由: voteStage内で
 // parallel([...3体])を呼ぶため、外側のfan-outでもparallelを使うと「parallelの中で
 // さらにparallel」の入れ子になり避けたい、という既存の設計方針をそのまま維持するため）。
-async function verifyFindingsStage(toVerify, diffInfo, { agent, parallel, pipeline, log, extractHunkScript, round }) {
+async function verifyFindingsStage(toVerify, diffInfo, { agent, parallel, pipeline, log, extractHunkScript, round, workdir }) {
   if (toVerify.length === 0) {
     return { confirmed: [], needsHumanJudgment: [] };
   }
 
-  const hunkMap = await extractHunksViaAgent(agent, { extractHunkScript, diffFile: diffInfo.diff_file, findings: toVerify, round, log });
+  const hunkMap = await extractHunksViaAgent(agent, { extractHunkScript, diffFile: diffInfo.diff_file, findings: toVerify, round, log, workdir });
 
   async function attachHunkStage(finding) {
     const hunkInfo = hunkMap.get(findingKey(finding)) || { findingId: findingKey(finding), found: false, snippet: '' };
@@ -671,7 +713,7 @@ const resolvedArgs = (() => {
   }
   return args || {};
 })();
-const { base = null, collectDiffScript, extractHunkScript } = resolvedArgs;
+const { base = null, collectDiffScript, extractHunkScript, workdir = null } = resolvedArgs;
 if (!collectDiffScript || !extractHunkScript) {
   throw new Error('self-review-loop: args.collectDiffScript and args.extractHunkScript (absolute paths) are required.');
 }
@@ -681,7 +723,7 @@ const seenKeys = new Set();
 const needsHumanJudgmentAll = [];
 let qcFailed = false;
 
-let diffInfo = await collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile: null, round: 1, log });
+let diffInfo = await collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile: null, round: 1, log, workdir });
 let findings = await runReviewStage(diffInfo, 'full', [], { agent, parallel, log });
 roundHistory.push({ round: 1, findingsCount: findings.length });
 
@@ -705,7 +747,7 @@ for (let i = 0; i < MAX_ROUNDS && findings.length > 0; i += 1) {
   const { confirmed, needsHumanJudgment } = await verifyFindingsStage(
     freshToVerify,
     diffInfo,
-    { agent, parallel, pipeline, log, extractHunkScript, round: i + 1 },
+    { agent, parallel, pipeline, log, extractHunkScript, round: i + 1, workdir },
   );
   freshToVerify.forEach((f) => seenKeys.add(roundDedupKey(f)));
   needsHumanJudgmentAll.push(...needsHumanJudgment, ...alreadyVerified);
@@ -720,7 +762,7 @@ for (let i = 0; i < MAX_ROUNDS && findings.length > 0; i += 1) {
     break;
   }
 
-  const fixResult = await agent(buildFixPrompt(toFix, diffInfo), {
+  const fixResult = await agent(buildFixPrompt(toFix, diffInfo, workdir), {
     agentType: 'claude-harness:feature-implementer',
     schema: FIX_SCHEMA,
     phase: 'Fix',
@@ -748,7 +790,7 @@ for (let i = 0; i < MAX_ROUNDS && findings.length > 0; i += 1) {
   // このスナップショットのみを基準にし、前周のfindingsの行番号は持ち越さない。
   // 前周のdiff_file（一時ファイル）はgit-ops側の手順1でここに合わせて後始末される。
   const previousDiffFile = diffInfo.diff_file;
-  diffInfo = await collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile, round: i + 2, log });
+  diffInfo = await collectDiffViaAgent(agent, { collectDiffScript, base, previousDiffFile, round: i + 2, log, workdir });
   findings = await runReviewStage(diffInfo, 'confirmation', toFix, { agent, parallel, log });
   roundHistory.push({ round: i + 2, findingsCount: findings.length });
 }
@@ -765,7 +807,7 @@ for (let i = 0; i < MAX_ROUNDS && findings.length > 0; i += 1) {
 const residualFindings = dedupByRoundKey([...findings, ...needsHumanJudgmentAll]);
 const converged = !qcFailed && residualFindings.length === 0;
 
-await cleanupDiffFileViaAgent(agent, diffInfo.diff_file, log);
+await cleanupDiffFileViaAgent(agent, diffInfo.diff_file, log, workdir);
 
 return {
   rounds: roundHistory.length,
