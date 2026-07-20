@@ -354,8 +354,14 @@ fi
 echo ""
 echo "=== (vii) 誤った「実行時に展開」説明の再出現チェック ==="
 
-misexp_pattern='実行時にプラグインルートへ展開'
-misexp_hits="$(grep -rn "$misexp_pattern" skills agents docs --include='*.md')"
+# 「実行時に…展開」「自動的に…展開」「環境変数として展開」等の言い換えも検出する。
+# 正しい説明（「実行前に…絶対パスに置換」「絶対パスへ展開したうえで」= モデル自身が行う指示）は
+# 「実行時に/自動」を含まないためマッチしない。
+misexp_pattern='(実行時に[^。]*展開|自動的に[^。]*展開|自動で[^。]*展開|環境変数として[^。]*展開)'
+# 対象は実行時にモデルへロードされる skills/ agents/ のみ。docs/（特に規約正本
+# docs/plugin-path-conventions.md）は誤説明の引用・「hooks 設定内でのみ展開される」という
+# 正当な説明を必然的に含むため対象外（実行時ファイルからの docs/ 参照は検査(ii)で禁止済み）。
+misexp_hits="$(grep -rnE "$misexp_pattern" skills agents --include='*.md')"
 misexp_exit=$?
 
 if [ "$misexp_exit" -ge 2 ]; then
