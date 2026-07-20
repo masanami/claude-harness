@@ -88,7 +88,7 @@ fi
 
 ## 1チケットの実装フロー（Phase 3〜9）
 
-単一Issueはリードエージェントが Phase 3〜9 を実行する。複数Issueでは **Phase 3（worktree・ブランチ作成）をリードが担い**、各 `ticket-worker` が worktree で Phase 4-5〜9 を実行する（**1チケット = 1ブランチ = 1PR**。詳細は `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` 参照。解決手順は上記参照）。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CIの順で進める。**実装フェーズに人間ゲートは無い**。
+単一Issueはリードエージェントが Phase 3〜9 を実行する。複数Issueでは **Phase 3（worktree・ブランチ作成）をリードが担い**、各 `ticket-worker` が worktree で Phase 4-5〜9 を実行する（worker の Phase 7 は `/create-e2e` まで。`/explain-e2e` は worker 完了後にリードがメインセッションで実施する。**1チケット = 1ブランチ = 1PR**。詳細は `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` 参照。解決手順は上記参照）。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CIの順で進める。**実装フェーズに人間ゲートは無い**。
 
 ```text
 Phase 3 ブランチ準備

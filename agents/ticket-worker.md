@@ -33,7 +33,8 @@ cd {worktreeパス} && bash {ci-wait.shの絶対パス} {PR番号}
 ```
 
 - 出力 JSON の `ci` が `green` → 完了。`none`（checks が1件も無いリポジトリ）も green 相当として扱い、ブロックしない
-- `ci` が `red` / `timeout` → **Phase 4-5 に差し戻す**。差し戻し時の feature-implementer への再委譲プロンプトには、`failure_log_excerpt`（失敗ジョブのログ抜粋）を**必ず注入**する
+- `ci` が `red` → **Phase 4-5 に差し戻す**。差し戻し時の feature-implementer への再委譲プロンプトには必ず次の2点を含める: (1) `failure_log_excerpt`（失敗ジョブのログ抜粋。`red` の場合のみ非空）の注入、(2) **スコープ付き修正呼び出しである旨**——既存 worktree で CI 失敗箇所の修正と `/quality-check` のみを行い、Phase 1〜5 の通常フロー（設計のやり直し・`/self-review` の自己起動）を再帰的に開始しないこと（feature-implementer 側の「再入回避」規律が働く形で呼び出す）
+- `ci` が `timeout` → 失敗ログという新情報が無いため **Phase 4-5 には差し戻さない**。`ci-wait.sh` の再実行（CI 待機のみの再試行）を1回だけ行い、それでも `timeout` なら `failure`（CI を待ちきれなかった旨と最後の CI 状態を添える）としてリードに返す
 
 差し戻しは上限付き（**loop-until-green**）:
 
