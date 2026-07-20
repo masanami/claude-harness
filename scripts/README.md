@@ -1,6 +1,6 @@
 # scripts/ 共通規約
 
-`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が LLM 判断を要さない決定的な git/テキスト処理をループ内で呼び出す実例（Issue #44）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`mutation-run.sh` は `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が `agentType: 'claude-harness:git-ops'` 経由で呼び出す、PRレビューコメントの取得・返信・Resolved化を担う実例（Issue #48）。
+`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が LLM 判断を要さない決定的な git/テキスト処理をループ内で呼び出す実例（Issue #44）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`mutation-run.sh` は `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が `agentType: 'claude-harness:git-ops'` 経由で呼び出す、PRレビューコメントの取得・返信・Resolved化を担う実例（Issue #48）。`ci-wait.sh` / `worktree-setup.sh` / `worktree-cleanup.sh` は `skills/para-impl/scripts/para-impl-tickets.js`（Dynamic Workflow）が呼び出す、CI待ち・worktree作成・worktree削除を担う実例（Issue #45。`worktree-setup.sh`/`worktree-cleanup.sh` はリード側スキルからも直接呼ばれる）。
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 
@@ -289,6 +289,92 @@ stdout JSON:
 ## fetch-pr-comments.sh / reply-and-resolve.sh の出力仕様（正本）
 
 `skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が、`agentType: 'claude-harness:git-ops'` 経由でこの2スクリプトを呼び出す（Issue #48）。`skills/pr-review-respond/SKILL.md` はこの仕様を参照し、フィールド定義を複製しない。
+
+## ci-wait.sh の出力仕様（正本）
+
+`skills/para-impl/scripts/para-impl-tickets.js`（Dynamic Workflow）が、CIステージで `agentType: 'claude-harness:git-ops'` 経由でこのスクリプトを呼び出す（Issue #45）。`gh pr checks` を上限付きでポーリングし、失敗時は `gh run view --log-failed` から失敗ジョブのログ末尾を抽出する。gh を呼ぶ処理と、スナップショットの分類・ポーリング継続可否判定（`classify_checks`/`ci_wait_decision`）等の純粋関数を分離している。
+
+### `scripts/ci-wait.sh <PR番号 or ブランチ名> [timeout秒（既定900。0でsingle-shot）] [poll間隔秒（既定30）]`
+
+stdout JSON:
+```json
+{
+  "ci": "green" | "red" | "timeout" | "none",
+  "failed_checks": [{"name": "...", "workflow": "...", "link": "..."}],
+  "failure_log_excerpt": "...",
+  "pr_url": "...",
+  "pr_number": 123,
+  "pr_exists": true
+}
+```
+
+| フィールド | 型 / 値 | 意味 |
+|---|---|---|
+| `pr_exists` | bool | `gh pr view <selector>` でPRが解決できたか。`false` の場合は他フィールドは空/nullで即終了する（ポーリングしない）。para-impl-tickets.js の attempt≥2 冪等分岐（PR未作成なら `gh pr create`、既存ならpushのみ）の判定材料 |
+| `ci` | `"green"` \| `"red"` \| `"timeout"` \| `"none"` | `pass`（全checks成功）/ `fail・cancel検出`（他がpendingでも待たずに確定） / `pending のまま時間切れ` / `checksが1件も無い`。checks未設定リポジトリでの永久ブロックを避けるため、呼び出し側は `none` を green相当（ブロックしない）として扱ってよい |
+| `failed_checks` | `[{name, workflow, link}]` | `ci: "red"` の場合のみ非空。fail/cancel状態のcheckのみ |
+| `failure_log_excerpt` | string | `ci: "red"` の場合のみ、失敗checkのlinkから抽出したrun_idごとに `gh run view --log-failed` を実行し、末尾100行ずつ連結後、全体で約4000文字に切り詰めたもの |
+| `pr_url` / `pr_number` | string / integer\|null | `gh pr view` で解決したPRのURL・番号。`pr_exists: false` の場合は `""` / `null` |
+
+挙動の要点:
+
+- `ci: "none"` の確定は「チェックが1件も無い」スナップショットを連続2回観測してから行う（ポーリング開始直後の一時的な空とCI未設定を区別するため）。ポーリングが時間切れになった時点でまだ空だった場合も、`pending` ではなかったため `timeout` ではなく `none` として確定する
+- `timeout_seconds` に `0` を指定すると、sleepせず1回だけスナップショットを取得して確定する（single-shotモード）。PR作成有無だけを素早く確認したい呼び出し（attempt≥2の冪等分岐判定）に使う
+- gh呼び出しの失敗・jq不在は stderr にメッセージを出し exit 非0（PR自体が存在しない場合は真の異常系ではなく `pr_exists: false` の正常終了として扱う点に注意）
+
+## worktree-setup.sh / worktree-cleanup.sh の出力仕様（正本）
+
+`skills/para-impl/SKILL.md` Phase 3（複数Issue時のworktree・作業ブランチ作成）とPhase 11（クリーンアップ）を切り出した決定的スクリプト（Issue #45）。resume時のキャッシュ安定性（固定スクリプト呼び出し）と、worktree作成・削除の冪等性をコードで保証する。gh は呼ばない（gh非依存）。
+
+### `scripts/worktree-setup.sh <issue番号> <branch名> <base> [worktree_root]`
+
+stdout JSON:
+```json
+{
+  "issue": 45,
+  "branch": "feature/issue-45-xxx",
+  "base": "main",
+  "worktree_path": "/path/to/xxx-worktrees/issue-45",
+  "created": true,
+  "reused": false,
+  "branch_existed": false
+}
+```
+
+| フィールド | 型 | 意味 |
+|---|---|---|
+| `branch` | string | `{type}/issue-{issue番号}-{ケバブケース説明}` 形式（type: feature/fix/refactor/docs/hotfix）でなければ拒否する。type・説明の意味的な決定は呼び出し側（LLM）の責務で、本スクリプトはパターン検証のみ行う |
+| `worktree_path` | string | `worktree_root`省略時は `<リポジトリの1つ上の階層>/<リポジトリ名>-worktrees/issue-{issue番号}`。symlink経由のTMPDIR（macOSの `/tmp`→`/private/tmp`等）でも `git worktree list` の記録と一致するよう実体パスへ正規化してから使う |
+| `created` | bool | このスクリプト呼び出しで新規に `git worktree add` を実行したか |
+| `reused` | bool | `worktree_path` が既に**同一ブランチ**の登録済みworktreeだったため、新規作成せず再利用したか（resume時の冪等性） |
+| `branch_existed` | bool | 指定ブランチがローカル/リモートに既に存在していたか（前回の途中失敗でブランチだけ作成済み等）。存在する場合は `-b` せず既存ブランチをそのままcheckoutする |
+
+挙動の要点:
+
+- `worktree_path` が**別ブランチ**の登録済みworktree、または**git worktreeに未登録の任意のディレクトリ**（stale等）の場合は、自動解決せず致命的エラーとして exit 非0（無条件の上書きはしない）
+- base の存在確認は `git ls-remote --exit-code --heads origin <base>` のみで行う（gh非依存）。存在しなければ exit 非0
+- gh呼び出しは一切行わない。git操作の失敗・jq不在は stderr にメッセージを出し exit 非0
+
+### `scripts/worktree-cleanup.sh <worktree_path> [--force|--skip-if-dirty]`
+
+stdout JSON:
+```json
+{"worktree_path": "...", "removed": true, "skipped": false, "dirty": false, "reason": null}
+```
+
+| フィールド | 型 | 意味 |
+|---|---|---|
+| `removed` | bool | `git worktree remove` を実行し削除できたか |
+| `skipped` | bool | `--skip-if-dirty` 指定時に dirty のため削除をスキップしたか |
+| `dirty` | bool | `git status --short` が非空（未コミット差分あり）だったか |
+| `reason` | string \| null | スキップ理由（`"dirty_worktree_skipped"`）。それ以外は `null` |
+
+挙動の要点:
+
+- **既定（フラグ省略）は保護優先**: dirty な worktree の削除は拒否し exit 非0（failure worktree の保護は呼び出し側の判断に委ねる設計。無条件削除をデフォルトにしない）
+- `--force`: dirty かどうかに関わらず `git worktree remove --force` で強制削除する
+- `--skip-if-dirty`: dirty なら削除せず `skipped: true` で正常終了（exit 0）。クリーンなら通常どおり削除する。複数worktreeを一括処理するループから、dirtyな1件だけを安全にスキップしたい場合に使う
+- gh は呼ばない。worktree_path が存在しない・`git worktree remove` 失敗・jq不在は stderr にメッセージを出し exit 非0
 
 ### `scripts/fetch-pr-comments.sh <PR番号>`
 
