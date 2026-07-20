@@ -354,6 +354,7 @@ stdout JSON:
 - `worktree_path` が**別ブランチ**の登録済みworktree、または**git worktreeに未登録の任意のディレクトリ**（stale等）の場合は、自動解決せず致命的エラーとして exit 非0（無条件の上書きはしない）
 - base の存在確認は `git ls-remote --exit-code --heads origin <base>` のみで行う（gh非依存）。存在しなければ exit 非0
 - gh呼び出しは一切行わない。git操作の失敗・jq不在は stderr にメッセージを出し exit 非0
+- **worktreeロック（CodeRabbit指摘対応。Issue #45）**: `git fetch`/`git worktree add` を含む共有 `.git` への書き込み区間を、mkdirのatomic性を使った簡易ロック（`<git-common-dir>/claude-harness-worktree-ops.lock`）で保護する。`scripts/worktree-cleanup.sh` の `git worktree remove` も同じロックディレクトリを取り合うため、両スクリプトが理論上同時に実行されても直列化される。既定で最大60秒待機し（`WORKTREE_LOCK_WAIT_SECONDS`）、120秒（`WORKTREE_LOCK_STALE_SECONDS`）を超えて保持されたロックはプロセスクラッシュ等による解放漏れとみなし奪取する。**一次的な保証は呼び出し側（リード）が各Issueについて逐次実行する運用規律**（`skills/para-impl/references/star-parallel.md`）であり、本ロックはその規律が守られなかった場合の防御第二層
 
 ### `scripts/worktree-cleanup.sh <worktree_path> [--force|--skip-if-dirty]`
 
@@ -375,6 +376,7 @@ stdout JSON:
 - `--force`: dirty かどうかに関わらず `git worktree remove --force` で強制削除する
 - `--skip-if-dirty`: dirty なら削除せず `skipped: true` で正常終了（exit 0）。クリーンなら通常どおり削除する。複数worktreeを一括処理するループから、dirtyな1件だけを安全にスキップしたい場合に使う
 - gh は呼ばない。worktree_path が存在しない・`git worktree remove` 失敗・jq不在は stderr にメッセージを出し exit 非0
+- **worktreeロック**: `git worktree remove` の実行区間は `worktree-setup.sh` と**同一のロックディレクトリ**（上記参照）で保護される（`--skip-if-dirty` によるスキップ判定等、git writeを伴わない箇所はロック不要のため対象外）
 
 ### `scripts/fetch-pr-comments.sh <PR番号>`
 

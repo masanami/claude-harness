@@ -61,6 +61,44 @@ echo "=== is_dirty ==="
 }
 
 echo ""
+echo "=== worktreeロック（resolve_worktree_lock_dir/acquire_worktree_lock/release_worktree_lock） ==="
+{
+  WT_LOCK="${TMP_ROOT}/wt-lock"
+  git -C "$REPO_DIR" worktree add -q "$WT_LOCK" -b feature/issue-9-lock main >/dev/null 2>&1
+
+  lock_dir_from_main="$(resolve_worktree_lock_dir "$REPO_DIR")"
+  lock_dir_from_worktree="$(resolve_worktree_lock_dir "$WT_LOCK")"
+  assert_eq "resolve_worktree_lock_dir: mainリポジトリとworktreeから同一ロックパスに解決される（worktree-setup.shと同じロックを取り合う契約の裏付け）" "$lock_dir_from_main" "$lock_dir_from_worktree"
+  assert_eq "resolve_worktree_lock_dir: 固定ロック名で終わる" "claude-harness-worktree-ops.lock" "$(basename "$lock_dir_from_main")"
+
+  acquire_worktree_lock "$lock_dir_from_worktree" >/dev/null 2>&1
+  acquire_rc=$?
+  assert_eq "acquire_worktree_lock: 未取得なら成功(0)を返す" "0" "$acquire_rc"
+  assert_eq "acquire_worktree_lock: ロックディレクトリが作成される" "true" "$([ -d "$lock_dir_from_worktree" ] && echo true || echo false)"
+
+  release_worktree_lock "$lock_dir_from_worktree"
+  assert_eq "release_worktree_lock: ロックディレクトリが削除される" "false" "$([ -d "$lock_dir_from_worktree" ] && echo true || echo false)"
+
+  # --- staleロックは奪取される ---
+  mkdir "$lock_dir_from_worktree"
+  echo "1" >"${lock_dir_from_worktree}/acquired_at" # epoch=1（大昔）なので確実にstale
+  WORKTREE_LOCK_STALE_SECONDS=1
+  WORKTREE_LOCK_WAIT_SECONDS=10
+  acquire_worktree_lock "$lock_dir_from_worktree" >/dev/null 2>&1
+  stale_rc=$?
+  assert_eq "acquire_worktree_lock: staleロックは奪取して成功(0)する" "0" "$stale_rc"
+  release_worktree_lock "$lock_dir_from_worktree"
+  # 既定値へ復元（以降の main() テストに影響させないため）。shellcheckのsource境界を
+  # 跨いだ使用追跡の限界によるfalse positiveのため無効化する。
+  # shellcheck disable=SC2034
+  WORKTREE_LOCK_STALE_SECONDS=120
+  # shellcheck disable=SC2034
+  WORKTREE_LOCK_WAIT_SECONDS=60
+
+  git -C "$REPO_DIR" worktree remove --force "$WT_LOCK" >/dev/null 2>&1
+}
+
+echo ""
 echo "=== main(): クリーンなworktreeは既定で削除される ==="
 {
   output="$(main "$WT_CLEAN")"

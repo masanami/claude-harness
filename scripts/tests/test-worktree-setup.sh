@@ -52,6 +52,83 @@ echo "=== compute_worktree_path / default_worktree_root ==="
 }
 
 echo ""
+echo "=== worktreeロック（resolve_worktree_lock_dir/acquire_worktree_lock/release_worktree_lock） ==="
+{
+  LOCK_TMP_ROOT="$(mktemp -d)"
+  lock_test_cleanup() { rm -rf "$LOCK_TMP_ROOT"; }
+  trap lock_test_cleanup EXIT
+
+  LOCK_REPO_DIR="${LOCK_TMP_ROOT}/repo"
+  mkdir -p "$LOCK_REPO_DIR"
+  (
+    cd "$LOCK_REPO_DIR" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    echo "hello" >README.md
+    git add README.md
+    git commit -q -m "initial commit"
+  )
+
+  lock_dir="$(resolve_worktree_lock_dir "$LOCK_REPO_DIR")"
+  # 期待値も pwd -P で物理パスへ正規化してから比較する（LOCK_REPO_DIRの祖先が
+  # symlink経由の可能性がある。macOSの/tmp -> /private/tmp・/var -> /private/var等。
+  # resolve_worktree_lock_dir 自身がpwd -Pで正規化する実装のため、期待値側も
+  # 同じ基準に揃えないと環境依存で偽陰性になる）。
+  lock_repo_dir_physical="$(cd "$LOCK_REPO_DIR" && pwd -P)"
+  assert_eq "resolve_worktree_lock_dir: 固定ロック名で終わる" "claude-harness-worktree-ops.lock" "$(basename "$lock_dir")"
+  assert_eq "resolve_worktree_lock_dir: git-common-dir配下(絶対パス)を指す" "true" "$([ "$lock_dir" = "${lock_repo_dir_physical}/.git/claude-harness-worktree-ops.lock" ] && echo true || echo false)"
+
+  # --- 取得・解放 ---
+  acquire_worktree_lock "$lock_dir" >/dev/null 2>&1
+  acquire_rc=$?
+  assert_eq "acquire_worktree_lock: 未取得なら成功(0)を返す" "0" "$acquire_rc"
+  assert_eq "acquire_worktree_lock: ロックディレクトリが作成される" "true" "$([ -d "$lock_dir" ] && echo true || echo false)"
+  assert_eq "acquire_worktree_lock: pidファイルが書き込まれる" "true" "$([ -s "${lock_dir}/pid" ] && echo true || echo false)"
+  assert_eq "acquire_worktree_lock: acquired_atファイルが書き込まれる" "true" "$([ -s "${lock_dir}/acquired_at" ] && echo true || echo false)"
+
+  release_worktree_lock "$lock_dir"
+  assert_eq "release_worktree_lock: ロックディレクトリが削除される" "false" "$([ -d "$lock_dir" ] && echo true || echo false)"
+
+  # --- 保持中（stale未満）は待機の上タイムアウトする（WAIT_SECONDSをテスト用に短縮） ---
+  mkdir "$lock_dir"
+  date +%s >"${lock_dir}/acquired_at"
+  WORKTREE_LOCK_WAIT_SECONDS=2
+  WORKTREE_LOCK_STALE_SECONDS=120
+  start_ts="$(date +%s)"
+  acquire_worktree_lock "$lock_dir" >/dev/null 2>&1
+  timeout_rc=$?
+  end_ts="$(date +%s)"
+  assert_eq "acquire_worktree_lock: 保持中(non-stale)はタイムアウトで1を返す" "1" "$timeout_rc"
+  assert_eq "acquire_worktree_lock: WORKTREE_LOCK_WAIT_SECONDS相当まで待ってから諦める" "true" "$([ $((end_ts - start_ts)) -ge 2 ] && echo true || echo false)"
+  rm -rf "$lock_dir"
+
+  # --- staleロック（acquired_atが古い）は奪取して取得できる ---
+  mkdir "$lock_dir"
+  echo "99999999" >"${lock_dir}/pid"
+  echo "1" >"${lock_dir}/acquired_at" # epoch=1（大昔）なので確実にstale
+  WORKTREE_LOCK_STALE_SECONDS=1
+  WORKTREE_LOCK_WAIT_SECONDS=10
+  acquire_worktree_lock "$lock_dir" >/dev/null 2>&1
+  stale_rc=$?
+  assert_eq "acquire_worktree_lock: staleロックは奪取して成功(0)する" "0" "$stale_rc"
+  assert_eq "acquire_worktree_lock: 奪取後は新しいacquired_atで上書きされる" "true" "$([ -s "${lock_dir}/acquired_at" ] && echo true || echo false)"
+  release_worktree_lock "$lock_dir"
+
+  # 既定値へ復元（以降の main() テストに影響させないため）。ここでの代入自体は
+  # このスコープ内で読まれないが、この後 main() 経由で worktree-setup.sh 側の
+  # acquire_worktree_lock が参照するグローバル変数のため必要（shellcheckの
+  # source境界を跨いだ使用追跡の限界によるfalse positive）。
+  # shellcheck disable=SC2034
+  WORKTREE_LOCK_STALE_SECONDS=120
+  # shellcheck disable=SC2034
+  WORKTREE_LOCK_WAIT_SECONDS=60
+
+  lock_test_cleanup
+  trap - EXIT
+}
+
+echo ""
 echo "=== main(): 実際のgit worktree操作(一時リポジトリ) ==="
 {
   TMP_ROOT="$(mktemp -d)"

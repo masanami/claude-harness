@@ -35,6 +35,61 @@ check_jq() {
 }
 
 # ---------------------------------------------------------------------------
+# worktreeロック（Issue #45 CodeRabbit指摘の追修正）: scripts/worktree-setup.sh と
+# 同一の契約・同一のロックディレクトリ名を使う（両スクリプトのコメントを参照）。
+# 関数・定数はここに複製する（両スクリプトが同時にsourceされることは無い前提。
+# scripts/README.md「テスト」節）。ロック名を変更する場合は worktree-setup.sh 側も
+# 同時に変更すること。
+# ---------------------------------------------------------------------------
+
+WORKTREE_LOCK_NAME="claude-harness-worktree-ops.lock"
+WORKTREE_LOCK_STALE_SECONDS=120  # このロック保持時間を超えたら他プロセスがstaleと判断し奪取する
+WORKTREE_LOCK_WAIT_SECONDS=60    # ロック取得を諦めるまでの最大待機秒数（テストからは短縮して上書きしてよい）
+
+resolve_worktree_lock_dir() {
+  local start_dir="${1:-.}"
+  local common_dir common_dir_abs
+  common_dir="$(cd "$start_dir" 2>/dev/null && git rev-parse --git-common-dir 2>/dev/null)" || return 1
+  # pwd -P（symlink解決済みの物理パス）で正規化する（scripts/worktree-setup.sh の
+  # 同種コメント参照。素のpwdだと呼び出し元によって論理/物理パスが混在し、
+  # setup.sh/cleanup.sh双方から異なる文字列に解決されてしまう不具合の回避）。
+  common_dir_abs="$(cd "$start_dir" && cd "$common_dir" 2>/dev/null && pwd -P)" || return 1
+  echo "${common_dir_abs}/${WORKTREE_LOCK_NAME}"
+}
+
+acquire_worktree_lock() {
+  local lock_dir="$1"
+  local waited=0
+  while true; do
+    if mkdir "$lock_dir" 2>/dev/null; then
+      echo "$$" >"${lock_dir}/pid" 2>/dev/null || true
+      date +%s >"${lock_dir}/acquired_at" 2>/dev/null || true
+      return 0
+    fi
+    if [ -f "${lock_dir}/acquired_at" ]; then
+      local acquired_at now age
+      acquired_at="$(cat "${lock_dir}/acquired_at" 2>/dev/null || echo 0)"
+      now="$(date +%s)"
+      age=$((now - acquired_at))
+      if [ "$age" -ge "$WORKTREE_LOCK_STALE_SECONDS" ]; then
+        rm -rf "$lock_dir" 2>/dev/null || true
+        continue
+      fi
+    fi
+    if [ "$waited" -ge "$WORKTREE_LOCK_WAIT_SECONDS" ]; then
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
+release_worktree_lock() {
+  local lock_dir="$1"
+  rm -rf "$lock_dir" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
 # git 呼び出し（外部作用あり）
 # ---------------------------------------------------------------------------
 
@@ -118,6 +173,24 @@ main() {
     echo "Error: worktree has uncommitted changes; refusing to remove (pass --force or --skip-if-dirty): ${worktree_path}" >&2
     exit 1
   fi
+
+  # 以降、git worktree remove を含む共有 .git への書き込み区間をロックで保護する
+  # （trap EXIT により、この後のどの exit 経路でも確実に解放される）。
+  # --skip-if-dirty によるスキップ・dirty時の既定拒否はこれより前で完了しており
+  # 対象外（git writeを伴わないため、ロック不要）。
+  # 注意: lock_dir は意図的に local にしない（scripts/worktree-setup.sh の
+  # 同種コメント参照。exitを呼ばず正常returnする経路があるとtrap発火時に
+  # local変数がスコープ外になり set -u でエラーになる不具合の回避）。
+  lock_dir=""
+  if ! lock_dir="$(resolve_worktree_lock_dir "$worktree_path")"; then
+    echo "Error: failed to resolve worktree lock directory" >&2
+    exit 1
+  fi
+  if ! acquire_worktree_lock "$lock_dir"; then
+    echo "Error: timed out waiting for worktree lock (another worktree-setup.sh/worktree-cleanup.sh run may be holding it): ${lock_dir}" >&2
+    exit 1
+  fi
+  trap 'release_worktree_lock "$lock_dir"' EXIT
 
   local main_root
   if ! main_root="$(resolve_main_repo_root "$worktree_path")"; then
