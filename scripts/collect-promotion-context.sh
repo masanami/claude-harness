@@ -1,8 +1,9 @@
 #!/bin/bash
 # collect-promotion-context.sh
-# skills/promote-verify/scripts/promote-verify.js（Dynamic Workflow）が Context フェーズで
-# git-ops エージェント経由で呼び出す決定的スクリプト。統合ブランチ→main 昇格前検証パッケージの
-# 一部として、base ブランチと統合ブランチの間の diff コンテキストを取得する（Issue #52）。
+# skills/promote-verify/SKILL.md（Step 3）が Bash ツールで直接実行する決定的スクリプト
+# （Issue #110 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の
+# 直接実行に一本化した）。統合ブランチ→main 昇格前検証パッケージの一部として、base ブランチと
+# 統合ブランチの間の diff コンテキストを取得する（Issue #52）。
 #
 # collect-review-diff.sh と同じ設計思想（gh非依存・純粋な git 操作・関数分離によるテスト容易性・
 # diff本文は一時ファイル書き出し）を踏襲するが、対象は「merge-base → 作業ツリー」ではなく

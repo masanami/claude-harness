@@ -1,6 +1,6 @@
 ---
 name: spec-fixer
-description: "機能仕様ドキュメント（docs/features/{slug}.md）の blocker 指摘を機械的に修正する際に使用。skills/define-feature/scripts/spec-critique.js（Dynamic Workflow）から `agentType: 'claude-harness:spec-fixer'` として、Fix フェーズでスコープ付きに呼び出される。"
+description: "機能仕様ドキュメント（docs/features/{slug}.md）の blocker 指摘を機械的に修正する際に使用。`/define-feature`（skills/define-feature/SKILL.md）Step 6.5-3 から Task ツールで `subagent_type: 'claude-harness:spec-fixer'` として、Fix フェーズでスコープ付きに1体呼び出される（Issue #111）。"
 # tools: 既存ファイルの部分編集のみのためWrite不要。
 tools: Read, Edit, Grep
 model: sonnet

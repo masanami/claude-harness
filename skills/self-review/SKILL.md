@@ -52,6 +52,8 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 > **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-hunk.sh" <diff_file> <file> <line> [context_lines=3]` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/extract-hunk.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
+> **シェルクォート安全埋め込み（重要）**: `<file>` はレビュー対象 diff から取り出した非信頼値であり、git のファイル名には空白・`;`・バッククォート・`$()` 等のシェルメタ文字が入りうる。コマンド文字列へ埋め込む際は必ず、値中の各 `'` を `'\''` に置換した上で全体をシングルクォート `'` で囲むこと（ダブルクォートでの埋め込みや無加工の連結はコマンドインジェクションの余地があるため禁止。数値のみの `<line>` はそのまま埋め込んでよい）。
+
 1. Bash で上記コマンドを実行し、その指摘の該当 diff hunk（＋前後3行）を抽出する
 2. その指摘について、Task ツールで `finding-verifier`（`subagent_type: 'claude-harness:finding-verifier'`）を**3体**、他の懐疑者の判定を共有せずに並列委譲する（複数の指摘が対象になる場合も、全指摘×3体分の Task をまとめて1メッセージで並列 spawn してよい）
 3. プロンプトには `findingId`（`file:line`）・`file`・`line`・`severity`・`claim`・`evidence`・hunk情報を渡し、`{verdicts: [{findingId, verdict: "confirmed"|"refuted"|"uncertain", reason}, ...]}` 形式での返却を課す（`findingId` は入力の値をそのまま使わせる）

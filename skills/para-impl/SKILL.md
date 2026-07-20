@@ -164,11 +164,11 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 E2E対象機能の場合、Phase 4-5 で feature-implementer が返した E2Eシナリオ一覧に基づき実装する:
 
 1. `/create-e2e` — 設計（Phase 4-5 のシナリオを根拠）→ 実装 → 全テスト実行
-2. `/explain-e2e` — Phase 1（テストシナリオ解説）はメインセッションで対話的に、Phase 2（独立検証）は Dynamic Workflow による自動検証で実施
+2. `/explain-e2e` — Phase 1（テストシナリオ解説）はメインセッションで対話的に、Phase 2（独立検証）は Task ツールによる直接委譲（Verify段階のfan-out・Mutation段階の逐次処理）で実施
 
 - E2E失敗 → **Phase 4-5 に戻る**
 
-> **複数Issue（star 型）の場合**: worker は `/create-e2e` までを実施し、`/explain-e2e` は Phase 1 が対話前提のため worker 完了後に**リードがメインセッションで実施**する。リードは**当該チケットの worktree（保持されている）内のテストコードを対象**に実施する（Phase 2 の Workflow 起動時は `workingDirectory` に当該 worktree の絶対パスを指定する）。独立検証で問題が見つかった場合は当該 worker を再度 spawn して Phase 4-5 から修正させる。
+> **複数Issue（star 型）の場合**: worker は `/create-e2e` までを実施し、`/explain-e2e` は Phase 1 が対話前提のため worker 完了後に**リードがメインセッションで実施**する。リードは**当該チケットの worktree（保持されている）内のテストコードを対象**に実施する（Phase 2 の `mutation-run.sh` 実行時は当該 worktree の絶対パスへ `cd` してから実行する）。独立検証で問題が見つかった場合は当該 worker を再度 spawn して Phase 4-5 から修正させる。
 
 非E2E対象の場合、このフェーズはスキップする。
 

@@ -1,6 +1,6 @@
 # scripts/ 共通規約
 
-`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`/self-review`（`skills/self-review/SKILL.md`）が LLM 判断を要さない決定的な git/テキスト処理をレビューの各ラウンドで直接呼び出す実例（Issue #44・#107）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`mutation-run.sh` は `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `/pr-review-respond`（`skills/pr-review-respond/SKILL.md`）が、PRレビューコメントの取得（Step 2）・返信・Resolved化（Step 12）のタイミングで Bash ツールから直接呼び出す実例（Issue #48。Issue #108 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の直接実行に一本化した）。`ci-wait.sh` / `worktree-setup.sh` / `worktree-cleanup.sh` は para-impl の star型並列実装が呼び出す、CI待ち・worktree作成・worktree削除を担う実例（Issue #45・#105。`ci-wait.sh` は `ticket-worker` が、`worktree-setup.sh`/`worktree-cleanup.sh` はリード側スキルが呼ぶ。gh系スクリプトだが LLM 判断を挟まない決定的処理としてスキルフローから直接実行される）。
+`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`/self-review`（`skills/self-review/SKILL.md`）が LLM 判断を要さない決定的な git/テキスト処理をレビューの各ラウンドで直接呼び出す実例（Issue #44・#107）。`spec-lint.sh` は同様のパターンで `/define-feature`（`skills/define-feature/SKILL.md` Step 6.5-1）が Bash ツールから直接呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51で新設、#111 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し呼び出し元自身の直接実行に一本化した）。`mutation-run.sh` は `/explain-e2e`（`skills/explain-e2e/SKILL.md` Phase 2）が、呼び出し元自身の Bash ツールから直接呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47・#114）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `/pr-review-respond`（`skills/pr-review-respond/SKILL.md`）が、PRレビューコメントの取得（Step 2）・返信・Resolved化（Step 12）のタイミングで Bash ツールから直接呼び出す実例（Issue #48。Issue #108 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の直接実行に一本化した）。`ci-wait.sh` / `worktree-setup.sh` / `worktree-cleanup.sh` は para-impl の star型並列実装が呼び出す、CI待ち・worktree作成・worktree削除を担う実例（Issue #45・#105。`ci-wait.sh` は `ticket-worker` が、`worktree-setup.sh`/`worktree-cleanup.sh` はリード側スキルが呼ぶ。gh系スクリプトだが LLM 判断を挟まない決定的処理としてスキルフローから直接実行される）。
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 
@@ -168,7 +168,7 @@ gh/gitを呼ばない純粋なテキスト処理のみで完結する（diff_fil
 
 ## spec-lint.sh の出力仕様（正本）
 
-`skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が、Lint フェーズで `agentType: 'claude-harness:git-ops'` 経由でこのスクリプトを呼び出す（Issue #51）。機能仕様ドキュメント（`docs/features/{slug}.md`）に対する4つの決定的チェックの候補列挙のみを行い、**severity（blocker/minor/needs_user_input）の判定は行わない**（severity判定は呼び出し元の批評エージェント `agents/spec-critic.md` の責務）。gh呼び出しは一切行わない（gh非依存）。
+`/define-feature`（`skills/define-feature/SKILL.md` Step 6.5-1）が、Lint フェーズで Bash ツールから直接このスクリプトを呼び出す（Issue #51で新設、#111 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し呼び出し元自身の直接実行に一本化した）。機能仕様ドキュメント（`docs/features/{slug}.md`）に対する4つの決定的チェックの候補列挙のみを行い、**severity（blocker/minor/needs_user_input）の判定は行わない**（severity判定は呼び出し元の批評エージェント `agents/spec-critic.md` の責務）。gh呼び出しは一切行わない（gh非依存）。
 
 ### `scripts/spec-lint.sh <spec-file-path>`
 
@@ -200,7 +200,7 @@ stdout JSON:
 
 ## mutation-run.sh の出力仕様（正本）
 
-`skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）の Mutation ステージが、`agentType: 'claude-harness:git-ops'` 経由でこのスクリプトを呼び出す（Issue #47）。「意味のある不具合を注入する」判断のみを変異エージェント（`agents/e2e-mutation-injector.md`）に残し、それ以外の全手順（テスト実行・失敗判定・`git checkout --` による復元・復元確認・再実行パス確認）を決定的に行う。
+`/explain-e2e`（`skills/explain-e2e/SKILL.md` Phase 2）の Mutation 段階から、呼び出し元自身（Bash ツール）が直接このスクリプトを呼び出す（Issue #47・#114。#114 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の直接実行に一本化した）。「意味のある不具合を注入する」判断のみを変異エージェント（`agents/e2e-mutation-injector.md`）に残し、それ以外の全手順（テスト実行・失敗判定・`git checkout --` による復元・復元確認・再実行パス確認）を決定的に行う。
 
 ### `scripts/mutation-run.sh <test_command> <mutated_file_1> [<mutated_file_2> ...]`
 
@@ -221,13 +221,13 @@ stdout JSON:
 - **手順0（クリーン確認）**: `git status --porcelain`（リポジトリ全体）の変更が `mutated_file_*` の範囲内に完全に収まっているかを検証する。範囲外の未コミット変更が1件でもあれば、`git checkout -- <files>` では作業ツリーを完全にクリーンへ戻せない前提が崩れるため、**テスト実行に進まず**真の異常系として stderr にメッセージを出し exit 非0（stdoutにJSONは出さない）。`mutated_file_*` のいずれにも変更が無い場合（注入が実際には行われていない）も同様に異常系として扱う
 - **`mutated_file_*` の形式**: 絶対パス・リポジトリルート相対パスのいずれで渡してもよい（呼び出し契約上、変異エージェントは常に絶対パスを返す。`agents/e2e-mutation-injector.md`）。`git status --porcelain`（引数無し）が返すパスは常にリポジトリルート相対のため、手順0の比較専用にリポジトリルート相対へ正規化してから照合する（`normalize_to_repo_relative`）。加えて、渡されたパスがシンボリックリンク経由（例: macOS の `/tmp` → `/private/tmp`、`/var` → `/private/var`。`mktemp -d` の返り値が該当しうる）の場合に備え、比較前に `cd "$(dirname ...)" && pwd -P` で実体パスへ解決してから正規化する（`canonicalize_path`）。`git checkout --`/`git status --porcelain -- <file>` 自体は元の引数（絶対パスのまま）で実行する（git はパススペックとして絶対パスをそのまま受け付けるため変換不要）
 - **手順1〜4**は上記チェックを通過した後にのみ実行する（テスト実行＋失敗判定 → 復元 → 復元確認 → 復元できた場合のみ再実行してパス確認）
-- 終了コード: `0`（`restored && rePassed`。復元・再パスとも確認できた「安全な」状態）／ `1`（`restored`/`rePassed` のいずれかが `false`。前段の真の異常系＝クリーン確認失敗・引数不正・非gitリポジトリ等も同じ `1` だが、その場合は stdout にJSONを出さない点で区別できる）／ `2`（jq不在）。呼び出し側（`explain-e2e-verify.js`）は、この終了コードと JSON の `restored`/`rePassed` 自己申告を突き合わせることで、シェル実行エージェント側の誤報告を検出できる
+- 終了コード: `0`（`restored && rePassed`。復元・再パスとも確認できた「安全な」状態）／ `1`（`restored`/`rePassed` のいずれかが `false`。前段の真の異常系＝クリーン確認失敗・引数不正・非gitリポジトリ等も同じ `1` だが、その場合は stdout にJSONを出さない点で区別できる）／ `2`（jq不在）。呼び出し側（`/explain-e2e` の SKILL.md Phase 2）は、この終了コードと JSON の `restored`/`rePassed` 自己申告を突き合わせることで、誤報告を検出できる
 - gh は呼ばない（gh非依存）。`test_command` は呼び出し側が特定済みの文字列をそのまま `bash -c` で実行するだけで、コマンドの意味は解釈しない（`quality-check-runner.sh` の `run_command` と同じ設計）
 - テスト容易性のため、外部コマンド（git/`test_command`）を起動する処理と、外部コマンドを起動しない純粋なテキスト処理（`porcelain_path` / `classify_failure_kind` / `check_dirty_scope` / `normalize_to_repo_relative`）を関数として分離している（`source` して直接テスト可能）。`canonicalize_path`（実ファイルシステムを参照する `cd`/`pwd -P`）はこの分離の対象外（副作用ありの外部コマンド実行側に置く）
 
 ## collect-promotion-context.sh / check-subtask-completion.sh の出力仕様（正本）
 
-`skills/promote-verify/scripts/promote-verify.js`（Dynamic Workflow）が、Context フェーズで `agentType: 'claude-harness:git-ops'` 経由でこの2スクリプトを呼び出す（Issue #52）。`skills/promote-verify/SKILL.md` はこの仕様を参照し、フィールド定義を複製しない。
+`/promote-verify`（`skills/promote-verify/SKILL.md`）が、Step 3（コンテキスト収集）でこの2スクリプトを Bash ツールから直接呼び出す（Issue #52。Issue #110 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の直接実行に一本化した）。`skills/promote-verify/SKILL.md` はこの仕様を参照し、フィールド定義を複製しない。
 
 ### `scripts/collect-promotion-context.sh <base_branch> <integration_branch>`
 

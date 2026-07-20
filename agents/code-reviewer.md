@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: "ソースコードをレビューする際に使用。「コードをレビューして」「実装をチェックして」「PRをレビューして」といったレビュー依頼時に自動委譲される。`/self-review`（skills/self-review/SKILL.md）から Task ツールで `subagent_type: 'claude-harness:code-reviewer'` として、design-reviewer とバリア付き並列で呼び出される経路もある（Issue #44・#107）。skills/pr-merge/scripts/merge-judge.js（Dynamic Workflow）の3レンズ判定パネルからも呼び出される。"
+description: "ソースコードをレビューする際に使用。「コードをレビューして」「実装をチェックして」「PRをレビューして」といったレビュー依頼時に自動委譲される。`/self-review`（skills/self-review/SKILL.md）から Task ツールで `subagent_type: 'claude-harness:code-reviewer'` として、design-reviewer とバリア付き並列で呼び出される経路もある（Issue #44・#107）。`/pr-merge`（skills/pr-merge/SKILL.md）の分岐B（統合ブランチゲート・リスクゲート非該当時の単発委譲）・分岐C（統合ブランチゲート・リスクゲート該当時の3レンズ judge panel、Task並列 spawn）の両方からも Task ツール経由で呼び出される（Issue #109）。"
 # tools: レビュー専用エージェントのため、コード編集ツール（Edit, Write）は意図的に除外。
 # 修正が必要な場合は、レビュー結果を報告し、実装エージェント（feature-implementer）に委譲する。
 # 品質チェックコマンドの実行もこのエージェントの責務ではない（Fixステージ後段に一本化。Issue #44）。
@@ -19,7 +19,8 @@ effort: xhigh
 
 **呼び出し経路によって出力形式が異なる**:
 - `/self-review` から Task ツール経由で呼び出された場合（`subagent_type: 'claude-harness:code-reviewer'`）: 呼び出し元のプロンプトが `{findings: [{file, line, severity, claim, evidence, verdict}, ...]}` 形式の構造化返却を明示的に指示する。この場合は **Step 3 を使わず**、findings を含むオブジェクトのみを返す（詳細は Step 3 直前の「findings schema での出力」を参照）
-- それ以外（人間からの直接依頼、`skills/pr-merge/scripts/merge-judge.js` 等の別スキーマを要求する呼び出し元等）: 呼び出し元のプロンプトが別形式の構造化返却を指示していればそれに従い、指示が無ければ従来通り Step 3 の prose 形式で報告する
+- `/pr-merge` 分岐C（judge panel）から呼び出された場合: 呼び出し元のプロンプトが `{blockers: [{file, line, reason}, ...], verdict: "merge"|"hold"}` 形式の構造化返却を明示的に指示する。この場合も **Step 3 を使わず**、指示されたスキーマに厳密に準拠したオブジェクトのみを返す
+- それ以外（人間からの直接依頼、`/pr-merge` 分岐B 等）: 呼び出し元のプロンプトが別形式の構造化返却を指示していればそれに従い、指示が無ければ従来通り Step 3 の prose 形式で報告する（`/pr-merge` 分岐B は Step 3 の prose 形式のまま呼び出される）
 
 ## Step 0: プロジェクトコンテキストの確認
 
