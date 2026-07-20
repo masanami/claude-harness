@@ -145,5 +145,7 @@ Dynamic Workflow スクリプトが `agent(prompt, { schema, ... })` に渡す J
 - 成立しない `echo "$CLAUDE_PLUGIN_ROOT"` 解決手順の再出現
 - `skills/*/scripts/*.js` の `agentType: '...'` および `agents/*.md` の自己記述が `claude-harness:` プレフィックス付きであること（(g) の規約）
 - `skills/*/scripts/*.js` に、引用符に直接続くハードコードされた `scripts/` 相対パス文字列リテラルが無いこと
+- `skills/*/scripts/*.js`（Workflow スクリプト）の `export` 宣言が `export const meta` の1件のみであること（前掲の Workflow ランタイム契約）
+- 「実行時に（プラグインルートへ）展開される」等、`${CLAUDE_PLUGIN_ROOT}` が環境変数として自動展開されるかのような誤説明の再出現が無いこと（正: 表記上のプレースホルダであり、実行前に Base directory から解決した絶対パスへ置換する）
 
 既知の許容パターンはテストファイル内でホワイトリストとして管理する。
