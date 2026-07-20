@@ -48,9 +48,19 @@ const ENTRY_POINT_MARKER = '// === WORKFLOW ENTRY POINT ===';
  * `const meta = {...}`); every other `export` token is left untouched on purpose, so a script
  * that still has stray exports fails to construct here (SyntaxError), matching runtime behavior.
  *
+ * `run`'s 8th parameter is `workflow`, the child-Workflow-composition function real scripts can
+ * call to start another Workflow script as a child (`workflow({ scriptPath, args, ... })` —
+ * verified against the real runtime for Issue #45: parent -> child startup, args passthrough,
+ * and agent() spawning from within the child all work). Scripts that don't reference `workflow`
+ * (e.g. self-review-loop.js, reduce-debt-scan.js) are unaffected since it's simply an unused free
+ * variable for them; this parameter exists so scripts that DO compose child workflows
+ * (para-impl-tickets.js) can be exercised by tests via a mock, without changing the calling
+ * convention for scripts that don't need it (backward compatible: existing callers that invoke
+ * `run(...)` with only 7 positional args still work, `workflow` is simply `undefined` for them).
+ *
  * @param {string} scriptPath absolute path to the workflow script
  * @returns {{
- *   run: (agent: Function, parallel: Function, pipeline: Function, phase: string, log: Function, args: object, budget: unknown) => Promise<unknown>,
+ *   run: (agent: Function, parallel: Function, pipeline: Function, phase: string, log: Function, args: object, budget: unknown, workflow?: Function) => Promise<unknown>,
  *   meta: object | null,
  *   source: string,
  * }}
@@ -61,7 +71,7 @@ export function loadWorkflow(scriptPath) {
 
   // Throws SyntaxError here (not when `run` is invoked) if the source still contains any
   // `export` token the runtime doesn't special-case — this is the intended Red signal.
-  const run = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'args', 'budget', transformedSource);
+  const run = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'args', 'budget', 'workflow', transformedSource);
 
   return { run, meta: extractMeta(rawSource), source: rawSource };
 }
