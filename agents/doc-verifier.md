@@ -1,6 +1,6 @@
 ---
 name: doc-verifier
-description: 実装とドキュメント（要件定義・設計書）の整合性を確認する際に使用。「ドキュメントと整合性を確認して」「設計書と実装が合っているか確認して」といった依頼時に自動委譲される。
+description: "実装とドキュメント（要件定義・設計書）の整合性を確認する際に使用。「ドキュメントと整合性を確認して」「設計書と実装が合っているか確認して」といった依頼時に自動委譲される。`/promote-verify`（skills/promote-verify/SKILL.md）からも、受入基準1件ごとに Task ツールで `subagent_type: 'claude-harness:doc-verifier'` として fan-out 起動される（Issue #110。Dynamic Workflow ではなく直接委譲）。"
 tools: Read, Glob, Grep
 model: sonnet
 # effort: 整合性チェックが中心のため medium。
