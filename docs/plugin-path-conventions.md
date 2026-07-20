@@ -105,7 +105,7 @@ Dynamic Workflow スクリプトが `agent(prompt, { schema, ... })` に渡す J
 
 > **検証済み事実（Issue #91 実機フォローアップ）**: `agent()` の `schema` オプションにトップレベル `type: 'array'` を渡すと 400 エラーになることが実機で確認された。
 
-- 配列そのものを返したい場合は、1プロパティ（例: `findings` / `verdicts`）へラップした `{ type: 'object', additionalProperties: false, required: [...], properties: { <フィールド名>: { type: 'array', items: {...} } } }` 形の schema にする（模範実装: `promote-verify.js` の `VERIFY_SCHEMA`、`reduce-debt-scan.js` の `SCAN_SCHEMA`）
+- 配列そのものを返したい場合は、1プロパティ（例: `findings` / `verdicts`）へラップした `{ type: 'object', additionalProperties: false, required: [...], properties: { <フィールド名>: { type: 'array', items: {...} } } }` 形の schema にする（模範実装: `promote-verify.js` の `VERIFY_SCHEMA`）
 - 受け側コードも合わせて戻り値を配列としてではなく `{ <フィールド名>: [...] }` として受け取る（例: `const output = await agent(...); const findings = output.findings;` であり、`const findings = await agent(...);` ではない）点に注意する
 
 ## (j) エージェントの terminal 失敗（`agent()` が `null` を返す）の扱い
@@ -117,7 +117,7 @@ Dynamic Workflow スクリプトが `agent(prompt, { schema, ... })` に渡す J
 方針は null の性質によって使い分ける:
 
 - **収束・完全性の判定に関わる null**（レビュアー・批評レンズ・分解案生成・judge 等。そのステージの出力が欠けると全体の収束判定自体が信頼できなくなるもの）は**明示 throw** する（模範実装: `promote-verify.js` の `runContextStage`（Context フェーズ、受入基準抽出等の欠落を許さない））
-- **部分結果が有用な null**（fan-out したスキャンバケットの一部・懐疑者の一部。他の並列項目の結果は引き続き有用なもの）は、結果 JSON に明示フィールド（`meta.failedBuckets` / `finding.failed_verifiers` 等）で可視化し、残りの結果は握りつぶさずそのまま返す（模範実装: `reduce-debt-scan.js` の `scanStage`/`verifyStage`）
+- **部分結果が有用な null**（fan-out したスキャンバケットの一部・懐疑者の一部。他の並列項目の結果は引き続き有用なもの）は、結果 JSON に明示フィールド（`meta.failedBuckets` / `finding.failed_verifiers` 等）で可視化し、残りの結果は握りつぶさずそのまま返す
 
 ## (f) 実行時ファイルから docs/ 設計文書への参照禁止
 
