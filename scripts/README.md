@@ -1,6 +1,6 @@
 # scripts/ 共通規約
 
-`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が LLM 判断を要さない決定的な git/テキスト処理をループ内で呼び出す実例（Issue #44）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`mutation-run.sh` は `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が `agentType: 'claude-harness:git-ops'` 経由で呼び出す、PRレビューコメントの取得・返信・Resolved化を担う実例（Issue #48）。`ci-wait.sh` / `worktree-setup.sh` / `worktree-cleanup.sh` は para-impl の star型並列実装が呼び出す、CI待ち・worktree作成・worktree削除を担う実例（Issue #45・#105。`ci-wait.sh` は `ticket-worker` が、`worktree-setup.sh`/`worktree-cleanup.sh` はリード側スキルが呼ぶ。gh系スクリプトだが LLM 判断を挟まない決定的処理としてスキルフローから直接実行される）。
+`scripts/` 配下の gh 系（GitHub CLI を叩いて決定的な処理を行う）スクリプトが従う共通規約。最初の実例は `format-on-save.sh`（フック）と `extract-acceptance-criteria.sh`（gh 系スクリプト第1号）。後続スクリプトは本規約に従うこと。`check-e2e-traceability.sh` は `extract-acceptance-criteria.sh` の出力とテストケース設計のトレーサビリティ表JSONを突合する後続スクリプトの実例（gh を呼ばず jq のみで完結する純粋処理）。`collect-review-diff.sh` / `extract-hunk.sh` は、`/self-review`（`skills/self-review/SKILL.md`）が LLM 判断を要さない決定的な git/テキスト処理をレビューの各ラウンドで直接呼び出す実例（Issue #44・#107）。`spec-lint.sh` は同様のパターンで `skills/define-feature/scripts/spec-critique.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的チェックスクリプトの実例（Issue #51）。`mutation-run.sh` は `skills/explain-e2e/scripts/explain-e2e-verify.js`（Dynamic Workflow）が呼び出す、gh非依存の決定的な git/テスト実行スクリプトの実例（Issue #47）。`fetch-pr-comments.sh` / `reply-and-resolve.sh` は `skills/pr-review-respond/scripts/review-respond.js`（Dynamic Workflow）が `agentType: 'claude-harness:git-ops'` 経由で呼び出す、PRレビューコメントの取得・返信・Resolved化を担う実例（Issue #48）。`ci-wait.sh` / `worktree-setup.sh` / `worktree-cleanup.sh` は para-impl の star型並列実装が呼び出す、CI待ち・worktree作成・worktree削除を担う実例（Issue #45・#105。`ci-wait.sh` は `ticket-worker` が、`worktree-setup.sh`/`worktree-cleanup.sh` はリード側スキルが呼ぶ。gh系スクリプトだが LLM 判断を挟まない決定的処理としてスキルフローから直接実行される）。
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 
@@ -138,7 +138,7 @@ stdout JSON:
 
 ## collect-review-diff.sh / extract-hunk.sh の出力仕様（正本）
 
-`skills/self-review/scripts/self-review-loop.js`（Dynamic Workflow）が、レビューの各ラウンド開始時にこの2スクリプトを呼び出す（LLM 判断を要さない決定的な git/テキスト処理のため）。Workflow ランタイムは Node.js の組み込みモジュール（ファイルシステム操作・子プロセス起動等）にアクセスできないサンドボックスで実行されるため、スクリプト自身が直接実行することはできず、Bash ツールのみを持つ薄いシェル実行専用エージェント（`agentType: 'claude-harness:git-ops'`。`agents/git-ops.md`）を `agent()` 経由で呼び出して実行を委譲する（詳細は同スクリプト冒頭のコメントを参照）。
+`/self-review`（`skills/self-review/SKILL.md`）が、レビューの各ラウンド開始時にこの2スクリプトを Bash ツールで直接呼び出す（LLM 判断を要さない決定的な git/テキスト処理のため。Issue #107 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の直接実行に一本化した）。
 
 ### `scripts/collect-review-diff.sh [BASE]`
 

@@ -56,7 +56,7 @@ async function mockParallel(thunks) {
 }
 
 // merge-judge.js は懐疑者(finding-verifier)を1体ずつ逐次呼ぶ設計のため、pipeline() は
-// このスモークテストでは使わない（self-review-loop.js/reduce-debt-scan.js と異なりVerify
+// このスモークテストでは使わない（reduce-debt-scan.js と異なりVerify
 // フェーズで多数決のparallel fan-outを行わないため）が、workflow() のシグネチャ互換のため
 // 引数としては渡す（未使用なら何もしないダミーでよい）。
 async function mockPipeline(items, stage1, stage2) {
@@ -208,7 +208,7 @@ console.log('=== prompt injection: boundary marker forgery ===');
   );
 }
 
-// --- git-ops プロンプトのシェルクォート安全性規律（self-review-loop.js の回帰テストと同種） ---
+// --- git-ops プロンプトのシェルクォート安全性規律（git-ops を使う各 Workflow スクリプト共通の規律） ---
 console.log('=== git-ops prompts: shell single-quote escaping discipline is instructed ===');
 {
   const diffPrompt = buildGitOpsDiffPrompt(123);
@@ -637,8 +637,7 @@ console.log('=== default export: regression - a lens holding with zero concrete 
 
 // --- default export: 回帰テスト(label衝突) — 2レンズが同一(file,line)を別々の理由で
 //     blockerとして挙げた場合、Verify呼び出しのlabelが衝突せず、両方が個別にfinding-verifierへ
-//     渡ること（resume/キャッシュ識別の衝突回避。self-review-loop.jsのverify:${findingId}:${idx}
-//     パターンと同種の懸念）。 ---
+//     渡ること（resume/キャッシュ識別の衝突回避）。 ---
 console.log('=== default export: regression - duplicate (file,line) blockers from different lenses get distinct Verify labels ===');
 {
   const verifyLabels = [];

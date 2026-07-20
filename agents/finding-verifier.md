@@ -1,6 +1,6 @@
 ---
 name: finding-verifier
-description: "code-reviewer/design-reviewer が報告したレビュー指摘（severity: high かつレビュアー自身の verdict が PLAUSIBLE のもの）に対して懐疑的に反証を試みる際に使用。skills/self-review/scripts/self-review-loop.js が起動する Dynamic Workflow から `agentType: 'claude-harness:finding-verifier'` として呼び出され、3体並列・多数決の一角を担う（Issue #44）。diff起点のレビュー指摘/blocker型の懐疑者として、ファイル起点・CLAUDE.md照合型の `debt-verifier` とは反証観点が異なる。将来的に #49（懐疑者1体でのblocker検証）とも `agentType: 'claude-harness:finding-verifier'` で共用予定。"
+description: "code-reviewer/design-reviewer が報告したレビュー指摘（severity: high かつレビュアー自身の verdict が PLAUSIBLE のもの）に対して懐疑的に反証を試みる際に使用。`/self-review`（skills/self-review/SKILL.md）から Task ツールで `subagent_type: 'claude-harness:finding-verifier'` として3体並列 spawn され、多数決の一角を担う（Issue #44・#107）。skills/pr-merge/scripts/merge-judge.js・skills/promote-verify/scripts/promote-verify.js（いずれも Dynamic Workflow）からは blocker/基準1件ごとに1体だけ呼ばれる単一懐疑者設計で使われる。diff起点のレビュー指摘/blocker型の懐疑者として、ファイル起点・CLAUDE.md照合型の `debt-verifier` とは反証観点が異なる。"
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet
