@@ -61,8 +61,8 @@ function assertEq(description, expected, actual) {
 }
 
 // pipeline は review-respond.js が単一ステージ関数で呼ぶ形（pipeline(items, stage)）と
-// 複数ステージで呼ぶ形の両方に対応できる可変長引数のモックにする（self-review-loop.js/
-// reduce-debt-scan.js の2段固定モックと異なり、review-respond.js は1段呼び出しのため）。
+// 複数ステージで呼ぶ形の両方に対応できる可変長引数のモックにする（reduce-debt-scan.js の
+// 2段固定モックと異なり、review-respond.js は1段呼び出しのため）。
 async function mockPipeline(items, ...stages) {
   const out = [];
   for (let i = 0; i < items.length; i += 1) {

@@ -1,6 +1,6 @@
 ---
 name: git-ops
-description: "Dynamic Workflow（skills/self-review/scripts/self-review-loop.js 等）が、Workflowランタイムでは実行できないgit操作・シェルスクリプト実行（diff収集・hunk抽出）を委譲する薄いシェル実行専用エージェント。Workflowランタイムはnode:fs/node:child_processにアクセスできないため、判断を伴わない機械的なコマンド実行のみをこのエージェント経由でBashツールにより行う。"
+description: "Dynamic Workflow（skills/pr-merge/scripts/merge-judge.js 等）が、Workflowランタイムでは実行できないgit操作・シェルスクリプト実行（diff収集・hunk抽出等）を委譲する薄いシェル実行専用エージェント。Workflowランタイムはnode:fs/node:child_processにアクセスできないため、判断を伴わない機械的なコマンド実行のみをこのエージェント経由でBashツールにより行う。`/self-review` は #107 で Dynamic Workflow を廃止し、Task ツールによる直接委譲へ移行したため本エージェントを経由しない（呼び出し元自身がBashで直接git操作を実行する）。"
 tools: Bash
 model: sonnet
 # effort: 判断を伴わないコマンド実行専任のため low。

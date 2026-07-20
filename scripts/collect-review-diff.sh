@@ -1,13 +1,13 @@
 #!/bin/bash
 # collect-review-diff.sh
-# skills/self-review/scripts/self-review-loop.js（Dynamic Workflow）が
+# /self-review（skills/self-review/SKILL.md）が
 # Review/Verify 各周の直前に呼び出す決定的スクリプト。
 # BASE解決 → merge-base算出 → 未追跡ファイルのintent-to-add登録 →
 # 作業ツリー込みdiffの採取までを担う。
 #
 # クリティカル設計決定（Issue #44 コメント2, 2026-07-18 ユーザー承認済み）:
 #   レビュー対象diffの基準は「merge-base → 作業ツリー」に統一する。
-#   修正エージェントはコミットしない設計のため、self-review-loop.js は毎周
+#   修正エージェントはコミットしない設計のため、/self-review は毎周
 #   本スクリプトを呼び直し、行番号のズレを前提として同一周回内のdiffスナップショット
 #   のみを hunk 抽出（extract-hunk.sh）の基準にする。
 #   コミット済み状態ではHEAD基準と同値になるため、未コミット経路

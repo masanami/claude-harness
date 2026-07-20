@@ -1,6 +1,6 @@
 #!/bin/bash
 # extract-hunk.sh
-# skills/self-review/scripts/self-review-loop.js の Verify フェーズが、finding の
+# /self-review（skills/self-review/SKILL.md）の Step 3（懐疑的検証）が、finding の
 # {file, line} から該当 diff hunk（＋前後N行）を切り出すために呼び出す決定的スクリプト。
 # 懐疑者（finding-verifier）3体×指摘数に全diffを配る事態を構造的に避けるための入力スライス。
 #
