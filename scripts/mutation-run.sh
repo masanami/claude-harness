@@ -1,7 +1,7 @@
 #!/bin/bash
 # mutation-run.sh
-# skills/explain-e2e/scripts/explain-e2e-verify.js（Dynamic Workflow）の Mutation ステージが、
-# git-ops エージェント経由で呼び出す決定的スクリプト（Issue #47）。
+# skills/explain-e2e/SKILL.md Phase 2 の Mutation 段階から、呼び出し元自身が
+# Bash ツールで直接呼び出す決定的スクリプト（Issue #47・#114）。
 #
 # 背景: 従来の /explain-e2e Step 2-3（ミューテーション検証）は「注入→テスト実行→
 # git checkout -- による復元→復元確認の再実行」という4段の手順をLLMの規律だけに
@@ -39,8 +39,8 @@
 # 出力（stdout にJSON1個）:
 #   {"testFailed": bool, "failureKind": "assertion"|"other"|"none", "restored": bool, "rePassed": bool}
 #
-# 終了コード（呼び出し側=Dynamic Workflow が「JSON上の自己申告」と「実際の終了コード」を
-# 突き合わせて幻覚報告を検出できるよう、JSON内容と独立に意味を持たせる）:
+# 終了コード（呼び出し側（/explain-e2e の SKILL.md Phase 2）が「JSON上の自己申告」と
+# 「実際の終了コード」を突き合わせて不整合を検出できるよう、JSON内容と独立に意味を持たせる）:
 #   0  restored && rePassed（復元・再パスとも確認できた「安全な」状態）
 #   1  restored/rePassed のいずれかが false（要人間介入。前段の真の異常系
 #      ＝クリーン確認失敗・引数不正・非gitリポジトリ等も同じ1で終了するが、

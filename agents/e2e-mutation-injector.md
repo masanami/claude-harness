@@ -1,9 +1,9 @@
 ---
 name: e2e-mutation-injector
-description: "explain-e2e の Phase 2（独立検証）Mutation ステージが、重要フローのE2Eテストに対して意味のある不具合を1箇所注入する際に使用する。skills/explain-e2e/scripts/explain-e2e-verify.js（Dynamic Workflow）から `agentType: 'claude-harness:e2e-mutation-injector'` として、対象テストごとに逐次（並列にしない）起動される（Issue #47）。注入以外の全手順（テスト実行・失敗判定・`git checkout --` による復元・復元確認・再実行パス確認）は `scripts/mutation-run.sh` に決定化されており、このエージェントの責務は「意味のある変異点を選んで Edit する」ことだけに縮小されている。"
+description: "explain-e2e の Phase 2（独立検証）Mutation ステージが、重要フローのE2Eテストに対して意味のある不具合を1箇所注入する際に使用する。`skills/explain-e2e/SKILL.md` Phase 2 の Mutation 段階から、Task ツールで `subagent_type: 'claude-harness:e2e-mutation-injector'` として、対象テストごとに逐次（並列にしない）起動される（Issue #47・#114）。注入以外の全手順（テスト実行・失敗判定・`git checkout --` による復元・復元確認・再実行パス確認）は `scripts/mutation-run.sh` に決定化されており、このエージェントの責務は「意味のある変異点を選んで Edit する」ことだけに縮小されている。"
 # tools: 変異点の特定（Read/Grep/Glob）とEditのみ。テスト実行・復元・コミット等の
-# 決定的な手順は git-ops 経由で mutation-run.sh に委譲されるため Bash は持たせない
-# （呼び出し元ワークフローが git-ops を別途呼ぶ設計。Issue #47）。
+# 決定的な手順は呼び出し元（/explain-e2e の SKILL.md Phase 2）が mutation-run.sh を
+# 直接Bash実行することで担うため、このエージェント自身にBashは持たせない（Issue #47・#114）。
 tools: Read, Grep, Glob, Edit
 model: sonnet
 # effort: 「1箇所だけ意味のある変異を選んでEditする」に責務が縮小されているため low
