@@ -123,7 +123,7 @@ Issue/PRが対象なのに `check-e2e-traceability.sh` が `status: no_criteria`
 ## 次のステップ: テストシナリオ解説と独立検証
 
 **Phase 3 で全テストがパスした状態**になったら、レビュー用に **`/explain-e2e`** を実行する（テスト失敗が残る場合は修正・再実行してパスさせてから進む）。
-このスキルは、人間がコードを読まずにE2Eをレビューできるよう「テストシナリオ解説」（Phase 1）と「独立検証」（Phase 2）の2層を提供する。Phase 1 は**メインセッションで対話的に**、Phase 2 は **Dynamic Workflow による自動検証**として実施する。
+このスキルは、人間がコードを読まずにE2Eをレビューできるよう「テストシナリオ解説」（Phase 1）と「独立検証」（Phase 2）の2層を提供する。Phase 1 は**メインセッションで対話的に**、Phase 2 は **Task ツールによる直接委譲**（e2e-explanation-verifier の並列 fan-out と e2e-mutation-injector の逐次実行）として実施する。
 
 `e2e-engineer` に委譲していた場合は、メインに戻ってから `/explain-e2e` を実行する。その際、e2e-engineer の返却内容（テストファイル一覧・実行結果・トレーサビリティ表）を `/explain-e2e` の入力コンテキストとして渡す。
 
