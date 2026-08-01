@@ -187,10 +187,71 @@ assert_eq "コメント行・空行を除外して2件" "2" "$(printf '%s\n' "$L
 assert_eq "1件目がfoo/*" "foo/*" "$(printf '%s\n' "$LOADED_PATTERNS" | sed -n '1p')"
 rm -f "$TMP_CONFIG"
 
+echo "=== test: load_sensitive_patterns — 設定ファイル不在時は明示エラー ==="
+# 設定ファイルはスクリプトと同一プラグイン内に同梱されており、欠損＝インストール破損
+# なのでフォールバックせず、stderrにファイルパスを含むエラーを出し非0 exitする
+# （Issue #129: 内蔵フォールバック複製の廃止）。
 NONEXISTENT_CONFIG="/tmp/does-not-exist-$$-sensitive-paths.txt"
-FALLBACK_PATTERNS="$(load_sensitive_patterns "$NONEXISTENT_CONFIG")"
-assert_eq "設定ファイル不在時は内蔵デフォルトにフォールバック" \
-  "${#DEFAULT_SENSITIVE_PATTERNS[@]}" "$(printf '%s\n' "$FALLBACK_PATTERNS" | grep -c .)"
+if MISSING_CONFIG_OUTPUT=$(load_sensitive_patterns "$NONEXISTENT_CONFIG" 2>&1); then
+  MISSING_CONFIG_RC=0
+else
+  MISSING_CONFIG_RC=$?
+fi
+assert_eq "設定ファイル不在時は非0 exit" \
+  "true" "$([ "$MISSING_CONFIG_RC" -ne 0 ] && echo true || echo false)"
+assert_eq "設定ファイル不在時はstderrにファイルパスを含むエラーメッセージ" \
+  "true" "$(printf '%s' "$MISSING_CONFIG_OUTPUT" | grep -qF "$NONEXISTENT_CONFIG" && echo true || echo false)"
+
+echo "=== test: load_sensitive_patterns — 有効なパターンが0件(全行コメント)でも成功する ==="
+# grep はマッチ0件のとき exit 1 を返すが、ファイルが存在しコメント/空行しか無いケースは
+# ファイル欠損とは異なり正常系（有効なパターン0件という設定）として扱うべき。grep の exit code を
+# そのまま関数の戻り値にすると、この正常系が誤ってエラー扱いされてしまう回帰を防ぐ
+# （セルフレビュー指摘: Issue #129）。あわせて、パターン0件は検出の全面無効化に繋がるため
+# stderr へ Warning を出すことも確認する（2周目セルフレビュー指摘）。
+EMPTY_PATTERNS_CONFIG="$(mktemp)"
+cat >"$EMPTY_PATTERNS_CONFIG" <<'EOF'
+# all commented
+# no real patterns
+EOF
+EMPTY_PATTERNS_STDERR_FILE="$(mktemp)"
+if EMPTY_PATTERNS_OUTPUT=$(load_sensitive_patterns "$EMPTY_PATTERNS_CONFIG" 2>"$EMPTY_PATTERNS_STDERR_FILE"); then
+  EMPTY_PATTERNS_RC=0
+else
+  EMPTY_PATTERNS_RC=$?
+fi
+assert_eq "全行コメントの設定ファイルは成功(exit 0)扱いになる" "0" "$EMPTY_PATTERNS_RC"
+assert_eq "全行コメントの設定ファイルは出力が空文字列" \
+  "true" "$([ -z "$EMPTY_PATTERNS_OUTPUT" ] && echo true || echo false)"
+assert_eq "全行コメントの設定ファイルはstderrにWarningを出す" \
+  "true" "$(grep -qF "$EMPTY_PATTERNS_CONFIG" "$EMPTY_PATTERNS_STDERR_FILE" && echo true || echo false)"
+rm -f "$EMPTY_PATTERNS_CONFIG" "$EMPTY_PATTERNS_STDERR_FILE"
+
+echo "=== test: load_sensitive_patterns — grep自体が失敗(exit>=2)した場合は非0 exitで伝播する ==="
+# 権限拒否等のgrep実エラー(exit 2)を再現するため、chmod依存(root実行では偽passになりうる。
+# test-generate-settings.shのmv失敗テストと同じ理由で避ける)ではなく、PATH経由でgrep自体を
+# スタブして決定的に再現する。マッチ0件(exit 1)のみを正常系として許容し、それ以外の非0は
+# 失敗として伝播することを確認する（`|| true` で全ての非0を握りつぶすと、読み取り失敗時も
+# sensitive判定が黙って無効化される回帰を防ぐ）。
+GREP_FAIL_BIN_DIR="$(mktemp -d)"
+cat > "${GREP_FAIL_BIN_DIR}/grep" <<'EOF'
+#!/bin/sh
+echo "grep: fake permission denied" >&2
+exit 2
+EOF
+chmod +x "${GREP_FAIL_BIN_DIR}/grep"
+GREP_FAIL_CONFIG="$(mktemp)"
+echo "foo/*" > "$GREP_FAIL_CONFIG"
+if GREP_FAIL_OUTPUT=$(PATH="${GREP_FAIL_BIN_DIR}:${PATH}" load_sensitive_patterns "$GREP_FAIL_CONFIG" 2>&1); then
+  GREP_FAIL_RC=0
+else
+  GREP_FAIL_RC=$?
+fi
+assert_eq "grep自体の実エラー(exit>=2)は非0 exitとして伝播する" \
+  "true" "$([ "$GREP_FAIL_RC" -ne 0 ] && echo true || echo false)"
+assert_eq "grep自体の実エラー時はstderrにファイルパスを含むエラーメッセージ" \
+  "true" "$(printf '%s' "$GREP_FAIL_OUTPUT" | grep -qF "$GREP_FAIL_CONFIG" && echo true || echo false)"
+rm -rf "$GREP_FAIL_BIN_DIR"
+rm -f "$GREP_FAIL_CONFIG"
 
 echo "=== test: 実際の scripts/config/sensitive-paths.txt を読み込める ==="
 # SENSITIVE_PATHS_CONFIG は pr-merge-preflight.sh を source した時点で
@@ -200,10 +261,6 @@ assert_eq "設定ファイルが存在する" "0" "$([ -f "$SENSITIVE_PATHS_CONF
 REAL_PATTERNS="$(load_sensitive_patterns "$SENSITIVE_PATHS_CONFIG")"
 assert_eq "設定ファイルから1件以上のパターンが読める" \
   "true" "$([ "$(printf '%s\n' "$REAL_PATTERNS" | grep -c .)" -gt 0 ] && echo true || echo false)"
-
-DEFAULT_PATTERNS_JOINED="$(printf '%s\n' "${DEFAULT_SENSITIVE_PATTERNS[@]}")"
-assert_eq "設定ファイルと内蔵デフォルトが完全一致（順序・件数含む）" \
-  "$DEFAULT_PATTERNS_JOINED" "$REAL_PATTERNS"
 
 # =============================================================================
 echo "=== test: poll_for_reviews（sleepを実際に待たず、フェッチをスタブしてループ制御を検証） ==="
@@ -324,9 +381,47 @@ rm -f "$CHECKS_CALL_COUNT_FILE" "$RECHECK_CALL_COUNT_FILE"
 unset -f fetch_default_branch fetch_pr_view fetch_pr_reviews_only fetch_pr_checks fetch_pr_recheck fetch_pr_review_decision
 
 # =============================================================================
+echo "=== test: main() — sensitive-paths.txt欠損時はfail-fastで非0 exit(gh呼び出し前に検出) ==="
+# =============================================================================
+# load_sensitive_patterns の非0 exitを main() 側が検知して即exitすること、かつその検知が
+# 最大約10分かかりうる外部レビュー待機ポーリングや他のgh呼び出しより前（fail-fast）で
+# 行われることを検証する（セルフレビュー指摘: Issue #129。設定ファイル欠損はPR番号にも
+# リモート状態にも依存しない静的な前提条件のため、待機の末に失敗させるべきではない）。
+
+MAIN_FAILFAST_CALLED_FILE="$(mktemp)"
+rm -f "$MAIN_FAILFAST_CALLED_FILE"
+# shellcheck disable=SC2329  # main から呼ばれてはいけないことを検証するためのスタブ
+fetch_default_branch() {
+  touch "$MAIN_FAILFAST_CALLED_FILE"
+  printf 'main'
+}
+
+MISSING_SENSITIVE_CONFIG="/tmp/does-not-exist-$$-main-sensitive.txt"
+SAVED_SENSITIVE_PATHS_CONFIG="$SENSITIVE_PATHS_CONFIG"
+SENSITIVE_PATHS_CONFIG="$MISSING_SENSITIVE_CONFIG"
+
+MAIN_FAILFAST_STDERR_FILE="$(mktemp)"
+MAIN_FAILFAST_STDOUT="$(main "123" 0 2>"$MAIN_FAILFAST_STDERR_FILE")"
+MAIN_FAILFAST_RC=$?
+
+SENSITIVE_PATHS_CONFIG="$SAVED_SENSITIVE_PATHS_CONFIG"
+
+assert_eq "main(): sensitive-paths.txt欠損時は非0 exit" \
+  "true" "$([ "$MAIN_FAILFAST_RC" -ne 0 ] && echo true || echo false)"
+assert_eq "main(): sensitive-paths.txt欠損時はstdoutが空(JSON結果を返さない)" \
+  "true" "$([ -z "$MAIN_FAILFAST_STDOUT" ] && echo true || echo false)"
+assert_eq "main(): sensitive-paths.txt欠損時はstderrにファイルパスを含む" \
+  "true" "$(grep -qF "$MISSING_SENSITIVE_CONFIG" "$MAIN_FAILFAST_STDERR_FILE" && echo true || echo false)"
+assert_eq "main(): sensitive-paths.txt欠損時はfetch_default_branch(gh呼び出し)より前にfail-fastする" \
+  "true" "$([ ! -f "$MAIN_FAILFAST_CALLED_FILE" ] && echo true || echo false)"
+
+rm -f "$MAIN_FAILFAST_STDERR_FILE" "$MAIN_FAILFAST_CALLED_FILE"
+unset -f fetch_default_branch
+
+# =============================================================================
 echo "=== test: main() 内の fetch_pr_checks 呼び出し合成(warn_on_empty=1)の回帰テスト ==="
 # =============================================================================
-# L395 の `fetch_pr_checks "$pr_num" 1` という呼び出し側の引数合成
+# main() 内の `fetch_pr_checks "$pr_num" 1` という呼び出し側の引数合成
 # （warn_on_empty=1。「preflight だけが空/失敗時に stderr Warning を出す」挙動の唯一の
 # 根拠）を固定する。fetch_pr_checks 自体はモックせず、scripts/lib/common.sh の実装を
 # そのまま通す経路で検証する（直前ブロックの `unset -f fetch_pr_checks` により関数定義
