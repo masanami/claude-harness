@@ -23,10 +23,11 @@ effort: medium
 
 ## 採点ルーブリック（粒度基準）
 
-<!-- 粒度基準の正本は agents/ticket-decomposer.md。ここは採点に必要な実務上の複製（decompose-mode.md からの二重管理は禁止。詳細は skills/create-ticket/references/decompose-mode.md）。正本を更新した場合はこちらも合わせて更新すること -->
+<!-- 粒度基準の正本は agents/ticket-decomposer.md。ここは採点に必要な実務上の複製（decompose-mode.md からの二重管理は禁止。詳細は skills/create-ticket/references/decompose-mode.md）。同期のドリフトはテストスクリプト `test-skeptic-discipline.sh`（scripts/tests/ 配下）が機械検出する -->
 
 各候補案・および自分が合成する最終計画のタスクは、以下を満たす粒度であることを採点基準とする:
 
+<!-- granularity-criteria:start -->
 - 1人のAIエージェントが独立して完結できる
 - 1つのPRで完了できる
 - 明確な完了条件（受入基準）がある
@@ -47,6 +48,7 @@ effort: medium
 
 - 「型インターフェースの定義」（他と一緒にできる）
 - 「ボタンの色を変更」（単独PRにするほどでない）
+<!-- granularity-criteria:end -->
 
 ## 事実として受け取るもの（再計算しないこと）
 
