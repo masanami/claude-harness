@@ -40,6 +40,12 @@
 
 set -u
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
+}
+
 # 変数名は source する側（テストファイル等）の SCRIPT_DIR と衝突しないよう
 # このスクリプト専用の名前にしている（source すると同名グローバル変数は上書きされるため）。
 PR_MERGE_PREFLIGHT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,16 +70,6 @@ DEFAULT_SENSITIVE_PATTERNS=(
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-60}"
 POLL_SLEEP_CMD="${POLL_SLEEP_CMD:-sleep}"
 DEFAULT_TIMEOUT_SECONDS=600
-
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
-}
 
 # ---------------------------------------------------------------------------
 # gh 呼び出し（外部作用あり）
@@ -115,22 +111,8 @@ fetch_pr_view() {
   printf '%s' "$output"
 }
 
-# CI チェック結果を取得する。
-# gh pr checks は CI が pending/fail の場合に非0 exitを返す仕様のため、
-# exit code ではなく stdout が有効なJSON配列かどうかで成否を判定する
-# （非0 exit = 失敗、とは限らないため）。
-# チェックが1件も無い/取得できない場合は空配列を返す（非致命）。
-fetch_pr_checks() {
-  local pr_num="$1"
-  local output
-  output=$(gh pr checks "$pr_num" --json name,state,bucket,description,workflow,link 2>/dev/null)
-  if [ -z "$output" ] || ! jq -e 'type == "array"' <<<"$output" >/dev/null 2>&1; then
-    echo "Warning: no CI checks data available for PR #${pr_num} (no checks configured, or fetch failed)" >&2
-    printf '[]'
-    return 0
-  fi
-  printf '%s' "$output"
-}
+# fetch_pr_checks は lib/common.sh（scripts/lib/common.sh）に集約（ci-wait.sh と同じ実装。
+# ここでは warn_on_empty=1 を渡し、取得失敗/空の際に Warning を出す元の挙動を維持する）。
 
 # ポーリングループ用の軽量な reviews 再取得。
 fetch_pr_reviews_only() {
@@ -203,7 +185,7 @@ determine_ci_status() {
     echo "none"
     return
   fi
-  if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<<"$checks_json" >/dev/null 2>&1; then
+  if jq -e "any(.[]; ${JQ_FAIL_CANCEL_PREDICATE})" <<<"$checks_json" >/dev/null 2>&1; then
     echo "fail"
     return
   fi
@@ -237,7 +219,7 @@ judge_blocking() {
     blocking="true"
   fi
 
-  if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<<"$checks_json" >/dev/null 2>&1; then
+  if jq -e "any(.[]; ${JQ_FAIL_CANCEL_PREDICATE})" <<<"$checks_json" >/dev/null 2>&1; then
     reasons=$(jq -c '. + ["ci_failed"]' <<<"$reasons")
     blocking="true"
   fi
@@ -410,7 +392,7 @@ main() {
   # 再取得する（ポーリング中にCIが完了したり、他の変更でmergeableやfilesが変わったりする場合、
   # ポーリング開始前の古いスナップショットのまま judge_blocking / risk算出に渡ってしまうため）。
   local checks_json
-  checks_json="$(fetch_pr_checks "$pr_num")"
+  checks_json="$(fetch_pr_checks "$pr_num" 1)"
 
   local ci_status
   ci_status="$(determine_ci_status "$checks_json")"

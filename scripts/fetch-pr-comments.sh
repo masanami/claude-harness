@@ -56,14 +56,10 @@
 
 set -u
 
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
 
 # author login からボット判定を行う純粋関数（gh を呼ばない）。
@@ -90,22 +86,7 @@ is_bot_author() {
 
 # --- gh を呼ぶ取得系関数 ---
 
-# owner/repo をリポジトリ設定から解決する。
-# 結果: REPO_OWNER, REPO_NAME
-resolve_repo() {
-  local json
-  if ! json=$(gh repo view --json owner,name 2>/dev/null); then
-    echo "Error: failed to resolve owner/repo via gh repo view" >&2
-    return 1
-  fi
-  REPO_OWNER=$(jq -r '.owner.login' <<<"$json")
-  REPO_NAME=$(jq -r '.name' <<<"$json")
-  if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ]; then
-    echo "Error: could not parse owner/repo from gh repo view output" >&2
-    return 1
-  fi
-  return 0
-}
+# resolve_repo は lib/common.sh（scripts/lib/common.sh）に集約。
 
 # 引数: PR番号
 # 戻り値: stdout に `gh pr view --json reviews` の生JSON
