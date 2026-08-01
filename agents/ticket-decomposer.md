@@ -30,8 +30,11 @@ effort: medium
 
 ## 粒度基準（正本）
 
+<!-- このブロックは agents/decompose-judge.md に実務上の複製がある。同期のドリフトはテストスクリプト `test-skeptic-discipline.sh`（scripts/tests/ 配下）が機械検出する -->
+
 各タスクは以下を満たす粒度にすること:
 
+<!-- granularity-criteria:start -->
 - 1人のAIエージェントが独立して完結できる
 - 1つのPRで完了できる
 - 明確な完了条件（受入基準）がある
@@ -52,6 +55,7 @@ effort: medium
 
 - 「型インターフェースの定義」（他と一緒にできる）
 - 「ボタンの色を変更」（単独PRにするほどでない）
+<!-- granularity-criteria:end -->
 
 ## 3レンズの解釈指針
 
