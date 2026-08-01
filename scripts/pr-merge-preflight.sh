@@ -16,20 +16,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
 PR_MERGE_PREFLIGHT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SENSITIVE_PATHS_CONFIG="${PR_MERGE_PREFLIGHT_DIR}/config/sensitive-paths.txt"
 
-# sensitive-paths.txt が存在しない場合の内蔵デフォルト（同ファイルの内容と同期させる）。
-DEFAULT_SENSITIVE_PATTERNS=(
-  ".github/workflows/*"
-  "*secret*"
-  "*credential*"
-  "*.pem"
-  "*.key"
-  "*.env"
-  "scripts/*"
-  "CLAUDE.md"
-  ".claude/settings.json"
-  ".claude/settings.local.json"
-)
-
 # 外部レビュー待機ポーリングの既定値。
 # 既存 SKILL.md Phase 1 の仕様（60秒間隔・最大10回・最大約10分）を踏襲する。
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-60}"
@@ -254,15 +240,37 @@ build_risk_json() {
 }
 
 # sensitive パターン一覧を返す（改行区切り文字列）。
-# config_path が存在すればそれを読み、コメント行(#)・空行を除外する。
-# 存在しなければ内蔵デフォルトにフォールバックする。
+# config_path を読み、コメント行(#)・空行を除外する。
+# この設定ファイルはスクリプトと同一プラグイン内に同梱されており、欠損＝インストール破損
+# なのでフォールバックせず、stderrにファイルパスを含むエラーを出して非0 exitする
+# （内蔵デフォルトへのフォールバックは行わない。古い内蔵コピーが黙って使われる方が
+#  機微パス検出漏れとして危険なため。Issue #129）。
 load_sensitive_patterns() {
   local config_path="$1"
-  if [ -f "$config_path" ]; then
-    grep -vE '^[[:space:]]*(#|$)' "$config_path"
-  else
-    printf '%s\n' "${DEFAULT_SENSITIVE_PATTERNS[@]}"
+  if [ ! -f "$config_path" ]; then
+    echo "Error: sensitive paths config file not found: ${config_path} (installation broken - this file should be bundled with the plugin)" >&2
+    return 1
   fi
+  local result grep_rc
+  result="$(grep -vE '^[[:space:]]*(#|$)' "$config_path")"
+  grep_rc=$?
+  # grep はマッチ0件（全行コメント/空ファイル）の場合に exit 1 を返すが、これはファイル欠損とは
+  # 異なる正常系（有効パターン0件）として扱う。exit 1 のみを許容し、それ以外の非0
+  # （例: exit 2 = 読み取り権限が無い等の実エラー）は失敗として伝播させる（セルフレビュー指摘:
+  # `|| true` で全ての非0を握りつぶすと、読み取り失敗時もsensitive判定が黙って無効化されるため）。
+  if [ "$grep_rc" -gt 1 ]; then
+    echo "Error: failed to read sensitive paths config file: ${config_path} (grep exit code ${grep_rc})" >&2
+    return 1
+  fi
+  # 有効なパターンが0件（全行コメント/空ファイル）の場合、compute_touches_sensitive は常にfalseを
+  # 返しsensitiveパス検出が全面的に無効化される。ファイル欠損ではないためエラーにはしないが、
+  # 黙って無効化されたままにしないよう警告する（セルフレビュー指摘: Issue #129が排除しようとした
+  # 「検出が黙って無効化される」状態と同種のため）。
+  if [ -z "$result" ]; then
+    echo "Warning: sensitive paths config file has no valid patterns (all commented/blank): ${config_path} (sensitive path detection will be disabled)" >&2
+  fi
+  printf '%s' "$result"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -332,6 +340,16 @@ main() {
     exit 1
   fi
 
+  # sensitive パターン設定ファイルの読み込みは PR番号にもリモート状態にも依存しない
+  # 静的な前提条件（欠損＝インストール破損）のため、最大約10分かかりうる外部レビュー
+  # 待機ポーリングやその他の gh 呼び出しより前に fail-fast する（セルフレビュー指摘:
+  # Issue #129。ポーリング後まで検出が遅延すると、インストール破損時に無駄な待機の末に
+  # 失敗するUXになってしまうため）。
+  local patterns
+  if ! patterns="$(load_sensitive_patterns "$SENSITIVE_PATHS_CONFIG")"; then
+    exit 1
+  fi
+
   local default_branch
   if ! default_branch="$(fetch_default_branch)"; then
     exit 1
@@ -392,8 +410,7 @@ main() {
   deletions="$(jq -r '.deletions // 0' <<<"$recheck_json")"
   changed_files="$(jq -r '.changedFiles // 0' <<<"$recheck_json")"
 
-  local patterns touches_sensitive risk_json
-  patterns="$(load_sensitive_patterns "$SENSITIVE_PATHS_CONFIG")"
+  local touches_sensitive risk_json
   touches_sensitive="$(compute_touches_sensitive "$files_json" "$patterns")"
   risk_json=$(build_risk_json "$changed_files" "$insertions" "$deletions" "$touches_sensitive")
 

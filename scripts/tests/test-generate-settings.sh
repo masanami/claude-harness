@@ -106,7 +106,9 @@ assert_true "Dockerfile 検出値(analyze-project.sh形式)でもdocker権限が
 assert_eq "infra指定なしでは空配列" "[]" "$(gs_infra_allow_json "")"
 
 # ============================================================
-# gs_load_base_deny_json: base-deny.json 正本の読み込みとフォールバックの整合
+# gs_load_base_deny_json: base-deny.json 正本の読み込みと、欠損/不正時の明示エラー
+# （Issue #129: 内蔵フォールバック複製の廃止。base-deny.jsonはスクリプトと同一プラグイン内に
+#  同梱されており、欠損＝インストール破損なのでフォールバックせず明示エラーとする）
 # ============================================================
 echo "=== test: gs_load_base_deny_json ==="
 TGS_BASE_DENY_FILE="${TGS_TEST_DIR}/../../skills/init-project/scripts/base-deny.json"
@@ -114,28 +116,61 @@ assert_true "base-deny.json が存在する" "$([ -f "$TGS_BASE_DENY_FILE" ] && 
 FROM_FILE="$(gs_load_base_deny_json "$(dirname "$TGS_BASE_DENY_FILE")")"
 assert_eq "gs_load_base_deny_json はbase-deny.jsonの内容をそのまま返す" \
   "$(jq -cS '.' "$TGS_BASE_DENY_FILE")" "$(jq -cS '.' <<<"$FROM_FILE")"
-# フォールバック(gs_fallback_base_deny_json)がbase-deny.jsonと内容drift していないことを保証する。
-# (base-deny.jsonが読めない場合に備えたスクリプト内蔵の第二の正本のため、
-#  片方だけ更新されるドリフトをここで検知する)
-assert_eq "フォールバックdenyはbase-deny.jsonと内容が一致する(drift防止)" \
-  "$(jq -cS '.' "$TGS_BASE_DENY_FILE")" "$(jq -cS '.' <<<"$(gs_fallback_base_deny_json)")"
 
-# base-deny.json が破損/不正形式(スキーマ違反)の場合は、有効なJSONであっても
-# フォールバックへ degrade することを確認する（CodeRabbit Major指摘: 有効なJSONでも
-# 型が契約と異なると下流のjqが失敗し、既存設定の空ファイル化に繋がりうるため）。
+# base-deny.json が存在しないディレクトリを渡した場合は、stderrにファイルパスを含む
+# エラーを出して非0 exitする（フォールバックしない）。
+TGS_MISSING_DENY_DIR="${TGS_TMP_DIR}/missing-deny"
+mkdir -p "$TGS_MISSING_DENY_DIR"
+if MISSING_DENY_OUTPUT=$(gs_load_base_deny_json "$TGS_MISSING_DENY_DIR" 2>&1); then
+  MISSING_DENY_RC=0
+else
+  MISSING_DENY_RC=$?
+fi
+assert_true "gs_load_base_deny_json: base-deny.jsonが存在しない場合は非0 exit" \
+  "$([ "$MISSING_DENY_RC" -ne 0 ] && echo true || echo false)"
+assert_true "gs_load_base_deny_json: base-deny.json不在時はstderrにファイルパスを含むエラー" \
+  "$(printf '%s' "$MISSING_DENY_OUTPUT" | grep -qF "${TGS_MISSING_DENY_DIR}/base-deny.json" && echo true || echo false)"
+
+# base-deny.json が破損/不正形式(スキーマ違反)の場合も、有効なJSONであっても
+# フォールバックへdegradeせず明示エラーで非0 exitすることを確認する（CodeRabbit Major指摘:
+# 有効なJSONでも型が契約と異なると下流のjqが失敗し、既存設定の空ファイル化に繋がりうるため）。
 TGS_BAD_DENY_DIR="${TGS_TMP_DIR}/bad-deny-object"
 mkdir -p "$TGS_BAD_DENY_DIR"
 echo '{"not":"an array"}' > "${TGS_BAD_DENY_DIR}/base-deny.json"
-BAD_DENY_RESULT_OBJ="$(gs_load_base_deny_json "$TGS_BAD_DENY_DIR")"
-assert_eq "gs_load_base_deny_json: オブジェクト形式のbase-deny.jsonはフォールバックにdegradeする" \
-  "$(jq -cS '.' <<<"$(gs_fallback_base_deny_json)")" "$(jq -cS '.' <<<"$BAD_DENY_RESULT_OBJ")"
+if BAD_DENY_OUTPUT_OBJ=$(gs_load_base_deny_json "$TGS_BAD_DENY_DIR" 2>&1); then
+  BAD_DENY_RC_OBJ=0
+else
+  BAD_DENY_RC_OBJ=$?
+fi
+assert_true "gs_load_base_deny_json: オブジェクト形式のbase-deny.jsonは非0 exit" \
+  "$([ "$BAD_DENY_RC_OBJ" -ne 0 ] && echo true || echo false)"
+assert_true "gs_load_base_deny_json: オブジェクト形式の場合stderrにファイルパスを含むエラー" \
+  "$(printf '%s' "$BAD_DENY_OUTPUT_OBJ" | grep -qF "${TGS_BAD_DENY_DIR}/base-deny.json" && echo true || echo false)"
 
 TGS_BAD_DENY_DIR2="${TGS_TMP_DIR}/bad-deny-nonstring"
 mkdir -p "$TGS_BAD_DENY_DIR2"
 echo '["ok", 1, 2]' > "${TGS_BAD_DENY_DIR2}/base-deny.json"
-BAD_DENY_RESULT_NONSTR="$(gs_load_base_deny_json "$TGS_BAD_DENY_DIR2")"
-assert_eq "gs_load_base_deny_json: 要素に非文字列を含む配列はフォールバックにdegradeする" \
-  "$(jq -cS '.' <<<"$(gs_fallback_base_deny_json)")" "$(jq -cS '.' <<<"$BAD_DENY_RESULT_NONSTR")"
+if BAD_DENY_OUTPUT_NONSTR=$(gs_load_base_deny_json "$TGS_BAD_DENY_DIR2" 2>&1); then
+  BAD_DENY_RC_NONSTR=0
+else
+  BAD_DENY_RC_NONSTR=$?
+fi
+assert_true "gs_load_base_deny_json: 要素に非文字列を含む配列は非0 exit" \
+  "$([ "$BAD_DENY_RC_NONSTR" -ne 0 ] && echo true || echo false)"
+assert_true "gs_load_base_deny_json: 非文字列要素を含む場合stderrにファイルパスを含むエラー" \
+  "$(printf '%s' "$BAD_DENY_OUTPUT_NONSTR" | grep -qF "${TGS_BAD_DENY_DIR2}/base-deny.json" && echo true || echo false)"
+
+# エラーJSON（{"status":"error","error":"..."}）はファイルパスを jq --arg で安全に埋め込んでいる
+# ことを確認する。printf '%s' での直接埋め込みだと、パスに二重引用符が含まれる場合に
+# 不正なJSONを生成してしまう（セルフレビュー指摘: Issue #129）。
+TGS_QUOTE_DIR_PARENT="${TGS_TMP_DIR}/quote-parent"
+mkdir -p "$TGS_QUOTE_DIR_PARENT"
+TGS_QUOTE_DIR="${TGS_QUOTE_DIR_PARENT}/dir with \"quote\""
+mkdir -p "$TGS_QUOTE_DIR"
+QUOTE_OUTPUT="$(gs_load_base_deny_json "$TGS_QUOTE_DIR" 2>&1 || true)"
+QUOTE_JSON_LINE="$(printf '%s\n' "$QUOTE_OUTPUT" | grep '^{' | tail -1)"
+assert_true "gs_load_base_deny_json: パスに二重引用符を含んでもエラーJSONは有効なJSONのまま" \
+  "$(jq -e . >/dev/null 2>&1 <<<"$QUOTE_JSON_LINE" && echo true || echo false)"
 
 # ============================================================
 # gs_validate_settings_schema: JSON境界のスキーマ検証(構文だけでなく型契約を検証)
@@ -306,6 +341,29 @@ assert_eq "既存targetのスキーマ不正時は元のファイルを書き換
   "$TGS_ORIGINAL_BAD_CONTENT" "$(cat "$TGS_TARGET_BAD_EXISTING")"
 assert_true "既存targetのスキーマ不正時はstdoutが空(status:okを返さない)" \
   "$([ ! -s "${TGS_TMP_DIR}/bad-existing-stdout.json" ] && echo true || echo false)"
+
+echo "=== test: CLI — base-deny.json欠損時はmain()がexit非0でstdoutが空になる ==="
+# gs_load_base_deny_json はスクリプトの配置ディレクトリ（SCRIPT_DIR）を基準に base-deny.json を
+# 探すため、main()経由の欠損ケースを検証するにはスクリプト自体を base-deny.json が存在しない
+# 一時ディレクトリへ配置して実行する必要がある（セルフレビュー指摘: Issue #129）。
+TGS_MISSING_DENY_CLI_DIR="${TGS_TMP_DIR}/missing-deny-cli"
+mkdir -p "$TGS_MISSING_DENY_CLI_DIR"
+cp "$TGS_TARGET_SCRIPT" "${TGS_MISSING_DENY_CLI_DIR}/generate-settings.sh"
+TGS_TARGET_MISSING_DENY_CLI="${TGS_TMP_DIR}/case-missing-deny-cli/.claude/settings.json"
+if bash "${TGS_MISSING_DENY_CLI_DIR}/generate-settings.sh" --pm npm --target "$TGS_TARGET_MISSING_DENY_CLI" \
+    >"${TGS_TMP_DIR}/missing-deny-cli-stdout.json" 2>"${TGS_TMP_DIR}/missing-deny-cli-stderr.log"; then
+  FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("CLI: base-deny.json欠損でexit非0")
+  echo "  NG - CLI: base-deny.json欠損でexit非0"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - CLI: base-deny.json欠損でexit非0"
+fi
+assert_true "CLI: base-deny.json欠損時はstdoutが空(status:okを返さない)" \
+  "$([ ! -s "${TGS_TMP_DIR}/missing-deny-cli-stdout.json" ] && echo true || echo false)"
+assert_true "CLI: base-deny.json欠損時はtargetファイルが生成されない" \
+  "$([ ! -f "$TGS_TARGET_MISSING_DENY_CLI" ] && echo true || echo false)"
+assert_true "CLI: base-deny.json欠損時はstderrにbase-deny.jsonのパスを含む" \
+  "$(grep -qF "${TGS_MISSING_DENY_CLI_DIR}/base-deny.json" "${TGS_TMP_DIR}/missing-deny-cli-stderr.log" && echo true || echo false)"
 
 # ============================================================
 # CLI: 一時ファイル生成の安全性と書き込み失敗時の挙動
