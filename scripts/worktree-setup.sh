@@ -1,50 +1,7 @@
 #!/bin/bash
 # worktree-setup.sh
-# skills/para-impl/SKILL.md Phase 3（複数Issue時、リードが Issue ごとに worktree・
-# 作業ブランチを作成する）を切り出した決定的スクリプト（Issue #45）。
-# base の存在確認（git ls-remote）→ fetch → git worktree add までを担う。
-#
-# 使い方:
-#   scripts/worktree-setup.sh <issue番号> <branch名> <base> [worktree_root]
-#     worktree_root省略時は「リポジトリの1つ上の階層の <リポジトリ名>-worktrees」を使う
-#     （例: /path/to/claude-harness -> /path/to/claude-harness-worktrees）。
-#
-#   ブランチ名は `{type}/issue-{issue番号}-{説明}` 形式でなければならない
-#   （type は feature/fix/refactor/docs/hotfix のいずれか。説明はケバブケース）。
-#   ブランチ種別・スラグ自体の意味的な決定（Issueの内容から何と命名するか）は
-#   呼び出し側（LLM）の責務。本スクリプトは命名規約のパターン検証のみを行う。
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "issue": 45,
-#     "branch": "feature/issue-45-xxx",
-#     "base": "main",
-#     "worktree_path": "/path/to/xxx-worktrees/issue-45",
-#     "created": true,
-#     "reused": false,
-#     "branch_existed": false
-#   }
-#
-# 冪等挙動（設計判断。Issue #45 本文の指示に基づく）:
-#   - worktree_path が既に **同一ブランチの登録済み worktree** であれば、新規作成せず
-#     そのまま再利用する（created: false, reused: true）。resume 時に前回作成済みの
-#     worktree をそのまま使い続けられるようにするため
-#   - worktree_path が既存だが **別ブランチの登録済み worktree**、または
-#     **git worktree に未登録の任意のディレクトリ**（stale等）である場合は、
-#     衝突を自動解決せず致命的エラーとして exit 非0 にする（無条件の上書き・削除は
-#     行わない。呼び出し側の判断に委ねる）
-#   - 指定ブランチが既にローカル/リモートに存在する場合（前回の途中失敗で
-#     ブランチだけ作成済み等）は `-b` で新規作成せず、既存ブランチをそのまま
-#     checkout する worktree を作る（branch_existed: true として可視化する）
-#
-# gh は呼ばない（gh非依存。base の存在確認は git ls-remote のみで行う）。
-#
-# テスト容易性のため、git を呼ぶ処理（verify_base_remote/fetch_base/
-# local_branch_exists/remote_branch_exists/find_registered_worktree_branch/
-# create_worktree_new_branch/create_worktree_existing_branch）と、
-# 外部コマンドを呼ばない純粋関数（validate_branch_name/compute_worktree_path/
-# default_worktree_root）を分離している。git操作を伴う分岐は一時gitリポジトリ
-# （mktemp -d、bare remote付き）を作成して検証する（scripts/tests/test-worktree-setup.sh）。
+# 使い方: scripts/worktree-setup.sh <issue番号> <branch名> <base> [worktree_root]（詳細は下記参照）
+# 仕様の正本は scripts/specs/worktree-setup.md を参照。
 
 set -u
 

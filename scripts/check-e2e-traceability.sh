@@ -1,34 +1,7 @@
 #!/bin/bash
 # check-e2e-traceability.sh
-# extract-acceptance-criteria.sh の出力（完了条件ID集合）と、create-e2e Step 1-3 で
-# 作成するテストケース設計のトレーサビリティ表（JSON）を突合し、
-# 未カバーの完了条件・未知のID（テストケース設計側の幻覚ID）を検出する。
-#
-# 使い方:
-#   scripts/check-e2e-traceability.sh <criteria_json_file|-> <trace_json_file|->
-#     - 第1引数: extract-acceptance-criteria.sh の出力JSONを保存したファイルパス、または "-" で stdin
-#     - 第2引数: テストケース設計のトレーサビリティ表JSON（下記スキーマ）を保存したファイルパス、または "-" で stdin
-#     - 両方を同時に "-" にはできない
-#
-# trace JSON スキーマ:
-#   {"cases": [{"name": "ログイン成功", "class": "正常系", "criteria": ["AC-1", "AC-2"]}]}
-#
-# 出力（stdout にJSON1個）:
-#   {"uncovered": [{"id": "AC-2", "text": "..."}], "unknown_ids": ["AC-99"],
-#    "status": "ok" | "issues_found" | "no_criteria"}
-#
-# status:
-#   - "no_criteria": criteria側の parse_status が "no_checklist_found"、または criteria配列が空。
-#                    「未カバー」概念自体が成立しない状態。uncovered/unknown_idsは空配列。
-#   - "ok": uncovered・unknown_ids がともに空
-#   - "issues_found": uncovered または unknown_ids のいずれかが非空
-#
-# exit code: 「チェックが正常に実行できたか」を表す。issues_found は検知の正常動作なので exit 0。
-# 真の異常系（jq不在、入力ファイルが存在しない、不正なJSON、必須キー欠如、両方stdin指定等）は
-# stderr にメッセージを出し exit 非0 で終了する。
-#
-# テスト容易性のため、入力読み込み（main相当）と突合処理（check_traceability）を
-# 関数として分離している。このファイルを `source` すれば check_traceability を直接テストできる。
+# 使い方: scripts/check-e2e-traceability.sh <criteria_json_file|-> <trace_json_file|->（詳細は下記参照）
+# 仕様の正本は scripts/specs/extract-acceptance-criteria.md を参照。
 
 set -u
 

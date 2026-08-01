@@ -64,7 +64,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" {issue番号} {type}/issu
 
 > `scripts/worktree-setup.sh`/`scripts/worktree-cleanup.sh` 自体にも、共有 `.git` への書き込み区間（`git fetch`/`git worktree add`/`git worktree remove`）を保護する mkdir ベースの簡易ロック（両スクリプトが同一のロックディレクトリを取り合う）が実装されている（Issue #45）。これは上記の逐次呼び出し規律が守られなかった場合の**防御第二層**であり、一次的な保証は本節の「逐次実行」規律そのものである（ロックがあるからといって並列に呼び出してよいわけではない）。
 
-出力JSON（`worktree_path`・`created`・`reused`・`branch_existed`）の**フィールド定義の正本は、プラグイン配下の `scripts/README.md`「worktree-setup.sh / worktree-cleanup.sh の出力仕様」**（ここには複製しない。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/README.md` として解決すること）。`reused: true` の場合は前回実行分の worktree をそのまま再利用する（再実行時の冪等性）。エラー（base が remote に存在しない・別ブランチの worktree と衝突等）は非0 exitで返るため、内容を確認してから次のIssueへ進む。
+出力JSON（`worktree_path`・`created`・`reused`・`branch_existed`）の**フィールド定義の正本は、プラグイン配下の `scripts/specs/worktree-setup.md`**（ここには複製しない。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/worktree-setup.md` として解決すること）。`reused: true` の場合は前回実行分の worktree をそのまま再利用する（再実行時の冪等性）。エラー（base が remote に存在しない・別ブランチの worktree と衝突等）は非0 exitで返るため、内容を確認してから次のIssueへ進む。
 
 全 Issue 分の `worktree_path` を集めたら、次節の worker spawn へ進む。
 
@@ -130,7 +130,7 @@ spawn プロンプトに含めるもの:
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/worktree-cleanup.sh" {チケットのworktree_path}
 ```
 
-既定（フラグ省略）の dirty時削除拒否は、上記3条件による選定を通過したチケットに対する**セカンダリの安全網**（レビュー対応の最終コミットのpush漏れ等、想定外の未コミット差分が残っていた場合の最終防御）として働く。3条件を満たすが一時的にdirtyな場合はエラーで停止するため、原因を確認してから再実行する。`--skip-if-dirty` は、3条件を満たす対象群を一括ループする際に一時的なdirtyが混在するケース向けの補助フラグであり、3条件そのものの代替（failure・判断待ちチケットの保護手段）としては使わない。出力JSON（`removed`/`skipped`/`dirty`）の**フィールド定義の正本は、プラグイン配下の `scripts/README.md`「worktree-setup.sh / worktree-cleanup.sh の出力仕様」**（ここには複製しない。Read する場合は `<base>/../../scripts/README.md` として解決すること）。
+既定（フラグ省略）の dirty時削除拒否は、上記3条件による選定を通過したチケットに対する**セカンダリの安全網**（レビュー対応の最終コミットのpush漏れ等、想定外の未コミット差分が残っていた場合の最終防御）として働く。3条件を満たすが一時的にdirtyな場合はエラーで停止するため、原因を確認してから再実行する。`--skip-if-dirty` は、3条件を満たす対象群を一括ループする際に一時的なdirtyが混在するケース向けの補助フラグであり、3条件そのものの代替（failure・判断待ちチケットの保護手段）としては使わない。出力JSON（`removed`/`skipped`/`dirty`）の**フィールド定義の正本は、プラグイン配下の `scripts/specs/worktree-setup.md`**（ここには複製しない。Read する場合は `<base>/../../scripts/specs/worktree-setup.md` として解決すること）。
 
 > **注意**: ユーザーが後から追加の修正を行う可能性がある場合は、worktreeの削除を保留してもよい。ユーザーに確認してからクリーンアップすることを推奨する。
 
