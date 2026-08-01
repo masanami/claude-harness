@@ -116,6 +116,24 @@ echo "=== fetch_pr_checks ==="
     "Warning: no CI checks data available for PR #42 (no checks configured, or fetch failed)" \
     "$stderr_warn"
 
+  # exit code非依存の設計意図を固定する回帰テスト。gh pr checks は CI が pending/fail の
+  # 場合に非0 exitを返す仕様のため、fetch_pr_checks は exit code を見ず「出力の非空性 +
+  # jq -e 'type == "array"'」のみで採否を判定する設計になっている（scripts/lib/common.sh
+  # 内コメント参照）。exit code 判定へ書き換える退行を検出できるよう、
+  # 「非0 exitでも有効な配列は採用する」ケースと「rc=0でも非配列出力は棄却する」ケースの
+  # 両方を検証する。
+  gh() { echo '[{"bucket":"fail"}]'; return 1; }
+  result_nonzero_valid="$(fetch_pr_checks 42)"
+  assert_eq "非0 exitでも有効なJSON配列ならそのまま返す(exit code非依存)" \
+    '[{"bucket":"fail"}]' \
+    "$result_nonzero_valid"
+
+  gh() { echo 'not json'; return 0; }
+  result_zero_invalid="$(fetch_pr_checks 42)"
+  assert_eq "rc=0でも非JSON配列出力なら空配列を返す(jq判定が主体)" \
+    "[]" \
+    "$result_zero_invalid"
+
   unset -f gh
 }
 

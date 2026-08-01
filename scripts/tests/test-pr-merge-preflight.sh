@@ -324,6 +324,58 @@ rm -f "$CHECKS_CALL_COUNT_FILE" "$RECHECK_CALL_COUNT_FILE"
 unset -f fetch_default_branch fetch_pr_view fetch_pr_reviews_only fetch_pr_checks fetch_pr_recheck fetch_pr_review_decision
 
 # =============================================================================
+echo "=== test: main() 内の fetch_pr_checks 呼び出し合成(warn_on_empty=1)の回帰テスト ==="
+# =============================================================================
+# L395 の `fetch_pr_checks "$pr_num" 1` という呼び出し側の引数合成
+# （warn_on_empty=1。「preflight だけが空/失敗時に stderr Warning を出す」挙動の唯一の
+# 根拠）を固定する。fetch_pr_checks 自体はモックせず、scripts/lib/common.sh の実装を
+# そのまま通す経路で検証する（直前ブロックの `unset -f fetch_pr_checks` により関数定義
+# そのものが失われているため、ここで lib/common.sh を再sourceして実物を復元する。
+# 同じ理由で fetch_default_branch 等の pr-merge-preflight.sh 固有関数も直前ブロックの
+# unset -f で失われているため、以下ですべて再定義（モック）する。gh は
+# `pr checks` のみ最小スタブし、実物の fetch_pr_checks がそれを経由する）。
+
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/../lib/common.sh"
+
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_default_branch() { printf 'main'; }
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_view() { printf '{"baseRefName":"main","reviews":[]}'; }
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_reviews_only() { printf '[]'; }
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_recheck() {
+  printf '{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","files":[],"additions":0,"deletions":0,"changedFiles":0}'
+}
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
+fetch_pr_review_decision() { printf 'APPROVED'; }
+
+# gh pr checks のみ「空出力+失敗」を返す最小スタブ（fetch_pr_checks は common.sh の実物）
+# shellcheck disable=SC2329  # fetch_pr_checks(common.sh実物)から間接的に呼ばれる
+gh() {
+  if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+    printf ''
+    return 1
+  fi
+  return 1
+}
+
+WARN_STDERR_FILE="$(mktemp)"
+# timeout=0 -> max_attempts=1 でポーリングループに入らず即確定する
+MAIN_OUTPUT_WARN="$(main "999" 0 2>"$WARN_STDERR_FILE")"
+
+assert_eq "main()経由のfetch_pr_checks呼び出し(warn_on_empty=1合成)はCI空時にWarningをstderrへ出す" \
+  "1" \
+  "$(grep -c 'Warning: no CI checks data available for PR #999' "$WARN_STDERR_FILE")"
+assert_eq "main()経由でもCI空時はci.statusがnoneになる(fetch_pr_checksが空配列を返す経路の確認)" \
+  "none" \
+  "$(jq -r '.ci.status' <<<"$MAIN_OUTPUT_WARN")"
+
+rm -f "$WARN_STDERR_FILE"
+unset -f fetch_default_branch fetch_pr_view fetch_pr_reviews_only fetch_pr_recheck fetch_pr_review_decision gh
+
+# =============================================================================
 echo "=== test: CLIレベル（引数バリデーション。ghを呼ばない） ==="
 # =============================================================================
 
