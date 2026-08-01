@@ -1,29 +1,7 @@
 #!/bin/bash
 # extract-hunk.sh
-# /self-review（skills/self-review/SKILL.md）の Step 3（懐疑的検証）が、finding の
-# {file, line} から該当 diff hunk（＋前後N行）を切り出すために呼び出す決定的スクリプト。
-# 懐疑者（finding-verifier）3体×指摘数に全diffを配る事態を構造的に避けるための入力スライス。
-#
-# 使い方:
-#   scripts/extract-hunk.sh <diff_file> <file> <line> [context_lines=3]
-#     diff_file: collect-review-diff.sh が出力した diff_file のパス
-#     file/line: findingの対象ファイルパス・行番号（new側の行番号を想定）
-#     context_lines: 該当hunkの前後に付与する追加コンテキスト行数（省略時3）
-#
-# 出力（stdout にJSON1個）:
-#   {"file": "...", "line": N, "found": true|false, "snippet": "..."}
-#
-# found=false の場合、snippet には最も近いhunk（行番号が最も近いhunk。同一ファイル内に
-# hunkが1つも無ければ空文字）が入る。懐疑者（finding-verifier）にはRead/Grepを残しているため、
-# hunk外のコンテキストが必要な場合や本スクリプトの一次スライスで不十分な場合は
-# 懐疑者自身がファイルを読むことを想定する。
-#
-# 純粋なテキスト処理のみで完結する（gh/git を呼ばない。diff_fileの中身だけを見る）。
-#
-# テスト容易性のため、テキスト処理本体（extract_hunk_from_diff）を関数として分離している。
-# `source` すればgh/gitを呼ばずに直接テストできる（scripts/tests/test-extract-hunk.sh）。
-#
-# `source` された場合は main を実行しない。
+# 使い方: scripts/extract-hunk.sh <diff_file> <file> <line> [context_lines=3]（詳細は下記参照）
+# 仕様の正本は scripts/specs/collect-review-diff.md を参照。
 
 set -u
 

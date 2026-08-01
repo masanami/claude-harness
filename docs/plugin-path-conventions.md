@@ -35,12 +35,12 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/xxx.sh" <引数>
 <!-- 正本: docs/plugin-path-conventions.md -->
 ```
 
-## (c) Read ツールで参照する `references/` `templates/` `scripts/README.md`
+## (c) Read ツールで参照する `references/` `templates/` `scripts/README.md` `scripts/specs/*.md`
 
 Read ツールも Bash ツールと同様、パス文字列中の `${CLAUDE_PLUGIN_ROOT}` を展開しない。以下の手順で解決する:
 
 1. **スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを組み立てる**（例: `<base>/references/xxx.md`）。スキル自身の `references/` `templates/` はこの方式で解決できる
-2. スキル外のファイル（例: `scripts/README.md`）は `<base>/../../scripts/README.md` のように相対階層で辿る
+2. スキル外のファイル（例: `scripts/README.md`、各スクリプトの入出力仕様の正本である `scripts/specs/<name>.md`）は `<base>/../../scripts/README.md` や `<base>/../../scripts/specs/<name>.md` のように相対階層で辿る
 
 Base directory はスキル起動時に必ずコンテキストへ与えられるため、これが唯一の解決手順であり、Bash による読み出しへのフォールバックは無い（前掲のとおり成立しないため）。
 

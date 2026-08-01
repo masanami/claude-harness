@@ -1,42 +1,7 @@
 #!/bin/bash
 # pr-merge-preflight.sh
-# /pr-merge スキルの Phase 0（base ブランチ判定・ゲート判定）と
-# Phase 1（PR情報・CI・mergeable・外部レビュー待機ポーリング）を切り出した
-# 決定的なシェルスクリプト。
-#
-# 使い方:
-#   scripts/pr-merge-preflight.sh <PR番号> [timeout秒]
-#     -> gh でPR情報・CI・reviews を取得し、外部レビュー未投稿なら
-#        タイムアウトまでポーリングし、決定表（blocking判定）とrisk算出を行う。
-#     timeout秒省略時は600秒（10分。60秒間隔で最大10回チェックする既存仕様を踏襲）。
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "gate": "production" | "integration",
-#     "base": "...",            # PRのbaseブランチ名（後続フェーズでの再取得を避けるために含める）
-#     "default_branch": "...",  # リポジトリの既定ブランチ名（同上）
-#     "ci": {"status": "pass"|"fail"|"pending"|"none", "checks": [...]},
-#     "mergeable": "MERGEABLE"|"CONFLICTING"|"UNKNOWN",
-#     "mergeStateStatus": "...",
-#     "reviews": [{"author": "...", "state": "..."}],
-#     "commented_bodies": ["..."],
-#     "blocking": bool,
-#     "block_reasons": ["changes_requested" | "ci_failed" | "conflicting" | "merge_blocked"],
-#     "risk": {"files_changed": n, "insertions": n, "deletions": n, "touches_sensitive": bool}
-#   }
-#
-# 「COMMENTED の内容に重大な指摘がないか」は意味判断のため commented_bodies を
-# 返すだけに留め、スクリプト側では本文の意味を一切判定しない（LLM 側の責務）。
-#
-# CI・mergeable/mergeStateStatus・files/additions/deletions/changedFiles は外部レビュー待機
-# ポーリング（最大約10分かかりうる）の完了後に取得する（ポーリング開始前のスナップショットを
-# 使うと、ポーリング中にCIが完了する・他の変更でmergeableやfilesが変わる等のケースで
-# 古い状態のまま blocking判定・risk算出をしてしまうため。main 参照）。
-#
-# gh 呼び出しを行う処理（fetch_*）と、入力から出力を組み立てる純粋な判定処理
-# （determine_gate / determine_ci_status / judge_blocking / compute_touches_sensitive /
-#  reviews_poll_decision / build_risk_json）を関数として分離している。
-# このファイルを `source` すれば gh を呼ばずに純粋関数を直接テストできる。
+# 使い方: scripts/pr-merge-preflight.sh <PR番号> [timeout秒]（詳細は下記参照）
+# 仕様の正本は scripts/specs/pr-merge-preflight.md を参照。
 
 set -u
 

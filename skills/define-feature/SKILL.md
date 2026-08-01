@@ -149,7 +149,7 @@ Step 6 で作成した機能仕様ドキュメントは、後続の `/create-tic
 > **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/spec-lint.sh" <specPath>` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/spec-lint.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-1. Bash で上記コマンドを実行する。`specPath` は Step 6 で保存した機能仕様ドキュメント（`docs/features/{slug}.md`）の絶対パス。標準出力の JSON（`spec_file`, `ambiguous_words`, `template_placeholders`, `broken_references`, `checklist_format_issues`）のフィールド定義の正本はプラグイン配下の `scripts/README.md`「spec-lint.sh の出力仕様」（ここには複製しない。Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/README.md` として解決する）。取得した JSON はそのまま 6.5-2 の Critique fan-out で使う
+1. Bash で上記コマンドを実行する。`specPath` は Step 6 で保存した機能仕様ドキュメント（`docs/features/{slug}.md`）の絶対パス。標準出力の JSON（`spec_file`, `ambiguous_words`, `template_placeholders`, `broken_references`, `checklist_format_issues`）のフィールド定義の正本はプラグイン配下の `scripts/specs/spec-lint.md`（ここには複製しない。Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/specs/spec-lint.md` として解決する）。取得した JSON はそのまま 6.5-2 の Critique fan-out で使う
 2. **1周目のみ**、後段の差分サマリ算出のため、Bash で `mktemp` を実行し一時ファイルパスを得たのち `cp <specPath> <一時ファイルパス>` を実行して仕様ドキュメントのスナップショットを保存する（Fix フェーズが発生してもしなくても、スナップショットはこの1回だけ取る。2周目の Lint 再実行時にスナップショットを取り直さない）
 
 #### 6.5-2 Critique（spec-critic 3体・1メッセージ並列 fan-out）

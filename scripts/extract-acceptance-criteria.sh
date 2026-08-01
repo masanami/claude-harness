@@ -1,23 +1,7 @@
 #!/bin/bash
 # extract-acceptance-criteria.sh
-# GitHub Issue本文の「## 受入基準」「## 完了条件」セクションから
-# チェックリスト（- [ ] / - [x]）を抽出し、構造化されたJSONを返す。
-#
-# 使い方:
-#   scripts/extract-acceptance-criteria.sh <issue番号>
-#     -> gh issue view <issue番号> --json body で本文を取得してパースする
-#   scripts/extract-acceptance-criteria.sh --stdin
-#     -> stdin から本文テキストを読み込んでパースする（gh を呼ばない。issue は null）
-#
-# 出力（stdout にJSON1個）:
-#   {"issue": N, "criteria": [{"id": "AC-1", "text": "...", "checked": false}], "parse_status": "ok" | "no_checklist_found"}
-#
-# チェックリストが見つからない場合は parse_status: "no_checklist_found" を返す（exit 0、エラー終了しない）。
-# gh 呼び出し自体の失敗・jq 不在など真の異常系は stderr にメッセージを出し、exit 非0 で終了する。
-#
-# テスト容易性のため、本文取得（fetch_issue_body）とパース（parse_acceptance_criteria）を
-# 関数として分離している。このファイルを `source` すれば gh を呼ばずに
-# parse_acceptance_criteria を直接テストできる。
+# 使い方: scripts/extract-acceptance-criteria.sh <issue番号|--stdin>（詳細は下記参照）
+# 仕様の正本は scripts/specs/extract-acceptance-criteria.md を参照。
 
 set -u
 

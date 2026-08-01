@@ -1,45 +1,7 @@
 #!/bin/bash
 # ci-wait.sh
-# para-impl の star型並列実装で ticket-worker が Phase 9（CI確認）に使う決定的スクリプト
-# （Issue #45 で新設）。
-# `gh pr checks` を上限付きでポーリングし、失敗時は失敗ジョブのログ末尾を抽出する。
-#
-# 使い方:
-#   scripts/ci-wait.sh <PR番号 or ブランチ名> [timeout秒（既定: 900）] [poll間隔秒（既定: 30）]
-#
-#   <PR番号 or ブランチ名> は `gh pr view` がそのまま受け付けるセレクタ（PR番号・
-#   ブランチ名・URL のいずれでもよい）。対応する PR が存在しない場合は
-#   pr_exists: false, ci: 'none' を返して即座に終了する（ポーリングしない）。
-#
-#   timeout秒に 0 を指定すると「1回だけスナップショットを取得して即終了する」
-#   single-shot モードになる（sleep しない）。ticket-worker の attempt>=2
-#   冪等分岐（PR作成済みかどうかだけを素早く確認したい場合）はこの用法を使う。
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "ci": "green" | "red" | "timeout" | "none",
-#     "failed_checks": [{"name": "...", "workflow": "...", "link": "..."}],
-#     "failure_log_excerpt": "...",
-#     "pr_url": "...",
-#     "pr_number": 123 | null,
-#     "pr_exists": true | false
-#   }
-#
-# 設計判断（checks未設定リポジトリの扱い。Issue #45 本文の指示に基づく）:
-#   `gh pr checks` が「チェックが1件も無い」を返した場合、それが「本当にCIが
-#   設定されていない」のか「ポーリング開始直後でまだチェックが登録されていない」のか
-#   を1回のスナップショットだけでは区別できない。本スクリプトは連続
-#   NONE_CONFIRM_ATTEMPTS 回（既定2回）空を観測して初めて `ci: 'none'` を確定する
-#   （呼び出し側 ticket-worker は 'none' を green 相当としてブロックしない扱いに
-#   してよい。実行不能なゲートで永久にブロックしないため）。ループが timeout に達した
-#   時点でまだ「空」だった場合も（チェックがpendingだったわけではないため）'timeout'
-#   ではなく 'none' として確定する。'timeout' は「チェックはあるが完了を待ちきれなかった
-#   （pending のまま時間切れ）」の場合にのみ使う。
-#
-# gh呼び出しを行う処理（fetch_*）と、入力から出力を組み立てる純粋な判定処理
-# （classify_checks / ci_wait_decision / extract_run_ids / tail_lines /
-#  truncate_to_budget / build_failed_checks_json）を関数として分離している。
-# このファイルを `source` すれば gh を呼ばずに純粋関数を直接テストできる。
+# 使い方: scripts/ci-wait.sh <PR番号 or ブランチ名> [timeout秒（既定: 900）] [poll間隔秒（既定: 30）]（詳細は下記参照）
+# 仕様の正本は scripts/specs/ci-wait.md を参照。
 
 set -u
 

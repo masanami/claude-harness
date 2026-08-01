@@ -30,7 +30,7 @@ PR番号（省略可能）: $ARGUMENTS
 > **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/fetch-pr-comments.sh" <PR番号>` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/fetch-pr-comments.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-Bash で上記コマンドを実行する。標準出力の JSON（`{pr, diff_stat, comments: [...]}`）をそのまま以降のステップで使う。出力JSONのフィールド定義の正本はプラグイン配下の `scripts/README.md`「fetch-pr-comments.sh / reply-and-resolve.sh の出力仕様」（ここには複製しない）。Readする場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/README.md` として解決すること。
+Bash で上記コマンドを実行する。標準出力の JSON（`{pr, diff_stat, comments: [...]}`）をそのまま以降のステップで使う。出力JSONのフィールド定義の正本はプラグイン配下の `scripts/specs/fetch-pr-comments.md`（ここには複製しない）。Readする場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/fetch-pr-comments.md` として解決すること。
 
 `is_resolved: true` のコメント（人間レビュアーが既にResolve済みのスレッド）は、以降の分類・修正の対象から除外する（`activeComments`）。除外した件数を `skippedAlreadyResolved` として控えておく（Step 6 の報告で使う。既に完了しているスレッドの再分類・再修正・resolve再実行という無駄な二重処理を避けるため）。
 

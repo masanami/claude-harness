@@ -83,7 +83,7 @@ bare_exec_exit=$?
 # （例: 「正本は `scripts/README.md`（Read する場合は `<base>/../../scripts/README.md` で解決）」）
 # 単なる名称としての言及であり違反ではないため除外する。
 # shellcheck disable=SC2016
-bare_doc_pattern='`scripts/[A-Za-z0-9_.-]+\.md`'
+bare_doc_pattern='`scripts/[A-Za-z0-9_./-]+\.md`'
 bare_doc_candidates="$(grep -rnE "$bare_doc_pattern" skills agents --include='*.md')"
 bare_doc_exit=$?
 

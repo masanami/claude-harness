@@ -85,7 +85,7 @@ Bash で上記コマンドを実行し、標準出力の JSON（`{issue, criteri
 > **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/collect-promotion-context.sh" <baseBranch> <integrationBranch>` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/collect-promotion-context.sh` では呼び出さないこと。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-Bash で上記コマンドを実行し、標準出力の JSON（`{base, integration, merge_base, diff_stat, name_status, diff_file}`）をそのまま以降のステップで使う。フィールド定義の正本はプラグイン配下の `scripts/README.md`「collect-promotion-context.sh / check-subtask-completion.sh の出力仕様」（ここには複製しない）。Readする場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/README.md` として解決すること。
+Bash で上記コマンドを実行し、標準出力の JSON（`{base, integration, merge_base, diff_stat, name_status, diff_file}`）をそのまま以降のステップで使う。フィールド定義の正本はプラグイン配下の `scripts/specs/collect-promotion-context.md`（ここには複製しない）。Readする場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/collect-promotion-context.md` として解決すること。
 
 - コマンドが非ゼロ終了した場合、**処理全体を中断**し、失敗内容を報告する
 - **`diff_file` のパスは取得した直後に控えておくこと**（このスクリプトは成功時点で既に一時ファイルをディスクへ書き出している）。以降のどのステップで処理が中断・失敗しても、Step 8（後始末）でこのパスを使ってクリーンアップできるようにするため

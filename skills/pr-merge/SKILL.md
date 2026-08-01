@@ -58,7 +58,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 
 3. **preflight結果の読み取り**
 
-   出力 JSON の**フィールド定義と `block_reasons` の意味論の正本は、プラグイン配下の `scripts/README.md`「pr-merge-preflight.sh の出力仕様」**（ここには複製しない）。**cwd 起点の相対パス `scripts/README.md` では導入先プロジェクトの同名ファイルを誤って参照しうるため、Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/README.md` として解決すること。** 後続フェーズで使う値だけ展開する:
+   出力 JSON の**フィールド定義と `block_reasons` の意味論の正本は、プラグイン配下の `scripts/specs/pr-merge-preflight.md`**（ここには複製しない）。**cwd 起点の相対パス `scripts/specs/pr-merge-preflight.md` では導入先プロジェクトの同名ファイルを誤って参照しうるため、Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/pr-merge-preflight.md` として解決すること。** 後続フェーズで使う値だけ展開する:
    ```bash
    GATE=$(jq -r '.gate' <<<"$PREFLIGHT")          # production=本番ゲート / integration=統合ブランチゲート
    BASE=$(jq -r '.base' <<<"$PREFLIGHT")          # 以降のフェーズで再取得せず再利用
