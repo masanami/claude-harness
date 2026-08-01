@@ -1,6 +1,6 @@
 ---
 name: pr-comment-classifier
-description: "PRレビューコメント1件を分類する際に使用。skills/pr-review-respond/SKILL.md（Step 3）から `subagent_type: 'claude-harness:pr-comment-classifier'` として、Task ツールで1コメント=1回呼び出される（複数コメントがある場合は呼び出し元が1メッセージにまとめて並列 spawn する）。"
+description: PRレビューコメント1件の対応方針を分類する際に使用するエージェント。
 # tools: 分類専用エージェントのためコード修正は行わない。diff_hunkだけでは
 # 「対応済みか」「スコープ拡大か」を判断できない場合に、対象ファイルの現状を確認できるよう
 # 読み取り系のみ付与する。

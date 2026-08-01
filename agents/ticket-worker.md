@@ -1,6 +1,6 @@
 ---
 name: ticket-worker
-description: para-impl の複数Issue並列実装（star 型 orchestrator-worker）で、1チケット分の実装フローを worktree 内で実行する worker。リードから Issue・worktree・ブランチ・フロー手順を受け取って自走する。
+description: 複数Issueの並列実装で、1つのIssueをworktree内で最初から最後まで実装するworkerエージェント。リードから割り当てられたIssueを自走で実装する際に使用する。
 tools: Read, Glob, Grep, Edit, Write, Bash, Task, Skill
 model: sonnet
 # effort: CI失敗の分析と Phase 4-5 差し戻し判断を含むフロー統括のため high（実装の中核は feature-implementer 側が担う）。

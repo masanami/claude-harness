@@ -1,6 +1,6 @@
 ---
 name: design-deviation-verifier
-description: "feature-implementer が Phase 2-3 で自己申告した『クリティカル設計整合』（✅表明）に対して独立に反証を試みる際に使用する。feature-implementer から Phase 5（5-1/5-2 の判定確定後の 5-3）で、Task ツール経由で `subagent_type: 'claude-harness:design-deviation-verifier'` として直接 spawn される（Dynamic Workflow を介さない直接呼び出し）。既定1体で判定し、violation（決定への違反）と判定した場合のみ追加2体（計3体）で多数決する。反証対象は『実装は機能仕様のクリティカル設計決定に従っている』という自己申告であり、finding-verifier（レビュー指摘の偽陽性除去。逆方向）とは異なり、見逃されている違反の発見（偽陰性の是正）を目指す。"
+description: feature-implementer が自己申告した「クリティカル設計整合」に対し、実装が親要件チケットの決定に本当に従っているかを独立に反証する際に使用するエージェント。
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

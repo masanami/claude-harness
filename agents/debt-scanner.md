@@ -1,6 +1,6 @@
 ---
 name: debt-scanner
-description: "プロジェクトの担当ディレクトリ配下を技術負債の観点でスキャンする際に使用。skills/reduce-debt/SKILL.md（Step 2-3）から `subagent_type: 'claude-harness:debt-scanner'` として、Task ツールでスキャンバケットごとに並列 spawn される。"
+description: プロジェクトの担当ディレクトリ配下を技術負債の観点でスキャンする際に使用するエージェント。
 # tools: スキャン専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

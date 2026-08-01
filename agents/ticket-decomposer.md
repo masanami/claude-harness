@@ -1,6 +1,6 @@
 ---
 name: ticket-decomposer
-description: "親要件チケットを実装タスクへ分解する際に使用。skills/create-ticket/references/decompose-mode.md から Task ツールで `subagent_type: 'claude-harness:ticket-decomposer'` として、異なるレンズ（依存最小優先／垂直スライス優先／レイヤ分割優先）を与えられた3体が1メッセージで並列 spawn される（Issue #46・#112）。"
+description: 親要件チケットの実装タスクへの分解案を生成する際に使用するエージェント。
 # tools: 分解案生成専用エージェントのため読み取り系のみ。コード修正・Issue作成は行わない。
 # 注入されたcodebaseAnalysisリストに加え、filesフィールドの幻覚防止のため自己に
 # Glob/Grepでの存在確認を許可する。
