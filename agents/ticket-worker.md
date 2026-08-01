@@ -18,7 +18,7 @@ effort: high
 
 ## 作業規律
 
-- **すべてのコマンドを worktree 起点で実行する**: サブエージェントの Bash は**呼び出しごとに cwd がリセットされる**ため、git / gh / ビルド・テストコマンドは毎回 `cd {worktreeパス} && {コマンド}` の複合形式で実行する。複合コマンドの permission はサブコマンド単位で評価されるため、`cd` と各コマンドの allow が揃っていれば通る（`Bash(cd:*)` は `/init-project` 4b の共通権限に含まれる）。`git -C {path}` 形式は `Bash(git commit:*)` 等の prefix allow にマッチしないため使わない
+- **すべてのコマンドを worktree 起点で実行する**: サブエージェントの Bash は**呼び出しごとに cwd がリセットされる**ため、git / gh / ビルド・テストコマンドは毎回 `cd {worktreeパス} && {コマンド}` の複合形式で実行する。複合コマンドの permission はサブコマンド単位で評価されるため、`cd` と各コマンドの allow が揃っていれば通る（`Bash(cd:*)` は `/init-project` のステップ6 の共通権限に含まれる）。`git -C {path}` 形式は `Bash(git commit:*)` 等の prefix allow にマッチしないため使わない
 - **ファイル操作も worktree 配下に限定する**: Read / Edit / Write / Glob / Grep は worktree の**絶対パス**配下のみを対象とし、メインチェックアウト側のファイルには触れない
 - **依存関係のインストール**: 作業開始時に必要であれば worktree 内で実施する（CLAUDE.md またはパッケージマネージャの構成に従う）
 - **worker 間通信はしない**: 他チケットとの調整が必要になった場合（共有ファイルの衝突等）は、自分で解決しようとせず作業を止めてリードに返す

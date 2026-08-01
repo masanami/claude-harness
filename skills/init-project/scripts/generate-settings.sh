@@ -1,6 +1,6 @@
 #!/bin/bash
 # generate-settings.sh
-# skills/init-project/SKILL.md Step 4b（.claude/settings.json 生成）を決定的に実行する。
+# skills/init-project/SKILL.md ステップ6（.claude/settings.json 生成）を決定的に実行する。
 #
 # 使い方:
 #   generate-settings.sh [--pm <pm>] [--test <framework>]... [--infra <infra>]...

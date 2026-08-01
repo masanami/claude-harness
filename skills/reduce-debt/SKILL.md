@@ -158,11 +158,7 @@ Step 2 の Task 結果を、あなた自身が以下の形に集約する（自�
 
 ### Step 4: 結果分類と報告
 
-「今回の実装で導入 vs 既存」の分類は Step 2-5 で既に付与済み（`introducedByParent` / `relatedDir` フィールド）。Step 3 の集約結果を次の報告フォーマットに転記する。
-
-- `introducedByParent: true`（`changedFiles` とファイル完全一致）→「今回の実装で導入された技術負債」
-- `introducedByParent: false` かつ `relatedDir: true`（ファイルは不一致だが `changedDirs` のいずれかに含まれる）→「既存の技術負債」の中で「既存（親実装の関連ディレクトリ）」として区別表示
-- `introducedByParent: false` かつ `relatedDir: false`（どちらも不一致）→「既存の技術負債」の中で通常の「既存」として表示
+Step 3 の集約結果を、2-5 で付与した分類フィールド（`introducedByParent` / `relatedDir`）に従って次の報告フォーマットに振り分ける。
 
 ```markdown
 ## 技術負債スキャン結果
@@ -183,8 +179,6 @@ Step 2 の Task 結果を、あなた自身が以下の形に集約する（自�
 （なければ「検出なし」）
 
 ### 既存の技術負債（confirmed かつ introducedByParent = false）
-
-`relatedDir` の値に応じて「分類」列に「既存（親実装の関連ディレクトリ）」/「既存」を区別表示する（ディレクトリのみ一致はファイル自体が変更されていないため今回導入には含めないが、親実装との関連が疑われるため区別する）。
 
 | # | 概要 | 優先度 | 観点 | 対象ファイル | 詳細 | 分類 |
 |---|------|--------|------|------------|------|------|

@@ -103,9 +103,9 @@ Phase 1 で解説したテストのうち、**重要フロー**（主要な正�
 
 2. Task結果に応じて次のいずれかへ分岐する（各分岐とも、蓄積スキーマ（下記）の全フィールドを明示的に埋めること。値を推測で補わない）:
 
-   - **Taskが構造化応答を返さなかった場合**（terminal失敗相当） → `injectFailed: true, mutatedFile: null, description: null`。`mutation-run.sh` を一度も呼んでおらず実際の復元状態を確認できないため、安全側に倒して `needsManualRestore: true, restored: false, rePassed: false, testFailed: false, failureKind: "none", toothless: false, invalidTarget: false, mutationRunFailed: false, exitReportMismatch: false` とする
-   - **`file` が空文字列**（エージェントが注入を見送った） → 正常系として扱う。`mutatedFile: null, description: injectOutput.description`（見送り理由）とし、`mutation-run.sh` を呼ばず `restored: true, rePassed: true, injectFailed: false, needsManualRestore: false, toothless: false, invalidTarget: false, mutationRunFailed: false, exitReportMismatch: false, testFailed: false, failureKind: "none"` とする（報告テンプレートの有効性判定は `mutatedFile === null` を「未実施（見送り）」の判定条件に使うため、ここで `mutatedFile` を必ず `null` にすること）
-   - **`file` がテストファイル自身と一致**（安全弁。`agents/e2e-mutation-injector.md` の禁止事項） → `mutatedFile: injectOutput.file, description: injectOutput.description, invalidTarget: true, needsManualRestore: true` とし、`mutation-run.sh` を呼ばない。`restored: false, rePassed: false, testFailed: false, failureKind: "none", toothless: false, injectFailed: false, mutationRunFailed: false, exitReportMismatch: false` とする
+   - **Taskが構造化応答を返さなかった場合**（terminal失敗相当） → `injectFailed: true, mutatedFile: null, description: null`。`mutation-run.sh` を一度も呼んでおらず実際の復元状態を確認できないため、安全側に倒して `needsManualRestore: true, restored: false, rePassed: false, testFailed: false, failureKind: "none", toothless: false, invalidTarget: false, exitReportMismatch: false` とする
+   - **`file` が空文字列**（エージェントが注入を見送った） → 正常系として扱う。`mutatedFile: null, description: injectOutput.description`（見送り理由）とし、`mutation-run.sh` を呼ばず `restored: true, rePassed: true, injectFailed: false, needsManualRestore: false, toothless: false, invalidTarget: false, exitReportMismatch: false, testFailed: false, failureKind: "none"` とする（報告テンプレートの有効性判定は `mutatedFile === null` を「未実施（見送り）」の判定条件に使うため、ここで `mutatedFile` を必ず `null` にすること）
+   - **`file` がテストファイル自身と一致**（安全弁。`agents/e2e-mutation-injector.md` の禁止事項） → `mutatedFile: injectOutput.file, description: injectOutput.description, invalidTarget: true, needsManualRestore: true` とし、`mutation-run.sh` を呼ばない。`restored: false, rePassed: false, testFailed: false, failureKind: "none", toothless: false, injectFailed: false, exitReportMismatch: false` とする
    - **上記いずれでもない場合**（実際に実装コードへ変異が注入された） → あなた自身（呼び出し元・Bashツール）が直接 `bash "${CLAUDE_PLUGIN_ROOT}/scripts/mutation-run.sh" <testCommand> <mutatedFile>` を実行する（上記「スクリプトの所在」の形式に従う）。`testCommand` は「そのテストファイルのみ」を実行する解決済みシェルコマンド（`CLAUDE.md`「よく使うコマンド」のE2E実行コマンドに対象ファイルを絞り込んだもの）。**`testCommand` は空白を含みうる1個のコマンド文字列であり、必ず全体を1個のシェル引数として渡すこと**（値中の `'` は `'\''` に置換したうえで全体をシングルクォートで囲む、標準的なシェルクォート手順に従う。クォートせずに連結すると `testCommand` の中の空白が別引数として分割され、`mutation-run.sh` が「対象外のファイルが追加で渡された」と誤認してテスト実行前に異常終了する）。`workingDirectory`（star型並列実装でworktree対象の場合はその絶対パス）が指定されている場合は、先に対象の作業ツリーへ `cd` してから実行する。標準出力とその終了コード（`$?`）の両方を取得し、次の手順で値を導出する:
      - 標準出力が空、または妥当なJSONとしてパースできない場合（`mutation-run.sh` の手順0のクリーン確認失敗・引数不正・非gitリポジトリ・jq不在等で、JSONを出さずに異常終了したケース） → `testFailed: false, failureKind: "none", restored: false, rePassed: false, exitReportMismatch: false` とする（値を捏造・推測しない）。この場合すでに変異は注入済みで復元状態が確認できていないため `needsManualRestore: true` とし、**テストが実際に変異を検出したかは未観測のため `toothless` は `false` で固定する**（下記の一般則を適用せず、「歯の無いテストと確認された」わけではないことを明示する。復元未確認の残留として Step 2-3 で扱う）
      - 標準出力が妥当なJSON（`{testFailed, failureKind, restored, rePassed}`）の場合 → その値をそのまま使い、以下を導出する:
@@ -114,9 +114,9 @@ Phase 1 で解説したテストのうち、**重要フロー**（主要な正�
        - `exitReportMismatch` = `reportedNominal !== exitNominal`（JSON上の自己申告と実際の終了コードの突合による不整合検出）。真の場合は `needsManualRestore: true` とする
        - `needsManualRestore` = `!restored || exitReportMismatch`
        - `toothless` = `testFailed === false`（JSONが得られた場合のみ、この一般則を適用する）
-     - いずれの場合も `mutatedFile: injectOutput.file, description: injectOutput.description, injectFailed: false, invalidTarget: false, mutationRunFailed: false` とする
+     - いずれの場合も `mutatedFile: injectOutput.file, description: injectOutput.description, injectFailed: false, invalidTarget: false` とする
 
-   各対象の結果を `mutation: [{testFile, mutatedFile, description, testFailed, failureKind, restored, rePassed, toothless, injectFailed, mutationRunFailed, exitReportMismatch, needsManualRestore, invalidTarget}]` に蓄積する（`mutationRunFailed` は本フローでは常に `false` で固定する。`mutation-run.sh` はあなた自身が直接Bash実行するため、旧設計にあった「実行代行エージェント自身の terminal 失敗」という区分自体が発生しない。この固定値は報告テンプレートの `mutationRunFailed:true` 分岐が本フローでは到達しないことを意味する——`invalidTarget:true` の分岐のみが「⚠️要確認」を発生させる）。
+   各対象の結果を `mutation: [{testFile, mutatedFile, description, testFailed, failureKind, restored, rePassed, toothless, injectFailed, exitReportMismatch, needsManualRestore, invalidTarget}]` に蓄積する。
 
 ### Step 2-3: 復元未確認の残留対応
 
@@ -133,7 +133,7 @@ Step 2-1/2-2 で自分が集約した `verify`/`mutation`/`unsafeMutationResidua
 
 | テスト | 解説整合 | アサーション妥当 | 有効性 | 判定 |
 |-------|---------|----------------|-------|------|
-| {test} | {explanationConsistent: ✅/❌} | {assertionsMeaningful: ✅/❌} | {有効性の判定は下記の優先順で1つ選ぶ: mutation対象外→「未実施（対象外）」／ injectFailed:true または mutatedFile===null（見送り）→「未実施（{description}）」／ invalidTarget:true または mutationRunFailed:true → 「⚠️要確認」（`mutationRunFailed` はStep 2-2の設計上常に`false`のため本フローでは`invalidTarget:true`のみが該当。フィールド自体は将来の拡張に備え防御的に残す）／ toothless:true → ❌ ／ それ以外（実際に注入・検出できた） → ✅} | {explanationConsistent かつ assertionsMeaningful かつ verifyFailed:false かつ 有効性が「✅」または「未実施（対象外）」なら OK、それ以外（「未実施（{description}）」「⚠️要確認」「❌」を含む）は要修正} |
+| {test} | {explanationConsistent: ✅/❌} | {assertionsMeaningful: ✅/❌} | {有効性の判定は下記の優先順で1つ選ぶ: mutation対象外→「未実施（対象外）」／ injectFailed:true または mutatedFile===null（見送り）→「未実施（{description}）」／ invalidTarget:true → 「⚠️要確認」／ toothless:true → ❌ ／ それ以外（実際に注入・検出できた） → ✅} | {explanationConsistent かつ assertionsMeaningful かつ verifyFailed:false かつ 有効性が「✅」または「未実施（対象外）」なら OK、それ以外（「未実施（{description}）」「⚠️要確認」「❌」を含む）は要修正} |
 
 ### 乖離・問題（あれば）
 - {test}: {verify[].issues の内容。verifyFailed: true の場合は「検証エージェントが失敗（未検証）」}
