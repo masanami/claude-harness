@@ -34,7 +34,7 @@ effort: medium
 
 ## 出力
 
-判定結果を `test`（対象テストのパス。入力の `path` をそのまま使う）・`explanationConsistent`（bool）・`assertionsMeaningful`（bool）・`disabled`（bool）・`issues`（発見した乖離・問題点の配列。無ければ空配列）で返してください。スキーマ定義そのもの（フィールド一覧・型）は呼び出し元のワークフロースクリプトの責務であり、ここでは重複記載しません。
+判定結果を `test`（対象テストのパス。入力の `path` をそのまま使う）・`explanationConsistent`（bool）・`assertionsMeaningful`（bool）・`disabled`（bool）・`issues`（発見した乖離・問題点の配列。無ければ空配列）で返してください。スキーマ定義そのもの（フィールド一覧・型）は呼び出し元プロンプト側の責務であり、ここでは重複記載しません。
 
 ## 禁止事項
 

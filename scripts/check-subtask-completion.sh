@@ -1,8 +1,7 @@
 #!/bin/bash
 # check-subtask-completion.sh
-# skills/promote-verify/SKILL.md（Step 3）が Bash ツールで直接実行する決定的スクリプト
-# （Issue #110 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の
-# 直接実行に一本化した）。統合ブランチ→main 昇格前検証パッケージの一部として、親Issueの
+# skills/promote-verify/SKILL.md（Step 3）が Bash ツールで直接実行する決定的スクリプト。
+# 統合ブランチ→main 昇格前検証パッケージの一部として、親Issueの
 # 全サブタスク（子Issue）がマージ済みかを機械的に判定する（Issue #52）。
 #
 # 使い方:

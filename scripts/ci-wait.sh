@@ -1,7 +1,7 @@
 #!/bin/bash
 # ci-wait.sh
 # para-impl の star型並列実装で ticket-worker が Phase 9（CI確認）に使う決定的スクリプト
-# （Issue #45 で新設、#105 で呼び出し元を Dynamic Workflow から ticket-worker へ変更）。
+# （Issue #45 で新設）。
 # `gh pr checks` を上限付きでポーリングし、失敗時は失敗ジョブのログ末尾を抽出する。
 #
 # 使い方:

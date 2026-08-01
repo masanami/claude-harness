@@ -120,7 +120,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 RISK_GATE_TRIGGERED=$(jq -r '(.risk.touches_sensitive == true) or ((.commented_bodies | length) > 0)' <<<"$PREFLIGHT")
 ```
 
-Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だけ**起動する。Workflow を経由しないため出力の schema 強制はできず、`agents/code-reviewer.md` Step 3 の prose 形式の報告を受け取る。プロンプトには以下を明記する:
+Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だけ**起動する。Task ツールには出力検証機構が無いため、`agents/code-reviewer.md` Step 3 の prose 形式の報告を受け取る。プロンプトには以下を明記する:
 - `gh pr diff` ベースのレビューに限定すること（ローカルチェックアウト・品質チェックコマンド実行を前提にしないこと）
 - 手順1で取得済みの PR title/body と、`gh pr diff "$PR_NUM"` の変更差分を渡す
 
@@ -128,7 +128,7 @@ Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だ�
 
 #### 分岐C: 統合ブランチゲート・リスクゲート該当時
 
-`GATE == "integration"` かつ上記 `RISK_GATE_TRIGGERED` が**真**の場合、以下の judge panel 手順を実施する。Dynamic Workflow は使用しない（Issue #109）。diff収集・hunk抽出（判断を伴わない機械的処理）も `git-ops` エージェントを経由せず、あなた自身が Bash ツールで直接実行する（`skills/self-review/SKILL.md` Step 1・Step 3 が同じ理由で採用している先例と揃える。`git-ops` を経由していた理由は Dynamic Workflow ランタイムが `node:fs`/`node:child_process` にアクセスできないサンドボックスだったためであり、Task 経由のあなたにはその制約が無い）。
+`GATE == "integration"` かつ上記 `RISK_GATE_TRIGGERED` が**真**の場合、以下の judge panel 手順を実施する（Issue #109）。diff収集・hunk抽出（判断を伴わない機械的処理）も `git-ops` エージェントを経由せず、あなた自身が Bash ツールで直接実行する（`skills/self-review/SKILL.md` Step 1・Step 3 が同じ理由で採用している先例と揃える）。
 
 3レンズの判定基準そのもの・懐疑的検証の反証規範そのものは `agents/code-reviewer.md` / `agents/finding-verifier.md` 側に置く（レイヤリング。本 SKILL には重複記載しない）。本 SKILL が正本とするのは、fan-out の手順・any-veto集約・単一懐疑者反証の判定規律という「構造」のみ。
 
@@ -152,7 +152,7 @@ Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だ�
    - `gh pr diff` ベースのレビューに限定すること（ローカルチェックアウト・品質チェックコマンド実行を前提にしないこと）。`$DIFF_FILE` を Read させ、その内容のみに基づいてレビューさせる
    - 手順1（Phase 3 手順1）で取得済みの PR title/body と、対象 focus（レンズ）を渡す
    - レビュー基準そのもの（何を問題とみなすか）は `agents/code-reviewer.md` の既定の観点に従うこと（このプロンプトでは対象PRのコンテキストと focus・出力形式のみを指定し、観点の中身は再記述しない）
-   - 以下の形式での構造化返却を明示的に指示する（Task ツールには `agent()` の schema オプションのような出力検証機構が無いため、指示文で明示的に構造化返却を課す）:
+   - 以下の形式での構造化返却を明示的に指示する（Task ツールには出力検証機構が無いため、指示文で明示的に構造化返却を課す）:
      ```text
      {blockers: [{file, line, reason}, ...], verdict: "merge"|"hold"}
      ```

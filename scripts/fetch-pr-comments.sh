@@ -1,8 +1,6 @@
 #!/bin/bash
 # fetch-pr-comments.sh
-# skills/pr-review-respond/SKILL.md（Step 2）が Bash ツールで直接実行する決定的スクリプト
-# （Issue #108 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の
-# 直接実行に一本化した）。
+# skills/pr-review-respond/SKILL.md（Step 2）が Bash ツールで直接実行する決定的スクリプト。
 # PRのレビューコメントを3経路（レビュー本体/会話タブ/インライン）+ GraphQL reviewThreads +
 # 変更ファイル一覧から取得し、単一の正規化配列へ組み立てる。
 #
