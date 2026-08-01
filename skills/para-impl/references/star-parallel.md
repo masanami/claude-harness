@@ -4,7 +4,7 @@
 >
 > 参照パスは `${CLAUDE_PLUGIN_ROOT}` 配下です（例: `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md`）。Read にはプラグインの絶対パスが必要です。
 >
-> **v2.1.0 での再設計（Issue #105）**: v2.0.0 は worker 委譲を Dynamic Workflow（`para-impl-tickets.js`）化したが、ヘッドレス（`claude -p`）呼び出しで Workflow が孤児化し実装が完了しないリグレッションが確認されたため、Task ツールで `ticket-worker` サブエージェントを並列 spawn する同期委譲（v1.x の star 型）へ戻した。Workflow 化で得た資産（`worktree-setup.sh`/`worktree-cleanup.sh`/`ci-wait.sh` の決定的スクリプト、loop-until-green と CI 失敗ログ注入、衝突予測ヒント）は本フローに取り込み済み。
+> **使用スクリプト**: `worktree-setup.sh`/`worktree-cleanup.sh`/`ci-wait.sh` の決定的スクリプトと、loop-until-green・CI失敗ログ注入・衝突予測ヒントの仕組みを本フローで使用する。
 
 ---
 

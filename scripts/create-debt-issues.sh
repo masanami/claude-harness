@@ -5,8 +5,8 @@
 # `gh issue create --label tech-debt` で一括起票し、manifestのindexとissue番号/URLの
 # 対応表JSONを返す。
 #
-# 背景: Issue #55 では Workflow(pipeline) 化を不採用とし、本スクリプトによる
-# 決定的な一括起票で「1:1対応の構造保証・wall-clock短縮・コンテキスト削減」を達成する。
+# 背景: 本スクリプトによる決定的な一括起票で
+# 「1:1対応の構造保証・wall-clock短縮・コンテキスト削減」を達成する（Issue #55）。
 # 粒度判定（分割/統合すべきか）はリード（LLM）が行い、本スクリプトは
 # targetFiles件数の機械的カウントによる警告付与のみを行う（起票は止めない）。
 #
