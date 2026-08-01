@@ -1,6 +1,6 @@
 #!/bin/bash
 # reply-and-resolve.sh
-# skills/pr-review-respond/SKILL.md（Step 12）が Bash ツールで直接実行する決定的スクリプト。
+# skills/pr-review-respond/SKILL.md（Step 11）が Bash ツールで直接実行する決定的スクリプト。
 # 分類済みコメントへの返信投稿とスレッドのResolved化を、1件ずつ**逐次**行う
 # （GitHub secondary rate limit対策のため並列fan-outしない）。
 #

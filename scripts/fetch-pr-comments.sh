@@ -1,6 +1,6 @@
 #!/bin/bash
 # fetch-pr-comments.sh
-# skills/pr-review-respond/SKILL.md（Step 2）が Bash ツールで直接実行する決定的スクリプト。
+# skills/pr-review-respond/SKILL.md（Step 1）が Bash ツールで直接実行する決定的スクリプト。
 # PRのレビューコメントを3経路（レビュー本体/会話タブ/インライン）+ GraphQL reviewThreads +
 # 変更ファイル一覧から取得し、単一の正規化配列へ組み立てる。
 #
