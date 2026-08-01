@@ -1,6 +1,6 @@
 ---
 name: decompose-judge
-description: "ticket-decomposer が生成した3案の実装タスク分解案を採点・合成する際に使用。skills/create-ticket/references/decompose-mode.md から Task ツールで `subagent_type: 'claude-harness:decompose-judge'` として呼び出され、受入基準の網羅・依存グラフの妥当性に不備があれば上限付きで再実行される（Issue #46・#112）。"
+description: ticket-decomposer が生成した複数の実装タスク分解案を採点し、最良の要素を合成した最終分解計画を作成する際に使用するエージェント。
 # tools: 判断材料（3候補案・計算済みグラフ指標・網羅結果）はすべてプロンプトに注入されるため、
 # 探索系ツール（Glob/Grep）は不要と判断し持たせない。ticket-decomposer と異なり、あなた自身が
 # files フィールドを新規に創作することもない（候補案の合成に専念する）。Read のみ、候補案の

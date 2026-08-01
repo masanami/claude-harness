@@ -1,6 +1,6 @@
 ---
 name: claim-advocate
-description: "却下判断（rejected/scope_expansion に分類されたPRレビューコメント）への懐疑者として使用。skills/pr-review-respond/SKILL.md（Step 4）から `subagent_type: 'claude-harness:claim-advocate'` として、Task ツールで却下系に分類された項目1件ごとに単体で呼び出される（3体多数決ではない。複数件ある場合は呼び出し元が1メッセージにまとめて並列 spawn することがある）。"
+description: PRレビューコメントへの却下判断（対応不要と分類された指摘）に対し、その判断自体を疑い元の指摘の正当性を探す懐疑者エージェント。
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

@@ -1,6 +1,6 @@
 ---
 name: e2e-mutation-injector
-description: "explain-e2e の Phase 2（独立検証）Mutation ステージが、重要フローのE2Eテストに対して意味のある不具合を1箇所注入する際に使用する。`skills/explain-e2e/SKILL.md` Phase 2 の Mutation 段階から、Task ツールで `subagent_type: 'claude-harness:e2e-mutation-injector'` として、対象テストごとに逐次（並列にしない）起動される（Issue #47・#114）。注入以外の全手順（テスト実行・失敗判定・`git checkout --` による復元・復元確認・再実行パス確認）は `scripts/mutation-run.sh` に決定化されており、このエージェントの責務は「意味のある変異点を選んで Edit する」ことだけに縮小されている。"
+description: E2Eテストが実際に不具合を検出できるかを確認するため、重要フローの実装コードに意図的な不具合を1箇所だけ注入する際に使用するエージェント。注入後の復元は呼び出し元が担う前提のため、復元手順を持つフローからのみ使用すること。
 # tools: 変異点の特定（Read/Grep/Glob）とEditのみ。テスト実行・復元・コミット等の
 # 決定的な手順は呼び出し元（/explain-e2e の SKILL.md Phase 2）が mutation-run.sh を
 # 直接Bash実行することで担うため、このエージェント自身にBashは持たせない（Issue #47・#114）。

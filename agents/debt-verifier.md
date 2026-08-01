@@ -1,6 +1,6 @@
 ---
 name: debt-verifier
-description: "debt-scanner が検出した技術負債の指摘に対して懐疑的に反証を試みる際に使用。skills/reduce-debt/SKILL.md（Step 2-4）から `subagent_type: 'claude-harness:debt-verifier'` として、Task ツールで検証バッチごとに3体並列 spawn され、多数決の一角を担う。"
+description: debt-scanner が検出した技術負債の指摘に対して懐疑的に反証を試みる際に使用するエージェント。ファイル起点でCLAUDE.mdの規約と照合する点で、diff起点で反証する finding-verifier とは反証観点が異なる。
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet
