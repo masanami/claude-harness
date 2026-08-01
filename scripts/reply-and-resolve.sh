@@ -58,17 +58,13 @@
 
 set -u
 
-MARKER_PREFIX="pr-review-respond"
-
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
+
+MARKER_PREFIX="pr-review-respond"
 
 # --- 純粋関数（gh を呼ばない） ---
 
@@ -113,22 +109,7 @@ EOF
 
 # --- gh を呼ぶ関数 ---
 
-# owner/repo をリポジトリ設定から解決する。
-# 結果: REPO_OWNER, REPO_NAME
-resolve_repo() {
-  local json
-  if ! json=$(gh repo view --json owner,name 2>/dev/null); then
-    echo "Error: failed to resolve owner/repo via gh repo view" >&2
-    return 1
-  fi
-  REPO_OWNER=$(jq -r '.owner.login' <<<"$json")
-  REPO_NAME=$(jq -r '.name' <<<"$json")
-  if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ]; then
-    echo "Error: could not parse owner/repo from gh repo view output" >&2
-    return 1
-  fi
-  return 0
-}
+# resolve_repo は lib/common.sh（scripts/lib/common.sh）に集約。
 
 # threadIdが非nullの項目向けの既存コメント本文一覧を取得する。
 # 引数: PR番号, owner, repo

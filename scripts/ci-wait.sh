@@ -43,6 +43,12 @@
 
 set -u
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
+}
+
 DEFAULT_TIMEOUT_SECONDS=900
 DEFAULT_POLL_INTERVAL_SECONDS=30
 NONE_CONFIRM_ATTEMPTS=2
@@ -50,15 +56,6 @@ LOG_TAIL_LINES=100
 LOG_CHAR_BUDGET=4000
 
 POLL_SLEEP_CMD="${POLL_SLEEP_CMD:-sleep}"
-
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
-}
 
 # ---------------------------------------------------------------------------
 # gh 呼び出し（外部作用あり）
@@ -76,18 +73,8 @@ fetch_pr_view() {
   return 0
 }
 
-# pr-merge-preflight.sh の fetch_pr_checks と同じ設計（gh pr checks は pending/fail 時に
-# 非0 exitを返す仕様のため、exit code ではなく stdout が有効なJSON配列かどうかで成否判定）。
-fetch_pr_checks() {
-  local pr_num="$1"
-  local output
-  output=$(gh pr checks "$pr_num" --json name,state,bucket,description,workflow,link 2>/dev/null)
-  if [ -z "$output" ] || ! jq -e 'type == "array"' <<<"$output" >/dev/null 2>&1; then
-    printf '[]'
-    return 0
-  fi
-  printf '%s' "$output"
-}
+# fetch_pr_checks は lib/common.sh（scripts/lib/common.sh）に集約（pr-merge-preflight.sh と
+# 同じ実装。ここでは warn_on_empty を渡さないため Warning は出さない元の挙動を維持する）。
 
 # 失敗ジョブのログ末尾を取得する。run_id 単位（複数チェックが同一 run に属しうる）。
 fetch_run_log_failed() {
@@ -110,7 +97,7 @@ classify_checks() {
     echo "empty"
     return
   fi
-  if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<<"$checks_json" >/dev/null 2>&1; then
+  if jq -e "any(.[]; ${JQ_FAIL_CANCEL_PREDICATE})" <<<"$checks_json" >/dev/null 2>&1; then
     echo "red"
     return
   fi
@@ -179,7 +166,7 @@ extract_run_id() {
 # fail/cancel の checks のみを抽出したJSON配列を返す。
 build_failed_checks_json() {
   local checks_json="$1"
-  jq -c '[.[] | select(.bucket == "fail" or .bucket == "cancel") | {name, workflow, link}]' <<<"$checks_json"
+  jq -c "[.[] | select(${JQ_FAIL_CANCEL_PREDICATE}) | {name, workflow, link}]" <<<"$checks_json"
 }
 
 # failed_checks_json（build_failed_checks_json の出力）から一意な run_id 一覧を返す
