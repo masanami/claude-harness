@@ -1,79 +1,26 @@
 #!/bin/bash
 # pr-merge-preflight.sh
-# /pr-merge スキルの Phase 0（base ブランチ判定・ゲート判定）と
-# Phase 1（PR情報・CI・mergeable・外部レビュー待機ポーリング）を切り出した
-# 決定的なシェルスクリプト。
-#
-# 使い方:
-#   scripts/pr-merge-preflight.sh <PR番号> [timeout秒]
-#     -> gh でPR情報・CI・reviews を取得し、外部レビュー未投稿なら
-#        タイムアウトまでポーリングし、決定表（blocking判定）とrisk算出を行う。
-#     timeout秒省略時は600秒（10分。60秒間隔で最大10回チェックする既存仕様を踏襲）。
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "gate": "production" | "integration",
-#     "base": "...",            # PRのbaseブランチ名（後続フェーズでの再取得を避けるために含める）
-#     "default_branch": "...",  # リポジトリの既定ブランチ名（同上）
-#     "ci": {"status": "pass"|"fail"|"pending"|"none", "checks": [...]},
-#     "mergeable": "MERGEABLE"|"CONFLICTING"|"UNKNOWN",
-#     "mergeStateStatus": "...",
-#     "reviews": [{"author": "...", "state": "..."}],
-#     "commented_bodies": ["..."],
-#     "blocking": bool,
-#     "block_reasons": ["changes_requested" | "ci_failed" | "conflicting" | "merge_blocked"],
-#     "risk": {"files_changed": n, "insertions": n, "deletions": n, "touches_sensitive": bool}
-#   }
-#
-# 「COMMENTED の内容に重大な指摘がないか」は意味判断のため commented_bodies を
-# 返すだけに留め、スクリプト側では本文の意味を一切判定しない（LLM 側の責務）。
-#
-# CI・mergeable/mergeStateStatus・files/additions/deletions/changedFiles は外部レビュー待機
-# ポーリング（最大約10分かかりうる）の完了後に取得する（ポーリング開始前のスナップショットを
-# 使うと、ポーリング中にCIが完了する・他の変更でmergeableやfilesが変わる等のケースで
-# 古い状態のまま blocking判定・risk算出をしてしまうため。main 参照）。
-#
-# gh 呼び出しを行う処理（fetch_*）と、入力から出力を組み立てる純粋な判定処理
-# （determine_gate / determine_ci_status / judge_blocking / compute_touches_sensitive /
-#  reviews_poll_decision / build_risk_json）を関数として分離している。
-# このファイルを `source` すれば gh を呼ばずに純粋関数を直接テストできる。
+# 使い方: scripts/pr-merge-preflight.sh <PR番号> [timeout秒]（詳細は下記参照）
+# 仕様の正本は scripts/specs/pr-merge-preflight.md を参照。
 
 set -u
+
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
+}
 
 # 変数名は source する側（テストファイル等）の SCRIPT_DIR と衝突しないよう
 # このスクリプト専用の名前にしている（source すると同名グローバル変数は上書きされるため）。
 PR_MERGE_PREFLIGHT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SENSITIVE_PATHS_CONFIG="${PR_MERGE_PREFLIGHT_DIR}/config/sensitive-paths.txt"
 
-# sensitive-paths.txt が存在しない場合の内蔵デフォルト（同ファイルの内容と同期させる）。
-DEFAULT_SENSITIVE_PATTERNS=(
-  ".github/workflows/*"
-  "*secret*"
-  "*credential*"
-  "*.pem"
-  "*.key"
-  "*.env"
-  "scripts/*"
-  "CLAUDE.md"
-  ".claude/settings.json"
-  ".claude/settings.local.json"
-)
-
 # 外部レビュー待機ポーリングの既定値。
 # 既存 SKILL.md Phase 1 の仕様（60秒間隔・最大10回・最大約10分）を踏襲する。
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-60}"
 POLL_SLEEP_CMD="${POLL_SLEEP_CMD:-sleep}"
 DEFAULT_TIMEOUT_SECONDS=600
-
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
-}
 
 # ---------------------------------------------------------------------------
 # gh 呼び出し（外部作用あり）
@@ -115,22 +62,8 @@ fetch_pr_view() {
   printf '%s' "$output"
 }
 
-# CI チェック結果を取得する。
-# gh pr checks は CI が pending/fail の場合に非0 exitを返す仕様のため、
-# exit code ではなく stdout が有効なJSON配列かどうかで成否を判定する
-# （非0 exit = 失敗、とは限らないため）。
-# チェックが1件も無い/取得できない場合は空配列を返す（非致命）。
-fetch_pr_checks() {
-  local pr_num="$1"
-  local output
-  output=$(gh pr checks "$pr_num" --json name,state,bucket,description,workflow,link 2>/dev/null)
-  if [ -z "$output" ] || ! jq -e 'type == "array"' <<<"$output" >/dev/null 2>&1; then
-    echo "Warning: no CI checks data available for PR #${pr_num} (no checks configured, or fetch failed)" >&2
-    printf '[]'
-    return 0
-  fi
-  printf '%s' "$output"
-}
+# fetch_pr_checks は lib/common.sh（scripts/lib/common.sh）に集約（ci-wait.sh と同じ実装。
+# ここでは warn_on_empty=1 を渡し、取得失敗/空の際に Warning を出す元の挙動を維持する）。
 
 # ポーリングループ用の軽量な reviews 再取得。
 fetch_pr_reviews_only() {
@@ -203,7 +136,7 @@ determine_ci_status() {
     echo "none"
     return
   fi
-  if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<<"$checks_json" >/dev/null 2>&1; then
+  if jq -e "any(.[]; ${JQ_FAIL_CANCEL_PREDICATE})" <<<"$checks_json" >/dev/null 2>&1; then
     echo "fail"
     return
   fi
@@ -237,7 +170,7 @@ judge_blocking() {
     blocking="true"
   fi
 
-  if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<<"$checks_json" >/dev/null 2>&1; then
+  if jq -e "any(.[]; ${JQ_FAIL_CANCEL_PREDICATE})" <<<"$checks_json" >/dev/null 2>&1; then
     reasons=$(jq -c '. + ["ci_failed"]' <<<"$reasons")
     blocking="true"
   fi
@@ -307,15 +240,37 @@ build_risk_json() {
 }
 
 # sensitive パターン一覧を返す（改行区切り文字列）。
-# config_path が存在すればそれを読み、コメント行(#)・空行を除外する。
-# 存在しなければ内蔵デフォルトにフォールバックする。
+# config_path を読み、コメント行(#)・空行を除外する。
+# この設定ファイルはスクリプトと同一プラグイン内に同梱されており、欠損＝インストール破損
+# なのでフォールバックせず、stderrにファイルパスを含むエラーを出して非0 exitする
+# （内蔵デフォルトへのフォールバックは行わない。古い内蔵コピーが黙って使われる方が
+#  機微パス検出漏れとして危険なため。Issue #129）。
 load_sensitive_patterns() {
   local config_path="$1"
-  if [ -f "$config_path" ]; then
-    grep -vE '^[[:space:]]*(#|$)' "$config_path"
-  else
-    printf '%s\n' "${DEFAULT_SENSITIVE_PATTERNS[@]}"
+  if [ ! -f "$config_path" ]; then
+    echo "Error: sensitive paths config file not found: ${config_path} (installation broken - this file should be bundled with the plugin)" >&2
+    return 1
   fi
+  local result grep_rc
+  result="$(grep -vE '^[[:space:]]*(#|$)' "$config_path")"
+  grep_rc=$?
+  # grep はマッチ0件（全行コメント/空ファイル）の場合に exit 1 を返すが、これはファイル欠損とは
+  # 異なる正常系（有効パターン0件）として扱う。exit 1 のみを許容し、それ以外の非0
+  # （例: exit 2 = 読み取り権限が無い等の実エラー）は失敗として伝播させる（セルフレビュー指摘:
+  # `|| true` で全ての非0を握りつぶすと、読み取り失敗時もsensitive判定が黙って無効化されるため）。
+  if [ "$grep_rc" -gt 1 ]; then
+    echo "Error: failed to read sensitive paths config file: ${config_path} (grep exit code ${grep_rc})" >&2
+    return 1
+  fi
+  # 有効なパターンが0件（全行コメント/空ファイル）の場合、compute_touches_sensitive は常にfalseを
+  # 返しsensitiveパス検出が全面的に無効化される。ファイル欠損ではないためエラーにはしないが、
+  # 黙って無効化されたままにしないよう警告する（セルフレビュー指摘: Issue #129が排除しようとした
+  # 「検出が黙って無効化される」状態と同種のため）。
+  if [ -z "$result" ]; then
+    echo "Warning: sensitive paths config file has no valid patterns (all commented/blank): ${config_path} (sensitive path detection will be disabled)" >&2
+  fi
+  printf '%s' "$result"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -385,6 +340,16 @@ main() {
     exit 1
   fi
 
+  # sensitive パターン設定ファイルの読み込みは PR番号にもリモート状態にも依存しない
+  # 静的な前提条件（欠損＝インストール破損）のため、最大約10分かかりうる外部レビュー
+  # 待機ポーリングやその他の gh 呼び出しより前に fail-fast する（セルフレビュー指摘:
+  # Issue #129。ポーリング後まで検出が遅延すると、インストール破損時に無駄な待機の末に
+  # 失敗するUXになってしまうため）。
+  local patterns
+  if ! patterns="$(load_sensitive_patterns "$SENSITIVE_PATHS_CONFIG")"; then
+    exit 1
+  fi
+
   local default_branch
   if ! default_branch="$(fetch_default_branch)"; then
     exit 1
@@ -410,7 +375,7 @@ main() {
   # 再取得する（ポーリング中にCIが完了したり、他の変更でmergeableやfilesが変わったりする場合、
   # ポーリング開始前の古いスナップショットのまま judge_blocking / risk算出に渡ってしまうため）。
   local checks_json
-  checks_json="$(fetch_pr_checks "$pr_num")"
+  checks_json="$(fetch_pr_checks "$pr_num" 1)"
 
   local ci_status
   ci_status="$(determine_ci_status "$checks_json")"
@@ -445,8 +410,7 @@ main() {
   deletions="$(jq -r '.deletions // 0' <<<"$recheck_json")"
   changed_files="$(jq -r '.changedFiles // 0' <<<"$recheck_json")"
 
-  local patterns touches_sensitive risk_json
-  patterns="$(load_sensitive_patterns "$SENSITIVE_PATHS_CONFIG")"
+  local touches_sensitive risk_json
   touches_sensitive="$(compute_touches_sensitive "$files_json" "$patterns")"
   risk_json=$(build_risk_json "$changed_files" "$insertions" "$deletions" "$touches_sensitive")
 

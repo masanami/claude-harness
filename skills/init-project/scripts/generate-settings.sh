@@ -1,6 +1,6 @@
 #!/bin/bash
 # generate-settings.sh
-# skills/init-project/SKILL.md Step 4b（.claude/settings.json 生成）を決定的に実行する。
+# skills/init-project/SKILL.md ステップ6（.claude/settings.json 生成）を決定的に実行する。
 #
 # 使い方:
 #   generate-settings.sh [--pm <pm>] [--test <framework>]... [--infra <infra>]...
@@ -59,7 +59,7 @@ gs_union_unique_json() {
 # ベース allow / deny（single source of truth）
 # ------------------------------------------------------------------
 
-# 共通権限（常に含める。約25項目）
+# 共通権限（常に含める。約26項目）
 gs_base_allow_json() {
   jq -n '[
     "Bash(git add:*)",
@@ -86,7 +86,8 @@ gs_base_allow_json() {
     "Bash(gh pr:*)",
     "Bash(gh api:*)",
     "Bash(gh repo view:*)",
-    "Bash(cd:*)"
+    "Bash(cd:*)",
+    "Bash(bash:*)"
   ]'
 }
 
@@ -128,39 +129,39 @@ gs_validate_analyze_input_schema() {
   ' >/dev/null 2>&1 <<<"$json"
 }
 
-# jq 内蔵のフォールバック（base-deny.json が読めない場合用）
-gs_fallback_base_deny_json() {
-  jq -n '[
-    "Bash(rm -rf:*)",
-    "Bash(rm -r:*)",
-    "Bash(git push --force:*)",
-    "Bash(git push -f:*)",
-    "Bash(git clean -f:*)",
-    "Bash(gh repo delete:*)"
-  ]'
-}
-
 # ベースdenyの正本（base-deny.json）を読み込む。
 # init-devcontainer 側もこのファイルを直接参照することで重複を排除している。
 # 配置場所は「共有 scripts/config/」ではなく本スキルのローカルscripts/配下:
 # このファイルの主たる所有者・更新者は generate-settings.sh（init-project）であり、
 # init-devcontainer は${CLAUDE_PLUGIN_ROOT}経由のパス参照で読むだけの副次的な利用者のため。
 # 引数: このスクリプトが置かれているディレクトリ（SCRIPT_DIR）
+#
+# base-deny.json はスクリプトと同一プラグイン内に同梱されており、欠損＝インストール破損
+# なのでフォールバックせず、ファイル不在またはスキーマ不正の場合は stderr に
+# ファイルパスを含むエラーを出して非0 exitする（内蔵デフォルトへのフォールバックは行わない。
+# 古い内蔵コピーが黙って使われる方が deny 設定漏れとして危険なため。Issue #129）。
 gs_load_base_deny_json() {
   local script_dir="$1"
   local deny_file="${script_dir}/base-deny.json"
-  if [ -f "$deny_file" ]; then
-    local content
-    content="$(jq -c '.' "$deny_file" 2>/dev/null)"
-    # 構文（valid JSON）だけでなく型契約（文字列配列）も検証する。
-    # 有効なJSONでも型が違えば後続のunion/mergeでjqが失敗し、
-    # 既存 .claude/settings.json の破損に繋がりうるため。
-    if [ -n "$content" ] && gs_validate_string_array_json "$content"; then
-      echo "$content"
-      return 0
-    fi
+  if [ ! -f "$deny_file" ]; then
+    echo "Error: base-deny.json not found: ${deny_file} (installation broken - this file should be bundled with the plugin)" >&2
+    # ファイルパスをJSON文字列へ安全に埋め込むため jq --arg を使う（printf %s の直接埋め込みは
+    # パスに `"` 等が含まれると不正なJSONを生成しうるため。セルフレビュー指摘: Issue #129）。
+    jq -nc --arg msg "base-deny.json not found: ${deny_file}" '{status:"error", error:$msg}' >&2
+    return 1
   fi
-  gs_fallback_base_deny_json
+  local content
+  content="$(jq -c '.' "$deny_file" 2>/dev/null)"
+  # 構文（valid JSON）だけでなく型契約（文字列配列）も検証する。
+  # 有効なJSONでも型が違えば後続のunion/mergeでjqが失敗し、
+  # 既存 .claude/settings.json の破損に繋がりうるため。
+  if [ -z "$content" ] || ! gs_validate_string_array_json "$content"; then
+    echo "Error: base-deny.json is invalid or does not match expected schema (must be a JSON array of strings): ${deny_file}" >&2
+    jq -nc --arg msg "base-deny.json invalid schema: ${deny_file}" '{status:"error", error:$msg}' >&2
+    return 1
+  fi
+  echo "$content"
+  return 0
 }
 
 # ------------------------------------------------------------------
@@ -403,7 +404,9 @@ main() {
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
   local base_deny_json generated_json
-  base_deny_json="$(gs_load_base_deny_json "$script_dir")"
+  if ! base_deny_json="$(gs_load_base_deny_json "$script_dir")"; then
+    exit 1
+  fi
   generated_json="$(gs_build_generated_settings_json "$pm" "$test_csv" "$infra_csv" "$base_deny_json")"
 
   local existed="false" final_json

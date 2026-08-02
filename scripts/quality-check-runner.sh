@@ -1,65 +1,14 @@
 #!/bin/bash
 # quality-check-runner.sh
-# /quality-check スキルの手順2-4（自動修正の事前適用 → lint/型チェック/テスト実行 →
-# 機械可読JSON構築）を切り出した決定的なシェルスクリプト。
-#
-# コマンド特定（どのコマンドが lint/型チェック/テスト/auto-fix に当たるか）は
-# プロジェクトごとに意味理解が必要なため、呼び出し側（LLM）が CLAUDE.md や
-# package.json 等から特定した上で、特定済みのコマンド文字列を引数として渡す。
-# このスクリプトはコマンド文字列を「実行してexit codeで判定する」だけで、
-# コマンドの意味は一切解釈しない。
-#
-# 使い方:
-#   quality-check-runner.sh [--auto-fix CMD]... [--lint CMD] [--typecheck CMD] [--test CMD]
-#     --auto-fix CMD   自動修正コマンド。0回以上指定可。指定順に1回ずつ実行する
-#     --lint CMD       リント（チェック用）コマンド。1回のみ指定可
-#     --typecheck CMD  型チェックコマンド。1回のみ指定可
-#     --test CMD       テストコマンド。1回のみ指定可
-#   lint/typecheck/test は該当コマンドを特定できなかった場合、フラグごと省略する
-#   （その場合そのゲートは status: "skip" として扱われ、失敗とはしない）。
-#   lint/typecheck/test を2回以上指定した場合はエラー（exit 1）とする
-#   （後勝ちで無言に上書きすると、呼び出し側の指定ミスに気付けないため）。
-#
-# 出力（stdout にJSON1個。skills/quality-check/SKILL.md の機械可読JSON契約と互換）:
-#   {
-#     "result": "pass" | "fail",
-#     "auto_fix": {"applied": bool, "summary": "cmd1 → cmd2"},
-#     "gates": {
-#       "lint":      {"status": "pass"|"fail"|"skip", "errors": n|null, "warnings": n|null},
-#       "typecheck": {"status": "pass"|"fail"|"skip", "errors": n|null},
-#       "test":      {"status": "pass"|"fail"|"skip", "passed": n|null, "failed": n|null, "skipped": n|null}
-#     }
-#   }
-#
-# - `result` は lint/typecheck/test のいずれかが fail なら fail、それ以外は pass
-# - 各ゲートの `status` は **exit code のみ**で判定する（0 -> pass、非0 -> fail、
-#   コマンド未指定 -> skip）。件数フィールド（errors/warnings/passed/failed/skipped）は
-#   ツールごとに出力形式が異なり完全決定化できないため best-effort 抽出とし、
-#   抽出できない場合は null を返す（status の判定には使わない）
-# - 終了コード: result が pass なら 0、fail なら 1（jq不在等の致命的エラー時は 2）
-# - 各コマンドの生の stdout/stderr は stderr に転記する（`--- <gate>: <cmd> ---` 区切り）。
-#   件数抽出で丸められる前の詳細（lintエラー箇所・型エラー内容・失敗テストのスタック
-#   トレース等）は、失敗時に呼び出し側（LLM）が原因分析するために必要なため
-#   （出力規約: stdout にはJSONのみ、人間/LLM向け詳細は stderr）
-#
-# gate 実行（外部コマンドを起動する run_command / build_*_gate_json）と、
-# 出力テキストからの件数抽出・ステータス判定（parse_* / gate_status_from_exit /
-# compute_result）を関数として分離している。このファイルを `source` すれば
-# 外部コマンドを起動せずに purely な抽出・判定関数を直接テストできる。
+# 使い方: scripts/quality-check-runner.sh [--auto-fix CMD]... [--lint CMD] [--typecheck CMD] [--test CMD]（詳細は下記参照）
+# 仕様の正本は scripts/specs/quality-check-runner.md を参照。
 
 set -u
 
-# ---------------------------------------------------------------------------
-# 前提チェック
-# ---------------------------------------------------------------------------
-
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
 
 # ---------------------------------------------------------------------------

@@ -1,76 +1,17 @@
 #!/bin/bash
 # reply-and-resolve.sh
-# skills/pr-review-respond/SKILL.md（Step 12）が Bash ツールで直接実行する決定的スクリプト
-# （Issue #108 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の
-# 直接実行に一本化した）。
-# 分類済みコメントへの返信投稿とスレッドのResolved化を、1件ずつ**逐次**行う
-# （GitHub secondary rate limit対策のため並列fan-outしない）。
-#
-# 使い方:
-#   scripts/reply-and-resolve.sh <PR番号> <items_json_file|->
-#
-# 入力JSON（配列。ファイルまたは "-" でstdin指定）:
-#   [{"commentId": "123", "threadId": "PRRT_xxx"|null, "reply_body": "...", "resolve": true|false}, ...]
-#
-# 出力（stdout にJSON1個）:
-#   {"pr": 48, "results": [...], "succeeded": n, "failed": n}
-#   各 results 要素:
-#   {"commentId": "123", "replied": true|false, "resolved": true|false|"skipped_not_applicable", "error": string|null}
-#
-# 処理の要点:
-#   1. 冪等性（返信済みスキップ）: 投稿する返信本文の末尾に隠しマーカー
-#      `<!-- pr-review-respond:{commentId} -->` を付与する。処理開始時に一度、既存コメント
-#      一覧（threadIdが非nullの項目向けは `gh api .../pulls/{pr}/comments`、threadIdがnullの
-#      項目向けは `gh pr view {pr} --json comments`）を取得し、このマーカーを含む既存コメントが
-#      あれば「返信済み」として新規投稿をスキップする（replied: true として記録）。
-#   2. 返信: threadIdが非null（インラインコメント）の場合は
-#      `gh api -X POST repos/{o}/{r}/pulls/{pr}/comments -f body=... -F in_reply_to={commentId}`。
-#      threadIdがnull（会話タブ/レビュー本体コメント）の場合は
-#      `gh pr comment {pr} --body "..."`（新規のPRコメントとして投稿）。
-#   3. Resolved化: 返信が成立している（冪等性スキップ含む replied: true）、かつ resolve:true、
-#      かつ threadIdが非nullの場合のみ、GraphQL resolveReviewThread mutationを実行。
-#      threadIdがnullなら resolved: "skipped_not_applicable" として記録する
-#      （該当なしを暗黙のfalseにしない）。返信自体が成立しなかった場合（投稿失敗）は
-#      Resolved化を試みない（返信の付いていないスレッドを隠してしまうのを避けるため。
-#      code-reviewer指摘の回帰修正）。
-#      冪等性判定で「既に返信済み」と判定された項目についても、resolve:trueであれば
-#      resolve_threadを実際に呼ぶ（呼び出しをスキップしない）。GitHubのresolveReviewThreadは
-#      既にresolve済みのスレッドに対しても安全に再実行できる（idempotent）ため、
-#      「前回実行でresolveも成功していたはず」と推測して呼び出しを省略すると、前回の
-#      resolveが実際には失敗していたケースを検知できず誤って放置してしまう
-#      （code-reviewer/design-reviewer指摘の回帰修正。以前は "skipped_already" という
-#      値でこの呼び出し自体をスキップしていたが、安全側に倒して廃止した）。
-#
-# 関数分離（テスト容易性のため）:
-#   - gh を呼ぶ関数: resolve_repo / fetch_existing_inline_bodies / fetch_existing_conversation_bodies /
-#     post_inline_reply / post_conversation_reply / resolve_thread
-#   - 純粋関数: build_marker / build_reply_body_with_marker / body_list_contains_marker /
-#     build_resolve_mutation_query
-# gh を呼ぶ関数は、scripts/README.md の「外部呼び出し関数をテストからスタブ関数で上書きする」
-# 方針に従い、テストからスタブに差し替えて main() 全体の分岐（返信/Resolved化/冪等性スキップ/
-# エラー集計）を検証する（scripts/tests/test-reply-and-resolve.sh）。
-#
-# `failed` は results 内で error が非nullの項目数。1件でも failed > 0 なら exit 1、
-# それ以外は exit 0（scripts/README.md の出力規約: exit code と JSON の両方で成否を表現する）。
-#
-# main() はテスト容易性のため exit を直接呼ばず、常に return で終了コード相当の値を返す
-# （このファイルが直接実行された場合のみ、末尾の呼び出しが main の戻り値で実際に exit する）。
-#
-# `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。
+# 使い方: scripts/reply-and-resolve.sh <PR番号> <items_json_file|->（詳細は下記参照）
+# 仕様の正本は scripts/specs/fetch-pr-comments.md を参照。
 
 set -u
 
-MARKER_PREFIX="pr-review-respond"
-
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
+
+MARKER_PREFIX="pr-review-respond"
 
 # --- 純粋関数（gh を呼ばない） ---
 
@@ -115,22 +56,7 @@ EOF
 
 # --- gh を呼ぶ関数 ---
 
-# owner/repo をリポジトリ設定から解決する。
-# 結果: REPO_OWNER, REPO_NAME
-resolve_repo() {
-  local json
-  if ! json=$(gh repo view --json owner,name 2>/dev/null); then
-    echo "Error: failed to resolve owner/repo via gh repo view" >&2
-    return 1
-  fi
-  REPO_OWNER=$(jq -r '.owner.login' <<<"$json")
-  REPO_NAME=$(jq -r '.name' <<<"$json")
-  if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ]; then
-    echo "Error: could not parse owner/repo from gh repo view output" >&2
-    return 1
-  fi
-  return 0
-}
+# resolve_repo は lib/common.sh（scripts/lib/common.sh）に集約。
 
 # threadIdが非nullの項目向けの既存コメント本文一覧を取得する。
 # 引数: PR番号, owner, repo

@@ -1,65 +1,14 @@
 #!/bin/bash
 # collect-review-diff.sh
-# /self-review（skills/self-review/SKILL.md）が
-# Review/Verify 各周の直前に呼び出す決定的スクリプト。
-# BASE解決 → merge-base算出 → 未追跡ファイルのintent-to-add登録 →
-# 作業ツリー込みdiffの採取までを担う。
-#
-# クリティカル設計決定（Issue #44 コメント2, 2026-07-18 ユーザー承認済み）:
-#   レビュー対象diffの基準は「merge-base → 作業ツリー」に統一する。
-#   修正エージェントはコミットしない設計のため、/self-review は毎周
-#   本スクリプトを呼び直し、行番号のズレを前提として同一周回内のdiffスナップショット
-#   のみを hunk 抽出（extract-hunk.sh）の基準にする。
-#   コミット済み状態ではHEAD基準と同値になるため、未コミット経路
-#   （feature-implementer Phase 5 = /commit 前）と単独実行経路の両方をこの1規則で扱える。
-#
-# 使い方:
-#   scripts/collect-review-diff.sh [BASE]
-#     BASE省略時は以下の順でフォールバック解決する
-#     （skills/self-review/SKILL.md の現行 Step1 由来のロジック）:
-#       1. gh pr view --json baseRefName
-#       2. gh repo view --json defaultBranchRef
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "base": "main",
-#     "merge_base": "<sha>",
-#     "commits": ["<sha> subject", ...],
-#     "files": ["path/a.js", ...],
-#     "diff_file": "/path/to/tmpfile"
-#   }
-#
-# diff_file の中身は「merge-base から 作業ツリー」までの unified diff
-# （未追跡の新規ファイルを含む）。呼び出し側はdiff本文をプロンプトに直貼りせず、
-# このパスをエージェントに渡してReadさせること（コンテキスト削減のため）。
-#
-# 未追跡ファイルの扱い（Issue #44 クリティカル設計決定 実装要求2）:
-#   `git diff <commit>` はデフォルトでは未追跡（untracked）ファイルを含まない。
-#   本スクリプトは diff 採取前に `git add --intent-to-add -A` を実行し、
-#   新規作成ファイルもインデックスに（内容は空のまま）登録することで、
-#   `git diff` がそれらを「新規追加」として検出できるようにする
-#   （ステージ＝コミット可能状態にはしない。追跡対象フラグが立つのみで、
-#   実体はワーキングツリー側に残ったまま）。
-#
-# gh呼び出しの失敗・jq不在・git操作の失敗は stderr にメッセージを出し、exit非0で終了する。
-#
-# テスト容易性のため、gh を呼ぶ処理（resolve_base）と、git を呼ぶがgh非依存の処理
-# （resolve_base_ref/compute_merge_base/collect_commits/collect_files/write_diff_file）を
-# 分離している。いずれも実際のgitリポジトリ操作を要するため、テストは一時gitリポジトリを
-# 作成して検証する（scripts/tests/test-collect-review-diff.sh）。
-#
-# `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。
+# 使い方: scripts/collect-review-diff.sh [BASE]（詳細は下記参照）
+# 仕様の正本は scripts/specs/collect-review-diff.md を参照。
 
 set -u
 
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
 
 # BASE未指定時のフォールバック解決。gh を呼ぶため純粋関数ではない。

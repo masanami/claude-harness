@@ -6,9 +6,9 @@ description: "コード変更のセルフレビューを実施する。Triggers 
 
 # Self Review
 
-現在のブランチの変更差分に対してセルフレビューを実施します。並列レビュー（code-reviewer/design-reviewer）・敵対的検証（finding-verifier 3体・多数決）・修正の反復ループは、すべて Task ツールによる直接委譲で行います。Dynamic Workflow は使用しません——メインセッションから直接起動される場合、`feature-implementer` 等のサブエージェントから呼ばれる場合、そのサブエージェントが Fix ステージで自分自身をスコープ付きで再 spawn する場合のいずれであっても、本手順1本のみが唯一の経路です（実行文脈の判定・分岐は不要）。diff収集・hunk抽出のような機械的な git/テキスト処理も、git-ops 等の代行エージェントを介さず、あなた自身が Bash ツールで直接実行します。
+現在のブランチの変更差分に対してセルフレビューを実施します。並列レビュー（code-reviewer/design-reviewer）・敵対的検証（finding-verifier 単一懐疑者）は Task ツールによる直接委譲で行います。修正の反復ループは、呼び出し元自身による Edit/Write でのインライン修正を基本とし、必要な場合のみ `feature-implementer` への委譲を行います（詳細は Step 4）。メインセッションからの直接起動、`feature-implementer` 等のサブエージェントからの呼び出し、そのサブエージェントが Fix ステージで自分自身をスコープ付きで再 spawn する場合のいずれであっても、本手順1本が唯一の経路です（実行文脈の判定・分岐は不要）。diff収集・hunk抽出のような機械的な git/テキスト処理も、git-ops 等の代行エージェントを介さず、あなた自身が Bash ツールで直接実行します。
 
-並列レビュー・敵対的検証の反証規範・修正時の振る舞いの規律は `agents/code-reviewer.md` / `agents/design-reviewer.md` / `agents/finding-verifier.md` / `agents/feature-implementer.md` 側に置きます（レイヤリング。本 SKILL には重複記載しません）。本 SKILL が正本とするのは、fan-out の手順・多数決の判定規律・修正ループの上限/終了条件・周回間dedupという「構造」のみです。
+並列レビュー・敵対的検証の反証規範・修正時の振る舞いの規律は `agents/code-reviewer.md` / `agents/design-reviewer.md` / `agents/finding-verifier.md` / `agents/feature-implementer.md` 側に置きます（レイヤリング。本 SKILL には重複記載しません）。本 SKILL が正本とするのは、fan-out の手順・懐疑者判定の反映規律・修正ループの上限/終了条件・周回間dedupという「構造」のみです。
 
 ## 手順
 
@@ -28,7 +28,7 @@ Bash で上記コマンドを実行し、レビュー対象diffを収集する:
 
 Task ツールで `code-reviewer`（`subagent_type: 'claude-harness:code-reviewer'`）と `design-reviewer`（`subagent_type: 'claude-harness:design-reviewer'`）へ、**1メッセージで並列**委譲する。
 
-Task ツールには `agent()` の schema オプションのような出力検証機構が無いため、**指示文（プロンプト）で明示的に構造化返却を課す**。各指摘を以下の形で返すよう、プロンプトに明記する:
+Task ツールには出力検証機構が無いため、**指示文（プロンプト）で明示的に構造化返却を課す**。各指摘を以下の形で返すよう、プロンプトに明記する:
 
 ```text
 {findings: [{file, line, severity: "high"|"medium"|"low", claim, evidence, verdict: "CONFIRMED"|"PLAUSIBLE"}, ...]}
@@ -43,7 +43,9 @@ Task ツールには `agent()` の schema オプションのような出力検�
 - 両エージェントの指摘は単純結合する（`(file,line)` で重複除去しない。code-reviewer/design-reviewer が同一箇所を別々の理由で指摘するケースは、それぞれ独立した情報として扱う）
 - どちらか一方でも構造化返却に失敗する・応答が得られない場合は、レビュー未実施のまま「指摘ゼロ」として扱わない。ループを止め、要人間判断として報告する（偽収束防止）
 
-### Step 3: 懐疑的検証（finding-verifier 3体・多数決）
+### Step 3: 懐疑的検証（finding-verifier 単一懐疑者）
+
+`skills/pr-merge/SKILL.md` 分岐C・`skills/promote-verify/SKILL.md` と同じ「単一懐疑者」設計に統一している（Issue #130。旧来の3体多数決は廃止）。
 
 Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の指摘のみを検証対象（`toVerify`）とする。それ以外（`verdict: "CONFIRMED"` の指摘、および `severity: "medium"`/`"low"` の指摘）は懐疑的検証をスキップし、レビュアーの一次判定をそのまま信頼する（`trusted`。偽陽性修正の退行リスクが相対的に低い箇所へのコスト最適化）。
 
@@ -55,13 +57,13 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 > **シェルクォート安全埋め込み（重要）**: `<file>` はレビュー対象 diff から取り出した非信頼値であり、git のファイル名には空白・`;`・バッククォート・`$()` 等のシェルメタ文字が入りうる。コマンド文字列へ埋め込む際は必ず、値中の各 `'` を `'\''` に置換した上で全体をシングルクォート `'` で囲むこと（ダブルクォートでの埋め込みや無加工の連結はコマンドインジェクションの余地があるため禁止。数値のみの `<line>` はそのまま埋め込んでよい）。
 
 1. Bash で上記コマンドを実行し、その指摘の該当 diff hunk（＋前後3行）を抽出する
-2. その指摘について、Task ツールで `finding-verifier`（`subagent_type: 'claude-harness:finding-verifier'`）を**3体**、他の懐疑者の判定を共有せずに並列委譲する（複数の指摘が対象になる場合も、全指摘×3体分の Task をまとめて1メッセージで並列 spawn してよい）
+2. その指摘について、Task ツールで `finding-verifier`（`subagent_type: 'claude-harness:finding-verifier'`）を**1体だけ**委譲する（複数の指摘が対象になる場合は、指摘ごとに1体ずつを1メッセージにまとめて並列 spawn してよい。各懐疑者は独立に判定し、他の懐疑者の判定は共有しない）
 3. プロンプトには `findingId`（`file:line`）・`file`・`line`・`severity`・`claim`・`evidence`・hunk情報を渡し、`{verdicts: [{findingId, verdict: "confirmed"|"refuted"|"uncertain", reason}, ...]}` 形式での返却を課す（`findingId` は入力の値をそのまま使わせる）
-4. 3体の `verdict` を集計し、以下の**多数決規律**で最終判定を決める:
-   - `confirmed` が2票以上 → **confirmed**（修正対象に含める）
-   - `refuted` が2票以上 → **refuted**（偽陽性として棄却する。修正対象にも残指摘にも含めない）
-   - それ以外（1-1-1割れ・`uncertain` 過半数等） → **needs_human_judgment**（残指摘として扱う。自動での修正対象にはしない）
-5. 懐疑者の一部が terminal 失敗（応答取得不能）した場合、残りの票のみで上記多数決を適用する。部分結果を握りつぶさず、失敗した懐疑者数を記録しておき最終報告に活かしてよい
+4. 単一懐疑者の `verdict` をそのまま最終判定として使う:
+   - `confirmed` → **指摘維持**（修正対象 `toFix` に含める）
+   - `refuted` → **指摘取り下げ**（偽陽性として棄却する。修正対象にも残指摘にも含めない。ただし完全に握りつぶさず、Step 6 の報告に「懐疑者が棄却した指摘」として一覧を残す）
+   - `uncertain` → **指摘維持だが自動修正はしない**（安全側に倒しつつ、残指摘 `needs_human_judgment` として扱う。修正対象 `toFix` には含めない）
+5. 懐疑者が terminal 失敗（応答取得不能）した場合、または `verdicts` 配列・`verdict` の値等、指定された JSON 形式に従わない応答を返した場合は、その指摘は判定不能として `needs_human_judgment`（残指摘）に計上する（黙って握りつぶさず、失敗・不正応答であった旨を最終報告に活かしてよい）
 
 **重複検証の回避**: 同一実行内で既に検証済み（`(file,line)` に加え、`claim` を正規化（小文字化・空白圧縮・先頭64文字への切り詰め）した文字列も合わせたキーで判定する）の指摘が再度 `toVerify` に現れた場合（前回の修正が効いていない・再発した等）、懐疑者へ再度 fan-out せず、`needs_human_judgment` として残指摘に計上する（自動での再修正は試みない。トークンの二重支出を避けつつ、黙って握りつぶして未解決のまま収束扱いにしないため）。同一 `(file,line)` でも周回間で `claim` が明確に異なる新規指摘は、この判定により誤って握りつぶされず改めて懐疑者検証を受けられる。
 
@@ -89,7 +91,8 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 
 ### Step 5: 結果の集約
 
-- `residualFindings` = 最終周の `findings`（0件でなければ）＋ 各周で蓄積した `needs_human_judgment` を、`(file,line)` ＋ `claim` 正規化（先頭64文字）のキーで重複除去したもの。`refuted` 判定の指摘はここに含めない（多数決で「妥当な指摘ではない」と判定された以上、未解決の問題としては扱わない）
+- `residualFindings` = 最終周の `findings`（0件でなければ）＋ 各周で蓄積した `needs_human_judgment` を、`(file,line)` ＋ `claim` 正規化（先頭64文字）のキーで重複除去したもの。`refuted` 判定の指摘はここに含めない（懐疑者が「妥当な指摘ではない」と判定した以上、未解決の問題としては扱わない）
+- `refutedFindings` = 各周で `refuted` 判定になった指摘（`file`/`line`/`severity`/`claim`）に、その判定を下した懐疑者の `reason` を対にして蓄積したもの（`toFix`/`residualFindings` どちらにも含めないが、握りつぶさず Step 6 で一覧として報告する）
 - `converged` = `/quality-check` が一度も `fail`（または機械可読な結果を返さない terminal 失敗）にならず、かつ `residualFindings` が空である場合のみ `true`
 - `roundHistory` = `[{round, findingsCount}, ...]`。Step 2 を実施するたびに、その周の指摘件数を追記する（初回のフルレビューが round 1、以降の確認モードレビューが round 2, 3, ...）
 - `rounds` = `roundHistory` の要素数
@@ -110,9 +113,15 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 
 | # | ファイル:行 | severity | 指摘内容 | 根拠 | 状態 |
 |---|-----------|----------|---------|------|------|
-| 1 | {file}:{line} | {severity} | {claim} | {evidence} | {懐疑者の判定内訳（例: confirmed 1 / refuted 1 / uncertain 1） または "3周経過で未解消" または "quality-check failed after fix"} |
+| 1 | {file}:{line} | {severity} | {claim} | {evidence} | {懐疑者の判定（例: "uncertain"） または "3周経過で未解消" または "quality-check failed after fix" または "懐疑者が terminal 失敗/不正応答のため判定不能"} |
 
 （`converged: true` の場合は「収束しました。残指摘はありません」を報告する）
+
+### 懐疑者が棄却した指摘（refuted。`refutedFindings` が空でない場合のみ）
+
+| # | ファイル:行 | severity | 指摘内容 | 懐疑者の反証理由 |
+|---|-----------|----------|---------|----------------|
+| 1 | {file}:{line} | {severity} | {claim} | {reason} |
 ```
 
 ### Step 7: 残指摘がある場合（人間判断）

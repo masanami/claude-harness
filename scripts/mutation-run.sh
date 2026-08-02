@@ -1,68 +1,14 @@
 #!/bin/bash
 # mutation-run.sh
-# skills/explain-e2e/SKILL.md Phase 2 の Mutation 段階から、呼び出し元自身が
-# Bash ツールで直接呼び出す決定的スクリプト（Issue #47・#114）。
-#
-# 背景: 従来の /explain-e2e Step 2-3（ミューテーション検証）は「注入→テスト実行→
-# git checkout -- による復元→復元確認の再実行」という4段の手順をLLMの規律だけに
-# 委ねており、特に「復元できたことの確認」が実行者自身の自己申告になっていた
-# （幻覚報告で「注入したまま放置」を防止できない）。本スクリプトはこの機械的な部分
-# （注入そのもの以外の全手順）を決定的なシェル処理に置き換え、変異エージェントの役割を
-# 「意味のある変異点を選んで Edit する」だけに縮小する。
-#
-# 使い方:
-#   scripts/mutation-run.sh <test_command> <mutated_file_1> [<mutated_file_2> ...]
-#     test_command      既に注入済み（不具合を仕込んだ）状態のワーキングツリーに対し、
-#                       対象テストのみを実行するシェルコマンド文字列（bash -c で実行）
-#     mutated_file_*    呼び出し側（変異エージェント）が Edit で書き換え済みのファイルパス
-#                       （1個以上）。絶対パス・リポジトリルート相対パスのいずれでもよい
-#                       （手順0のクリーン確認では内部でルート相対へ正規化して比較する。
-#                       normalize_to_repo_relative 参照）。復元スコープの検証・
-#                       `git checkout --` の対象になる
-#
-# 手順（この順で機械的に実行する）:
-#   0. クリーン確認: `git status --porcelain` の変更が mutated_file_* の範囲内に
-#      収まっているかを検証する。範囲外の未コミット変更が1件でもあれば、
-#      `git checkout -- <files>` では作業ツリーを完全にクリーンへ戻せない前提が崩れるため、
-#      テスト実行に進まず真の異常系として exit 非0 で終了する（stdoutにJSONは出さない）。
-#      mutated_file_* のいずれにも変更が無い場合（注入が実際には行われていない）も
-#      同様に異常系として扱う。
-#   1. test_command を実行し、失敗したか（testFailed）・失敗理由がアサーション起因らしいか
-#      （failureKind: "assertion"|"other"|"none"）を出力のbest-effortパースで判定する。
-#   2. `git checkout -- <mutated_file_*>` で注入を復元する。
-#   3. 復元確認: `git status --porcelain -- <mutated_file_*>` が空であることを確認する
-#      （restored）。
-#   4. 復元できた場合のみ test_command を再実行し、パスすることを確認する（rePassed）。
-#      復元できなかった場合は再実行しても意味がない（注入済み状態のままの再実行になる）ため
-#      スキップし rePassed: false とする。
-#
-# 出力（stdout にJSON1個）:
-#   {"testFailed": bool, "failureKind": "assertion"|"other"|"none", "restored": bool, "rePassed": bool}
-#
-# 終了コード（呼び出し側（/explain-e2e の SKILL.md Phase 2）が「JSON上の自己申告」と
-# 「実際の終了コード」を突き合わせて不整合を検出できるよう、JSON内容と独立に意味を持たせる）:
-#   0  restored && rePassed（復元・再パスとも確認できた「安全な」状態）
-#   1  restored/rePassed のいずれかが false（要人間介入。前段の真の異常系
-#      ＝クリーン確認失敗・引数不正・非gitリポジトリ等も同じ1で終了するが、
-#      その場合は stdout にJSONを出さない点で区別できる）
-#   2  jq 不在
-#
-# テスト容易性のため、外部コマンド（git/test_command）を起動する処理（run_command/main）と、
-# 外部コマンドを起動しない純粋なテキスト処理（porcelain_path/classify_failure_kind/
-# check_dirty_scope）を関数として分離している。純粋関数はスクリプトを source して
-# 直接テストできる（scripts/tests/test-mutation-run.sh）。
-#
-# `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。
+# 使い方: scripts/mutation-run.sh <test_command> <mutated_file_1> [<mutated_file_2> ...]（詳細は下記参照）
+# 仕様の正本は scripts/specs/mutation-run.md を参照。
 
 set -u
 
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
 
 print_usage() {
@@ -187,13 +133,59 @@ canonicalize_path() {
 # test_command を実行し、標準出力/標準エラーを結合してグローバル変数
 # LAST_OUTPUT / LAST_EXIT_CODE に格納する。生の出力は stderr にも転記する
 # （出力規約: stdoutにはJSONのみ。呼び出し側がfailureKindの手掛かりを追えるように）。
+# test_command はバックグラウンドで起動し `wait` で待ち受ける（`$(...)` コマンド置換で
+# 前面待機すると、bash はフォアグラウンドジョブ完了までシグナルの trap 実行を遅延させるため、
+# SIGTERM/SIGINT を受けてもタイムアウトによる強制終了までトラップが発火しない。`wait` は
+# シグナル到着時に即座に中断してトラップを実行できるため、この構成で早期に捕捉できる）。
+# 実行中の test_command の PID は CURRENT_TEST_PID に保持し、シグナル受信時に
+# terminate_on_signal から子プロセスの終了を試みる。
+CURRENT_TEST_PID=""
+
 run_test_command() {
   local cmd="$1"
   echo "--- test: ${cmd} ---" >&2
-  LAST_OUTPUT="$(bash -c "$cmd" 2>&1)"
+  local tmp_out
+  tmp_out="$(mktemp)" || { LAST_OUTPUT=""; LAST_EXIT_CODE=1; return; }
+  bash -c "$cmd" >"$tmp_out" 2>&1 &
+  CURRENT_TEST_PID=$!
+  wait "$CURRENT_TEST_PID"
   LAST_EXIT_CODE=$?
+  CURRENT_TEST_PID=""
+  LAST_OUTPUT="$(cat "$tmp_out" 2>/dev/null)"
+  rm -f "$tmp_out"
   printf '%s\n' "$LAST_OUTPUT" >&2
   echo "--- test exit: ${LAST_EXIT_CODE} ---" >&2
+}
+
+# ---------------------------------------------------------------------------
+# EXIT / シグナルトラップ（安全網）
+# ---------------------------------------------------------------------------
+
+# main() が呼び出し引数から確定させる復元対象ファイル一覧。trap ハンドラは
+# main() の local 変数を参照できないため、グローバル配列として保持する。
+MUTATION_FILES=()
+
+# jq不在・事前チェック失敗・test_command 実行中のシグナル/タイムアウトによる中断など、
+# 通常の手順2（復元）に到達しない早期終了パスでも、変異対象を可能な限り復元する安全網。
+# 通常経路（手順2〜4）で既に復元済みの場合、ここでの再実行は冪等（`git checkout --` は
+# 対象ファイルが既にクリーンなら no-op）。exit を呼ばないため、元の終了コード（$?）は
+# そのまま維持される。
+restore_on_exit() {
+  if [ "${#MUTATION_FILES[@]}" -gt 0 ] && git rev-parse --git-dir >/dev/null 2>&1; then
+    git checkout -- "${MUTATION_FILES[@]}" 2>/dev/null || true
+  fi
+}
+
+# SIGTERM/SIGINT（`timeout` コマンドの既定シグナルを含む）受信時のハンドラ。
+# 実行中の test_command（バックグラウンドジョブ）があれば終了させたうえで、明示的に
+# exit することで EXIT トラップ（restore_on_exit）を発火させ、復元後に非0終了する。
+# SIGKILL はプロセスを即座に終了させるため捕捉不可能（OS上の制約であり対処不能）。
+terminate_on_signal() {
+  local code="$1"
+  if [ -n "$CURRENT_TEST_PID" ]; then
+    kill -TERM "$CURRENT_TEST_PID" 2>/dev/null || true
+  fi
+  exit "$code"
 }
 
 main() {
@@ -203,13 +195,17 @@ main() {
     exit 1
   fi
 
-  if ! check_jq; then
-    exit 2
-  fi
-
   local test_command="$1"
   shift
   local files=("$@")
+  MUTATION_FILES=("${files[@]}")
+  trap restore_on_exit EXIT
+  trap 'terminate_on_signal 143' TERM
+  trap 'terminate_on_signal 130' INT
+
+  if ! check_jq; then
+    exit 2
+  fi
 
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
     echo "Error: not a git repository (git rev-parse --git-dir failed)" >&2

@@ -1,6 +1,6 @@
 ---
 name: para-impl
-description: "GitHub Issueを分析し、設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認の1チケットフローを実装フェーズの人間ゲートなしで実行する。クリティカル設計は要件チケット側で決定済み前提。複数Issue時は star 型（orchestrator-worker）で ticket-worker に並列委譲する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
+description: "GitHub Issueを分析し、設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認の1チケットフローを実装フェーズの人間ゲートなしで実行する。複数Issue指定時は並列実行する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
 argument-hint: "<Issue番号> [Issue番号...] [--base <統合ブランチ>]"
 model: opus
 # effort: 設計〜TDD実装〜PRの自走フローを担うため high。
@@ -11,7 +11,7 @@ effort: high
 
 **あなたは実装を統括するリードエージェントです。**
 
-GitHub Issueを分析し、1チケット実行フロー（設計→TDD実装→必須ゲート→コミット→E2E→PR→CI確認）に沿って実装を進めます。**クリティカル設計の意思決定は要件チケット側で完了している前提**のため、実装フェーズには人間ゲートを置きません。Issueが複数の場合は star 型（orchestrator-worker）で `ticket-worker` サブエージェントに並列委譲します（v2.0.0 の Dynamic Workflow 委譲はヘッドレス（`claude -p`）で機能しないリグレッションが確認されたため、v2.1.0 で Task 委譲へ戻した。Issue #105）。
+GitHub Issueを分析し、1チケット実行フロー（設計→TDD実装→必須ゲート→コミット→E2E→PR→CI確認）に沿って実装を進めます。**クリティカル設計の意思決定は要件チケット側で完了している前提**のため、実装フェーズには人間ゲートを置きません。Issueが複数の場合は star 型（orchestrator-worker）で `ticket-worker` サブエージェントに並列委譲します。
 
 ---
 

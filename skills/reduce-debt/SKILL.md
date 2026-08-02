@@ -11,7 +11,7 @@ effort: high
 
 **あなたは技術負債の分析を統括するリードエージェントです。**
 
-プロジェクト全体を対象に技術負債をスキャンし、親Issueの実装範囲をコンテキストとして結果を分類・優先度付けします。スキャンの fan-out・偽陽性除去（敵対的検証3体・多数決）・検出結果の集約は、すべて Task ツールによる直接委譲で行います。Dynamic Workflow は使用しません（Issue #106・#113）。問題が見つかればユーザー確認の上、修正Issueとして起票します。
+プロジェクト全体を対象に技術負債をスキャンし、親Issueの実装範囲をコンテキストとして結果を分類・優先度付けします。スキャンの fan-out・偽陽性除去（敵対的検証3体・多数決）・検出結果の集約は、すべて Task ツールによる直接委譲で行います。問題が見つかればユーザー確認の上、修正Issueとして起票します。
 
 スキャン観点（6観点）・CLAUDE.md参照の規律、懐疑的検証の反証規範は `agents/debt-scanner.md` / `agents/debt-verifier.md` 側に置きます（レイヤリング。本 SKILL には重複記載しません）。本 SKILL が正本とするのは、スキャンバケットへの分割・スキャン fan-out・懐疑的検証3体並列 fan-out・多数決の判定規律・分類（今回導入 vs 既存）という「構造・手順」のみです。
 
@@ -92,7 +92,7 @@ Step 2-1 でユーザーが確認したディレクトリ一覧（重複除去�
 
 #### 2-3. スキャン fan-out（debt-scanner）
 
-Task ツールには `agent()` の schema オプションのような出力検証機構が無いため、**指示文（プロンプト）で明示的に構造化返却を課す**。
+Task ツールには出力検証機構が無いため、**指示文（プロンプト）で明示的に構造化返却を課す**。
 
 各バケットについて、Task ツールで `subagent_type: 'claude-harness:debt-scanner'` を**1メッセージで並列 spawn**する。各 Task には担当ディレクトリ一覧を渡し、以下の形での構造化返却を課す:
 
@@ -144,7 +144,7 @@ Step 2-3/2-4 の Task 結果を受け取った後、**呼び出し元（あな�
 
 ### Step 3: 結果の集約
 
-Step 2 の Task 結果を、あなた自身が以下の形に集約する（Dynamic Workflow の返り値のような自動集約機構は無いため、ここでの集約はあなたの責務）:
+Step 2 の Task 結果を、あなた自身が以下の形に集約する（自動集約機構は無いため、ここでの集約はあなたの責務）:
 
 - `meta`: `{parentIssue, scannedDirectories, bucketCount, failedBuckets}`（`failedBuckets` は 2-3 で `bucketFailed: true` となったバケットの `id` 一覧）
 - `confirmed`: 2-4 の多数決で `confirmed` になった検出項目（`votes`/`failed_verifiers` を保持） ＋ 2-5 の分類フィールド
@@ -158,11 +158,7 @@ Step 2 の Task 結果を、あなた自身が以下の形に集約する（Dyna
 
 ### Step 4: 結果分類と報告
 
-「今回の実装で導入 vs 既存」の分類は Step 2-5 で既に付与済み（`introducedByParent` / `relatedDir` フィールド）。Step 3 の集約結果を次の報告フォーマットに転記する。
-
-- `introducedByParent: true`（`changedFiles` とファイル完全一致）→「今回の実装で導入された技術負債」
-- `introducedByParent: false` かつ `relatedDir: true`（ファイルは不一致だが `changedDirs` のいずれかに含まれる）→「既存の技術負債」の中で「既存（親実装の関連ディレクトリ）」として区別表示
-- `introducedByParent: false` かつ `relatedDir: false`（どちらも不一致）→「既存の技術負債」の中で通常の「既存」として表示
+Step 3 の集約結果を、2-5 で付与した分類フィールド（`introducedByParent` / `relatedDir`）に従って次の報告フォーマットに振り分ける。
 
 ```markdown
 ## 技術負債スキャン結果
@@ -183,8 +179,6 @@ Step 2 の Task 結果を、あなた自身が以下の形に集約する（Dyna
 （なければ「検出なし」）
 
 ### 既存の技術負債（confirmed かつ introducedByParent = false）
-
-`relatedDir` の値に応じて「分類」列に「既存（親実装の関連ディレクトリ）」/「既存」を区別表示する（ディレクトリのみ一致はファイル自体が変更されていないため今回導入には含めないが、親実装との関連が疑われるため区別する）。
 
 | # | 概要 | 優先度 | 観点 | 対象ファイル | 詳細 | 分類 |
 |---|------|--------|------|------------|------|------|

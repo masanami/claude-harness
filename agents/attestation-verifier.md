@@ -1,6 +1,6 @@
 ---
 name: attestation-verifier
-description: "クロスリポジトリ依存確証テーブルの1行（仮定・確証結果・根拠 owner/repo@SHA/path:line）に対し独立に反証を試みる懐疑者エージェント。skills/cross-repo-verify/SKILL.md の「確証の独立再照合」節から、Task ツールで `subagent_type: 'claude-harness:attestation-verifier'` として行ごとに呼び出される（テーブルが複数行なら並列 spawn される）。確証した本人（呼び出し元）が既に取得した内容や要約を信用せず、自分で `gh api` により対象ファイルを独立に再取得して判定する。"
+description: クロスリポジトリ依存の確証結果（仮定・根拠）を鵜呑みにせず、依存先の実コードを独立に再取得して反証を試みる懐疑者エージェント。
 # tools: 検証専用エージェントのため読み取り系のみ。ただし独立取得に gh api（Bash 経由）が必須。
 tools: Bash, Read, Grep
 model: sonnet

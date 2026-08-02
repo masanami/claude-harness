@@ -5,8 +5,8 @@
 # `gh issue create --label tech-debt` で一括起票し、manifestのindexとissue番号/URLの
 # 対応表JSONを返す。
 #
-# 背景: Issue #55 では Workflow(pipeline) 化を不採用とし、本スクリプトによる
-# 決定的な一括起票で「1:1対応の構造保証・wall-clock短縮・コンテキスト削減」を達成する。
+# 背景: 本スクリプトによる決定的な一括起票で
+# 「1:1対応の構造保証・wall-clock短縮・コンテキスト削減」を達成する（Issue #55）。
 # 粒度判定（分割/統合すべきか）はリード（LLM）が行い、本スクリプトは
 # targetFiles件数の機械的カウントによる警告付与のみを行う（起票は止めない）。
 #
@@ -51,19 +51,15 @@
 
 set -u
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
+}
+
 # 粒度ヒューリスティックの閾値。targetFilesの件数がこれを超える項目には
 # 対応表の結果に warning フィールドを付ける（起票は止めない。機械的カウントのみ）。
 TARGET_FILES_WARNING_THRESHOLD=5
-
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
-}
 
 # 1件のmanifest項目（JSONオブジェクト文字列）の必須フィールドを検証する。gh を呼ばない純粋関数。
 # 引数: item_json（JSONオブジェクト文字列）

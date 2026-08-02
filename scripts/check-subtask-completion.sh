@@ -1,93 +1,19 @@
 #!/bin/bash
 # check-subtask-completion.sh
-# skills/promote-verify/SKILL.md（Step 3）が Bash ツールで直接実行する決定的スクリプト
-# （Issue #110 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の
-# 直接実行に一本化した）。統合ブランチ→main 昇格前検証パッケージの一部として、親Issueの
-# 全サブタスク（子Issue）がマージ済みかを機械的に判定する（Issue #52）。
-#
-# 使い方:
-#   scripts/check-subtask-completion.sh <parent_issue_number>
-#
-# 取得経路（優先順）:
-#   1. sub_issues_api: GitHub の Sub-issues API
-#      (`gh api repos/{owner}/{repo}/issues/{parent}/sub_issues`) で子Issue一覧を取得する。
-#      成功（HTTPエラーでない）かつ非空配列を返せばこの経路を採用する。
-#   2. parent_label_fallback: 上記が失敗（404等。Sub-issues APIが未有効化のリポジトリ等）または
-#      空配列の場合のフォールバック。Issue本文に "Parent: #<parent>" という文字列を含む
-#      Issueを `gh search issues` で検索する。
-#
-# 各子Issueのマージ済み判定（「merged PRとの突合」）:
-#   子Issueの state が CLOSED であることに加えて、その子Issueをcloseした merged PR が
-#   実在することを `gh search prs --state merged "#<child> in:body"` で確認する
-#   （見つかった最初のPR番号を mergedPr とする）。
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "parent": 52,
-#     "source": "sub_issues_api" | "parent_label_fallback",
-#     "status": "ok" | "no_children_found",
-#     "children": [{"number": 60, "title": "...", "state": "CLOSED", "mergedPr": 61 | null}],
-#     "allMerged": true | false
-#   }
-#
-# 「子Issueが1件も見つからなかった」場合は status: "no_children_found" を明示し、children は
-# 空配列、allMerged は暗黙にtrueにせず false とする（scripts/README.md の出力規約:
-# 「特定できなかった」「対象外だった」は暗黙の空配列・空文字ではなく明示的なステータス
-# フィールドで返す。空集合に対する論理的な真=trueの罠を避ける安全側の設計判断）。
-#
-# allMerged は children が非空、かつ全要素が state == "CLOSED" かつ mergedPr が非nullの場合のみ true。
-#
-# 関数分離（テスト容易性のため。scripts/README.md「外部呼び出し関数をテストからスタブ関数で
-# 上書きする」方針に従う）:
-#   - gh を呼ぶ関数: resolve_repo / fetch_sub_issues_json / fetch_fallback_issues_json /
-#     fetch_merged_pr_number
-#   - 純粋関数: normalize_sub_issues_json / normalize_fallback_issues_json / build_child_entry /
-#     compute_all_merged
-# テストからは gh を呼ぶ関数をスタブ関数で上書きしたうえで main() を呼び出し、
-# sub_issues_api経路/フォールバック経路/子Issue0件/一部未マージの各分岐を検証する
-# （scripts/tests/test-check-subtask-completion.sh。fetch-pr-comments.sh / reply-and-resolve.sh
-# のテスト方針と同じ）。
-#
-# main() はテスト容易性のため exit を直接呼ばず、常に return で終了コード相当の値を返す
-# （このファイルが直接実行された場合のみ、末尾の呼び出しが main の戻り値で実際に exit する。
-# reply-and-resolve.sh と同じパターン）。
-#
-# gh呼び出し自体の失敗（owner/repo解決失敗等）・jq不在は stderr にメッセージを出し、
-# exit非0で終了する（sub_issues_api/フォールバック双方の「結果が空」はエラーではなく
-# no_children_found として正常終了する点に注意）。
-#
-# `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。
+# 使い方: scripts/check-subtask-completion.sh <parent_issue_number>（詳細は下記参照）
+# 仕様の正本は scripts/specs/collect-promotion-context.md を参照。
 
 set -u
 
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
 
 # --- gh を呼ぶ関数 ---
 
-# owner/repo をリポジトリ設定から解決する。
-# 結果: REPO_OWNER, REPO_NAME
-resolve_repo() {
-  local json
-  if ! json=$(gh repo view --json owner,name 2>/dev/null); then
-    echo "Error: failed to resolve owner/repo via gh repo view" >&2
-    return 1
-  fi
-  REPO_OWNER=$(jq -r '.owner.login' <<<"$json")
-  REPO_NAME=$(jq -r '.name' <<<"$json")
-  if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ]; then
-    echo "Error: could not parse owner/repo from gh repo view output" >&2
-    return 1
-  fi
-  return 0
-}
+# resolve_repo は lib/common.sh（scripts/lib/common.sh）に集約。
 
 # Sub-issues API で子Issue一覧の生JSON配列を取得する。
 # 引数: parent_issue, owner, repo

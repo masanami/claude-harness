@@ -93,14 +93,14 @@ effort: medium
   - ユーザーが選定した作成対象（ステップ3）: 状態「作成予定」、パスは規約に沿った標準パス（例: `docs/coding-guidelines.md`）
   - 選定されなかった候補は記載しない
 
-### 4c. 選定ドキュメントの雛形作成（任意）
+### 5. 選定ドキュメントの雛形作成（任意）
 
 ユーザーが希望する場合のみ、ステップ3で「作成予定」としたドキュメントの雛形（見出しのみのスケルトン）を標準パスに作成し、CLAUDE.md のドキュメントマップの状態を「整備済み」に更新する。
 
 - 作成しない場合は「作成予定」として記録のみ（後で `/define-feature` 等で整備）
 - 雛形作成の要否はユーザーに確認する
 
-### 4b. `.claude/settings.json` 生成
+### 6. `.claude/settings.json` 生成
 
 並列実装（star 型）の各 worker はworktree隔離環境で動作するため、`.claude/settings.json`（git tracked）にBash権限を設定する必要がある。`.claude/settings.local.json`（gitignored）はworktreeにコピーされないため、ここに権限を記載してもworktree内のエージェントに適用されない。
 
@@ -133,7 +133,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh" \
 | `--input <file\|->` | `analyze-project.sh` の出力JSON（`-` で stdin）。`.pm` / `.stack.test[]` / `.stack.infra[]` を抽出し、`--pm`/`--test`/`--infra` と合成する |
 | `--target <path>` | 出力先パス（既定: `./.claude/settings.json`） |
 
-**出力**: 成功時のみ stdout に `{"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M}` を1個出力する。失敗時（jq不在・入力JSON不正・既存 `.claude/settings.json` のスキーマ不正・書き込み失敗など）は stdout を空のまま exit 非0とし、エラー内容は stderr の `{"status":"error","error":"..."}` とメッセージで確認する。
+**出力**: 成功時のみ stdout に `{"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M}` を1個出力する。失敗時（jq不在・入力JSON不正・既存 `.claude/settings.json` のスキーマ不正・書き込み失敗など）は stdout を空のまま exit 非0とし、エラー内容は stderr の `{"status":"error","error":"..."}` とメッセージで確認する（設定ファイル `base-deny.json` の欠損・スキーマ不正もこの経路に含まれ、その場合はインストール破損として報告する）。
 
 **既存ファイルとの冪等マージ**: `--target` が既に存在する場合、既存の `permissions.allow`/`permissions.deny` を保持しつつ、生成した allow/deny の非重複分のみ追加する（配列は重複排除され、同じ入力で再実行しても差分は出ない）。存在しない場合は `.claude/` ディレクトリごと新規作成する。
 
@@ -149,7 +149,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh" \
 
 `.gitignore` に `.claude/settings.json` が含まれていないことを確認する。含まれている場合はユーザーに警告する（worktreeで権限が効かなくなるため）。
 
-### 5. 完了報告
+### 7. 完了報告
 
 ```
 ## プロジェクト初期設定 完了

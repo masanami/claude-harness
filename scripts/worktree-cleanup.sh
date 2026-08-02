@@ -1,37 +1,14 @@
 #!/bin/bash
 # worktree-cleanup.sh
-# skills/para-impl/SKILL.md Phase 11（複数Issue時のworktreeクリーンアップ）を
-# 切り出した決定的スクリプト（Issue #45）。`git status --short` で確認してから
-# 削除する。failure worktree（未コミット差分がある等）の保護は呼び出し側の
-# 判断に委ねるフラグ設計にする（無条件削除をデフォルトにしない）。
-#
-# 使い方:
-#   scripts/worktree-cleanup.sh <worktree_path> [--force|--skip-if-dirty]
-#     フラグ省略時（既定）: worktree が dirty（未コミット差分あり）なら削除を拒否し
-#       exit 非0（保護がデフォルト）
-#     --force: dirty かどうかに関わらず強制削除する（`git worktree remove --force`）
-#     --skip-if-dirty: dirty なら削除せず正常終了（skipped: true）。クリーンなら
-#       通常どおり削除する（複数worktreeを一括処理するループから、dirtyな1件だけを
-#       安全にスキップしたい場合に使う）
-#
-# 出力（stdout にJSON1個）:
-#   {"worktree_path": "...", "removed": true|false, "skipped": true|false, "dirty": true|false, "reason": "..."|null}
-#
-# gh は呼ばない（gh非依存）。
-#
-# テスト容易性のため、git を呼ぶ処理（is_dirty/resolve_main_repo_root/remove_worktree）は
-# 一時gitリポジトリ（mktemp -d）+ 実際の worktree を作成して検証する
-# （scripts/tests/test-worktree-cleanup.sh）。
+# 使い方: scripts/worktree-cleanup.sh <worktree_path> [--force|--skip-if-dirty]（詳細は下記参照）
+# 仕様の正本は scripts/specs/worktree-setup.md を参照。
 
 set -u
 
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
 
 # ---------------------------------------------------------------------------

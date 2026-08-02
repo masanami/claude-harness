@@ -152,13 +152,13 @@ Phase 3 を完了したら、**Skill ツール経由で `/quality-check` を呼�
 
 なし。`/quality-check` の通過は必須ゲートであり、省略できない（プロジェクトにより該当コマンドが存在しないチェックは `/quality-check` 自身が「スキップ」として扱い、失敗とはしない）。
 
-> **スコープ付き即時修正呼び出しでの例外（`/pr-review-respond`）**: `/pr-review-respond` の即時対応フェーズ（`skills/pr-review-respond/SKILL.md` Step 5・Step 8）から、PRレビューコメント1件単位のスコープ付き呼び出しとして本エージェントが呼ばれ、かつ呼び出し元プロンプトが明示的に「Phase 4（`/quality-check`）・Phase 5（`/self-review`）は実行しないこと」を指示している場合に限り、上記4-3の原則の例外として、Edit/Write による変更適用のみを行い `/quality-check`（および Phase 5 の `/self-review`）の実行を見送ってよい。品質ゲートは呼び出し元が全項目の即時対応完了後にまとめて実行する設計であり、本エージェントを再帰的に Phase 1〜5 まで開始しない点は Phase 5 の再入回避と同じ趣旨だが、対象はコメント単位の軽微な修正1件に限る。この例外はプロンプトの指示内容から判断し、それ以外の呼び出し（通常の機能実装依頼、`/pr-review-respond` Step 6 のQCリトライからの委譲を含む）では適用しない（Step 6 由来の委譲は `/quality-check` の失敗修正そのものが目的のため、本例外の対象外）。
+> **例外**: `/pr-review-respond` のコメント単位スコープ付き呼び出し（即時修正・人間ゲート承認後の修正）から、呼び出し元プロンプトが Phase 4・Phase 5 双方の不実行を明示している場合のみそれに従う。通常の機能実装依頼、および Phase 5 のみを免除する `/quality-check` リトライ委譲には適用しない。
 
 ---
 
 ## Phase 5: セルフレビュー（`/self-review` 委譲）
 
-`/quality-check` 通過後、**Skill ツール経由で `/self-review` を呼び出し**てセルフレビューを実施する。並列レビュー（`code-reviewer`/`design-reviewer`）・敵対的検証（`finding-verifier`・多数決）・修正エージェントによる修正・再レビューの反復は `/self-review` 側が Task ツールによる直接委譲で自律的に完結させる（反復回数・終了判定・dedup方針等の規律そのものは `/self-review` 側の正本であり、ここでは重複させない）。`/self-review` は Dynamic Workflow を使用しない単一経路であり、本エージェントから呼ばれる場合も含め実行文脈の判定・分岐は不要（Phase 5 の責務は**呼び出しと結果の受け取り**に専念する）。
+`/quality-check` 通過後、**Skill ツール経由で `/self-review` を呼び出し**てセルフレビューを実施する。並列レビュー（`code-reviewer`/`design-reviewer`）・敵対的検証（`finding-verifier` 単一懐疑者）・修正エージェントによる修正・再レビューの反復は `/self-review` 側が Task ツールによる直接委譲で自律的に完結させる（反復回数・終了判定・dedup方針等の規律そのものは `/self-review` 側の正本であり、ここでは重複させない）。`/self-review` は単一経路であるため、本エージェントから呼ばれる場合も含め実行文脈の判定・分岐は不要（Phase 5 の責務は**呼び出しと結果の受け取り**に専念する）。
 
 > **再入回避（重要）**: `/self-review` の Fix ステージ（`skills/self-review/SKILL.md` Step 4）で、呼び出し元がインライン修正せず本エージェント自身を新規にスコープ付きで spawn する委譲を選んだ場合、この呼び出しを受けた側は、渡された指摘の修正と `/quality-check` の実行のみに専念し、**Phase 1〜5（本ファイルの通常フロー、特に本 Phase 5 の `/self-review` 委譲）を再帰的に開始しない**。Fix ステージの委譲呼び出し由来かどうかはプロンプトの指示内容から判断する（独立した機能実装タスクとしての起動ではない）。なお、呼び出し元が自分自身のコンテキストでインライン修正する場合は、新たなサブエージェント呼び出しが発生しないためこの再入回避の対象外（再帰の懸念自体が生じない）。
 
@@ -180,7 +180,7 @@ Phase 3 を完了したら、**Skill ツール経由で `/quality-check` を呼�
 
 ### 5-3. クリティカル設計逸脱の懐疑的検証（Phase 2-3 で ✅ 整合を自己申告した場合のみ）
 
-Phase 2-3 で「✅ クリティカル設計整合」を自己申告した場合、その自己申告は**逸脱した本人（自分自身）が気付く前提**であり見逃しうる。5-1/5-2 の判定確定後（**5-2 が `failure` で確定した場合は Phase 5-3 を実行せず、そのまま `failure` として返却する**）、**Task ツールで `subagent_type: 'claude-harness:design-deviation-verifier'` を直接 spawn**し（Dynamic Workflow を介さない直接呼び出し）、自己申告を独立に反証させる。
+Phase 2-3 で「✅ クリティカル設計整合」を自己申告した場合、その自己申告は**逸脱した本人（自分自身）が気付く前提**であり見逃しうる。5-1/5-2 の判定確定後（**5-2 が `failure` で確定した場合は Phase 5-3 を実行せず、そのまま `failure` として返却する**）、**Task ツールで `subagent_type: 'claude-harness:design-deviation-verifier'` を直接 spawn**し、自己申告を独立に反証させる。
 
 - 渡す情報: Phase 1-2/2-3 で読んだ「クリティカル設計決定」セクションの**本文そのもの**（親要件チケット由来・`docs/features/{slug}.md` 由来のいずれでも、プロンプトにテキストとして埋め込む）、実装 diff（変更ファイル一覧・該当箇所）、関連ファイル。design-deviation-verifier は Bash/gh を持たず GitHub Issue を自力取得できないため、決定本文は必ずプロンプトに含める（`docs/features/{slug}.md` が実在すれば追加で Read させてよいが、それは補助情報であり一次情報はプロンプト本文）
 - 既定1体で判定する。verdict が `no_violation` または `uncertain` ならその判定で確定し、次へ進む

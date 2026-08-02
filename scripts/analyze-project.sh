@@ -34,18 +34,25 @@
 
 set -u
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
+}
+
+# analyze-project.sh の check_jq エラーJSONは他スクリプトと異なり status フィールドを含む
+# （元実装の出力仕様を維持するため）。呼び出し箇所ごとに引数を渡し忘れるリスクを無くすため、
+# lib/common.sh の check_jq をこのスクリプト専用のエラーJSONへ束縛したローカル版で上書きする
+# （lib/common.sh の _common_check_jq_impl を直接呼ぶ）。以降このファイル内の check_jq 呼び出しは
+# 引数無しで統一する。
+ANALYZE_PROJECT_JQ_ERROR_JSON='{"status":"error","error":"jq not found"}'
+check_jq() {
+  _common_check_jq_impl "$ANALYZE_PROJECT_JQ_ERROR_JSON"
+}
+
 # ------------------------------------------------------------------
 # 共通ヘルパー
 # ------------------------------------------------------------------
-
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"status":"error","error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
-}
 
 # 空白区切りリスト $2.. の中に要素 $1 が含まれるか
 _contains_word() {
@@ -488,6 +495,44 @@ fetch_test_prereqs() {
 }
 
 # ------------------------------------------------------------------
+# 共通: 走査から除外するディレクトリ名（find -prune 節の一本化。Issue #128）
+# ------------------------------------------------------------------
+
+# fetch_dir_tree / fetch_docs_evidence / fetch_named_dirs / fetch_colocated_tests / fetch_axes
+# が共通して除外するディレクトリ「名」の一覧の単一の正本。除外を1つ追加/削除する場合は
+# ここだけを直せばよい。ただし元実装では2種類の異なるマッチ深さの prune 節が使われていた
+# （fetch_dir_tree のみ任意の深さ、他4関数はトップレベルのみ）ため、この一覧から実際に
+# find 引数配列を組み立てる際は用途に応じて build_analyze_project_prune_name_args
+# （任意深さ）/ build_analyze_project_prune_path_args（トップレベルのみ）を使い分ける
+# （下記コメント参照。挙動変更ゼロの原則によりこの差は統一しない）。
+ANALYZE_PROJECT_EXCLUDE_DIR_NAMES=(.git node_modules dist .next target __pycache__ .venv vendor)
+
+# -name 形式のprune用find引数配列を構築し、グローバル配列 ANALYZE_PROJECT_PRUNE_NAME_ARGS に
+# 格納する（basenameの一致なので任意の深さで除外される。元実装の fetch_dir_tree の挙動）。
+# fetch_dir_tree が呼び出し時に都度呼ぶ。
+build_analyze_project_prune_name_args() {
+  ANALYZE_PROJECT_PRUNE_NAME_ARGS=()
+  local name
+  for name in "${ANALYZE_PROJECT_EXCLUDE_DIR_NAMES[@]}"; do
+    [ ${#ANALYZE_PROJECT_PRUNE_NAME_ARGS[@]} -gt 0 ] && ANALYZE_PROJECT_PRUNE_NAME_ARGS+=(-o)
+    ANALYZE_PROJECT_PRUNE_NAME_ARGS+=(-name "$name")
+  done
+}
+
+# -path "./name" 形式のprune用find引数配列を構築し、グローバル配列
+# ANALYZE_PROJECT_PRUNE_PATH_ARGS に格納する（find のパスは "./" 始まりのため cwd直下の
+# パスにのみ一致=トップレベルのみ除外。元実装の他4関数の挙動をそのまま維持する）。
+# fetch_docs_evidence / fetch_named_dirs / fetch_colocated_tests / fetch_axes が呼び出し時に都度呼ぶ。
+build_analyze_project_prune_path_args() {
+  ANALYZE_PROJECT_PRUNE_PATH_ARGS=()
+  local name
+  for name in "${ANALYZE_PROJECT_EXCLUDE_DIR_NAMES[@]}"; do
+    [ ${#ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]} -gt 0 ] && ANALYZE_PROJECT_PRUNE_PATH_ARGS+=(-o)
+    ANALYZE_PROJECT_PRUNE_PATH_ARGS+=(-path "./${name}")
+  done
+}
+
+# ------------------------------------------------------------------
 # 2d. ディレクトリ構成のスキャン
 # ------------------------------------------------------------------
 
@@ -496,11 +541,11 @@ fetch_dir_tree() {
   local max_depth="${2:-3}"
   local max_entries="${3:-200}"
   local all_entries
+  build_analyze_project_prune_name_args
   # 除外ディレクトリは走査前に -prune で刈り込む（grep で事後除外すると大規模プロジェクトで
   # node_modules 等を全走査してメモリに積むことになり、解析時間・メモリ使用量が急増するため）
   all_entries=$(cd "$dir" 2>/dev/null && find . -mindepth 1 -maxdepth "$max_depth" \
-    \( -type d \( -name .git -o -name node_modules -o -name dist -o -name .next \
-       -o -name target -o -name __pycache__ -o -name .venv -o -name vendor \) \) -prune \
+    \( -type d \( "${ANALYZE_PROJECT_PRUNE_NAME_ARGS[@]}" \) \) -prune \
     -o \( -type d -o -type f \) -print 2>/dev/null \
     | sed 's|^\./||' \
     | sort)
@@ -536,23 +581,33 @@ DESIGN_DOC_PATTERNS=(
 # ディレクトリ（src/domain 等）を誤って含めないよう -type f + 拡張子で限定する。
 DESIGN_DOC_EXTENSIONS_REGEX='\.(md|mdx|txt|rst|adoc|yaml|yml|json|png|svg|drawio|excalidraw|puml|sql)$'
 
+# DESIGN_DOC_PATTERNS の各パターンを -iname -o で連結したfind引数配列を構築し、
+# グローバル配列 ANALYZE_PROJECT_INAME_OR_ARGS に格納する（パターン数ぶんフルツリー走査
+# していたのを1回の find に統合するため。Issue #128）。
+build_analyze_project_iname_or_args() {
+  ANALYZE_PROJECT_INAME_OR_ARGS=()
+  local pattern
+  for pattern in "$@"; do
+    [ ${#ANALYZE_PROJECT_INAME_OR_ARGS[@]} -gt 0 ] && ANALYZE_PROJECT_INAME_OR_ARGS+=(-o)
+    ANALYZE_PROJECT_INAME_OR_ARGS+=(-iname "$pattern")
+  done
+}
+
 fetch_docs_evidence() {
   local dir="$1"
   local docs_dir="null"
   [ -d "$dir/docs" ] && docs_dir='"docs"'
 
   local -a results=()
-  local pattern
-  for pattern in "${DESIGN_DOC_PATTERNS[@]}"; do
-    while IFS= read -r f; do
-      [ -n "$f" ] && results+=("$f")
-    done < <(cd "$dir" 2>/dev/null && find . \
-      \( -path "./.git" -o -path "./node_modules" -o -path "./dist" -o -path "./.next" \
-         -o -path "./target" -o -path "./__pycache__" -o -path "./.venv" -o -path "./vendor" \) -prune \
-      -o -type f -iname "$pattern" -print 2>/dev/null \
-      | sed 's|^\./||' \
-      | grep -Ei "$DESIGN_DOC_EXTENSIONS_REGEX")
-  done
+  build_analyze_project_prune_path_args
+  build_analyze_project_iname_or_args "${DESIGN_DOC_PATTERNS[@]}"
+  while IFS= read -r f; do
+    [ -n "$f" ] && results+=("$f")
+  done < <(cd "$dir" 2>/dev/null && find . \
+    \( "${ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]}" \) -prune \
+    -o -type f \( "${ANALYZE_PROJECT_INAME_OR_ARGS[@]}" \) -print 2>/dev/null \
+    | sed 's|^\./||' \
+    | grep -Ei "$DESIGN_DOC_EXTENSIONS_REGEX")
   local design_docs_json
   design_docs_json=$(printf '%s\n' "${results[@]:-}" | awk 'NF' | sort -u | jq -R -s 'split("\n") | map(select(length>0))')
 
@@ -566,12 +621,12 @@ fetch_named_dirs() {
   local -a names=("$@")
   local -a results=()
   local name
+  build_analyze_project_prune_path_args
   for name in "${names[@]}"; do
     while IFS= read -r f; do
       [ -n "$f" ] && results+=("$f")
     done < <(cd "$dir" 2>/dev/null && find . \
-      \( -path "./.git" -o -path "./node_modules" -o -path "./dist" -o -path "./.next" \
-         -o -path "./target" -o -path "./__pycache__" -o -path "./.venv" -o -path "./vendor" \) -prune \
+      \( "${ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]}" \) -prune \
       -o -type d -name "$name" -print 2>/dev/null | sed 's|^\./||')
   done
   printf '%s\n' "${results[@]:-}" | awk 'NF' | sort -u | jq -R -s 'split("\n") | map(select(length>0))'
@@ -596,9 +651,9 @@ fetch_colocated_tests() {
   # fetch_test_dirs が検出する専用テストディレクトリ（__tests__/test/tests/spec）配下の
   # *.test.*/*.spec.* は「co-located」ではなく通常のテスト配置なので除外する
   # （(^|/)(name)/ でパス区切り境界を厳密化し、"latest/" 等の部分一致誤検出を防ぐ）
+  build_analyze_project_prune_path_args
   hit=$(cd "$dir" 2>/dev/null && find . \
-    \( -path "./.git" -o -path "./node_modules" -o -path "./dist" -o -path "./.next" \
-       -o -path "./target" -o -path "./__pycache__" -o -path "./.venv" -o -path "./vendor" \) -prune \
+    \( "${ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]}" \) -prune \
     -o -type f \( -iname "*.test.*" -o -iname "*.spec.*" \) -print 2>/dev/null \
     | sed 's|^\./||' \
     | grep -Ev '(^|/)(__tests__|test|tests|spec)/' \
@@ -712,9 +767,9 @@ fetch_axes() {
 
   local has_openapi="false"
   local openapi_hit
+  build_analyze_project_prune_path_args
   openapi_hit=$(cd "$dir" 2>/dev/null && find . \
-    \( -path "./.git" -o -path "./node_modules" -o -path "./dist" -o -path "./.next" \
-       -o -path "./target" -o -path "./__pycache__" -o -path "./.venv" -o -path "./vendor" \) -prune \
+    \( "${ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]}" \) -prune \
     -o -iname "openapi*" -print -o -iname "swagger*" -print 2>/dev/null | LC_ALL=C sort | head -1)
   [ -n "$openapi_hit" ] && has_openapi="true"
 

@@ -9,8 +9,9 @@
 # そのため "**" は "*" と実質的に同じ挙動になる点に注意すること
 # （例: "*secrets/*" は "secrets/key.pem" にも "app/secrets/key.pem" にもマッチする）。
 #
-# このファイルが存在しない場合、pr-merge-preflight.sh は内蔵の
-# デフォルトパターン（このファイルと同内容）にフォールバックする。
+# このファイルは pr-merge-preflight.sh と同一プラグイン内に同梱されており、
+# 欠損＝インストール破損のため、存在しない場合 pr-merge-preflight.sh は
+# フォールバックせず明示エラー（stderrにファイルパスを含む）で終了する。
 
 # CI/CD ワークフロー定義（実行権限・シークレット・自動化トリガーに直結する）
 .github/workflows/*

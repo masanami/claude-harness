@@ -1,6 +1,6 @@
 ---
 name: issue-conflict-predictor
-description: "para-impl の複数Issue並列実装で、Issue間のファイル衝突・依存関係を予測する際に使用する。リード（/para-impl の star 型並列実装）から Task ツール経由で `subagent_type: 'claude-harness:issue-conflict-predictor'` として、Issue数が閾値（既定5件）以上の場合のみ、全Issueに対して並列fan-outで呼び出される（Issue #45・#105）。予測結果はリード側で交差判定（予測ファイル集合の突き合わせ）されるが、判定結果は自動直列化トリガーではなくリードの直列化判断への**ヒント**に格下げされる——偽陰性・偽陽性を含みうる予測に基づいて機械的に直列化すると、統合時の衝突検知・解決という既存の安全網（リードの役目）を弱めてしまうため。"
+description: 複数Issueの並列実装で、Issue間のファイル衝突・依存関係を予測する際に使用するエージェント。予測結果は並列実装リードの直列化判断のヒントとして使われる。
 tools: Read, Glob, Grep
 model: sonnet
 # effort: 1Issueあたりの予測に限定した軽量タスクのため low。

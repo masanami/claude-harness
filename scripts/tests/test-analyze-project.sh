@@ -697,6 +697,27 @@ NONEXISTENT_EXIT=$?
 assert_eq "存在しないディレクトリはexit非0" "1" "$NONEXISTENT_EXIT"
 assert_eq "statusがerror" "error" "$(jq -r '.status' <<<"$NONEXISTENT_OUTPUT")"
 
+# ====================================================================
+# check_jq（analyze-project.sh 独自のエラーJSON上書き。lib/common.sh 集約後の回帰。Issue #128）
+# ====================================================================
+# analyze-project.sh は source 後、lib/common.sh の check_jq（既定エラーJSON）を
+# 自スクリプト専用のエラーJSON（status フィールド付き）へ束縛したローカル版で上書きする。
+# この上書きが本番コードパス（CLI実行）でも効いていることを、jqが見つからないPATHで
+# 直接 $TARGET_SCRIPT を実行して確認する（sourceされた関数を直接呼ぶだけでは、
+# 上書きのブロック順序が崩れて既定JSONへ静かにフォールバックする回帰を検出できないため）。
+echo "=== test: check_jq (analyze-project.sh固有のエラーJSON上書きがCLI実行でも効く、回帰) ==="
+# PATH を jq だけ見つからない最小構成にする（完全な空PATHだと source 行が使う外部コマンド
+# dirname 自体が見つからずソース失敗のガード側に倒れてしまい、check_jq を検証できないため）。
+JQ_ABSENT_PATH_DIR="$(mktemp -d)"
+ln -s "$(command -v dirname)" "${JQ_ABSENT_PATH_DIR}/dirname"
+JQ_ABSENT_STDERR=$(PATH="$JQ_ABSENT_PATH_DIR" "$TARGET_SCRIPT" 2>&1 1>/dev/null)
+JQ_ABSENT_EXIT_CHECK=$(PATH="$JQ_ABSENT_PATH_DIR" "$TARGET_SCRIPT" >/dev/null 2>&1; echo $?)
+rm -rf "$JQ_ABSENT_PATH_DIR"
+assert_eq "jq不在時はexit非0" "1" "$JQ_ABSENT_EXIT_CHECK"
+assert_eq "jq不在時のstderr最終行はstatusフィールド付きエラーJSON(lib/common.shの既定にフォールバックしない)" \
+  '{"status":"error","error":"jq not found"}' \
+  "$(printf '%s\n' "$JQ_ABSENT_STDERR" | tail -n 1)"
+
 echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"

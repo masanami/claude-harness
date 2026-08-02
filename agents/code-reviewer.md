@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: "ソースコードをレビューする際に使用。「コードをレビューして」「実装をチェックして」「PRをレビューして」といったレビュー依頼時に自動委譲される。`/self-review`（skills/self-review/SKILL.md）から Task ツールで `subagent_type: 'claude-harness:code-reviewer'` として、design-reviewer とバリア付き並列で呼び出される経路もある（Issue #44・#107）。`/pr-merge`（skills/pr-merge/SKILL.md）の分岐B（統合ブランチゲート・リスクゲート非該当時の単発委譲）・分岐C（統合ブランチゲート・リスクゲート該当時の3レンズ judge panel、Task並列 spawn）の両方からも Task ツール経由で呼び出される（Issue #109）。"
+description: ソースコードをレビューする際に使用するエージェント。「コードをレビューして」「実装をチェックして」「PRをレビューして」といったレビュー依頼時に自動委譲される。
 # tools: レビュー専用エージェントのため、コード編集ツール（Edit, Write）は意図的に除外。
 # 修正が必要な場合は、レビュー結果を報告し、実装エージェント（feature-implementer）に委譲する。
 # 品質チェックコマンドの実行もこのエージェントの責務ではない（Fixステージ後段に一本化。Issue #44）。

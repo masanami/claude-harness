@@ -1,71 +1,14 @@
 #!/bin/bash
 # fetch-pr-comments.sh
-# skills/pr-review-respond/SKILL.md（Step 2）が Bash ツールで直接実行する決定的スクリプト
-# （Issue #108 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の
-# 直接実行に一本化した）。
-# PRのレビューコメントを3経路（レビュー本体/会話タブ/インライン）+ GraphQL reviewThreads +
-# 変更ファイル一覧から取得し、単一の正規化配列へ組み立てる。
-#
-# 使い方:
-#   scripts/fetch-pr-comments.sh <PR番号>
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "pr": 48,
-#     "diff_stat": "path/a.js | +12 -3\npath/b.js | +5 -0",
-#     "comments": [
-#       {
-#         "id": "123",
-#         "threadId": "PRRT_xxx" | null,
-#         "source": "review" | "conversation" | "inline",
-#         "author": "login",
-#         "is_bot": true | false,
-#         "path": "a.js" | null,
-#         "line": 10 | null,
-#         "diff_hunk": "..." | null,
-#         "body": "...",
-#         "is_resolved": true | false,
-#         "is_outdated": true | false
-#       }
-#     ]
-#   }
-#
-# フィールドの定義:
-#   - id: コメントのDB ID（またはgh/GraphQLが返す識別子）を文字列化したもの。
-#     review/conversation/inlineでID空間は別だが、この正規化配列内では一意識別子として扱う。
-#   - threadId: GraphQL reviewThread のnode id。inlineコメントで対応するスレッドが
-#     見つかった場合のみ値を持つ。review/conversationコメントは常にnull。
-#   - source: "review"（PR全体へのレビュー本体コメント。空bodyのレビューは除外する）/
-#     "conversation"（PR会話タブ、行に紐付かない）/ "inline"（個別行コメント）。
-#   - is_bot: is_bot_author() の判定結果（gh を呼ばない純粋関数として分離。テスト対象）。
-#   - path/line/diff_hunk: inlineコメントのみ値を持つ。他はnull。
-#   - is_resolved/is_outdated: inlineコメントで対応スレッドが見つかった場合のみそのスレッドの
-#     値。他はfalse。
-#
-# owner/repo は `gh repo view --json owner,name` で解決する。
-#
-# 関数分離（テスト容易性のため）:
-#   - gh を呼ぶ取得系関数: resolve_repo / fetch_reviews_json / fetch_conversation_json /
-#     fetch_inline_json / fetch_review_threads_json / fetch_pr_files_json
-#   - 取得済みJSON文字列から正規化配列を組み立てる純粋パース関数: normalize_comments /
-#     build_diff_stat / is_bot_author
-# パース関数はこのスクリプトを `source` してフィクスチャJSON（4つの入力JSON文字列）から
-# 直接呼び出してテストできる（scripts/tests/test-fetch-pr-comments.sh）。
-#
-# gh呼び出しの失敗・jq不在は stderr にメッセージを出し、exit非0で終了する。
-#
-# `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。
+# 使い方: scripts/fetch-pr-comments.sh <PR番号>（詳細は下記参照）
+# 仕様の正本は scripts/specs/fetch-pr-comments.md を参照。
 
 set -u
 
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
 
 # author login からボット判定を行う純粋関数（gh を呼ばない）。
@@ -92,22 +35,7 @@ is_bot_author() {
 
 # --- gh を呼ぶ取得系関数 ---
 
-# owner/repo をリポジトリ設定から解決する。
-# 結果: REPO_OWNER, REPO_NAME
-resolve_repo() {
-  local json
-  if ! json=$(gh repo view --json owner,name 2>/dev/null); then
-    echo "Error: failed to resolve owner/repo via gh repo view" >&2
-    return 1
-  fi
-  REPO_OWNER=$(jq -r '.owner.login' <<<"$json")
-  REPO_NAME=$(jq -r '.name' <<<"$json")
-  if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ]; then
-    echo "Error: could not parse owner/repo from gh repo view output" >&2
-    return 1
-  fi
-  return 0
-}
+# resolve_repo は lib/common.sh（scripts/lib/common.sh）に集約。
 
 # 引数: PR番号
 # 戻り値: stdout に `gh pr view --json reviews` の生JSON

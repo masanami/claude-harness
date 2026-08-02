@@ -2,34 +2,20 @@
 # test-path-conventions.sh
 # skills/ agents/ に対する grep ベースの再発防止テスト。
 # (i) 裸の scripts/ 参照（${CLAUDE_PLUGIN_ROOT} も <base> も SCRIPT_DIR 自己解決も伴わない
-#     bash/node 実行・Workflow scriptPath・scripts/ 配下ドキュメントへの Read 参照）
+#     bash/node 実行・scriptPath: 形式の参照・scripts/ 配下ドキュメントへの Read 参照）
 # (ii) 実行時ファイルから docs/ 配下の設計文書への参照（HTML コメント行は除外。docs/features/ は
 #      スキルの入出力ドキュメントであり設計文書ではないため対象外。1行に複数の docs/*.md 参照が
 #      併記されている場合は参照ごとに判定し、docs/features/ 以外が1つでもあれば違反とする）
 # (iii) 成立しない `echo "$CLAUDE_PLUGIN_ROOT"` 解決手順の再出現（実機検証によりBash環境では
 #       常にUNSETであることが確認済み。Base directory起点の解決に一本化されている）
-# (iv) skills/*/scripts/*.js（Workflow ランタイムが scriptPath で直接実行するスクリプト）が
-#      `export const meta` 以外の export を持たないこと。ランタイムは `export const meta` のみを
-#      特別扱いし、本文を async 関数体として実行する契約のため、他の export が1つでも残っていると
-#      起動時に `SyntaxError: Unexpected keyword 'export'` で失敗する（Issue #89の実機確認事実）。
-#      export 宣言の総数がちょうど1であることに加え、その1件が `export const meta` 自体である
-#      ことも検証する（`export default async function () {}` のみのファイルは総数1で通過して
-#      しまうが起動には失敗するため、総数チェックだけでは不十分。先頭空白付きの export も
-#      見逃さないよう `^[[:space:]]*export ` で数える）。
-# (v)  skills/*/scripts/*.js の `agentType: '...'` / `subagent_type: '...'` と agents/*.md 内の
-#      自己記述（同表記のバッククォート表記）が、プラグイン名前空間プレフィックス
+# (iv) skills/*.md 内の呼び出し記述と agents/*.md 内の自己記述（いずれも
+#      `subagent_type: '...'` の表記）が、プラグイン名前空間プレフィックス
 #      `claude-harness:` 付きであること（Issue #41 実機プローブ: プレフィックス無しの
-#      subagent_type/agentType は名称解決エラーになる。CodeRabbit指摘対応(PR #92)で
-#      subagent_type も検査対象に追加）。
-# (vi) skills/*/scripts/*.js（Dynamic Workflow スクリプト）に、ハードコードされた `scripts/`
-#      への相対パス文字列リテラル（引用符 '/"/` に直接続く `scripts/...`）が無いこと（Issue #80
-#      由来のパス規約違反パターンの一種。Workflow スクリプトが cwd 起点の裸の相対パスを
-#      ハードコードしていると、導入先プロジェクトの同名パスと衝突する・cwd がプラグイン
-#      ルートである保証がない、という問題の再発防止）。コメントや説明文中の言及（引用符に
-#      直接続かない形）は誤検出しない。
-# (vii) 「実行時にプラグインルートへ展開される」という誤説明の再出現（CLAUDE_PLUGIN_ROOT は
-#       Bash 環境変数として存在せず展開されない — 実機検証済み。正しくは「表記上の
-#       プレースホルダであり、実行前に Base directory から解決した絶対パスに置換する」）
+#      subagent_type は名称解決エラーになる。CodeRabbit指摘対応(PR #92)で
+#      subagent_type を検査対象に追加）。
+# (v) 「実行時にプラグインルートへ展開される」という誤説明の再出現（CLAUDE_PLUGIN_ROOT は
+#     Bash 環境変数として存在せず展開されない — 実機検証済み。正しくは「表記上の
+#     プレースホルダであり、実行前に Base directory から解決した絶対パスに置換する」）
 # を検出する。規約の正本は docs/plugin-path-conventions.md。
 #
 # grep の exit code は 0=マッチあり / 1=マッチなし（正常） / 2以上=実行エラー
@@ -71,11 +57,6 @@ skills/init-project/SKILL.md:137
 DEAD_ECHO_ALLOWLIST="
 "
 
-# (vi) skills/*/scripts/*.js 内のハードコードされた scripts/ 相対パス文字列リテラルの許容リスト。
-# 現時点では既知の例外は無い。
-BARE_JS_SCRIPT_ALLOWLIST="
-"
-
 is_allowlisted() {
   local file_line="$1"
   local allowlist="$2"
@@ -102,7 +83,7 @@ bare_exec_exit=$?
 # （例: 「正本は `scripts/README.md`（Read する場合は `<base>/../../scripts/README.md` で解決）」）
 # 単なる名称としての言及であり違反ではないため除外する。
 # shellcheck disable=SC2016
-bare_doc_pattern='`scripts/[A-Za-z0-9_.-]+\.md`'
+bare_doc_pattern='`scripts/[A-Za-z0-9_./-]+\.md`'
 bare_doc_candidates="$(grep -rnE "$bare_doc_pattern" skills agents --include='*.md')"
 bare_doc_exit=$?
 
@@ -242,47 +223,19 @@ else
 fi
 
 echo ""
-echo "=== (iv) Workflow スクリプトの export 制約チェック ==="
+echo "=== (iv) subagent_type プラグイン名前空間プレフィックスチェック ==="
 
-workflow_script_export_violations=""
-while IFS= read -r -d '' file; do
-  # 先頭空白の有無に関わらず export 宣言を数える（インデントされた export の見逃し防止）。
-  export_count="$(grep -c -E '^[[:space:]]*export ' "$file")"
-  # export 総数が1でも、その1件が export const meta でなければ（例: export default async
-  # function (...) {} のみのファイル）ランタイムでは起動に失敗する。唯一の export が
-  # export const meta であることまで併せて検証する。
-  meta_export_count="$(grep -c -E '^export const meta[[:space:]]*=' "$file")"
-  if [ "$export_count" -ne 1 ] || [ "$meta_export_count" -ne 1 ]; then
-    workflow_script_export_violations="${workflow_script_export_violations}${file}: export宣言数=${export_count}, export const meta数=${meta_export_count}（期待値=両方とも1。export const meta のみ許容）
-"
-  fi
-done < <(find skills -path '*/scripts/*.js' -print0)
-
-if [ -z "$workflow_script_export_violations" ]; then
-  PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  ok - skills/*/scripts/*.js は全て export const meta のみを export している"
-else
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("skills/*/scripts/*.js に export const meta 以外の export を検出")
-  echo "  NG - skills/*/scripts/*.js に export const meta 以外の export を検出"
-  print_indented "$workflow_script_export_violations"
-fi
-
-echo ""
-echo "=== (v) agentType/subagent_type プラグイン名前空間プレフィックスチェック ==="
-
-# CodeRabbit指摘対応（PR #92）: agentType だけでなく subagent_type（Task ツールが受け取る
-# 引数名。docs/plugin-path-conventions.md (g) は両方をプレフィックス必須の対象としている）も
-# 検査しないと、裸の subagent_type が名称解決エラーになる契約なのにこの再発防止テストが
-# 見逃してしまう。
+# CodeRabbit指摘対応（PR #92）: subagent_type（Task ツールが受け取る引数名。
+# docs/plugin-path-conventions.md (g) がプレフィックス必須の対象としている）を検査しないと、
+# 裸の subagent_type が名称解決エラーになる契約なのにこの再発防止テストが見逃してしまう。
 # shellcheck disable=SC2016
-agenttype_pattern="(agentType|subagent_type):[[:space:]]*'[^']+'"
-agenttype_hits="$(grep -rnoE "$agenttype_pattern" skills agents --include='*.js' --include='*.md')"
+agenttype_pattern="subagent_type:[[:space:]]*'[^']+'"
+agenttype_hits="$(grep -rnoE "$agenttype_pattern" skills agents --include='*.md')"
 agenttype_exit=$?
 
 if [ "$agenttype_exit" -ge 2 ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("agentType/subagent_type 名前空間プレフィックスチェックの grep 実行に失敗")
+  FAILED_TESTS+=("subagent_type 名前空間プレフィックスチェックの grep 実行に失敗")
   echo "  NG - grep 実行エラー（exit ${agenttype_exit}）のため判定不能"
 else
   agenttype_violations=""
@@ -290,7 +243,7 @@ else
     while IFS= read -r hit; do
       [ -z "$hit" ] && continue
       case "$hit" in
-        *"agentType: 'claude-harness:"*|*"subagent_type: 'claude-harness:"*) continue ;;
+        *"subagent_type: 'claude-harness:"*) continue ;;
       esac
       agenttype_violations="${agenttype_violations}${hit}
 "
@@ -299,60 +252,17 @@ else
 
   if [ -z "$agenttype_violations" ]; then
     PASS_COUNT=$((PASS_COUNT + 1))
-    echo "  ok - agentType/subagent_type はすべて claude-harness: プレフィックス付き"
+    echo "  ok - subagent_type はすべて claude-harness: プレフィックス付き"
   else
     FAIL_COUNT=$((FAIL_COUNT + 1))
-    FAILED_TESTS+=("claude-harness: プレフィックス無しの agentType/subagent_type を検出")
-    echo "  NG - claude-harness: プレフィックス無しの agentType/subagent_type を検出"
+    FAILED_TESTS+=("claude-harness: プレフィックス無しの subagent_type を検出")
+    echo "  NG - claude-harness: プレフィックス無しの subagent_type を検出"
     print_indented "$agenttype_violations"
   fi
 fi
 
 echo ""
-echo "=== (vi) Workflow スクリプトのハードコードされた scripts/ 相対パスチェック ==="
-
-# 対象: 引用符（'/"/`）に直接続く scripts/ から始まる文字列リテラルのみ。コメントや説明文中の
-# 言及（例: meta.description 内の「... runs scripts/mutation-run.sh to ...」）は引用符に直接
-# 続かないため誤検出しない。
-# shellcheck disable=SC2016 # バッククォートは正規表現の文字クラス内リテラルであり、シェル展開の対象ではない
-bare_js_script_pattern="['\"\`]scripts/"
-
-bare_js_script_violations=""
-bare_js_script_grep_error=0
-while IFS= read -r -d '' file; do
-  hits="$(grep -nE "$bare_js_script_pattern" "$file")"
-  grep_exit=$?
-  if [ "$grep_exit" -ge 2 ]; then
-    bare_js_script_grep_error=1
-    echo "  NG - ${file}: grep 実行エラー（exit ${grep_exit}）のため判定不能"
-    continue
-  fi
-  [ -z "$hits" ] && continue
-  while IFS= read -r hit; do
-    [ -z "$hit" ] && continue
-    lineno="${hit%%:*}"
-    if ! is_allowlisted "${file}:${lineno}" "$BARE_JS_SCRIPT_ALLOWLIST"; then
-      bare_js_script_violations="${bare_js_script_violations}${file}:${hit}
-"
-    fi
-  done <<<"$hits"
-done < <(find skills -path '*/scripts/*.js' -print0)
-
-if [ "$bare_js_script_grep_error" -eq 1 ]; then
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("skills/*/scripts/*.js のハードコードされた scripts/ 相対パスチェックの grep 実行に失敗")
-elif [ -z "$bare_js_script_violations" ]; then
-  PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  ok - skills/*/scripts/*.js にハードコードされた scripts/ 相対パス文字列リテラルは無い"
-else
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("skills/*/scripts/*.js にハードコードされた scripts/ 相対パス文字列リテラルを検出")
-  echo "  NG - skills/*/scripts/*.js にハードコードされた scripts/ 相対パス文字列リテラルを検出"
-  print_indented "$bare_js_script_violations"
-fi
-
-echo ""
-echo "=== (vii) 誤った「実行時に展開」説明の再出現チェック ==="
+echo "=== (v) 誤った「実行時に展開」説明の再出現チェック ==="
 
 # 「実行時に…展開」「自動的に…展開」「環境変数として展開」等の言い換えも検出する。
 # 正しい説明（「実行前に…絶対パスに置換」「絶対パスへ展開したうえで」= モデル自身が行う指示）は

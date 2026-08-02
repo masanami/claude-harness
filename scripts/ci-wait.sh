@@ -1,47 +1,15 @@
 #!/bin/bash
 # ci-wait.sh
-# para-impl の star型並列実装で ticket-worker が Phase 9（CI確認）に使う決定的スクリプト
-# （Issue #45 で新設、#105 で呼び出し元を Dynamic Workflow から ticket-worker へ変更）。
-# `gh pr checks` を上限付きでポーリングし、失敗時は失敗ジョブのログ末尾を抽出する。
-#
-# 使い方:
-#   scripts/ci-wait.sh <PR番号 or ブランチ名> [timeout秒（既定: 900）] [poll間隔秒（既定: 30）]
-#
-#   <PR番号 or ブランチ名> は `gh pr view` がそのまま受け付けるセレクタ（PR番号・
-#   ブランチ名・URL のいずれでもよい）。対応する PR が存在しない場合は
-#   pr_exists: false, ci: 'none' を返して即座に終了する（ポーリングしない）。
-#
-#   timeout秒に 0 を指定すると「1回だけスナップショットを取得して即終了する」
-#   single-shot モードになる（sleep しない）。ticket-worker の attempt>=2
-#   冪等分岐（PR作成済みかどうかだけを素早く確認したい場合）はこの用法を使う。
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "ci": "green" | "red" | "timeout" | "none",
-#     "failed_checks": [{"name": "...", "workflow": "...", "link": "..."}],
-#     "failure_log_excerpt": "...",
-#     "pr_url": "...",
-#     "pr_number": 123 | null,
-#     "pr_exists": true | false
-#   }
-#
-# 設計判断（checks未設定リポジトリの扱い。Issue #45 本文の指示に基づく）:
-#   `gh pr checks` が「チェックが1件も無い」を返した場合、それが「本当にCIが
-#   設定されていない」のか「ポーリング開始直後でまだチェックが登録されていない」のか
-#   を1回のスナップショットだけでは区別できない。本スクリプトは連続
-#   NONE_CONFIRM_ATTEMPTS 回（既定2回）空を観測して初めて `ci: 'none'` を確定する
-#   （呼び出し側 ticket-worker は 'none' を green 相当としてブロックしない扱いに
-#   してよい。実行不能なゲートで永久にブロックしないため）。ループが timeout に達した
-#   時点でまだ「空」だった場合も（チェックがpendingだったわけではないため）'timeout'
-#   ではなく 'none' として確定する。'timeout' は「チェックはあるが完了を待ちきれなかった
-#   （pending のまま時間切れ）」の場合にのみ使う。
-#
-# gh呼び出しを行う処理（fetch_*）と、入力から出力を組み立てる純粋な判定処理
-# （classify_checks / ci_wait_decision / extract_run_ids / tail_lines /
-#  truncate_to_budget / build_failed_checks_json）を関数として分離している。
-# このファイルを `source` すれば gh を呼ばずに純粋関数を直接テストできる。
+# 使い方: scripts/ci-wait.sh <PR番号 or ブランチ名> [timeout秒（既定: 900）] [poll間隔秒（既定: 30）]（詳細は下記参照）
+# 仕様の正本は scripts/specs/ci-wait.md を参照。
 
 set -u
+
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
+}
 
 DEFAULT_TIMEOUT_SECONDS=900
 DEFAULT_POLL_INTERVAL_SECONDS=30
@@ -50,15 +18,6 @@ LOG_TAIL_LINES=100
 LOG_CHAR_BUDGET=4000
 
 POLL_SLEEP_CMD="${POLL_SLEEP_CMD:-sleep}"
-
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
-}
 
 # ---------------------------------------------------------------------------
 # gh 呼び出し（外部作用あり）
@@ -76,18 +35,8 @@ fetch_pr_view() {
   return 0
 }
 
-# pr-merge-preflight.sh の fetch_pr_checks と同じ設計（gh pr checks は pending/fail 時に
-# 非0 exitを返す仕様のため、exit code ではなく stdout が有効なJSON配列かどうかで成否判定）。
-fetch_pr_checks() {
-  local pr_num="$1"
-  local output
-  output=$(gh pr checks "$pr_num" --json name,state,bucket,description,workflow,link 2>/dev/null)
-  if [ -z "$output" ] || ! jq -e 'type == "array"' <<<"$output" >/dev/null 2>&1; then
-    printf '[]'
-    return 0
-  fi
-  printf '%s' "$output"
-}
+# fetch_pr_checks は lib/common.sh（scripts/lib/common.sh）に集約（pr-merge-preflight.sh と
+# 同じ実装。ここでは warn_on_empty を渡さないため Warning は出さない元の挙動を維持する）。
 
 # 失敗ジョブのログ末尾を取得する。run_id 単位（複数チェックが同一 run に属しうる）。
 fetch_run_log_failed() {
@@ -110,7 +59,7 @@ classify_checks() {
     echo "empty"
     return
   fi
-  if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<<"$checks_json" >/dev/null 2>&1; then
+  if jq -e "any(.[]; ${JQ_FAIL_CANCEL_PREDICATE})" <<<"$checks_json" >/dev/null 2>&1; then
     echo "red"
     return
   fi
@@ -179,7 +128,7 @@ extract_run_id() {
 # fail/cancel の checks のみを抽出したJSON配列を返す。
 build_failed_checks_json() {
   local checks_json="$1"
-  jq -c '[.[] | select(.bucket == "fail" or .bucket == "cancel") | {name, workflow, link}]' <<<"$checks_json"
+  jq -c "[.[] | select(${JQ_FAIL_CANCEL_PREDICATE}) | {name, workflow, link}]" <<<"$checks_json"
 }
 
 # failed_checks_json（build_failed_checks_json の出力）から一意な run_id 一覧を返す

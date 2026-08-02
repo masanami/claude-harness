@@ -1,64 +1,14 @@
 #!/bin/bash
 # collect-promotion-context.sh
-# skills/promote-verify/SKILL.md（Step 3）が Bash ツールで直接実行する決定的スクリプト
-# （Issue #110 で Dynamic Workflow・git-ops エージェント経由の委譲を廃止し、呼び出し元自身の
-# 直接実行に一本化した）。統合ブランチ→main 昇格前検証パッケージの一部として、base ブランチと
-# 統合ブランチの間の diff コンテキストを取得する（Issue #52）。
-#
-# collect-review-diff.sh と同じ設計思想（gh非依存・純粋な git 操作・関数分離によるテスト容易性・
-# diff本文は一時ファイル書き出し）を踏襲するが、対象は「merge-base → 作業ツリー」ではなく
-# 「base ブランチ ↔ 統合ブランチ」という2つの名前付きブランチ間（three-dot diff）である点が異なる。
-#
-# 使い方:
-#   scripts/collect-promotion-context.sh <base_branch> <integration_branch>
-#     例: scripts/collect-promotion-context.sh main feat/issue-52-promotion-verify
-#
-# 出力（stdout にJSON1個）:
-#   {
-#     "base": "main",
-#     "integration": "feat/issue-52-promotion-verify",
-#     "merge_base": "<sha>",
-#     "diff_stat": "path/a.js | +12 -3\n...",
-#     "name_status": [{"status": "M", "path": "path/a.js"}, ...],
-#     "diff_file": "/path/to/tmpfile"
-#   }
-#
-# name_status の各要素:
-#   - 通常（M/A/D等）: {"status": "M", "path": "..."}
-#   - rename（`R100\told\tnew` のような3カラム行）: {"status": "R100", "path": "<new>", "oldPath": "<old>"}
-#
-# diff_file の中身は「base_ref...integration_ref」（three-dot。merge-baseから統合ブランチ側への
-# 差分）の unified diff 全文。呼び出し側はdiff本文をプロンプトに直貼りせず、このパスを
-# エージェントに渡してReadさせること（collect-review-diff.sh の diff_file と同じ思想。
-# コンテキスト削減のため）。
-#
-# ref解決（resolve_ref）:
-#   base/integration いずれも、`origin/<name>` が解決できなければ `<name>`（ローカルブランチ）に
-#   フォールバックする（collect-review-diff.sh の resolve_base_ref と同じフォールバック方式を
-#   汎用化し、両方の引数に使い回す）。
-#
-# fetch（重要。テスト容易性のための設計）:
-#   `git fetch origin` は main() からのみ呼ばれる別関数 fetch_origin に分離している。
-#   ref解決・merge-base算出・diff系の関数からは呼ばない。fetch は best-effort とし、
-#   失敗しても stderr に警告を出すのみで処理を継続する（ローカルに既に fetch 済みの ref が
-#   あれば動作を継続できるようにするため）。これにより、テストは fetch を経由せず
-#   ref解決・merge-base・diff系の関数を直接呼んでローカル一時gitリポジトリで検証できる
-#   （`origin` リモートを用意しない。scripts/tests/test-collect-promotion-context.sh）。
-#
-# jq 不在時・git操作失敗時は stderr にエラー + exit非0（scripts/README.md の出力規約に従う）。
-#
-# `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。
+# 使い方: scripts/collect-promotion-context.sh <base_branch> <integration_branch>（詳細は下記参照）
+# 仕様の正本は scripts/specs/collect-promotion-context.md を参照。
 
 set -u
 
-# jq の有無をチェックする。無ければ stderr にエラーメッセージ + エラーJSONを出す。
-check_jq() {
-  if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but was not found in PATH" >&2
-    printf '{"error":"jq not found"}\n' >&2
-    return 1
-  fi
-  return 0
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
+  echo "Error: failed to source lib/common.sh" >&2
+  exit 1
 }
 
 # git fetch origin を best-effort で実行する（gh を呼ばない。git のみ）。

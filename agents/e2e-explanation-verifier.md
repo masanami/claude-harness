@@ -1,6 +1,6 @@
 ---
 name: e2e-explanation-verifier
-description: "explain-e2e の Phase 2（独立検証）が、Phase 1 の解説とE2E実装コードの整合・アサーションの妥当性を新鮮なコンテキストで確認する際に使用する。`skills/explain-e2e/SKILL.md` Phase 2 の Verify 段階から、Task ツールで `subagent_type: 'claude-harness:e2e-explanation-verifier'` として、テストファイルごとに1メッセージで並列 fan-out 起動される（Issue #47・#114）。解説を書いた本人（Phase 1・メインセッション）と同一コンテキストにならないことが独立検証の前提であり、このエージェントは Phase 1 の対話・解説内容を一切知らない新規セッションとして起動される。"
+description: 実装済みE2Eテストの解説とコードの整合・アサーションの妥当性を、解説作成者とは独立したコンテキストで確認する際に使用するエージェント。
 # tools: 読み取り専用の検証専用エージェントのため。コード修正は行わない。
 tools: Read, Grep
 model: sonnet
@@ -34,7 +34,7 @@ effort: medium
 
 ## 出力
 
-判定結果を `test`（対象テストのパス。入力の `path` をそのまま使う）・`explanationConsistent`（bool）・`assertionsMeaningful`（bool）・`disabled`（bool）・`issues`（発見した乖離・問題点の配列。無ければ空配列）で返してください。スキーマ定義そのもの（フィールド一覧・型）は呼び出し元のワークフロースクリプトの責務であり、ここでは重複記載しません。
+判定結果を `test`（対象テストのパス。入力の `path` をそのまま使う）・`explanationConsistent`（bool）・`assertionsMeaningful`（bool）・`disabled`（bool）・`issues`（発見した乖離・問題点の配列。無ければ空配列）で返してください。スキーマ定義そのもの（フィールド一覧・型）は呼び出し元プロンプト側の責務であり、ここでは重複記載しません。
 
 ## 禁止事項
 
