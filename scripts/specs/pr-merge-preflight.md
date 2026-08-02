@@ -5,7 +5,7 @@
 | フィールド | 型 / 値 | 意味 |
 |---|---|---|
 | `gate` | `"production"` \| `"integration"` | base = 既定ブランチなら production（人間承認必須）、それ以外は integration（自律マージ可） |
-| `base` / `default_branch` | string | PR の base とリポジトリ既定ブランチ。ブランチ構成由来のため再実行でも不変 |
+| `base` / `default_branch` | string | PR の base とリポジトリ既定ブランチ。**この実行時に取得した値**。base ブランチも既定ブランチも変更されうるため、再実行すれば値が変わりうる。実行をまたいでキャッシュしないこと（同一実行内での再利用は可） |
 | `ci` | `{status: "pass"\|"fail"\|"pending"\|"none", checks: [...]}` | CI チェックの集約。`cancel` 系は fail 扱い |
 | `mergeable` | `"MERGEABLE"` \| `"CONFLICTING"` \| `"UNKNOWN"` | GitHub の mergeable 判定 |
 | `mergeStateStatus` | string（例: `"BLOCKED"` `"CLEAN"` 等） | `gh pr view --json mergeStateStatus` の値をそのまま透過する。`"BLOCKED"`（branch protection の必須条件未達等）は `block_reasons` の `merge_blocked` 判定の入力になる |

@@ -59,7 +59,7 @@ gs_union_unique_json() {
 # ベース allow / deny（single source of truth）
 # ------------------------------------------------------------------
 
-# 共通権限（常に含める。約25項目）
+# 共通権限（常に含める。約26項目）
 gs_base_allow_json() {
   jq -n '[
     "Bash(git add:*)",
@@ -86,7 +86,8 @@ gs_base_allow_json() {
     "Bash(gh pr:*)",
     "Bash(gh api:*)",
     "Bash(gh repo view:*)",
-    "Bash(cd:*)"
+    "Bash(cd:*)",
+    "Bash(bash:*)"
   ]'
 }
 

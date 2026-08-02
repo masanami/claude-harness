@@ -133,7 +133,7 @@ Step 2-1/2-2 で自分が集約した `verify`/`mutation`/`unsafeMutationResidua
 
 | テスト | 解説整合 | アサーション妥当 | 有効性 | 判定 |
 |-------|---------|----------------|-------|------|
-| {test} | {explanationConsistent: ✅/❌} | {assertionsMeaningful: ✅/❌} | {有効性の判定は下記の優先順で1つ選ぶ: mutation対象外→「未実施（対象外）」／ injectFailed:true または mutatedFile===null（見送り）→「未実施（{description}）」／ invalidTarget:true → 「⚠️要確認」／ toothless:true → ❌ ／ それ以外（実際に注入・検出できた） → ✅} | {explanationConsistent かつ assertionsMeaningful かつ verifyFailed:false かつ 有効性が「✅」または「未実施（対象外）」なら OK、それ以外（「未実施（{description}）」「⚠️要確認」「❌」を含む）は要修正} |
+| {test} | {explanationConsistent: ✅/❌} | {assertionsMeaningful: ✅/❌} | {有効性の判定は下記の優先順で1つ選ぶ: mutation対象外→「未実施（対象外）」／ injectFailed:true または mutatedFile===null（見送り）→「未実施（{description}）」／ invalidTarget:true または needsManualRestore:true → 「⚠️要確認」／ toothless:true → ❌ ／ それ以外（実際に注入・検出できた） → ✅} | {explanationConsistent かつ assertionsMeaningful かつ verifyFailed:false かつ 有効性が「✅」または「未実施（対象外）」なら OK、それ以外（「未実施（{description}）」「⚠️要確認」「❌」を含む）は要修正} |
 
 ### 乖離・問題（あれば）
 - {test}: {verify[].issues の内容。verifyFailed: true の場合は「検証エージェントが失敗（未検証）」}

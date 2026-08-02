@@ -6,7 +6,7 @@ description: "コード変更のセルフレビューを実施する。Triggers 
 
 # Self Review
 
-現在のブランチの変更差分に対してセルフレビューを実施します。並列レビュー（code-reviewer/design-reviewer）・敵対的検証（finding-verifier 単一懐疑者）・修正の反復ループは、すべて Task ツールによる直接委譲で行います。メインセッションからの直接起動、`feature-implementer` 等のサブエージェントからの呼び出し、そのサブエージェントが Fix ステージで自分自身をスコープ付きで再 spawn する場合のいずれであっても、本手順1本が唯一の経路です（実行文脈の判定・分岐は不要）。diff収集・hunk抽出のような機械的な git/テキスト処理も、git-ops 等の代行エージェントを介さず、あなた自身が Bash ツールで直接実行します。
+現在のブランチの変更差分に対してセルフレビューを実施します。並列レビュー（code-reviewer/design-reviewer）・敵対的検証（finding-verifier 単一懐疑者）は Task ツールによる直接委譲で行います。修正の反復ループは、呼び出し元自身による Edit/Write でのインライン修正を基本とし、必要な場合のみ `feature-implementer` への委譲を行います（詳細は Step 4）。メインセッションからの直接起動、`feature-implementer` 等のサブエージェントからの呼び出し、そのサブエージェントが Fix ステージで自分自身をスコープ付きで再 spawn する場合のいずれであっても、本手順1本が唯一の経路です（実行文脈の判定・分岐は不要）。diff収集・hunk抽出のような機械的な git/テキスト処理も、git-ops 等の代行エージェントを介さず、あなた自身が Bash ツールで直接実行します。
 
 並列レビュー・敵対的検証の反証規範・修正時の振る舞いの規律は `agents/code-reviewer.md` / `agents/design-reviewer.md` / `agents/finding-verifier.md` / `agents/feature-implementer.md` 側に置きます（レイヤリング。本 SKILL には重複記載しません）。本 SKILL が正本とするのは、fan-out の手順・懐疑者判定の反映規律・修正ループの上限/終了条件・周回間dedupという「構造」のみです。
 

@@ -133,13 +133,59 @@ canonicalize_path() {
 # test_command を実行し、標準出力/標準エラーを結合してグローバル変数
 # LAST_OUTPUT / LAST_EXIT_CODE に格納する。生の出力は stderr にも転記する
 # （出力規約: stdoutにはJSONのみ。呼び出し側がfailureKindの手掛かりを追えるように）。
+# test_command はバックグラウンドで起動し `wait` で待ち受ける（`$(...)` コマンド置換で
+# 前面待機すると、bash はフォアグラウンドジョブ完了までシグナルの trap 実行を遅延させるため、
+# SIGTERM/SIGINT を受けてもタイムアウトによる強制終了までトラップが発火しない。`wait` は
+# シグナル到着時に即座に中断してトラップを実行できるため、この構成で早期に捕捉できる）。
+# 実行中の test_command の PID は CURRENT_TEST_PID に保持し、シグナル受信時に
+# terminate_on_signal から子プロセスの終了を試みる。
+CURRENT_TEST_PID=""
+
 run_test_command() {
   local cmd="$1"
   echo "--- test: ${cmd} ---" >&2
-  LAST_OUTPUT="$(bash -c "$cmd" 2>&1)"
+  local tmp_out
+  tmp_out="$(mktemp)" || { LAST_OUTPUT=""; LAST_EXIT_CODE=1; return; }
+  bash -c "$cmd" >"$tmp_out" 2>&1 &
+  CURRENT_TEST_PID=$!
+  wait "$CURRENT_TEST_PID"
   LAST_EXIT_CODE=$?
+  CURRENT_TEST_PID=""
+  LAST_OUTPUT="$(cat "$tmp_out" 2>/dev/null)"
+  rm -f "$tmp_out"
   printf '%s\n' "$LAST_OUTPUT" >&2
   echo "--- test exit: ${LAST_EXIT_CODE} ---" >&2
+}
+
+# ---------------------------------------------------------------------------
+# EXIT / シグナルトラップ（安全網）
+# ---------------------------------------------------------------------------
+
+# main() が呼び出し引数から確定させる復元対象ファイル一覧。trap ハンドラは
+# main() の local 変数を参照できないため、グローバル配列として保持する。
+MUTATION_FILES=()
+
+# jq不在・事前チェック失敗・test_command 実行中のシグナル/タイムアウトによる中断など、
+# 通常の手順2（復元）に到達しない早期終了パスでも、変異対象を可能な限り復元する安全網。
+# 通常経路（手順2〜4）で既に復元済みの場合、ここでの再実行は冪等（`git checkout --` は
+# 対象ファイルが既にクリーンなら no-op）。exit を呼ばないため、元の終了コード（$?）は
+# そのまま維持される。
+restore_on_exit() {
+  if [ "${#MUTATION_FILES[@]}" -gt 0 ] && git rev-parse --git-dir >/dev/null 2>&1; then
+    git checkout -- "${MUTATION_FILES[@]}" 2>/dev/null || true
+  fi
+}
+
+# SIGTERM/SIGINT（`timeout` コマンドの既定シグナルを含む）受信時のハンドラ。
+# 実行中の test_command（バックグラウンドジョブ）があれば終了させたうえで、明示的に
+# exit することで EXIT トラップ（restore_on_exit）を発火させ、復元後に非0終了する。
+# SIGKILL はプロセスを即座に終了させるため捕捉不可能（OS上の制約であり対処不能）。
+terminate_on_signal() {
+  local code="$1"
+  if [ -n "$CURRENT_TEST_PID" ]; then
+    kill -TERM "$CURRENT_TEST_PID" 2>/dev/null || true
+  fi
+  exit "$code"
 }
 
 main() {
@@ -149,13 +195,17 @@ main() {
     exit 1
   fi
 
-  if ! check_jq; then
-    exit 2
-  fi
-
   local test_command="$1"
   shift
   local files=("$@")
+  MUTATION_FILES=("${files[@]}")
+  trap restore_on_exit EXIT
+  trap 'terminate_on_signal 143' TERM
+  trap 'terminate_on_signal 130' INT
+
+  if ! check_jq; then
+    exit 2
+  fi
 
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
     echo "Error: not a git repository (git rev-parse --git-dir failed)" >&2

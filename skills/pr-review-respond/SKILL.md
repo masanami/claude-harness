@@ -32,6 +32,8 @@ PR番号（省略可能）: $ARGUMENTS
 
 Bash で上記コマンドを実行する。標準出力の JSON（`{pr, diff_stat, comments: [...]}`）をそのまま以降のステップで使う。出力JSONのフィールド定義の正本はプラグイン配下の `scripts/specs/fetch-pr-comments.md`（ここには複製しない）。Readする場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/fetch-pr-comments.md` として解決すること。
 
+**`id` → `commentId` の正規化**: `fetch-pr-comments.sh` が返す各 `comments[]` 要素の識別子フィールド名は `id`（フィールド定義の正本・所在は上記参照）だが、Step 2 以降（バケット振り分け・`unresolved`・`immediateApplied`・Step 10 の `items` 構築等）はすべて `commentId` という名前で参照する。取得直後に各要素の `id` を `commentId` としてコピーし（`threadId` は取得値をそのまま保持。値の変換は行わない）、以降のすべての工程でこの `commentId`/`threadId` の組を落とさず保持し続けること。
+
 `is_resolved: true` のコメント（人間レビュアーが既にResolve済みのスレッド）は、以降の分類・修正の対象から除外する（`activeComments`）。除外した件数を `skippedAlreadyResolved` として控えておく（Step 6 の報告で使う。既に完了しているスレッドの再分類・再修正・resolve再実行という無駄な二重処理を避けるため）。
 
 `activeComments` が0件の場合、Step 2〜5 をスキップして Step 6 に進む（全件 `immediateApplied: []`, `gateItems: []`, `rejectedItems: []`, `questionItems: []`, `unresolved: []` として扱う）。
@@ -42,7 +44,7 @@ Bash で上記コマンドを実行する。標準出力の JSON（`{pr, diff_st
 
 `activeComments` の**各コメントについて1つずつ**、Task ツールで `subagent_type: 'claude-harness:pr-comment-classifier'` を**1メッセージにまとめて並列 spawn**する（1コメント=1呼び出し。取りこぼしを防ぐため、必ず全 `activeComments` 分の Task を同一メッセージ内で起動する）。
 
-各 Task のプロンプトには、対象コメント1件のデータ（`id`/`source`/`author`/`is_bot`/`path`/`line`/`diff_hunk`/`body`）と共有コンテキスト（`diff_stat`）を渡し、以下の構造化形式での返却を課す:
+各 Task のプロンプトには、対象コメント1件のデータ（`commentId`/`source`/`author`/`is_bot`/`path`/`line`/`diff_hunk`/`body`。`commentId` は Step 1 で正規化済みの値）と共有コンテキスト（`diff_stat`）を渡し、以下の構造化形式での返却を課す:
 
 ```text
 {classification: "immediate"|"design_change"|"critical"|"scope_expansion"|"rejected"|"question", rejectionReason: "not_reasonable"|"already_addressed"（rejected分類の場合のみ）, draftReply: "...", rationale: "..."}
