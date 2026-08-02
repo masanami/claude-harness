@@ -44,7 +44,7 @@ Bash で上記コマンドを実行する。標準出力の JSON（`{pr, diff_st
 
 `activeComments` の**各コメントについて1つずつ**、Task ツールで `subagent_type: 'claude-harness:pr-comment-classifier'` を**1メッセージにまとめて並列 spawn**する（1コメント=1呼び出し。取りこぼしを防ぐため、必ず全 `activeComments` 分の Task を同一メッセージ内で起動する）。
 
-各 Task のプロンプトには、対象コメント1件のデータ（`commentId`/`source`/`author`/`is_bot`/`path`/`line`/`diff_hunk`/`body`。`commentId` は Step 1 で正規化済みの値）と共有コンテキスト（`diff_stat`）を渡し、以下の構造化形式での返却を課す:
+各 Task のプロンプトには、対象コメント1件のデータ（`commentId`/`source`/`author`/`is_bot`/`path`/`line`/`diff_hunk`/`body`。`commentId` は Step 1 で正規化済みの値）と共有コンテキスト（`diff_stat`）を渡し、以下の構造化形式での返却を課す（下記はフィールド名と許容値を示すスキーマ表記であり、`|` は許容値の列挙を表す。実際の返却はキー・文字列値をダブルクォートで囲った有効なJSONとすること）:
 
 ```text
 {classification: "immediate"|"design_change"|"critical"|"scope_expansion"|"rejected"|"question", rejectionReason: "not_reasonable"|"already_addressed"（rejected分類の場合のみ）, draftReply: "...", rationale: "..."}
@@ -73,7 +73,7 @@ Bash で上記コマンドを実行する。標準出力の JSON（`{pr, diff_st
 
 各項目について、Task ツールで `subagent_type: 'claude-harness:claim-advocate'` を**1件につき1体だけ**（3体多数決ではない）呼び出す。複数件ある場合も、全項目分の Task を**1メッセージにまとめて並列 spawn**してよい。
 
-各 Task のプロンプトには `commentId`/`classification`/`rejectionReason`/`path`/`line`/`body`/`diff_hunk`/`rationale` を渡し（Step 2 と同じプロンプトインジェクション対策のデータブロック分離を適用）、以下の構造化形式での返却を課す:
+各 Task のプロンプトには `commentId`/`classification`/`rejectionReason`/`path`/`line`/`body`/`diff_hunk`/`rationale` を渡し（Step 2 と同じプロンプトインジェクション対策のデータブロック分離を適用）、以下の構造化形式での返却を課す（下記はフィールド名と許容値を示すスキーマ表記であり、`|` は許容値の列挙を表す。実際の返却はキー・文字列値をダブルクォートで囲った有効なJSONとすること）:
 
 ```text
 {verdict: "confirmed"|"refuted"|"uncertain", reason: "..."}
