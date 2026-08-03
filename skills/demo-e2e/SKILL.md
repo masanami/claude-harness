@@ -41,7 +41,7 @@ E2Eテストケースカタログ（CASE_ID付きCSV。例: `e2e/playwright-test
 | パラメータ | 既定値 | 意味 |
 |-----------|-------|------|
 | slowMo | **1500ms** | 操作間の待ち。`WALKTHROUGH_SLOWMO` として `run-walkthrough.mjs` に渡す |
-| ステップ間静止秒数（`pauseMs`） | **5秒（5000ms）** | 1ステップ実行後に画面を静止させる秒数。生成する `flow.mjs` 内で `page.waitForTimeout(pauseMs)` として実現する（`run-walkthrough.mjs` 自体にはこの機能が無い） |
+| ステップ間静止秒数（`pauseMs`） | **5秒（5000ms）** | 1ステップ実行後に画面を静止させる秒数。`run-walkthrough.mjs` に `WALKTHROUGH_PAUSE_MS`（ms）として渡し、runner側で `ctx.step` / `ctx.goto` 完了直後に自動で静止させる（Issue #148。flow.mjs 側への手動挿入は不要） |
 
 既定値は実運用で好評だった値（Issue #142）。人間が「もっと速く/遅く」と要望した場合は、その回のみ `WALKTHROUGH_SLOWMO` の値・`pauseMs` の値を具体的なミリ秒数で確認したうえで上書きする（例:「もっと速く」→「slowMo を800ms、静止を2秒にしますか？」と確認してから反映する。曖昧な指定のまま数値を推測で決め打ちしない）。
 
@@ -126,23 +126,19 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
 
 ### Step 2-2: flow生成・実演
 
-1. **1ケース用の `flow.mjs` を生成する**（都度の使い捨て成果物。`run-walkthrough.mjs` 自体は変更しない）。Step 2-1 の操作手順を `ctx.goto` / `ctx.step` / `ctx.shot` / `ctx.login` で表現し、**`ctx.goto` / `ctx.step` の実行直後に `await ctx.page.waitForTimeout(pauseMs)` を呼んで操作ごとに画面を静止させる**（`pauseMs` は既定 5000。人間が上書きした場合はその値）。flow ファイルは絶対パス（例: スクラッチ領域配下）で保存する。
+1. **1ケース用の `flow.mjs` を生成する**（都度の使い捨て成果物。`run-walkthrough.mjs` 自体は変更しない）。Step 2-1 の操作手順を `ctx.goto` / `ctx.step` / `ctx.shot` / `ctx.login` で表現する。**ステップ間の静止は `run-walkthrough.mjs` が `WALKTHROUGH_PAUSE_MS` を見て `ctx.step` / `ctx.goto` 完了直後に自動で行う**（Issue #148。flow.mjs 側に `waitForTimeout` を手で挿入する必要はない。呼び出し方は次項2参照）。flow ファイルは絶対パス（例: スクラッチ領域配下）で保存する。
 
    - **前提の再現**: `run-walkthrough.mjs` は毎回新規にブラウザ・コンテキストを起動するため（ケース間でログインセッション等の状態は引き継がれない）、Step 2-1 で言語化した前提（ログイン状態・spec の `beforeEach`/fixture 相当のセットアップ）は、そのケース専用の `flow.mjs` の中で `ctx.login()` や事前の `ctx.goto` / 操作として明示的に再現する。認証情報が異なるケースでは `ctx.login({ username, password })` で明示上書きする。まずは Phase 0 Step 0-1 のシード投入・flow内での事前操作（`ctx.page` 経由のAPI呼び出しを含む）で再現を試み、それでもなお再現不能な前提が残る場合にのみ、Step 1-3 と同様に**実行不能と判断してスキップし、理由を提示する**（安易にスキップへ倒さない）
-   - **静止のかけどころ**: `ctx.step` だけでなく、画面遷移を伴う `ctx.goto` の直後にも静止を入れ、遷移直後の画面も人間が確認できるようにする
 
    ```js
    // 生成する flow.mjs のイメージ(デモ用に都度生成する使い捨てファイル)
    export default async (ctx) => {
-     const pauseMs = 5000 // 既定5秒。人間の指定があれば上書き
      await ctx.login() // 前提: ログイン状態(spec の beforeEach 相当をここで再現)
      await ctx.goto('/checkout')
-     await ctx.page.waitForTimeout(pauseMs)
      await ctx.step('カートの商品を確認', async (page) => {
        await page.getByTestId('cart-item-1').waitFor()
      })
-     await ctx.page.waitForTimeout(pauseMs)
-     // ...ケースの手順分だけ ctx.goto/ctx.step + waitForTimeout を繰り返す
+     // ...ケースの手順分だけ ctx.goto/ctx.step を繰り返す（ステップ間の静止は WALKTHROUGH_PAUSE_MS で runner が自動付与）
    }
    ```
 
@@ -150,11 +146,13 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
 
    ```bash
    WALKTHROUGH_SLOWMO=1500 \
+   WALKTHROUGH_PAUSE_MS=5000 \
    WALKTHROUGH_OUT="demo-e2e-artifacts/<SAFE_CASE_ID>/attempt-<N>" \
    node "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/run-walkthrough.mjs" "/絶対パス/flow.mjs"
    ```
 
    - `WALKTHROUGH_SLOWMO` は既定 1500ms（未上書き時）
+   - `WALKTHROUGH_PAUSE_MS` は既定 5000ms（未上書き時）。runner が `ctx.step` / `ctx.goto` 完了直後に自動で指定ms静止させる（正の整数以外は無効化＝静止しない）
    - **CASE_ID のサニタイズ（パストラバーサル対策・衝突防止）**: CASE_ID はケースカタログ由来の外部入力であり、`WALKTHROUGH_OUT` は `run-walkthrough.mjs` 内で `path.resolve()` により絶対パスへ解決されるため、CASE_ID に `../` 等の区切り文字が含まれると成果物の保存先が projectRoot 外へ移動し得る。成果物パスを組み立てる前に CASE_ID から **`<SAFE_CASE_ID>`**（ファイルシステム安全な識別子）を導出する: `[A-Za-z0-9._-]` 以外の文字を `_` に置換する。**置換が1文字でも発生した場合は、異なる CASE_ID が同じ `<SAFE_CASE_ID>` に衝突するのを防ぐため、元の CASE_ID の短い安定ハッシュ（例: `shasum` で得た先頭8文字などの決定的な値）を `-<hash>` として末尾に付加する**（例: `A/B` → `A_B-3f2a1c9d`。置換が発生しない CASE_ID はファイルシステム上そのまま安全なため、可読性を保つ目的でハッシュを付加しない）。結果が `.` または `..` になる場合は採用せず、元の CASE_ID の短い安定ハッシュから導出した固定形式の識別子（例: `case-<hash>`）にフォールバックする（連番サフィックス等カタログ順・実行順に依存する識別子は、再実行のたびに別ディレクトリへ移動し既存の `attempt-*` を検出できなくなるほか、異なる特殊な CASE_ID 同士が同じ別名に衝突し得るため使用しない）。成果物ディレクトリと `attempt-*` の既存スキャンには常に `<SAFE_CASE_ID>` のみを使い、CASE_ID そのものはパス構成に使わない。画面への実況・解説・Step 2-3 の報告では元の CASE_ID をそのまま表示する
    - `WALKTHROUGH_OUT` は**ケースの`<SAFE_CASE_ID>`を含むサブディレクトリ**を毎回指定する（成果物をケースごとに区別するため。例: `demo-e2e-artifacts/CASE-101/attempt-1/`）。実行前に `demo-e2e-artifacts/<SAFE_CASE_ID>/` 配下の既存 `attempt-*` を確認し、**最大番号の次の番号**を `attempt-<N>` として使う（同一セッション内の初回はもちろん、別セッションでの再実行・過去の実行が残っている場合でも `attempt-1` から採番し直して上書きしない）。`run-walkthrough.mjs` は同一 `WALKTHROUGH_OUT` を毎回上書きするため、この連番を付けないと前回（NGだった回を含む）の trace/スクショ/動画が消える
    - `WALKTHROUGH_OUT` は `run-walkthrough.mjs` 内で `projectRoot`（Step 0-3 で `WALKTHROUGH_PROJECT_ROOT` を明示した場合はそのサブワークスペース、無指定なら git root）を基準に絶対パスへ解決される（cwd 基準ではない）。Phase 3 で成果物の場所を報告する際は、この解決規則を踏まえた**絶対パス**（またはプロジェクトrootからの相対パスであることを明示した表記）で報告し、単に `demo-e2e-artifacts/<SAFE_CASE_ID>/...` とだけ書いて曖昧にしない

@@ -68,6 +68,7 @@ dev server とテストデータを整えたうえで、**同梱スクリプト*
    - `node "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/run-walkthrough.mjs" "/絶対パス/flow.mjs"` を**プロジェクトを cwd にしたまま**実行する。
      runner は `createRequire` で（cwd の git root 起点に）プロジェクトの `@playwright/test` を解決するため、**プラグイン配下の場所から実行しても壊れない**。
    - **headed + slowMo + trace** が既定 ON。ステップ実況ログ・スクショ・動画保存も runner が行う。
+   - `WALKTHROUGH_PAUSE_MS`（任意）に正の整数msを指定すると、`ctx.step` / `ctx.goto` 完了直後に runner が自動でその時間だけ静止する（ゆっくり見せたい場合に使う）。未指定・不正値（0/負数/非数値等）の場合は静止しない＝従来どおりの挙動。
    - `BASE_URL` / `E2E_USERNAME` / `E2E_PASSWORD` は env で渡す（`E2E_*` は `/create-e2e` と共通の命名）。操作手順は `flow.mjs`（`export default async (ctx) => {...}`）に書き、`ctx.goto` / `ctx.step` / `ctx.shot` / `ctx.login` を使う。flow ファイルは**絶対パス**で渡すこと（cwd 相対で解決される）。
    - **表示不可環境**（Linux で `DISPLAY` 無し等）では runner が**自動的に headless + スクショへフォールバック**する。明示制御は `WALKTHROUGH_HEADED=false`（headless）/ `WALKTHROUGH_HEADED=true`（headed 強制）。WSL の Headed は WSLg（`DISPLAY`）前提。
    - 注意: trace は入力値も記録され得る（`sources` 有効）。認証情報を含む成果物の取り扱いに注意する。
