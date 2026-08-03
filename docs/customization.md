@@ -196,7 +196,7 @@ model: opus
 | para-impl / tdd-impl / reduce-debt | skill | `high` | 設計〜実装・負債判断 |
 | create-ticket / pr-review-respond / create-e2e / explain-e2e / init-project / init-devcontainer | skill | `medium` | 分解・実装・解説・初期設定 |
 | commit / quality-check / pr-merge | skill | `low` | 定型・機械的処理 |
-| self-review / walkthrough | skill | （無指定＝継承） | 下記参照 |
+| self-review / demo | skill | （無指定＝継承） | 下記参照 |
 
 ### スキル→サブエージェント委譲時の effort
 
@@ -208,6 +208,6 @@ model: opus
 このため、深い検討が委譲先で行われるスキルは**スキル本体を継承のままにできます**。
 
 - **self-review**: 深い検討は委譲先レビュー agent（`code-reviewer`/`design-reviewer` = `xhigh`）側で効くため、スキル本体は継承。
-- **walkthrough**: ブラウザ操作主体で深い推論を要さないため継承。
+- **demo**: ブラウザ操作主体で深い推論を要さないため継承。
 
 > この委譲時の効き方は実機検証で最終確認する余地があります（#25 未決事項Cと関連）。
