@@ -80,6 +80,7 @@ claude --plugin-dir /path/to/claude-harness
 | `/create-e2e` | `/create-e2e [Issue/PR/機能]` | 仕様ベースのE2Eテスト設計→実装→実行（非対話） |
 | `/explain-e2e` | `/explain-e2e [テスト/Issue/PR]` | 実装済みE2Eのテストシナリオ解説（Phase 1・メインセッションで対話的に）と独立検証（Phase 2・Task直接委譲） |
 | `/demo` | `/demo [Issue/PR/機能]` | AIがHeaded Playwrightで動作確認（ユーザーは観察して承認） |
+| `/demo-e2e` | `/demo-e2e [カタログCSV/CASE_ID/specファイル/画面名]` | E2Eテストケースカタログと突き合わせ、1ケースごとに解説→実演（Headed Playwright）→人間判定を繰り返す |
 | `/quality-check` | `/quality-check` | lint + typecheck + test の一括実行（機械可読な結果） |
 | `/self-review` | `/self-review` | コード変更のセルフレビュー |
 
