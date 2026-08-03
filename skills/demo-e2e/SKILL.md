@@ -77,6 +77,7 @@ dev server とテストデータを整えたうえで、**`/demo` と同梱の P
 - 入力（$ARGUMENTS）で指定されたカタログCSVを読み、各行の CASE_ID・対象spec・screen（画面名）・status（pass/fixme等）を把握する
 - specファイル・画面名・フィルタで指定された場合は、該当するカタログ行を絞り込む
 - 各対象ケースについて、紐づく **specファイルの実コード**（該当 `test(...)` ブロックとその周辺コメント）を読む。Phase 2 の解説フェーズはこのspecコードとカタログ行を根拠にする
+- カタログ内に重複した CASE_ID がある場合は、実行に入る前にエラーとしてユーザーに提示し、カタログ側の重複が解消されるまで実行を進めない
 
 ### Step 1-2: 無指定時の提案フロー（対話）
 
@@ -142,26 +143,40 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
    }
    ```
 
-2. **runner で実演を実行する**。dev server を起動したプロジェクトを cwd のまま実行する:
+2. **成果物パスをスクリプトで決定的に求める**。CASE_ID はケースカタログ由来の外部入力であり、素朴に成果物パスへ組み込むとパストラバーサル・衝突・上書き（NG回のtrace消失）の実害につながるため、`bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" <CASE_ID>` を毎回（実演のたびに）呼び出し、SAFE_CASE_ID導出とattempt採番を行わせる（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）。出力JSON（`safe_case_id`/`out_dir`/`attempt`/`gitignore_warning`）の**フィールド定義・導出規則の正本はプラグイン配下の `scripts/specs/demo-e2e-out.md`**（ここには複製しない。Read する場合はスキル起動時の「Base directory for this skill」から `<base>/../../scripts/specs/demo-e2e-out.md` として解決する）。
+
+   - **cwd / project root**: 手順3の runner 実行と同じく、**dev server を起動したプロジェクトを cwd のまま**実行する（本スクリプトは `WALKTHROUGH_PROJECT_ROOT` 未指定時に cwd 基準の `git rev-parse --show-toplevel` をプロジェクトrootとして使うため、プラグインルート等の別ディレクトリを cwd にしたまま呼ぶと手順3と基準がずれ、既存 `attempt-*` を見落として上書きしうる）。project root を Step 0-3 で明示した場合は、この呼び出しにも同じ `WALKTHROUGH_PROJECT_ROOT` を付与する:
+
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" "CASE-101"
+     # Step 0-3 で WALKTHROUGH_PROJECT_ROOT を明示した場合はそれも付与する:
+     # WALKTHROUGH_PROJECT_ROOT="<Step 0-3で明示した絶対パス>" bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" "CASE-101"
+     # -> {"safe_case_id":"CASE-101-3f2a1c9d","out_dir":"demo-e2e-artifacts/CASE-101-3f2a1c9d/attempt-1","attempt":1,"gitignore_warning":false}
+     ```
+
+   - **失敗時**: 非0 exit（CASE_ID空・jq/shasum等のコマンド不在・project root不在等）の場合は実演に進まず、stderr のエラー内容をそのままユーザーに提示する（アドホックな成果物パスへフォールバックしない）
+   - `gitignore_warning: true` の場合は、実演前にユーザーへ `.gitignore` への `demo-e2e-artifacts` 追加を提案する（成果物を誤ってコミット対象に含めないため）
+   - 画面への実況・解説・Step 2-3 の報告では常に**元の CASE_ID** をそのまま表示する（`safe_case_id` は成果物パスの構成にのみ使う）
+   - 同じケースを再実行する場合（Step 2-3「再実行」）も同じコマンドを再度呼び出す。既存の `attempt-*` を踏まえて `attempt` が自動的に1つ進むため、前回（NGだった回を含む）の成果物を上書きしない
+
+3. **runner で実演を実行する**。dev server を起動したプロジェクトを cwd のまま実行する:
 
    ```bash
    WALKTHROUGH_SLOWMO=1500 \
    WALKTHROUGH_PAUSE_MS=5000 \
-   WALKTHROUGH_OUT="demo-e2e-artifacts/<SAFE_CASE_ID>/attempt-<N>" \
+   WALKTHROUGH_OUT="<手順2で得たout_dir>" \
    node "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/run-walkthrough.mjs" "/絶対パス/flow.mjs"
    ```
 
    - `WALKTHROUGH_SLOWMO` は既定 1500ms（未上書き時）
    - `WALKTHROUGH_PAUSE_MS` は既定 5000ms（未上書き時）。runner が `ctx.step` / `ctx.goto` 完了直後に自動で指定ms静止させる（正の整数以外は無効化＝静止しない）
-   - **CASE_ID のサニタイズ（パストラバーサル対策・衝突防止）**: CASE_ID はケースカタログ由来の外部入力であり、`WALKTHROUGH_OUT` は `run-walkthrough.mjs` 内で `path.resolve()` により絶対パスへ解決されるため、CASE_ID に `../` 等の区切り文字が含まれると成果物の保存先が projectRoot 外へ移動し得る。成果物パスを組み立てる前に CASE_ID から **`<SAFE_CASE_ID>`**（ファイルシステム安全な識別子）を導出する: `[A-Za-z0-9._-]` 以外の文字を `_` に置換する。**置換が1文字でも発生した場合は、異なる CASE_ID が同じ `<SAFE_CASE_ID>` に衝突するのを防ぐため、元の CASE_ID の短い安定ハッシュ（例: `shasum` で得た先頭8文字などの決定的な値）を `-<hash>` として末尾に付加する**（例: `A/B` → `A_B-3f2a1c9d`。置換が発生しない CASE_ID はファイルシステム上そのまま安全なため、可読性を保つ目的でハッシュを付加しない）。結果が `.` または `..` になる場合は採用せず、元の CASE_ID の短い安定ハッシュから導出した固定形式の識別子（例: `case-<hash>`）にフォールバックする（連番サフィックス等カタログ順・実行順に依存する識別子は、再実行のたびに別ディレクトリへ移動し既存の `attempt-*` を検出できなくなるほか、異なる特殊な CASE_ID 同士が同じ別名に衝突し得るため使用しない）。成果物ディレクトリと `attempt-*` の既存スキャンには常に `<SAFE_CASE_ID>` のみを使い、CASE_ID そのものはパス構成に使わない。画面への実況・解説・Step 2-3 の報告では元の CASE_ID をそのまま表示する
-   - `WALKTHROUGH_OUT` は**ケースの`<SAFE_CASE_ID>`を含むサブディレクトリ**を毎回指定する（成果物をケースごとに区別するため。例: `demo-e2e-artifacts/CASE-101/attempt-1/`）。実行前に `demo-e2e-artifacts/<SAFE_CASE_ID>/` 配下の既存 `attempt-*` を確認し、**最大番号の次の番号**を `attempt-<N>` として使う（同一セッション内の初回はもちろん、別セッションでの再実行・過去の実行が残っている場合でも `attempt-1` から採番し直して上書きしない）。`run-walkthrough.mjs` は同一 `WALKTHROUGH_OUT` を毎回上書きするため、この連番を付けないと前回（NGだった回を含む）の trace/スクショ/動画が消える
-   - `WALKTHROUGH_OUT` は `run-walkthrough.mjs` 内で `projectRoot`（Step 0-3 で `WALKTHROUGH_PROJECT_ROOT` を明示した場合はそのサブワークスペース、無指定なら git root）を基準に絶対パスへ解決される（cwd 基準ではない）。Phase 3 で成果物の場所を報告する際は、この解決規則を踏まえた**絶対パス**（またはプロジェクトrootからの相対パスであることを明示した表記）で報告し、単に `demo-e2e-artifacts/<SAFE_CASE_ID>/...` とだけ書いて曖昧にしない
+   - `WALKTHROUGH_OUT` には手順2で `demo-e2e-out.sh` から得た `out_dir`（projectRoot からの相対パス）をそのまま渡す。`run-walkthrough.mjs` 内で `projectRoot`（Step 0-3 で `WALKTHROUGH_PROJECT_ROOT` を明示した場合はそのサブワークスペース、無指定なら git root。`demo-e2e-out.sh` と同一の解決規則）を基準に絶対パスへ解決される（cwd 基準ではない）。Phase 3 で成果物の場所を報告する際は、この解決規則を踏まえた**絶対パス**（またはプロジェクトrootからの相対パスであることを明示した表記）で報告し、単に `out_dir` の値だけを書いて曖昧にしない
    - `BASE_URL` / `E2E_USERNAME` / `E2E_PASSWORD` 等は `/demo` Phase 2 と同じ env 命名（`E2E_*`）で渡す
-   - project root を Step 0-3 で明示した場合は `WALKTHROUGH_PROJECT_ROOT` も付与する
+   - project root を Step 0-3 で明示した場合は `WALKTHROUGH_PROJECT_ROOT` も付与する（手順2と同じ値）
    - 表示不可環境（`DISPLAY` 無し等）では runner が自動的に headless + スクショへフォールバックする。挙動は `skills/demo/SKILL.md` Phase 2 と同一のため重複記載しない
    - **注意**: trace は入力値も記録され得る（`sources` 有効）。認証情報を含む成果物の取り扱いに注意する（詳細は本ファイル末尾の注意事項）
 
-3. 実行中は各操作の前後で一文の実況を行う（例:「これからチェックアウトボタンを押します」→ 実行 →「注文確認画面に遷移しました」）。
+4. 実行中は各操作の前後で一文の実況を行う（例:「これからチェックアウトボタンを押します」→ 実行 →「注文確認画面に遷移しました」）。
 
 ### Step 2-3: 判定（人間ゲート）
 
@@ -180,7 +195,7 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
 |-----------|---------|
 | **OK** | このケースを「確認済み」として記録し、次のケースの Step 2-1 へ進む |
 | **NG + 詳細** | 問題を記録する。実装側の修正が必要な場合はその旨を伝える。人間の指示（次へ進む／このケースを打ち切る）を待つ |
-| **再実行** | 同じケースの Step 2-2 を（必要ならペースやシナリオを調整して）再実行する。`WALKTHROUGH_OUT` の `attempt-<N>` を1つ進め、前回の成果物を上書きしない |
+| **再実行** | 同じケースの Step 2-2 を（必要ならペースやシナリオを調整して）再実行する。`demo-e2e-out.sh` を再度呼び出すと `attempt` が自動的に1つ進むため、前回の成果物を上書きしない |
 
 **この判定を受け取るまで次のケースには進まない**（自動で先へ進めない）。
 
@@ -195,12 +210,12 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
 
 | CASE_ID | 画面 | 判定 | 成果物（絶対パス） |
 |---------|------|------|-------------------|
-| ... | ... | OK/NG/スキップ | 実演時: {実際に解決された `demo-e2e-artifacts/<SAFE_CASE_ID>/attempt-<N>/` の絶対パス}; スキップ: — |
+| ... | ... | OK/NG/スキップ | 実演時: {手順2で得た `out_dir` が実際に解決された絶対パス}; スキップ: — |
 
 - 確認済み: N件 / NG: N件 / スキップ（fixme・無効化・実行不能）: N件（理由一覧）
 ```
 
-- 実演したケースの trace / スクリーンショット / 動画は `demo-e2e-artifacts/<SAFE_CASE_ID>/attempt-<N>/`（`WALKTHROUGH_OUT` で指定したパス。Step 2-2 の解決規則に従いプロジェクトroot基準で解決される）に保存されている（`run-walkthrough.mjs` の既存の保存機能をそのまま利用）。再実行したケースは複数の `attempt-<N>` が残るため、最終判定（OK/NG確定）に対応する回を明示する
+- 実演したケースの trace / スクリーンショット / 動画は `demo-e2e-out.sh` が返した `out_dir`（`WALKTHROUGH_OUT` に渡したパス。Step 2-2 の解決規則に従いプロジェクトroot基準で解決される）に保存されている（`run-walkthrough.mjs` の既存の保存機能をそのまま利用）。再実行したケースは複数の `attempt-<N>` が残るため、最終判定（OK/NG確定）に対応する回を明示する
 - NG となったケースは、実装側の修正 Issue 化を提案してよい
 
 ---
