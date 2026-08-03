@@ -20,7 +20,7 @@ Claude Code プラグインとして、任意のリポジトリに横展開で�
 | カテゴリ | 内容 |
 |---------|------|
 | エージェント (6) | コードレビュー、設計レビュー、機能実装(設計成果物＋TDD: feature-implementer)、チケット実装worker(ticket-worker)、ドキュメント整合性検証、E2Eテスト実装(e2e-engineer) |
-| スキル | 機能定義(要件＋クリティカル設計)、チケット作成、並列実装、TDD実装、技術負債チェック、プロジェクト初期設定、E2Eテスト作成、E2Eテストシナリオ解説＋独立検証、動作確認(ウォークスルー)、PRレビュー対応、PRマージ、Conventional Commits、PRセルフレビュー、品質ゲートチェック |
+| スキル | 機能定義(要件＋クリティカル設計)、チケット作成、並列実装、TDD実装、技術負債チェック、プロジェクト初期設定、E2Eテスト作成、E2Eテストシナリオ解説＋独立検証、動作確認(デモ)、PRレビュー対応、PRマージ、Conventional Commits、PRセルフレビュー、品質ゲートチェック |
 | フック (1) | Write/Edit後の自動フォーマット |
 | ワークフロー定義 (1) | ブランチ戦略 |
 
@@ -79,7 +79,8 @@ claude --plugin-dir /path/to/claude-harness
 |--------|--------|------|
 | `/create-e2e` | `/create-e2e [Issue/PR/機能]` | 仕様ベースのE2Eテスト設計→実装→実行（非対話） |
 | `/explain-e2e` | `/explain-e2e [テスト/Issue/PR]` | 実装済みE2Eのテストシナリオ解説（Phase 1・メインセッションで対話的に）と独立検証（Phase 2・Task直接委譲） |
-| `/walkthrough` | `/walkthrough [Issue/PR/機能]` | AIがHeaded Playwrightで動作確認（ユーザーは観察して承認） |
+| `/demo` | `/demo [Issue/PR/機能]` | AIがHeaded Playwrightで動作確認（ユーザーは観察して承認） |
+| `/demo-e2e` | `/demo-e2e [カタログCSV/CASE_ID/specファイル/画面名]` | E2Eテストケースカタログと突き合わせ、1ケースごとに解説→実演（Headed Playwright）→人間判定を繰り返す |
 | `/quality-check` | `/quality-check` | lint + typecheck + test の一括実行（機械可読な結果） |
 | `/self-review` | `/self-review` | コード変更のセルフレビュー |
 
