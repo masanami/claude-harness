@@ -147,11 +147,15 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
 
    - **cwd / project root**: 手順3の runner 実行と同じく、**dev server を起動したプロジェクトを cwd のまま**実行する（本スクリプトは `WALKTHROUGH_PROJECT_ROOT` 未指定時に cwd 基準の `git rev-parse --show-toplevel` をプロジェクトrootとして使うため、プラグインルート等の別ディレクトリを cwd にしたまま呼ぶと手順3と基準がずれ、既存 `attempt-*` を見落として上書きしうる）。project root を Step 0-3 で明示した場合は、この呼び出しにも同じ `WALKTHROUGH_PROJECT_ROOT` を付与する:
 
+   - **シェルクォート安全埋め込み（重要）**: CASE_ID はケースカタログ由来の外部入力（非信頼値）であり、値中に `'` やシェルメタ文字（`;`・バッククォート・`$()` 等）が入りうる。コマンド文字列へ埋め込む際は必ず、値中の各 `'` を `'\''` に置換した上で全体をシングルクォート `'` で囲むこと（ダブルクォートでの埋め込みや無加工の連結はコマンドインジェクションの余地があるため禁止。`skills/pr-merge/SKILL.md` の「シェルクォート安全埋め込み（重要）」と同一規約）。
+
      ```bash
-     bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" "CASE-101"
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" 'CASE-101'
      # Step 0-3 で WALKTHROUGH_PROJECT_ROOT を明示した場合はそれも付与する:
-     # WALKTHROUGH_PROJECT_ROOT="<Step 0-3で明示した絶対パス>" bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" "CASE-101"
+     # WALKTHROUGH_PROJECT_ROOT="<Step 0-3で明示した絶対パス>" bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" 'CASE-101'
      # -> {"safe_case_id":"CASE-101-3f2a1c9d","out_dir":"demo-e2e-artifacts/CASE-101-3f2a1c9d/attempt-1","attempt":1,"gitignore_warning":false}
+     # CASE_ID に ' が含まれる場合の埋め込み例（値: O'Brien-Case）:
+     #   bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" 'O'\''Brien-Case'
      ```
 
    - **失敗時**: 非0 exit（CASE_ID空・jq/shasum等のコマンド不在・project root不在等）の場合は実演に進まず、stderr のエラー内容をそのままユーザーに提示する（アドホックな成果物パスへフォールバックしない）

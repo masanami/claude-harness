@@ -375,10 +375,28 @@ echo "=== main(): エンドツーエンド(一時gitリポジトリ) ==="
   assert_eq "WALKTHROUGH_PROJECT_ROOT指定時: 初回はattempt=1" "1" "$(jq -r '.attempt' <<<"$base_output")"
 
   mkdir -p "${ALT_ROOT}/demo-e2e-artifacts/${safe_301}/attempt-1"
+  # MAIN_REPO(gitルート)側には同名で attempt-1..3 を先に作っておく: スキャンが誤って
+  # gitルート基準で走っていれば attempt=4 になるため、ALT_ROOT基準(attempt=2)である
+  # ことを値の差として直接検証できる(常にtrueになる自明アサーションを置かない)
+  mkdir -p "${MAIN_REPO}/demo-e2e-artifacts/${safe_301}/attempt-1" \
+           "${MAIN_REPO}/demo-e2e-artifacts/${safe_301}/attempt-2" \
+           "${MAIN_REPO}/demo-e2e-artifacts/${safe_301}/attempt-3"
   base_output2="$(cd "$MAIN_REPO" && WALKTHROUGH_PROJECT_ROOT="$ALT_ROOT" bash "$TARGET_SCRIPT" "CASE-301")"
-  assert_eq "WALKTHROUGH_PROJECT_ROOT指定時: ALT_ROOT配下のattemptを見てattempt=2になる(gitルートではなく指定ディレクトリ基準)" "2" "$(jq -r '.attempt' <<<"$base_output2")"
-  # gitルート(MAIN_REPO)側には同名ディレクトリを作っていないため、gitルート基準ならattempt=1のはず
-  assert_true "ALT_ROOT基準のattemptはMAIN_REPO直下のdemo-e2e-artifactsには影響しない" "$([ ! -d "${MAIN_REPO}/demo-e2e-artifacts/${safe_301}" ] && echo true || echo false)"
+  assert_eq "WALKTHROUGH_PROJECT_ROOT指定時: MAIN_REPO側にattempt-1..3があってもALT_ROOT基準でattempt=2になる(gitルート基準ならattempt=4のはず)" "2" "$(jq -r '.attempt' <<<"$base_output2")"
+
+  # 相対パスの WALKTHROUGH_PROJECT_ROOT(spec明記のサポート対象)でも、絶対パス指定と
+  # 同じ基準でスキャンされ同じattempt値になることをエンドツーエンドで検証する
+  rel_output="$(cd "$MAIN_TMP" && WALKTHROUGH_PROJECT_ROOT="./alt-root" bash "$TARGET_SCRIPT" "CASE-301")"
+  assert_eq "相対パスのWALKTHROUGH_PROJECT_ROOT: 絶対パス指定と同じALT_ROOT基準でattempt=2" "2" "$(jq -r '.attempt' <<<"$rel_output")"
+  assert_eq "相対パスのWALKTHROUGH_PROJECT_ROOT: safe_case_idも絶対パス指定時と一致" "$safe_301" "$(jq -r '.safe_case_id' <<<"$rel_output")"
+
+  # project root不在ガード(spec: 解決したパスが存在しないディレクトリの場合は非0 exit)。
+  # このガードを失うと project_root_abs が空になり attempt が常に1へ退化する
+  # (前回成果物の上書き)ため、非0 exit かつ stdout 空を main() 経由で固定する
+  missing_rc=0
+  missing_stdout="$(cd "$MAIN_REPO" && WALKTHROUGH_PROJECT_ROOT="${MAIN_TMP}/no-such-dir" bash "$TARGET_SCRIPT" "CASE-401" 2>/dev/null)" || missing_rc=$?
+  assert_true "存在しないWALKTHROUGH_PROJECT_ROOT: 非0 exitで失敗する" "$([ "$missing_rc" -ne 0 ] && echo true || echo false)"
+  assert_eq "存在しないWALKTHROUGH_PROJECT_ROOT: stdoutにJSONを出力しない" "" "$missing_stdout"
 
   main_cleanup
   trap - EXIT
