@@ -155,7 +155,7 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
    ```
 
    - `WALKTHROUGH_SLOWMO` は既定 1500ms（未上書き時）
-   - **CASE_ID のサニタイズ（パストラバーサル対策）**: CASE_ID はケースカタログ由来の外部入力であり、`WALKTHROUGH_OUT` は `run-walkthrough.mjs` 内で `path.resolve()` により絶対パスへ解決されるため、CASE_ID に `../` 等の区切り文字が含まれると成果物の保存先が projectRoot 外へ移動し得る。成果物パスを組み立てる前に CASE_ID から **`<SAFE_CASE_ID>`**（ファイルシステム安全な識別子）を導出する: `[A-Za-z0-9._-]` 以外の文字を `_` に置換し、結果が `.` または `..` になる場合は採用せず別名（例: 連番サフィックスを付与した識別子）にフォールバックする。成果物ディレクトリと `attempt-*` の既存スキャンには常に `<SAFE_CASE_ID>` のみを使い、CASE_ID そのものはパス構成に使わない。画面への実況・解説・Step 2-3 の報告では元の CASE_ID をそのまま表示する
+   - **CASE_ID のサニタイズ（パストラバーサル対策・衝突防止）**: CASE_ID はケースカタログ由来の外部入力であり、`WALKTHROUGH_OUT` は `run-walkthrough.mjs` 内で `path.resolve()` により絶対パスへ解決されるため、CASE_ID に `../` 等の区切り文字が含まれると成果物の保存先が projectRoot 外へ移動し得る。成果物パスを組み立てる前に CASE_ID から **`<SAFE_CASE_ID>`**（ファイルシステム安全な識別子）を導出する: `[A-Za-z0-9._-]` 以外の文字を `_` に置換する。**置換が1文字でも発生した場合は、異なる CASE_ID が同じ `<SAFE_CASE_ID>` に衝突するのを防ぐため、元の CASE_ID の短い安定ハッシュ（例: `shasum` で得た先頭8文字などの決定的な値）を `-<hash>` として末尾に付加する**（例: `A/B` → `A_B-3f2a1c9d`。置換が発生しない CASE_ID はファイルシステム上そのまま安全なため、可読性を保つ目的でハッシュを付加しない）。結果が `.` または `..` になる場合は採用せず別名（例: 連番サフィックスを付与した識別子）にフォールバックする。成果物ディレクトリと `attempt-*` の既存スキャンには常に `<SAFE_CASE_ID>` のみを使い、CASE_ID そのものはパス構成に使わない。画面への実況・解説・Step 2-3 の報告では元の CASE_ID をそのまま表示する
    - `WALKTHROUGH_OUT` は**ケースの`<SAFE_CASE_ID>`を含むサブディレクトリ**を毎回指定する（成果物をケースごとに区別するため。例: `demo-e2e-artifacts/CASE-101/attempt-1/`）。実行前に `demo-e2e-artifacts/<SAFE_CASE_ID>/` 配下の既存 `attempt-*` を確認し、**最大番号の次の番号**を `attempt-<N>` として使う（同一セッション内の初回はもちろん、別セッションでの再実行・過去の実行が残っている場合でも `attempt-1` から採番し直して上書きしない）。`run-walkthrough.mjs` は同一 `WALKTHROUGH_OUT` を毎回上書きするため、この連番を付けないと前回（NGだった回を含む）の trace/スクショ/動画が消える
    - `WALKTHROUGH_OUT` は `run-walkthrough.mjs` 内で `projectRoot`（Step 0-3 で `WALKTHROUGH_PROJECT_ROOT` を明示した場合はそのサブワークスペース、無指定なら git root）を基準に絶対パスへ解決される（cwd 基準ではない）。Phase 3 で成果物の場所を報告する際は、この解決規則を踏まえた**絶対パス**（またはプロジェクトrootからの相対パスであることを明示した表記）で報告し、単に `demo-e2e-artifacts/<SAFE_CASE_ID>/...` とだけ書いて曖昧にしない
    - `BASE_URL` / `E2E_USERNAME` / `E2E_PASSWORD` 等は `/demo` Phase 2 と同じ env 命名（`E2E_*`）で渡す
@@ -197,12 +197,12 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
 
 | CASE_ID | 画面 | 判定 | 成果物（絶対パス） |
 |---------|------|------|-------------------|
-| ... | ... | OK/NG/スキップ | {実際に解決された `demo-e2e-artifacts/<SAFE_CASE_ID>/attempt-<N>/` の絶対パス} |
+| ... | ... | OK/NG/スキップ | 実演時: {実際に解決された `demo-e2e-artifacts/<SAFE_CASE_ID>/attempt-<N>/` の絶対パス}; スキップ: — |
 
-- 確認済み: N件 / NG: N件 / スキップ（fixme・実行不能）: N件（理由一覧）
+- 確認済み: N件 / NG: N件 / スキップ（fixme・無効化・実行不能）: N件（理由一覧）
 ```
 
-- 各ケースの trace / スクリーンショット / 動画は `demo-e2e-artifacts/<SAFE_CASE_ID>/attempt-<N>/`（`WALKTHROUGH_OUT` で指定したパス。Step 2-2 の解決規則に従いプロジェクトroot基準で解決される）に保存されている（`run-walkthrough.mjs` の既存の保存機能をそのまま利用）。再実行したケースは複数の `attempt-<N>` が残るため、最終判定（OK/NG確定）に対応する回を明示する
+- 実演したケースの trace / スクリーンショット / 動画は `demo-e2e-artifacts/<SAFE_CASE_ID>/attempt-<N>/`（`WALKTHROUGH_OUT` で指定したパス。Step 2-2 の解決規則に従いプロジェクトroot基準で解決される）に保存されている（`run-walkthrough.mjs` の既存の保存機能をそのまま利用）。再実行したケースは複数の `attempt-<N>` が残るため、最終判定（OK/NG確定）に対応する回を明示する
 - NG となったケースは、実装側の修正 Issue 化を提案してよい
 
 ---
