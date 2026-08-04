@@ -94,6 +94,11 @@ run_case "先頭プラス符号付き" 1 "+5000" "null"
 run_case "前後に空白を含む数値文字列" 1 " 5000 " "null"
 
 echo ""
+echo "=== parsePauseMs: Node の setTimeout 上限（2147483647ms）の境界値 ==="
+run_case "2147483647（上限ちょうど。有効値）" 1 "2147483647" "2147483647"
+run_case "2147483648（上限超過。null）" 1 "2147483648" "null"
+
+echo ""
 echo "=== run-walkthrough.mjs 側の配線チェック（回帰ガード） ==="
 # parsePauseMs 単体は上記で検証済みだが、run-walkthrough.mjs 側で
 # import されていること・ctx.goto / ctx.step の完了直後に実際に

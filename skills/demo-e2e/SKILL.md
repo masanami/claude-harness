@@ -173,7 +173,7 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
    ```
 
    - `WALKTHROUGH_SLOWMO` は既定 1500ms（未上書き時）
-   - `WALKTHROUGH_PAUSE_MS` は既定 5000ms（未上書き時）。runner が `ctx.step` / `ctx.goto` 完了直後に自動で指定ms静止させる（正の整数以外は無効化＝静止しない）
+   - `WALKTHROUGH_PAUSE_MS` は既定 5000ms（未上書き時）。runner が `ctx.step` / `ctx.goto` 完了直後に自動で指定ms静止させる（正の整数以外、および2147483647（Node の setTimeout 上限）超過は無効化＝静止しない）
    - `WALKTHROUGH_OUT` には手順2で `demo-e2e-out.sh` から得た `out_dir`（projectRoot からの相対パス）をそのまま渡す。`run-walkthrough.mjs` 内で `projectRoot`（Step 0-3 で `WALKTHROUGH_PROJECT_ROOT` を明示した場合はそのサブワークスペース、無指定なら git root。`demo-e2e-out.sh` と同一の解決規則）を基準に絶対パスへ解決される（cwd 基準ではない）。Phase 3 で成果物の場所を報告する際は、この解決規則を踏まえた**絶対パス**（またはプロジェクトrootからの相対パスであることを明示した表記）で報告し、単に `out_dir` の値だけを書いて曖昧にしない
    - `BASE_URL` / `E2E_USERNAME` / `E2E_PASSWORD` 等は `/demo` Phase 2 と同じ env 命名（`E2E_*`）で渡す
    - project root を Step 0-3 で明示した場合は `WALKTHROUGH_PROJECT_ROOT` も付与する（手順2と同じ値）

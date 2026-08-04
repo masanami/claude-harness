@@ -26,7 +26,7 @@
 //   E2E_PASSWORD          ログイン用パスワード
 //   WALKTHROUGH_HEADED    'false' で headless（既定: true。Linux で DISPLAY 無しなら自動 headless）
 //   WALKTHROUGH_SLOWMO    操作間の待ち(ms)（既定: 500）
-//   WALKTHROUGH_PAUSE_MS  ctx.step / ctx.goto 完了直後に静止する時間(ms)（既定: 未指定=静止しない）。
+//   WALKTHROUGH_PAUSE_MS  ctx.step / ctx.goto 完了直後に静止する時間(ms)（既定: 未指定=静止しない。上限2147483647=Node の setTimeout 上限）。
 //                         正の整数のみ有効。未指定・不正値（0/負数/非数値等）時は従来どおり静止しない
 //   WALKTHROUGH_OUT       成果物(スクショ/trace/動画)の出力先（既定: walkthrough-artifacts）
 //   WALKTHROUGH_PROJECT_ROOT  @playwright/test を解決するプロジェクトroot（既定: cwd）
