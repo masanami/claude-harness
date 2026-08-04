@@ -295,7 +295,9 @@ echo ""
 echo "=== main(): エンドツーエンド(一時gitリポジトリ) ==="
 {
   MAIN_TMP="$(mktemp -d)"
-  main_cleanup() { rm -rf "$MAIN_TMP"; unset WALKTHROUGH_PROJECT_ROOT; }
+  # chmod 000 にしたディレクトリ(cd失敗ガードのテストで使用)が残っていてもrm -rfで
+  # 確実に削除できるよう、削除前に再帰的に書き込み・実行権限を戻しておく。
+  main_cleanup() { chmod -R u+rwx "$MAIN_TMP" 2>/dev/null || true; rm -rf "$MAIN_TMP"; unset WALKTHROUGH_PROJECT_ROOT; }
   trap main_cleanup EXIT
 
   MAIN_REPO="${MAIN_TMP}/repo"
@@ -397,6 +399,26 @@ echo "=== main(): エンドツーエンド(一時gitリポジトリ) ==="
   missing_stdout="$(cd "$MAIN_REPO" && WALKTHROUGH_PROJECT_ROOT="${MAIN_TMP}/no-such-dir" bash "$TARGET_SCRIPT" "CASE-401" 2>/dev/null)" || missing_rc=$?
   assert_true "存在しないWALKTHROUGH_PROJECT_ROOT: 非0 exitで失敗する" "$([ "$missing_rc" -ne 0 ] && echo true || echo false)"
   assert_eq "存在しないWALKTHROUGH_PROJECT_ROOT: stdoutにJSONを出力しない" "" "$missing_stdout"
+
+  # cd失敗ガード(PR #151レビュー指摘の回帰): -dでの存在確認は真になるが実行権限が無く
+  # cdできないディレクトリを渡した場合、project_root_absに空文字列が入ったまま処理が
+  # 続くと case_dir が「/demo-e2e-artifacts/...」という不正なパスになり
+  # compute_next_attempt が attempt=1 を返して既存成果物を上書きしうる。cdの成否を
+  # 検査し失敗時は非0 exitにする(set -e無効環境でも退化しないことを直接検証する)。
+  NOEXEC_DIR="${MAIN_TMP}/noexec-root"
+  mkdir -p "$NOEXEC_DIR"
+  chmod 000 "$NOEXEC_DIR"
+  if (cd "$NOEXEC_DIR" 2>/dev/null); then
+    # CI環境がroot実行等の場合、chmod 000でもcdできてしまうことがあるため
+    # そのケースはこのガードの検証対象外としてskipする(誤って失敗扱いにしない)。
+    echo "  skip - 実行権限が無くcdできないWALKTHROUGH_PROJECT_ROOT(実行環境がroot等でchmod 000でもcd可能なためskip)"
+  else
+    noexec_rc=0
+    noexec_stdout="$(cd "$MAIN_REPO" && WALKTHROUGH_PROJECT_ROOT="$NOEXEC_DIR" bash "$TARGET_SCRIPT" "CASE-501" 2>/dev/null)" || noexec_rc=$?
+    assert_true "実行権限が無くcdできないWALKTHROUGH_PROJECT_ROOT: 非0 exitで失敗する" "$([ "$noexec_rc" -ne 0 ] && echo true || echo false)"
+    assert_eq "実行権限が無くcdできないWALKTHROUGH_PROJECT_ROOT: stdoutにJSONを出力しない" "" "$noexec_stdout"
+  fi
+  chmod 755 "$NOEXEC_DIR"
 
   main_cleanup
   trap - EXIT

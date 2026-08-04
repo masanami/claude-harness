@@ -206,7 +206,10 @@ main() {
     exit 1
   fi
   local project_root_abs
-  project_root_abs="$(cd "$project_root_raw" && pwd)"
+  if ! project_root_abs="$(cd "$project_root_raw" && pwd)" || [ -z "$project_root_abs" ]; then
+    echo "Error: failed to resolve project root directory: ${project_root_raw}" >&2
+    exit 1
+  fi
 
   local case_dir="${project_root_abs}/demo-e2e-artifacts/${safe_case_id}"
   local attempt
