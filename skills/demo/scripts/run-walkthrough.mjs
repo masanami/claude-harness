@@ -26,6 +26,8 @@
 //   E2E_PASSWORD          ログイン用パスワード
 //   WALKTHROUGH_HEADED    'false' で headless（既定: true。Linux で DISPLAY 無しなら自動 headless）
 //   WALKTHROUGH_SLOWMO    操作間の待ち(ms)（既定: 500）
+//   WALKTHROUGH_PAUSE_MS  ctx.step / ctx.goto 完了直後に静止する時間(ms)（既定: 未指定=静止しない。上限2147483647=Node の setTimeout 上限）。
+//                         正の整数のみ有効。未指定・不正値（0/負数/非数値等）時は従来どおり静止しない
 //   WALKTHROUGH_OUT       成果物(スクショ/trace/動画)の出力先（既定: walkthrough-artifacts）
 //   WALKTHROUGH_PROJECT_ROOT  @playwright/test を解決するプロジェクトroot（既定: cwd）
 //   E2E_LOGIN_PATH        ctx.login が開くパス（既定: /login）
@@ -37,6 +39,9 @@ import { execSync } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
+// このスクリプトを単体で持ち出す/移動する場合は、同階層に lib/parse-pause-ms.mjs も
+// 一緒にコピーすること（欠落すると起動時に ERR_MODULE_NOT_FOUND で失敗する）。
+import { parsePauseMs } from './lib/parse-pause-ms.mjs'
 
 // --- プロジェクトroot を決定 ------------------------------------------------
 // setup.sh と同じく git root をフォールバックにし、2スクリプトの基準を揃える
@@ -76,6 +81,18 @@ const baseURL = process.env.BASE_URL || 'http://localhost:3000'
 const slowMoRaw = Number(process.env.WALKTHROUGH_SLOWMO ?? 500)
 const slowMo = Number.isFinite(slowMoRaw) && slowMoRaw >= 0 ? slowMoRaw : 500
 const outDir = path.resolve(projectRoot, process.env.WALKTHROUGH_OUT || 'walkthrough-artifacts')
+
+// 正の整数のみ有効。未指定・不正値時は null（＝静止しない。従来挙動を維持）
+const pauseMsRaw = process.env.WALKTHROUGH_PAUSE_MS
+const pauseMs = parsePauseMs(pauseMsRaw)
+// env が指定されているのに無効値だった場合のみ警告する（未指定時は既定の「静止しない」なので警告不要）。
+// slowMo は不正値時も常にフォールバック値をログ表示するのに対し、pauseMs は無効時に何も表示されず
+// 「静止しない」原因（未指定なのか typo による無効値なのか）が切り分けにくいための対策。
+if (pauseMsRaw !== undefined && pauseMs === null) {
+  console.warn(
+    `[runner] WALKTHROUGH_PAUSE_MS="${pauseMsRaw}" は正の整数として解釈できないため無視します（静止しません）。`,
+  )
+}
 
 // Headed 既定 ON。WALKTHROUGH_HEADED を明示していない場合のみ、
 // Linux で DISPLAY が無ければ自動で headless にフォールバックする
@@ -135,7 +152,10 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 }
 
 try {
-  log(`起動モード: ${headed ? 'headed' : 'headless'} / slowMo=${slowMo}ms / BASE_URL=${baseURL}`)
+  log(
+    `起動モード: ${headed ? 'headed' : 'headless'} / slowMo=${slowMo}ms` +
+      ` / pauseMs=${pauseMs ? `${pauseMs}ms` : 'off'} / BASE_URL=${baseURL}`,
+  )
   browser = await chromium.launch({ headless: !headed, slowMo })
   context = await browser.newContext({
     baseURL,
@@ -168,6 +188,7 @@ try {
         log(`応答ステータス ${status}（${p}）`)
       }
       await ctx.shot(`goto${p.replace(/[^a-z0-9]+/gi, '-')}`)
+      if (pauseMs) await page.waitForTimeout(pauseMs)
     },
 
     // スクショを連番で保存
@@ -189,6 +210,7 @@ try {
       step(description)
       await fn(page)
       await ctx.shot(description.slice(0, 32))
+      if (pauseMs) await page.waitForTimeout(pauseMs)
     },
 
     // env の認証情報でログイン（セレクタは env で上書き可能）
