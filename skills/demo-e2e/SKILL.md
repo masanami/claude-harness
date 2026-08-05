@@ -59,7 +59,7 @@ E2Eテストケースカタログ（CASE_ID付きCSV。例: `e2e/playwright-test
 
 dev server とテストデータを整えたうえで、**`/demo` と同梱の Playwright(Headed) セットアップスクリプトをそのまま流用**する（複製・再実装しない）。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。実行する際は必ず `${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/` 配下のファイルを絶対パス（引用符必須）で参照し、相対パス `skills/demo/scripts/...` では呼び出さないこと（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）。`cd` はせず、**dev server を起動したプロジェクトを cwd にしたまま**スクリプトを実行する（runner は cwd の git root から `@playwright/test` を解決する）。
+> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。**walkthrough セットアップ関連スクリプト**（`walkthrough-setup.sh` / `run-walkthrough.mjs`）を実行する際は必ず `${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/` 配下のファイルを絶対パス（引用符必須）で参照し、相対パス `skills/demo/scripts/...` では呼び出さないこと（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）。**成果物パス決定スクリプト（`demo-e2e-out.sh`）はこの配下ではなく、プラグインルート直下の `${CLAUDE_PLUGIN_ROOT}/scripts/` 配下**にある点に注意（Phase 2 Step 2-2 参照）。`cd` はせず、**dev server を起動したプロジェクトを cwd にしたまま**スクリプトを実行する（runner は cwd の git root から `@playwright/test` を解決する）。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 **Step 0-1（dev server / テストデータ）**: dev server をバックグラウンドで起動して `BASE_URL` を控え、カタログが前提とするシードデータを投入する
@@ -160,7 +160,7 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
 
    - **失敗時**: 非0 exit（CASE_ID空・jq/shasum等のコマンド不在・project root不在等）の場合は実演に進まず、stderr のエラー内容をそのままユーザーに提示する（アドホックな成果物パスへフォールバックしない）
    - `gitignore_warning: true` の場合は、実演前にユーザーへ `.gitignore` への `demo-e2e-artifacts` 追加を提案する（成果物を誤ってコミット対象に含めないため）
-   - 画面への実況・解説・Step 2-3 の報告では常に**元の CASE_ID** をそのまま表示する（`safe_case_id` は成果物パスの構成にのみ使う）
+   - 画面への実況・解説・Step 2-3 の報告では常に**元の CASE_ID** をそのまま表示する（`safe_case_id` は成果物パスの構成にのみ使う）。ただし CASE_ID に改行や端末制御文字が含まれる場合は、表示前に可視化表記（`\n` 等）へ置換してから表示する（表・報告の体裁崩れや行偽装を防ぐための表示専用処理であり、成果物パス用の `safe_case_id` サニタイズとは別物）
    - 同じケースを再実行する場合（Step 2-3「再実行」）も同じコマンドを再度呼び出す。既存の `attempt-*` を踏まえて `attempt` が自動的に1つ進むため、前回（NGだった回を含む）の成果物を上書きしない
 
 3. **runner で実演を実行する**。dev server を起動したプロジェクトを cwd のまま実行する:
@@ -172,8 +172,8 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
    node "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/run-walkthrough.mjs" "/絶対パス/flow.mjs"
    ```
 
-   - `WALKTHROUGH_SLOWMO` は既定 1500ms（未上書き時）
-   - `WALKTHROUGH_PAUSE_MS` は既定 5000ms（未上書き時）。runner が `ctx.step` / `ctx.goto` 完了直後に自動で指定ms静止させる（正の整数以外、および2147483647（Node の setTimeout 上限）超過は無効化＝静止しない）
+   - `WALKTHROUGH_SLOWMO` は上記コマンド例のとおり本スキルの運用既定値 `1500`（ms）を明示指定している（人間が明示的に依頼した場合のみ、その回に限り値を変更する。「入力パラメータ」節参照）
+   - `WALKTHROUGH_PAUSE_MS` も同様に、上記コマンド例で本スキルの運用既定値 `5000`（ms）を明示指定している（人間が明示的に依頼した場合のみ、その回に限り値を変更する）。runner (`run-walkthrough.mjs`) 自体の契約は「env 未指定・不正値（0/負数/非数値・2147483647（Node の setTimeout 上限）超過等）なら静止しない＝従来どおりの挙動」であり（`skills/demo/SKILL.md` と同一契約）、5000ms は runner 自体の既定値ではなく本スキルが明示的に渡す運用既定値である点に注意する。runner は指定を受けた場合、`ctx.step` / `ctx.goto` 完了直後に自動でその時間だけ静止する
    - `WALKTHROUGH_OUT` には手順2で `demo-e2e-out.sh` から得た `out_dir`（projectRoot からの相対パス）をそのまま渡す。`run-walkthrough.mjs` 内で `projectRoot`（Step 0-3 で `WALKTHROUGH_PROJECT_ROOT` を明示した場合はそのサブワークスペース、無指定なら git root。`demo-e2e-out.sh` と同一の解決規則）を基準に絶対パスへ解決される（cwd 基準ではない）。Phase 3 で成果物の場所を報告する際は、この解決規則を踏まえた**絶対パス**（またはプロジェクトrootからの相対パスであることを明示した表記）で報告し、単に `out_dir` の値だけを書いて曖昧にしない
    - `BASE_URL` / `E2E_USERNAME` / `E2E_PASSWORD` 等は `/demo` Phase 2 と同じ env 命名（`E2E_*`）で渡す
    - project root を Step 0-3 で明示した場合は `WALKTHROUGH_PROJECT_ROOT` も付与する（手順2と同じ値）
