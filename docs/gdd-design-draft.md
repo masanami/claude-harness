@@ -35,9 +35,10 @@ Issue #152 の提案（リポジトリのライフサイクルに応じて駆動
 ```
 
 - 許容値は `SDD期` / `GDD期` の2値。
-- **宣言セクションが無い場合は SDD期 とみなす**（後方互換。既存プロジェクトに影響しない）。
-- フェーズの書き換えは人間が行う（§3.1）。エージェントは読むのみ。
-- スクリプトからは `grep -A2 '^## 開発フェーズ' CLAUDE.md` で決定的に判定できる（quality-check の索引ゲート発動判定に使う。§5.5）。
+- **見出し自体が無い場合のみ SDD期 とみなす**（後方互換。既存プロジェクトに影響しない）。
+- **宣言の有効性検証（D-16）**: 見出しは存在するが宣言が不正な場合（`## 開発フェーズ` 見出しの複数出現・許容値以外の値・未置換の `{DEV_PHASE}` プレースホルダ）は、**黙って SDD期 へフォールバックせず、フェーズ依存の処理を停止して要人間判定として報告する**（不正宣言によって GDD のゲート群が暗黙に無効化される事故を防ぐ）。`駆動文書` 行は人間向けの注記であり判定には使わない（欠落しても宣言を無効化しない）。
+- **GDD期 を有効化できるのは、人間が有効な宣言を CLAUDE.md に記載した場合のみ**。エージェントは読むのみで書き換えない（切り替え手順は §3.1）。他のファイルの存在（`docs/guarantees.md` 等）を自動判定の入力にしない。
+- 判定は決定的スクリプト `scripts/detect-dev-phase.sh`（新規・P1 で実装）に切り出す。出力は `{phase: "sdd"|"gdd"|"invalid", reason}` の機械可読 JSON。quality-check / promote-verify 等のゲート発動判定はこのスクリプトの出力のみを正とし、各スキルが独自に grep しない（§5.5・§5.6）。
 
 ### 2.2 保証台帳（`docs/guarantees.md`）フォーマット仕様
 
@@ -46,17 +47,17 @@ Issue #152 の提案（リポジトリのライフサイクルに応じて駆動
 ```markdown
 # 保証台帳
 
-<!-- ID は G-001 から連番。退役しても ID は再利用しない。 -->
+<!-- 保証 ID は G-{宣言元番号}-{枝番}。退役しても ID は再利用しない。 -->
 
 ## 保証（Guarantees）
 
-### G-001: POST /api/contact は JSON パース不能時に 400 と {"error":"invalid_json"} を返す
+### G-123-1: POST /api/contact は JSON パース不能時に 400 と {"error":"invalid_json"} を返す
 
 - 種別: API契約
 - テスト: `tests/api/contact.test.ts::returns 400 for invalid json`
 - 宣言元: #123
 
-### G-002: 未認証ユーザーが /admin にアクセスするとログイン画面へリダイレクトされる
+### G-130-1: 未認証ユーザーが /admin にアクセスするとログイン画面へリダイレクトされる
 
 - 種別: 認可
 - テスト: `e2e/auth.spec.ts::redirects unauthenticated user to login`
@@ -69,10 +70,12 @@ Issue #152 の提案（リポジトリのライフサイクルに応じて駆動
 
 書式の規約:
 
-- **ID**: `G-NNN`（保証）/ `GAP-NNN`（Gaps）。連番・再利用禁止。退役した保証は行ごと削除し、git 履歴で追う（**D-3**: 台帳内に「退役済み」節を残す方式は台帳自体のコンテキスト汚染になるため不採用）。
+- **保証 ID**: `G-{宣言元番号}-{枝番}`。宣言元番号は約束を裁可した Issue 番号（bootstrap 由来は台帳を裁可した PR 番号。§4.2）、枝番は同一宣言元内の連番。**ID が宣言元に紐づくため中央の連番管理が不要で、並列に走る親Issue間で採番が衝突せず、Issue の裁可時点で正式 ID が確定する**（**D-11**。仮 ID→正式化という2段階を持たない）。再利用の防止も構造的に担保される: 同一 ID の再登場には同一 Issue での再宣言が必要であり、通常フローでは起こらない。
+- **GAP ID**: `GAP-NNN` 連番。guarantee-audit の報告を経て人間の台帳 PR でのみ追記されるため（単一の直列な経路）、連番でも衝突しない。再利用禁止。
+- **退役**: 退役した保証は行ごと削除し、git 履歴と宣言元 Issue で追う（**D-3**: 台帳内に「退役済み」節を残す方式は台帳自体のコンテキスト汚染になるため不採用）。
 - **テスト参照**: `` `<ファイルパス>::<テスト名>` `` の固定書式。複数可（1行1参照）。この書式が §5.5 の索引整合チェックスクリプトのパース対象になる。
-- **宣言元**: 約束を裁可した Issue 番号。トレーサビリティの根拠。
-- Gaps はテスト追加で本体（`G-NNN`）へ昇格し、GAP 行は削除する。
+- **宣言元**: 約束を裁可した Issue 番号（bootstrap 由来は裁可 PR 番号）。トレーサビリティの根拠。裁可前のドラフト（§4.2）では `裁可待ち` と記載し、番号は裁可時に確定する。
+- Gaps はテスト追加で本体（`G-{宣言元番号}-{枝番}`。テスト追加を裁可した Issue が宣言元になる）へ昇格し、GAP 行は削除する。
 - 台帳に載せるのは**公開面の約束のみ**（線引きは §3.4）。
 
 ---
@@ -114,8 +117,8 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 `docs/features/` が既にあるリポジトリへの導入は、以下の5手順とする（この手順自体を戦略ドキュメントに掲載する）:
 
 1. **フェーズ宣言**: CLAUDE.md に `## 開発フェーズ`（GDD期）を追記する（人間が PR で実施）。
-2. **台帳ブートストラップ**: `/guarantee-audit bootstrap` を実行し、既存テストから保証台帳ドラフト（`docs/guarantees.md`）を生成する（§4）。
-3. **台帳の裁可**: 生成されたドラフトを人間が PR レビューで裁可する（公開面判定の妥当性・Gaps の網羅を確認）。この PR のマージが「台帳が正となった」時点。
+2. **台帳ブートストラップ**: `/guarantee-audit bootstrap` を実行し、既存テストから保証台帳ドラフト（`docs/guarantees.draft.md`。正本パスには書かない。§4.2）を生成する。
+3. **台帳の裁可**: 人間がドラフトをレビュー（公開面判定の妥当性・Gaps の網羅を確認）し、裁可 PR で `docs/guarantees.md` へ正本化する（ドラフトのリネーム＋ID・宣言元の確定。§4.2 手順5）。この PR のマージが「台帳が正となった」時点。
 4. **機能仕様の退役**: `docs/features/` の各ドキュメントについて、(a) まだ真である約束は台帳へ（手順2で大半はテスト経由で拾われている想定）、(b) 恒常的に参照すべきクリティカル設計決定（認可モデル・スキーマ方針等）は ADR（`docs/adr/`）または恒常設計ドキュメントへ昇格、(c) 残りはファイルごと削除する。
    - **D-7: 退役は「削除＋ADR昇格」とし、`docs/features/archive/` のようなアーカイブディレクトリは作らない。** 理由: アーカイブはエージェントの Glob/Grep に引き続き露出しコンテキスト汚染の予防という目的に反する。履歴は git が保持しており、`宣言元: #番号` から Issue 経由でも追える。
 5. **CLAUDE.md ドキュメントマップの更新**: `docs/features/` の行を削除し、`docs/guarantees.md` を追加する。
@@ -152,7 +155,9 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 | model / effort | `sonnet` / `high`（A-2: 抽出・分類は fan-out 側の仕事であり、リードは統括のみのため opus 不要と仮定。ドッグフーディングで精度不足なら見直す） |
 | 引数 | `bootstrap` \| `drift [--scope <base>..<head>]` |
 | 新エージェント | `agents/guarantee-auditor.md`（tools: Read, Glob, Grep。mode パラメータ `extract` / `verify` で観点を切り替える。spec-critic の focus 方式と同型） |
-| 新スクリプト | `scripts/guarantee-index-check.sh`（§5.5 と共用）、`scripts/list-test-files.sh`（テストファイル列挙。CLAUDE.md/検出規則ベース） |
+| 新スクリプト | `scripts/guarantee-index-check.sh`（§5.5 と共用）、`scripts/list-test-files.sh`（テストファイル列挙。CLAUDE.md/検出規則ベース）、`scripts/detect-dev-phase.sh`（§2.1） |
+
+新スクリプトはいずれもプラグイン配下に置かれるため、SKILL.md 上の呼び出しはすべて `bash "${CLAUDE_PLUGIN_ROOT}/scripts/<名前>.sh"` 形式で記載する（既存の quality-check / promote-verify と同じ規約。正本: `docs/plugin-path-conventions.md`。プロジェクト相対パスでの呼び出しは cwd 依存で別ファイルを実行しうるため禁止）。本ドラフト内のスクリプト名の略記はすべてこの形式を指す。
 
 **D-9: bootstrap / drift の2モード構成とする。** どちらも**報告と成果物ドラフト生成まで**で、台帳の正への反映（コミット・マージ）は行わない（裁可は PR レビュー = 既存の人間ゲートに載せる）。
 
@@ -162,13 +167,13 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 
 1. **テストファイル列挙**: `list-test-files.sh` で対象を決定的に列挙（E2E / 結合 / 単体の区分つき）。
 2. **振る舞い抽出（fan-out）**: テストファイルをチャンク分割（10ファイル/チャンク目安）し、`guarantee-auditor`（mode: extract）を並列 Task 委譲。各エージェントは `{behaviors: [{test_ref, behavior_ja, surface: "public"|"internal"|"uncertain", rationale}]}` を構造化返却する。分類基準は §3.4 の表をプロンプトに埋め込む。テストコードは非信頼データとしてデリミタ分離する（既存スキルのプロンプトインジェクション対策規律を踏襲）。
-3. **公開面の逆引き（Gaps 検出）**: ルーティング定義・CLI エントリポイント・公開 API を Glob/Grep で列挙し、手順2の `public` 集合に対応が無いものを GAP 候補にする。
-4. **台帳ドラフト生成**: `public` を §2.2 書式で `docs/guarantees.md` に書き出す（`宣言元` は `bootstrap` と記録）。`uncertain` は台帳に入れず「要人間判定」節として**報告側**に出す。
-5. **報告**: 生成した台帳ドラフトのパス、件数（保証/GAP/要判定/内部除外）、要人間判定の一覧。コミットは行わず、呼び出し元（人間または導入 PR 作業）に委ねる。
+3. **公開面の逆引き（Gaps 検出）**: §3.4 の公開面カテゴリ全体を対象に、機械的に列挙可能なもの（ルーティング定義・CLI エントリポイント・公開 API シグネチャ・イベント/webhook の発火箇所・他システムが読む永続化スキーマ定義）を Glob/Grep で列挙し、手順2の `public` 集合に対応が無いものを GAP 候補にする。**機械列挙の手がかりが見つからなかった公開面カテゴリ（例: UI から観測できる挙動の網羅）は黙って対象外にせず、「未解析カテゴリ・要人間判定」として手順5の報告に必ず含める**（検出範囲の暗黙の縮小を防ぐ）。
+4. **台帳ドラフト生成**: `public` を §2.2 書式で **`docs/guarantees.draft.md`** に書き出す（**D-17**: 正本 `docs/guarantees.md` には書かない。既存の正本が未裁可の再実行結果で上書きされる事故を防ぐ。ドラフトパスが既に存在する場合は上書きせず失敗し、人間に前回ドラフトの処置を促す）。ドラフト内の ID は枝番のみ採番した仮置き（`G-?-1` 等）、`宣言元` は `裁可待ち` と記載し、裁可 PR で正本化する際に PR 番号で確定する（§2.2）。`uncertain` は台帳に入れず「要人間判定」節として**報告側**に出す。
+5. **報告**: 生成した台帳ドラフトのパス、件数（保証/GAP/要判定/内部除外）、未解析カテゴリの一覧、要人間判定の一覧、および**正本化の手順案内**（人間が裁可 PR でドラフトをレビュー → ID・宣言元を確定 → `docs/guarantees.md` へリネームしてマージ）。コミットは行わず、呼び出し元（人間または導入 PR 作業）に委ねる。
 
 ### 4.3 drift モード（台帳と実態の乖離検出）
 
-1. **索引整合（決定的）**: `guarantee-index-check.sh docs/guarantees.md` を実行し、壊れたテスト参照を検出する。
+1. **索引整合（決定的）**: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/guarantee-index-check.sh" docs/guarantees.md` を実行し、壊れたテスト参照を検出する。
 2. **意味整合（fan-out）**: 台帳の各保証について `guarantee-auditor`（mode: verify）をチャンク分割で並列委譲。約束の文言と参照先テストの実際のアサーション内容を突き合わせ、`{guarantee_id, verdict: "consistent"|"drifted"|"uncertain", evidence}` を返却させる。構造化返却が得られないエージェントの担当分は「検証失敗」として報告に残す（握りつぶさない。promote-verify の完全性 join と同じ規律）。
 3. **逆方向チェック**: `--scope` 指定時は diff 範囲、無指定時は全量で、台帳に無い新しい公開面テストを抽出し GAP 候補として報告する。
 4. **報告**: `{index: {broken}, semantic: {drifted, uncertain, failed}, gap_candidates}` の機械可読 JSON ＋人間向けサマリー。**修正はしない**（修正は Issue 起票→通常フローへ。監査と修正の分離）。
@@ -192,7 +197,7 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 ### 5.1 init-project
 
 - `CLAUDE.md.template` に `## 開発フェーズ` セクション（§2.1 書式）を追加。プレースホルダ `{DEV_PHASE}`。
-- SKILL.md Step 3（検出結果の提示）でフェーズを確認する。**新規プロジェクトの既定は SDD期**（立ち上げ期に GDD を選ぶ理由がないため、既定値の提示のみで逐一質問はしない）。既存プロジェクトで `docs/guarantees.md` が検出された場合は GDD期 を既定として提示する。
+- SKILL.md Step 3（検出結果の提示）でフェーズを確認する。**新規プロジェクトの既定は SDD期**（立ち上げ期に GDD を選ぶ理由がないため、既定値の提示のみで逐一質問はしない）。既存プロジェクトで `docs/guarantees.md` が検出された場合は GDD期 を**既定候補として人間に提示する**（あくまで提示用の推奨値であり、フェーズの自動判定には使わない。フェーズを確定できるのは人間が CLAUDE.md に記載する宣言のみ。§2.1）。
 - `analyze-project.sh` に `docs/guarantees.md` の存在検出を追加（任意。docs 検出の既存枠に1項目足すだけ）。
 
 ### 5.2 define-feature
@@ -210,13 +215,13 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
   ## 保証（Guarantees）
 
   ### 新たに宣言する保証
-  - [ ] G-new-1: {約束文}（受入基準 AC-n に対応）
+  - [ ] G-{この Issue の番号}-1: {約束文}（受入基準 AC-n に対応）
 
   ### 維持する保証
-  - G-012, G-034（この変更で影響しうる既存保証。台帳から転記）
+  - G-101-2, G-115-1（この変更で影響しうる既存保証。台帳から転記）
   ```
 
-  - **D-11: 新規保証の ID は Issue 段階では仮 ID（`G-new-n`）とし、正式な `G-NNN` は台帳更新 PR のマージ時に採番する。** 並列に走る複数親Issueが同じ番号を先取りして衝突するのを防ぐため。
+  - **D-11: 保証 ID は宣言元 Issue 番号をスコープにした `G-{Issue番号}-{枝番}` とし、Issue 作成時点で確定させる**（§2.2）。中央連番の先取り競合が構造的に発生しないため、仮 ID→マージ時採番という2段階を持たず、Issue の保証節・台帳・テスト参照が最初から同一 ID で貫通する。裁可（`guarantee:approved`）はこの ID 群を約束として承認する行為になる。
   - 「維持する保証」は、機能仕様の変更対象と台帳を突き合わせてリード（create-ticket 実行主体）が列挙する。
 - **裁可の実現方式 — D-12: GitHub Issue には draft 状態が無いため、ラベルで代替する。** 要件モードは GDD期、Issue 作成時に `guarantee:proposed` ラベルを付与する。人間が保証節をレビューし、承認したら `guarantee:approved` に付け替える（このラベル操作が参考記事の「draft → open の裁可」に相当）。ゲートの強制は para-impl 側で行う（§5.4）。
 - **実装分解モード**（`decompose-mode.md` / `implementation-ticket.md`）: 各実装チケットに親の保証節への参照（`保証: 親#N の保証節参照`）を追記する。裁可ゲートは親 Issue 単位（実装チケット個々にはラベル不要）。
@@ -228,13 +233,17 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 - **feature-implementer Phase 2**: 既存の「2-3. クリティカル設計決定との整合確認」と対になる「**2-5. 保証整合確認**（GDD期のみ）」を追加:
   - 維持する保証に抵触する実装方針の場合は、既存の「⚠️ 逸脱検知」パスにそのまま合流させて停止する（**D-13**: 保証逸脱のために新しい停止経路は作らず、クリティカル設計逸脱と同じ経路・同じ返却形式を使う）。
   - 新規宣言する保証には対応するテストを TDD のテストリスト先頭に置く（保証 = テストで裏付けられて初めて成立するため）。
-  - 実装タスクに `docs/guarantees.md` の更新（新規保証の追記・仮 ID のまま）を含め、台帳更新を同一 PR に同梱する（**D-14**: 台帳更新を別 PR にすると実装とのアトミック性が壊れ、索引ドリフトの発生源になるため同一 PR とする）。
+  - 実装タスクに `docs/guarantees.md` の更新（新規保証の追記。ID は Issue 裁可時に確定済みの正式 ID（D-11）をそのまま使う）を含め、台帳更新を同一 PR に同梱する（**D-14**: 台帳更新を別 PR にすると実装とのアトミック性が壊れ、索引ドリフトの発生源になるため同一 PR とする。マージ済み台帳は常に §2.2 の正式書式を満たす）。
 
 ### 5.5 quality-check
 
-- **D-15: GDD期の索引整合チェックは quality-check の追加ゲートとするが、`quality-check-runner.sh` 本体は変更しない。** SKILL.md の手順に「GDD期かつ `docs/guarantees.md` が存在する場合、`scripts/guarantee-index-check.sh` を別途実行し、`guarantee_index` ゲートとして総合判定に合算する」ステップを足す。runner の gates スキーマ（lint/typecheck/test）と既存呼び出し元の互換を保つため、runner への統合はしない。
-- `guarantee-index-check.sh`（新規・決定的）: 台帳の全テスト参照（`path::test名`）について、(a) ファイルの存在、(b) テスト名文字列のファイル内出現、を検査し `{status, broken: [{guarantee_id, ref, reason}]}` を返す。exit 0/1。
-- これにより「テストを改名・削除したのに台帳を直していない」は feature-implementer の quality-check 反復ループ内（最大3回の修正サイクル）で即座に検知・修正される。
+- **D-15: GDD期の索引整合チェックは quality-check の追加ゲートとするが、`quality-check-runner.sh` 本体は変更しない。** SKILL.md の手順に「フェーズ判定（`detect-dev-phase.sh`。§2.1）が `gdd` の場合、`guarantee-index-check.sh` を別途実行し、`guarantee_index` ゲートとして総合判定に合算する」ステップを足す。runner の gates スキーマ（lint/typecheck/test）と既存呼び出し元の互換を保つため、runner への統合はしない。
+- `guarantee-index-check.sh`（新規・決定的）: 台帳の全テスト参照（`path::test名`）について、(a) ファイルの存在、(b) テスト名文字列のファイル内出現、を検査し `{status: "pass"|"fail", broken: [{guarantee_id, ref, reason}]}` を stdout に返す。exit code は pass=0 / fail=1 / 実行前提の欠落（台帳ファイル不在等）=2。
+- **機械可読出力への合算契約**（feature-implementer 等の呼び出し元が `result` だけを見て判定する前提を壊さないための規則）:
+  - quality-check の最終出力を `{result, auto_fix, gates, guarantee_index}` に拡張する。`guarantee_index` はスクリプトの出力 JSON をそのまま格納する（SDD期は当該ステップ自体を実行せずフィールドを出力しない。**GDD期に exit 2・stdout が JSON としてパース不能・スクリプト実行不能だった場合は `{status: "fail", error: "..."}` として扱い、スキップに変換しない**）。
+  - トップレベル `result` は「runner の `result` が `pass`」**かつ**「`guarantee_index` が不在（SDD期）または `status: "pass"`」の場合のみ `pass` とする。**索引ゲートの失敗が `result: "pass"` に見える出力経路は存在させない**。
+  - 修正反復ループでの消費: feature-implementer は `result` が `fail` のとき `guarantee_index.broken` の各 `{guarantee_id, ref, reason}` から台帳またはテスト参照を修正し、既存の最大3回の反復サイクル内で再実行する（Phase 4 の既存ループに乗せる。新しいループは作らない）。
+- これにより「テストを改名・削除したのに台帳を直していない」は feature-implementer の quality-check 反復ループ内で即座に検知・修正される。
 - **意味ドリフトはここでは検知しない**（Issue のたたき台では quality-check にも整合チェックとあるが、LLM 判定を必須ゲートの反復ループに入れるとコスト・不安定性が跳ねるため、機械チェックのみに絞る = **D-5** の分担）。
 
 ### 5.6 promote-verify
@@ -242,14 +251,19 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 - GDD期のみの追加ステップ「**Step 5.5: 保証整合チェック**」を挿入:
   1. 親 Issue の保証節から「新規宣言」「維持」の一覧を抽出する（extract-acceptance-criteria.sh と同様の決定的スクリプト化を検討。初版は LLM 抽出でも可）。
   2. 新規宣言の各保証について: 統合ブランチの `docs/guarantees.md` に追記済みか（機械）＋対応テストが約束を実際に検証しているか（`guarantee-auditor` mode: verify の fan-out。Step 4 の doc-verifier fan-out と同じチャンク・完全性 join 規律）。
-  3. 維持する保証について: `guarantee-index-check.sh` ＋ diff スコープの `/guarantee-audit drift --scope` 相当の意味チェック。
+  3. 維持する保証について: `guarantee-index-check.sh`（プラグインルート経由で実行）＋ diff スコープの `/guarantee-audit drift --scope` 相当の意味チェック。
 - `readyForPromotion` の論理式に1項を追加する:
 
   ```text
   AND (guaranteeCheck.skipped === true OR guaranteeCheck.allConsistent === true)
   ```
 
-  （SDD期・台帳なしの場合は `skipped: true`。既存の「スキップはOK扱い」の意味論に合わせる）
+  各項の定義（**フェイルセーフ側に倒す。既存の「スキップはOK扱い」を適用してよいのはフェーズが有効に SDD である場合のみ**）:
+
+  - `skipped: true` になるのは**フェーズ判定（`detect-dev-phase.sh`）が `sdd` の場合のみ**。
+  - `allConsistent: true` になるのは、**(a)** 保証節の全対象（新規宣言＋維持）について検証結果が存在し、**(b)** 索引整合チェックが `pass`、**(c)** すべての意味検証 verdict が `consistent`、の3条件をすべて満たす場合のみ。
+  - `drifted` / `uncertain` / 検証失敗（構造化応答なし）/ 結果の欠落は `allConsistent: false` とし、**`skipped` へ変換しない**（`readyForPromotion` は `false` になり、該当保証は `needsHumanReview` として表に出す）。
+  - フェーズ判定が `invalid`、または **GDD期なのに `docs/guarantees.md` が存在しない**場合は、運用前提の破れとして `skipped` にせず `allConsistent: false` ＋要人間判定で報告する（§2.1 D-16 と同じ規律）。
 
 ### 5.7 戦略ドキュメント
 
@@ -263,7 +277,7 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 
 | フェーズ | 内容 | 依存 | 完了時に得られるもの |
 |---|---|---|---|
-| **P1: 基盤** | フェーズ宣言規約・台帳フォーマット仕様の正本化（§5.7）、init-project 対応（§5.1）、define-feature 軽量化ガイド（§5.2 の SDD 部分） | なし | 規約が確定し、手動運用なら GDD を始められる |
+| **P1: 基盤** | フェーズ宣言規約・台帳フォーマット仕様の正本化（§5.7）、`detect-dev-phase.sh`（§2.1）、init-project 対応（§5.1）、define-feature 軽量化ガイド（§5.2 の SDD 部分） | なし | 規約が確定し、手動運用なら GDD を始められる |
 | **P2: 監査** | `/guarantee-audit`（bootstrap/drift）＋ `guarantee-auditor` エージェント＋ `guarantee-index-check.sh` / `list-test-files.sh`（§4） | P1 | **後付け導入（§3.3）が実行可能になる** |
 | **P3: フロー統合** | create-ticket 保証節・裁可ラベル（§5.3）、para-impl / feature-implementer の保証ブリーフとゲート（§5.4）、quality-check 索引ゲート（§5.5）、promote-verify 保証整合（§5.6）、define-feature の GDD 挙動（§5.2 残り） | P1, P2 | GDD期の全自動フローが成立 |
 | **P4: 運用実証** | ドッグフーディング（GDD期へ切り替える実プロジェクト1件での運用）、flywheel run-cycle への drift 定期実行の組み込み（**claude-flywheel 側の別課題として起票**） | P3 | 精度・コストの実測、判断基準（§3.1）の校正 |
@@ -289,11 +303,13 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 | D-8 | 公開面の線引きは「外部の誰かが気付き得るか」の1問 | 約束変更と実装変更の分離という GDD の中核価値 |
 | D-9 | guarantee-audit は bootstrap/drift の2モード・報告まで（自動修正しない） | 監査と修正の分離。裁可は PR ゲートに載せる |
 | D-10 | GDD期も新機能は define-feature を使う（仕様は短命文書と再定義） | クリティカル設計集約の価値はフェーズ非依存 |
-| D-11 | 新規保証は Issue 段階では仮 ID、台帳マージ時に正式採番 | 並列親Issue間の ID 衝突防止 |
+| D-11 | 保証 ID は宣言元スコープの `G-{Issue番号}-{枝番}`。Issue 作成時に確定（仮 ID 段階を持たない） | 並列親Issue間の ID 衝突防止・ID の全経路一貫・再利用の構造的防止 |
 | D-12 | 裁可は `guarantee:proposed` → `guarantee:approved` のラベル運用 | GitHub Issue に draft 状態が無い |
 | D-13 | 保証逸脱の停止はクリティカル設計逸脱の既存経路に合流 | 新しい停止経路・人間ゲートを増やさない |
-| D-14 | 台帳更新は実装と同一 PR に同梱 | アトミック性の確保・索引ドリフトの発生源を断つ |
-| D-15 | quality-check には機械的な索引チェックのみ追加（runner 本体は不変更・LLM 判定は入れない） | 必須ゲート反復ループのコスト・安定性。Issue たたき台からの意図的変更 |
+| D-14 | 台帳更新は実装と同一 PR に同梱（正式 ID のまま） | アトミック性の確保・索引ドリフトの発生源を断つ |
+| D-15 | quality-check には機械的な索引チェックのみ追加（runner 本体は不変更・LLM 判定は入れない）。索引ゲートの失敗が `result: "pass"` に見えない出力契約を明示 | 必須ゲート反復ループのコスト・安定性。Issue たたき台からの意図的変更 |
+| D-16 | 不正・重複したフェーズ宣言は黙って SDD へフォールバックせず停止・要人間判定。判定は `detect-dev-phase.sh` に一元化 | GDD ゲート群の暗黙の無効化防止 |
+| D-17 | bootstrap は `docs/guarantees.draft.md` へ出力し正本に触れない。正本化は人間の裁可 PR | 未裁可の再実行による正本上書き防止 |
 
 ### 未検証の仮定（A-n）
 
