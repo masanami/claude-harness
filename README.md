@@ -39,6 +39,20 @@ claude --plugin-dir /path/to/claude-harness
 
 > **Note**: `--scope user` を指定すると `.claude/settings.json` に記録され、プロジェクト単位で管理できます。省略するとユーザースコープ（全プロジェクト共通）にインストールされます。
 
+### スクリプトランチャーの導入（推奨・一度きり）
+
+スキルが同梱スクリプトを実行する際は、PATH 上のランチャー `claude-harness-run` を経由します。これを導入すると、利用側は `Bash(claude-harness-run:*)` の1行を許可するだけでよく、プラグイン更新で許可が外れません（未導入でも動きますが、headless 実行では permission 拒否になりえます）。
+
+```bash
+mkdir -p ~/.local/bin
+install -m 0755 \
+  "$(jq -r '.plugins | to_entries[] | select(.key | startswith("claude-harness@")) | .value[0].installPath' ~/.claude/plugins/installed_plugins.json)/bin/claude-harness-run" \
+  ~/.local/bin/claude-harness-run
+claude-harness-run --plugin-root   # 疎通確認
+```
+
+手順の詳細・allowlist の書き方・トラブルシューティングは [スクリプトランチャー](docs/script-launcher.md) を参照してください。
+
 ### 更新
 
 ```
@@ -105,6 +119,7 @@ claude --plugin-dir /path/to/claude-harness
 ### ガイド
 
 - [セットアップガイド](docs/getting-started.md) — インストールからCLAUDE.md整備、動作確認まで
+- [スクリプトランチャー](docs/script-launcher.md) — `claude-harness-run` の導入手順、allowlist の書き方、permission マッチャの実測記録
 - [カスタマイズ方法](docs/customization.md) — エージェント/スキルのオーバーライド、フック追加
 
 ---

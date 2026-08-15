@@ -26,7 +26,36 @@ claude plugin add ./path/to/claude-harness
 
 ---
 
-## 2. プロジェクトのCLAUDE.mdを整備
+## 2. スクリプトランチャーのセットアップ（推奨・一度きり）
+
+スキルはプラグイン同梱スクリプトを PATH 上のランチャー `claude-harness-run` 経由で実行します。導入すると利用側の許可設定は `Bash(claude-harness-run:*)` の1行で済み、プラグイン更新でも外れません。**未導入でも動作しますが、headless 実行（`claude -p`）ではスクリプト起動が permission 拒否されることがあります。**
+
+```bash
+# ランチャーを PATH 上へコピー（~/.local/bin が PATH に含まれている前提）
+mkdir -p ~/.local/bin
+install -m 0755 \
+  "$(jq -r '.plugins | to_entries[] | select(.key | startswith("claude-harness@")) | .value[0].installPath' ~/.claude/plugins/installed_plugins.json)/bin/claude-harness-run" \
+  ~/.local/bin/claude-harness-run
+
+# 疎通確認（シェルからと、Claude Code の Bash ツールからの両方で）
+claude-harness-run --plugin-root
+```
+
+`.claude/settings.json`（`/init-project` が生成する場合は自動で含まれます）:
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash(claude-harness-run:*)"]
+  }
+}
+```
+
+ランチャーは実行のたびにインストール済みプラグインの現行版を解決するため、プラグインを更新してもコピーを置き直す必要はありません。詳細・トラブルシューティングは [スクリプトランチャー](./script-launcher.md) を参照してください。
+
+---
+
+## 3. プロジェクトのCLAUDE.mdを整備
 
 プラグインのエージェント・スキルはプロジェクトの `CLAUDE.md` を参照して動作します。以下の情報を記述してください。
 
@@ -74,7 +103,7 @@ claude plugin add ./path/to/claude-harness
 
 ---
 
-## 3. 動作確認
+## 4. 動作確認
 
 ### エージェントの確認
 
@@ -92,7 +121,7 @@ claude plugin add ./path/to/claude-harness
 
 ---
 
-## 4. 開発ワークフロー
+## 5. 開発ワークフロー
 
 導入後の基本的な流れは次のとおり。サイクルの詳細は [AI駆動開発戦略](./ai-driven-development-strategy.md) を参照してください。
 
@@ -103,7 +132,7 @@ claude plugin add ./path/to/claude-harness
 
 ---
 
-## 5. 品質方針の設定
+## 6. 品質方針の設定
 
 レビュー範囲・テスト範囲は固定のレベルではなく、変更のリスク・重要度に応じて判断します。考え方は [AI駆動開発戦略](./ai-driven-development-strategy.md) を参照してください。
 

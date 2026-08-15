@@ -69,6 +69,31 @@ assert_eq "該当パターンが無い場合は errors/warnings ともに null" 
 assert_eq "errorsのみ言及されている場合はwarningsがnull" \
   "5 null" "$(parse_lint_counts '5 errors detected')"
 
+# Issue #154: npm workspaces では集計行がワークスペースごとに出力される。
+# 最後の1件だけを採用すると実態と乖離するため合算する。
+LINT_WORKSPACES="$(
+  cat <<'EOF'
+> pkg-a@1.0.0 lint
+✖ 4 problems (3 errors, 1 warning)
+
+> pkg-b@1.0.0 lint
+✖ 30 problems (10 errors, 20 warnings)
+EOF
+)"
+assert_eq "npm workspacesの複数集計行を合算する（最後のワークスペース分だけにしない）" \
+  "13 21" "$(parse_lint_counts "$LINT_WORKSPACES")"
+
+LINT_WITH_DETAIL="$(
+  cat <<'EOF'
+/src/a.ts
+  1:1  error  Unexpected var  no-var
+
+✖ 2 problems (2 errors, 0 warnings)
+EOF
+)"
+assert_eq "集計行がある場合は個別の指摘行を合算対象にしない（二重計上防止）" \
+  "2 0" "$(parse_lint_counts "$LINT_WITH_DETAIL")"
+
 # =============================================================================
 echo "=== test: parse_typecheck_errors ==="
 # =============================================================================
@@ -79,6 +104,19 @@ assert_eq "単数形 'Found 1 error.' も抽出できる" \
   "1" "$(parse_typecheck_errors 'Found 1 error.')"
 assert_eq "該当パターンが無い場合は null" \
   "null" "$(parse_typecheck_errors 'compiled successfully')"
+
+TSC_WORKSPACES="$(
+  cat <<'EOF'
+> pkg-a@1.0.0 typecheck
+src/a.ts(3,5): error TS2322: Type 'string' is not assignable to type 'number'.
+Found 1 error in 1 file.
+
+> pkg-b@1.0.0 typecheck
+Found 4 errors in 2 files.
+EOF
+)"
+assert_eq "npm workspacesの複数 'Found N errors' を合算する" \
+  "5" "$(parse_typecheck_errors "$TSC_WORKSPACES")"
 
 # =============================================================================
 echo "=== test: parse_test_counts ==="
@@ -92,6 +130,60 @@ assert_eq "2桁以上の件数を誤って末尾の桁だけ抽出しない（�
   "138 null null" "$(parse_test_counts '138 passed')"
 assert_eq "該当パターンが無い場合は全て null" \
   "null null null" "$(parse_test_counts 'no test output')"
+
+# Issue #154 の実測不具合: npm workspaces で最後のワークスペース分しか拾えていなかった
+# （実測 934 tests に対し 246 を報告）。集計行をすべて合算して解消する。
+JEST_WORKSPACES="$(
+  cat <<'EOF'
+> pkg-a@1.0.0 test
+Test Suites: 12 passed, 12 total
+Tests:       500 passed, 500 total
+
+> pkg-b@1.0.0 test
+Test Suites: 5 passed, 5 total
+Tests:       188 passed, 188 total
+
+> pkg-c@1.0.0 test
+Test Suites: 7 passed, 7 total
+Tests:       246 passed, 246 total
+EOF
+)"
+assert_eq "npm workspacesの複数 'Tests:' 行を合算する（最後のワークスペース分だけにしない）" \
+  "934 null null" "$(parse_test_counts "$JEST_WORKSPACES")"
+
+JEST_SUITES_AND_TESTS="$(
+  cat <<'EOF'
+Test Suites: 1 failed, 2 passed, 3 total
+Tests:       4 failed, 20 passed, 1 skipped, 25 total
+Snapshots:   0 total
+EOF
+)"
+assert_eq "'Test Suites:' 行を合算対象にしない（スイート数の二重計上防止）" \
+  "20 4 1" "$(parse_test_counts "$JEST_SUITES_AND_TESTS")"
+
+VITEST_WORKSPACES="$(
+  cat <<'EOF'
+ Test Files  3 passed (3)
+      Tests  30 passed | 2 skipped (32)
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+EOF
+)"
+assert_eq "Vitest形式でも 'Test Files' を除外して 'Tests' 行のみ合算する" \
+  "40 null 2" "$(parse_test_counts "$VITEST_WORKSPACES")"
+
+CARGO_STYLE="$(
+  cat <<'EOF'
+test result: ok. 12 passed; 0 failed; 1 ignored;
+test result: ok. 30 passed; 0 failed; 0 ignored;
+EOF
+)"
+assert_eq "'Tests' 集計行を持たない形式（cargo等）でも複数行を合算する" \
+  "42 0 null" "$(parse_test_counts "$CARGO_STYLE")"
+
+assert_eq "先頭ゼロの件数を8進数と解釈しない" \
+  "8 null null" "$(parse_test_counts '08 passed')"
 
 # =============================================================================
 echo "=== test: join_by ==="

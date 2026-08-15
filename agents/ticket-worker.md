@@ -26,7 +26,13 @@ effort: high
 
 ## CI確認と loop-until-green（Phase 9）
 
-CI確認は `gh pr checks --watch` ではなく、リードの spawn プロンプトで渡される **`ci-wait.sh` の絶対パス**を使う（スクリプトの所在はプラグイン配下のため、パスは必ずリードから受け取る。自分で解決しようとしない）:
+CI確認は `gh pr checks --watch` ではなく `ci-wait.sh` を使う。実行は PATH 上のランチャー経由で行う（パス・バージョン・引用符を付けない形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）:
+
+```bash
+cd {worktreeパス} && claude-harness-run ci-wait {PR番号}
+```
+
+`claude-harness-run: command not found` になった場合のみ、リードの spawn プロンプトで渡される **`ci-wait.sh` の絶対パス**を使ってフォールバックする（スクリプトの所在はプラグイン配下のため、パスは必ずリードから受け取る。自分で解決しようとしない。引用符では囲まない）:
 
 ```bash
 cd {worktreeパス} && bash {ci-wait.shの絶対パス} {PR番号}

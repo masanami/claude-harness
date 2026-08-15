@@ -16,6 +16,8 @@
 # (v) 「実行時にプラグインルートへ展開される」という誤説明の再出現（CLAUDE_PLUGIN_ROOT は
 #     Bash 環境変数として存在せず展開されない — 実機検証済み。正しくは「表記上の
 #     プレースホルダであり、実行前に Base directory から解決した絶対パスに置換する」）
+# (vi) allowlist できない実行形（引用符付きのパス実行 `bash "${CLAUDE_PLUGIN_ROOT}/…"`、
+#      ランチャーへの実行系・パス・環境変数の前置）。Issue #154 の再発防止。
 # を検出する。規約の正本は docs/plugin-path-conventions.md。
 #
 # grep の exit code は 0=マッチあり / 1=マッチなし（正常） / 2以上=実行エラー
@@ -286,6 +288,48 @@ elif [ -n "$misexp_hits" ]; then
 else
   PASS_COUNT=$((PASS_COUNT + 1))
   echo "  ok - 誤った「実行時に展開」説明は無い"
+fi
+
+echo ""
+echo "=== (vi) allowlist できない実行形チェック ==="
+
+# Issue #154: Claude Code の Bash permission マッチャは
+#  - ワイルドカードがトークン境界でしか効かない（パス中間の `*` は解釈されない）
+#  - `:` より手前はルールとコマンドが引用符まで含めて完全一致する必要がある
+#  - 先頭トークンが一致しないとマッチしない
+# ため、(a) 引用符付きのパス実行（bash "…/scripts/xxx.sh"）と
+# (b) ランチャーへの実行系・パス・環境変数の前置（bash claude-harness-run / …/claude-harness-run /
+# FOO=bar claude-harness-run）は allowlist できない。いずれも headless 実行を止めるため検出する。
+# 規約の正本は docs/plugin-path-conventions.md (a)。
+
+quoted_exec_pattern='(bash|node)[[:space:]]+"\$\{CLAUDE_PLUGIN_ROOT\}'
+quoted_exec_hits="$(grep -rnE "$quoted_exec_pattern" skills agents --include='*.md')"
+quoted_exec_exit=$?
+
+# ランチャーの前置（`bash claude-harness-run` / パス付き / 環境変数前置）。
+# `--env KEY=VALUE` は claude-harness-run より後ろに来るためこのパターンにはマッチしない。
+prefixed_launcher_pattern='(bash[[:space:]]+claude-harness-run|[A-Za-z0-9_./~-]+/claude-harness-run|[A-Z_]+=[^[:space:]]*[[:space:]]+claude-harness-run)'
+prefixed_launcher_hits="$(grep -rnE "$prefixed_launcher_pattern" skills agents --include='*.md')"
+prefixed_launcher_exit=$?
+
+if [ "$quoted_exec_exit" -ge 2 ] || [ "$prefixed_launcher_exit" -ge 2 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("allowlist できない実行形チェックの grep 実行に失敗")
+  echo "  NG - grep 実行エラー（exit ${quoted_exec_exit}/${prefixed_launcher_exit}）のため判定不能"
+else
+  bad_exec_violations="${quoted_exec_hits}
+${prefixed_launcher_hits}"
+  bad_exec_violations="$(printf '%s\n' "$bad_exec_violations" | grep -v '^[[:space:]]*$')"
+
+  if [ -z "$bad_exec_violations" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - allowlist できない実行形（引用符付きパス実行・ランチャーへの前置）は無い"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("allowlist できない実行形を検出")
+    echo "  NG - allowlist できない実行形を検出"
+    print_indented "$bad_exec_violations"
+  fi
 fi
 
 echo ""

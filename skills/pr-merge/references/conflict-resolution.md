@@ -31,7 +31,7 @@
    rebase + push で PR の状態（CI・`mergeable`・レビュー）が変わるため、**Phase 0-1 の判定結果はここで無効になる**。CI完了を待った上で preflight を再実行し、値を取り直す（`$GATE`/`$BASE` はブランチ構成由来のため不変）:
    ```bash
    gh pr checks "$PR_NUM" --watch
-   PREFLIGHT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh" "$PR_NUM")
+   PREFLIGHT=$(claude-harness-run pr-merge-preflight "$PR_NUM")
    BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")
    ```
    Phase 4 のマージ実行は、この再実行後の値で判断する（Phase 2 に入る前の古い値を使い回さない）。

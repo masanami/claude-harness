@@ -21,9 +21,22 @@ stdout JSON:
 |---|---|---|
 | `result` | `"pass"` \| `"fail"` | `gates.*.status` のいずれかが `fail` なら `fail`、それ以外（全て `pass`/`skip`）は `pass` |
 | `gates.*.status` | `"pass"` \| `"fail"` \| `"skip"` | **exit code のみ**で判定（0 → pass、非0 → fail）。対応フラグ未指定なら `skip` |
-| `gates.lint.errors` / `.warnings`、`gates.typecheck.errors`、`gates.test.passed`/`.failed`/`.skipped` | 数値 \| `null` | ツール出力からの best-effort 抽出（ESLintの`X problems (Y errors, Z warnings)`、tscの`Found N errors.`、Jest/Vitest/pytestの`N passed`/`N failed`/`N skipped`等のパターンに対応）。**抽出できない場合は `null`。`status` の判定には使わない** |
+| `gates.lint.errors` / `.warnings`、`gates.typecheck.errors`、`gates.test.passed`/`.failed`/`.skipped` | 数値 \| `null` | ツール出力からの best-effort 抽出（ESLintの`X problems (Y errors, Z warnings)`、tscの`Found N errors.`、Jest/Vitest/pytestの`N passed`/`N failed`/`N skipped`等のパターンに対応）。**該当する集計行が複数ある場合は合算する**（下記「件数の集計方針」）。**抽出できない場合は `null`。`status` の判定には使わない** |
 | `auto_fix.applied` | bool | `--auto-fix` が1つ以上指定されたか |
 | `auto_fix.summary` | string | 実行した auto-fix コマンドを検出順に `" → "` 区切りで連結したもの |
+
+### 件数の集計方針
+
+npm workspaces・cargo のように**1回の実行で集計行が複数回出力される**ツールチェインでは、最後の1行だけを採用すると実態と乖離する（Issue #154 の実測: 934 tests に対し最後のワークスペース分の `246` を報告していた）。このため**該当する集計行をすべて合算**する。二重計上を避けるため、対象行は次の優先順位で絞り込む:
+
+| ゲート | 優先して集計する行（在る場合） | 無い場合 |
+|---|---|---|
+| test | 複数形 `Tests` を含む集計行（Jest の `Tests:` / Vitest の `Tests `）。単数形の `Test Suites:` / `Test Files` はスイート数なので除外される | 件数パターンを含む全行を合算（pytest の `M passed, N failed`、cargo の `test result: ok. N passed; …` 等） |
+| lint | `N problems` を含む集計行（ESLint）。個別の指摘行は除外される | 件数パターンを含む全行を合算 |
+| typecheck | `Found N errors` を含む集計行（tsc）のみ。個別の型エラー行は常に除外される | （該当行が無ければ `null`） |
+
+- 単一ワークスペースの出力では従来と同じ値になる（合算対象が1行のため）
+- **既知の限界**: 集計行を持つツールと持たないツールが混在する多言語モノレポでは、集計行を持つ側のみが合算される。また上位ツール（turbo 等）が各ワークスペースの集計に加えて総計を出力する形式では二重計上しうる。件数はあくまで参考値であり、**合否判定（`status` / `result`）は exit code のみで行う**ため、この誤差が判定を変えることはない
 
 挙動の要点:
 

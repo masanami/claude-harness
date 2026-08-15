@@ -34,10 +34,10 @@ effort: medium
 
 対象の**仕様**を把握する。テストの根拠は**仕様（完了条件・受入基準）**であり、設計書ではない。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、以下で参照するスクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/<スクリプト名>"` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/<スクリプト名>` では呼び出さないこと。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、以下で参照するスクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。実行する際は必ず PATH 上のランチャー経由で `claude-harness-run scripts/<スクリプト名>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/<スクリプト名>` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash <プラグインルート>/scripts/<スクリプト名>` にフォールバックする（引用符で囲まない。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-- Issue/PRの場合: `gh issue view` / `gh pr view` で本文・完了条件・受入基準を取得する。加えて `bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-acceptance-criteria.sh" <番号>` で完了条件を機械可読JSONとしても取得しておく（後続 Step 1-3 のトレーサビリティチェックの入力になる）。**出力JSON形式の正本はプラグイン配下の `scripts/specs/extract-acceptance-criteria.md` を参照し、ここには複製しない**（Read する場合はスキル起動時の「Base directory for this skill」から `<base>/../../scripts/specs/extract-acceptance-criteria.md` として解決する）。使うフィールドは `criteria`（各要素の `id`/`text`）と `parse_status`。**この `<番号>` は常に Issue 番号**（`extract-acceptance-criteria.sh` は内部で `gh issue view` のみを呼ぶ）。対象がPRの場合は、PR番号をそのまま渡さず、PRに紐づく Issue 番号（`gh pr view <PR番号> --json closingIssuesReferences` 等で特定）を渡す。紐づく Issue が無いPRの場合は Step 1-1 の「機能名」ケースと同様に扱い、このスクリプトチェックは対象外とする
+- Issue/PRの場合: `gh issue view` / `gh pr view` で本文・完了条件・受入基準を取得する。加えて `claude-harness-run extract-acceptance-criteria <番号>` で完了条件を機械可読JSONとしても取得しておく（後続 Step 1-3 のトレーサビリティチェックの入力になる）。**出力JSON形式の正本はプラグイン配下の `scripts/specs/extract-acceptance-criteria.md` を参照し、ここには複製しない**（Read する場合はスキル起動時の「Base directory for this skill」から `<base>/../../scripts/specs/extract-acceptance-criteria.md` として解決する）。使うフィールドは `criteria`（各要素の `id`/`text`）と `parse_status`。**この `<番号>` は常に Issue 番号**（`extract-acceptance-criteria.sh` は内部で `gh issue view` のみを呼ぶ）。対象がPRの場合は、PR番号をそのまま渡さず、PRに紐づく Issue 番号（`gh pr view <PR番号> --json closingIssuesReferences` 等で特定）を渡す。紐づく Issue が無いPRの場合は Step 1-1 の「機能名」ケースと同様に扱い、このスクリプトチェックは対象外とする
 - 機能名の場合（Issue番号が無いケース）: 関連チケット・コードを調査して完了条件に相当する期待挙動を特定する。この場合 `extract-acceptance-criteria.sh` は対象外（Issue本文が無いため）であり、Step 1-3 のトレーサビリティチェックも自動実行せず、従来通り目視でのトレーサビリティ表確認にとどめる
 - 設計書がある場合は補助的に参照してよいが、テストケースの根拠は仕様に置く
 - プロジェクトルートの `CLAUDE.md` でテスト方針・E2Eテスト実行コマンドを確認する
@@ -68,7 +68,7 @@ effort: medium
 | {完了条件1} | {テストケース名} |
 | {完了条件2} | （未カバー → 要追加） |
 
-**機械可読チェック（Issue/PRが対象の場合）**: 上記トレーサビリティ表と同じ内容を `cases` 配列のJSONとしても用意し、`bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-e2e-traceability.sh" <criteria.json> <trace.json>` を実行する（正本・所在は Step 1-1 参照）。**未カバー0件・未知ID0件を返すまで設計を追補する（上限2周）**。2周しても残る場合はループを打ち切り、残存する未カバー条件・未知IDを**返却内容に明記**したうえで次のPhaseに進む（黙って進めない）。このスクリプトが検証するのは「完了条件とテストケースの対応付けの網羅性」であり、テストが完了条件を意味的に満たしているかの検証ではない（意味的妥当性の検証は `/explain-e2e` の責務）。
+**機械可読チェック（Issue/PRが対象の場合）**: 上記トレーサビリティ表と同じ内容を `cases` 配列のJSONとしても用意し、`claude-harness-run check-e2e-traceability <criteria.json> <trace.json>` を実行する（正本・所在は Step 1-1 参照）。**未カバー0件・未知ID0件を返すまで設計を追補する（上限2周）**。2周しても残る場合はループを打ち切り、残存する未カバー条件・未知IDを**返却内容に明記**したうえで次のPhaseに進む（黙って進めない）。このスクリプトが検証するのは「完了条件とテストケースの対応付けの網羅性」であり、テストが完了条件を意味的に満たしているかの検証ではない（意味的妥当性の検証は `/explain-e2e` の責務）。
 
 入力が「機能名」（Issue番号が無い）の場合は Step 1-1 の記載の通りこのスクリプトチェックは適用外であり、目視でのトレーサビリティ表作成のみで代替する。
 

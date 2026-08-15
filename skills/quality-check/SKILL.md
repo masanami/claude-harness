@@ -29,29 +29,30 @@ CLAUDE.md および `package.json` 等から、以下のコマンドを特定す
 
 **自動修正の事前適用 → lint → 型チェック → テストの順序実行**、exit code に基づく `gates.*.status` 判定、機械可読 JSON の構築は、決定的な処理として `scripts/quality-check-runner.sh` に切り出されている。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/quality-check-runner.sh"` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/quality-check-runner.sh` では呼び出さないこと。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run quality-check-runner` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/quality-check-runner.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash <プラグインルート>/scripts/quality-check-runner.sh` にフォールバックする（引用符で囲まない。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 ```bash
-RESULT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/quality-check-runner.sh" \
+claude-harness-run quality-check-runner \
   --auto-fix "<auto-fixコマンド1>" \
   --auto-fix "<auto-fixコマンド2>" \
   --lint "<リントコマンド>" \
   --typecheck "<型チェックコマンド>" \
-  --test "<テストコマンド>")
-SCRIPT_EXIT=$?
+  --test "<テストコマンド>"
 ```
+
+> **単独コマンドとして実行する（重要）**: 上記の形のまま、**シェル変数へ代入せず**（`RESULT=$(…)` としない）、**同じ Bash 呼び出しに後続コマンドを繋げない**（`; echo "$RESULT"` や `jq … <<<"$RESULT"` を続けない）こと。ローカル変数を展開する後続コマンドがあると、permission の静的解析が「解析不能」と判定して allowlist 到達前に拒否され、headless 実行が止まる（実測済み）。stdout の JSON と exit code は **Bash ツールの実行結果からそのまま読む**。
 
 - 手順1で特定できなかったコマンドは、対応する `--auto-fix`/`--lint`/`--typecheck`/`--test` フラグごと省略する（0個以上の `--auto-fix` を検出順に指定。`--lint`/`--typecheck`/`--test` は1回のみ指定可）
 - スクリプトの exit code: `result` が `pass` なら 0、`fail` なら 1、jq不在なら 2、CLI引数不正（未知フラグ・値欠落・フラグ重複指定）なら 1
-- **`$SCRIPT_EXIT` が `2` の場合は `$RESULT` が空（JSONが出力されていない）。この場合は `$RESULT` をJSONとしてパースせず、stderr のメッセージ（jq不在等）をそのまま報告して処理を中断する**
+- **exit code が `2` の場合は stdout が空（JSONが出力されていない）。この場合は stdout をJSONとしてパースせず、stderr のメッセージ（jq不在等）をそのまま報告して処理を中断する**
 - 各コマンドの生出力（lintエラー箇所・型エラー内容・失敗テストの詳細）は stderr に転記される。**手順4の失敗分析はこの stderr 出力を使う**
 
 出力 JSON の**フィールド定義と件数抽出の仕様の正本は、プラグイン配下の `scripts/specs/quality-check-runner.md`**（ここには複製しない）。**cwd 起点の相対パス `scripts/specs/quality-check-runner.md` では導入先プロジェクトの同名ファイルを誤って参照しうるため、Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/quality-check-runner.md` として解決すること。
 
 ### 3. 結果サマリー
 
-`$RESULT`（`{result, auto_fix, gates: {lint, typecheck, test}}`）を最後に**機械可読な結果としてそのまま出力**する（呼び出し元のスキル/エージェントが判定に使う）。
+手順2で得た stdout の JSON（`{result, auto_fix, gates: {lint, typecheck, test}}`）を最後に**機械可読な結果としてそのまま出力**する（呼び出し元のスキル/エージェントが判定に使う）。
 
 あわせて `gates.*` の内容から**人間向けサマリー**（✅ パス / ❌ 失敗 / ⊘ スキップ）を組み立てて提示する:
 

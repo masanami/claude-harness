@@ -59,7 +59,9 @@ gs_union_unique_json() {
 # ベース allow / deny（single source of truth）
 # ------------------------------------------------------------------
 
-# 共通権限（常に含める。約26項目）
+# 共通権限（常に含める。約27項目）
+# Bash(claude-harness-run:*) は本プラグイン同梱スクリプトのランチャー（bin/claude-harness-run）用。
+# パス・バージョンを含まない呼び出し形にすることで、この1行だけでプラグイン更新に追随できる。
 gs_base_allow_json() {
   jq -n '[
     "Bash(git add:*)",
@@ -87,7 +89,8 @@ gs_base_allow_json() {
     "Bash(gh api:*)",
     "Bash(gh repo view:*)",
     "Bash(cd:*)",
-    "Bash(bash:*)"
+    "Bash(bash:*)",
+    "Bash(claude-harness-run:*)"
   ]'
 }
 

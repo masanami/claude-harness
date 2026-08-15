@@ -212,6 +212,9 @@ echo "=== test: gs_build_generated_settings_json ==="
 BASE_DENY='["Bash(rm -rf:*)","Bash(rm -r:*)"]'
 GENERATED="$(gs_build_generated_settings_json npm playwright docker "$BASE_DENY")"
 assert_true "生成結果に共通権限 Bash(git commit:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(git commit:*)')"
+# プラグイン同梱スクリプトのランチャー権限（Issue #154）。この1行が無いと headless 実行で
+# スキルがスクリプトを起動できず permission 拒否になる。
+assert_true "生成結果にランチャー権限 Bash(claude-harness-run:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(claude-harness-run:*)')"
 assert_true "生成結果に pm 権限 Bash(npm:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(npm:*)')"
 assert_true "生成結果に test 権限 Bash(npx playwright:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(npx playwright:*)')"
 assert_true "生成結果に infra 権限 Bash(docker:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(docker:*)')"
