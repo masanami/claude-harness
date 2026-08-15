@@ -88,7 +88,7 @@ Phase 1 で解説したテストのうち、**重要フロー**（主要な正�
 
 `mutationTargets` は**並列にせず1件ずつ順番に**処理する（同一ワーキングツリーを書き換えるため、項目間の並行実行・オーバーラップを避ける）。**前の対象の処理（`mutation-run.sh` による復元確認まで）が完全に終わってから、次の対象のTaskをspawnする**（並列spawnしない）。
 
-> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run mutation-run <testCommand> <mutatedFile>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/mutation-run.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash <プラグインルート>/scripts/mutation-run.sh <testCommand> <mutatedFile>` にフォールバックする（引用符で囲まない。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run mutation-run <testCommand> <mutatedFile>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/mutation-run.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/mutation-run.sh" <testCommand> <mutatedFile>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 各対象について:

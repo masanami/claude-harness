@@ -16,8 +16,9 @@
 # (v) 「実行時にプラグインルートへ展開される」という誤説明の再出現（CLAUDE_PLUGIN_ROOT は
 #     Bash 環境変数として存在せず展開されない — 実機検証済み。正しくは「表記上の
 #     プレースホルダであり、実行前に Base directory から解決した絶対パスに置換する」）
-# (vi) allowlist できない実行形（引用符付きのパス実行 `bash "${CLAUDE_PLUGIN_ROOT}/…"`、
-#      ランチャーへの実行系・パス・環境変数の前置）。Issue #154 の再発防止。
+# (vi) allowlist できない実行形（実行位置の ${CLAUDE_PLUGIN_ROOT}・マシン固有な絶対パスの
+#      直書き・ランチャーへの実行系/パス/環境変数の前置）。Issue #154 の再発防止。
+#      検出パターン自体の自己検査（既知の違反形・正当形での検証）を同セクション内に持つ。
 # を検出する。規約の正本は docs/plugin-path-conventions.md。
 #
 # grep の exit code は 0=マッチあり / 1=マッチなし（正常） / 2以上=実行エラー
@@ -297,33 +298,102 @@ echo "=== (vi) allowlist できない実行形チェック ==="
 #  - ワイルドカードがトークン境界でしか効かない（パス中間の `*` は解釈されない）
 #  - `:` より手前はルールとコマンドが引用符まで含めて完全一致する必要がある
 #  - 先頭トークンが一致しないとマッチしない
-# ため、(a) 引用符付きのパス実行（bash "…/scripts/xxx.sh"）と
-# (b) ランチャーへの実行系・パス・環境変数の前置（bash claude-harness-run / …/claude-harness-run /
-# FOO=bar claude-harness-run）は allowlist できない。いずれも headless 実行を止めるため検出する。
+# ため、スクリプト実行は必ずランチャー経由（`claude-harness-run <target>`）にする。検出対象は:
+#  (a) `${CLAUDE_PLUGIN_ROOT}` を実行位置に書く形（引用符の有無を問わない。そもそも展開されない）
+#  (b) 実行位置にマシン固有の絶対パスを直書きする形（配布プラグインでは成立しない）
+#  (c) ランチャーへの実行系・パス・環境変数の前置（bash claude-harness-run / …/claude-harness-run /
+#      FOO=bar claude-harness-run。環境変数は `--env` で渡す）
+# フォールバック形 `bash "<プラグインルート>/scripts/xxx.sh"` はプレースホルダ表記であり、
+# パスの引用符も含めて正当（引数側の引用符は allowlist に影響しない）。
 # 規約の正本は docs/plugin-path-conventions.md (a)。
 
-quoted_exec_pattern='(bash|node)[[:space:]]+"\$\{CLAUDE_PLUGIN_ROOT\}'
-quoted_exec_hits="$(grep -rnE "$quoted_exec_pattern" skills agents --include='*.md')"
-quoted_exec_exit=$?
+# 実行位置の ${CLAUDE_PLUGIN_ROOT}（引用符あり・なしの両方）
+plugin_root_exec_pattern='(bash|node)[[:space:]]+"?\$\{?CLAUDE_PLUGIN_ROOT\}?'
+# 実行位置のマシン固有な絶対パス直書き（引用符あり・なしの両方）
+abs_path_exec_pattern='(bash|node)[[:space:]]+"?/[A-Za-z0-9_./~-]+\.(sh|mjs|js)'
+# ランチャーの前置。環境変数名は POSIX 準拠（小文字・数字・アンダースコアを含む）で受ける
+prefixed_launcher_pattern='(bash[[:space:]]+claude-harness-run|[A-Za-z0-9_./~-]+/claude-harness-run|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+claude-harness-run)'
 
-# ランチャーの前置（`bash claude-harness-run` / パス付き / 環境変数前置）。
-# `--env KEY=VALUE` は claude-harness-run より後ろに来るためこのパターンにはマッチしない。
-prefixed_launcher_pattern='(bash[[:space:]]+claude-harness-run|[A-Za-z0-9_./~-]+/claude-harness-run|[A-Z_]+=[^[:space:]]*[[:space:]]+claude-harness-run)'
+# --- (vi-a) 検出パターン自体の自己検査 ---
+# このテストが本規約の唯一の再発防止装置であり、パターンが壊れると違反を素通りさせて
+# しまう（grep は「マッチなし」と「検出できない」を区別しない）。既知の違反形・正当形を
+# 直接パターンに掛けて、検出器そのものが機能していることを確認する。
+assert_detects() {
+  local description="$1" pattern="$2" expected="$3" sample="$4"
+  local actual="no"
+  printf '%s\n' "$sample" | grep -qE "$pattern" && actual="yes"
+  if [ "$actual" = "$expected" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("検出パターンの自己検査: ${description}")
+    echo "  NG - ${description}（expected=${expected} actual=${actual}）"
+    echo "       pattern: ${pattern}"
+    echo "       sample:  ${sample}"
+  fi
+}
+
+# サンプルは検出器へ掛けるリテラル文字列であり、${CLAUDE_PLUGIN_ROOT} や ~ を展開させないため
+# シングルクォートで書く（展開したら検査にならない）。関数化しているのは、この意図的な
+# シングルクォート群へまとめて shellcheck 指示子を効かせるため。
+# shellcheck disable=SC2016,SC2088
+run_detector_self_checks() {
+  assert_detects '違反: bash "${CLAUDE_PLUGIN_ROOT}/..." を検出する' \
+    "$plugin_root_exec_pattern" yes 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/xxx.sh" <引数>'
+  assert_detects '違反: 引用符なしの ${CLAUDE_PLUGIN_ROOT} 実行も検出する' \
+    "$plugin_root_exec_pattern" yes 'bash ${CLAUDE_PLUGIN_ROOT}/scripts/xxx.sh <引数>'
+  assert_detects '違反: node "${CLAUDE_PLUGIN_ROOT}/..." を検出する' \
+    "$plugin_root_exec_pattern" yes 'node "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/run-walkthrough.mjs"'
+  assert_detects '正当: フォールバックのプレースホルダ表記は検出しない' \
+    "$plugin_root_exec_pattern" no 'bash "<プラグインルート>/scripts/xxx.sh" <引数>'
+
+  assert_detects '違反: 引用符付きの絶対パス直書き実行を検出する' \
+    "$abs_path_exec_pattern" yes 'bash "/Users/me/.claude/plugins/cache/mp/claude-harness/3.2.0/scripts/xxx.sh"'
+  assert_detects '違反: 引用符なしの絶対パス直書き実行を検出する' \
+    "$abs_path_exec_pattern" yes 'bash /Users/me/.claude/plugins/cache/mp/claude-harness/3.2.0/scripts/xxx.sh'
+  assert_detects '正当: bash -c "<コマンド>" は検出しない' \
+    "$abs_path_exec_pattern" no 'bash -c "<Step2で特定したE2Eコマンド>"'
+  assert_detects '正当: フォールバックのプレースホルダ表記は検出しない' \
+    "$abs_path_exec_pattern" no 'bash "<プラグインルート>/scripts/xxx.sh" <引数>'
+
+  assert_detects '違反: bash 前置のランチャー呼び出しを検出する' \
+    "$prefixed_launcher_pattern" yes 'bash claude-harness-run quality-check-runner'
+  assert_detects '違反: パス付きのランチャー呼び出しを検出する' \
+    "$prefixed_launcher_pattern" yes '~/.local/bin/claude-harness-run quality-check-runner'
+  assert_detects '違反: 大文字の環境変数前置を検出する' \
+    "$prefixed_launcher_pattern" yes 'FOO=bar claude-harness-run quality-check-runner'
+  assert_detects '違反: 小文字（POSIX 形式）の環境変数前置も検出する' \
+    "$prefixed_launcher_pattern" yes 'foo_bar2=baz claude-harness-run quality-check-runner'
+  assert_detects '正当: --env 経由の環境変数受け渡しは検出しない' \
+    "$prefixed_launcher_pattern" no "claude-harness-run --env FOO=bar demo-e2e-out 'CASE-101'"
+  assert_detects '正当: cd との複合コマンドは検出しない' \
+    "$prefixed_launcher_pattern" no 'cd "{worktreeパス}" && claude-harness-run ci-wait {PR番号}'
+}
+
+run_detector_self_checks
+
+# --- (vi-b) 実ファイルの走査 ---
+plugin_root_exec_hits="$(grep -rnE "$plugin_root_exec_pattern" skills agents --include='*.md')"
+plugin_root_exec_exit=$?
+abs_path_exec_hits="$(grep -rnE "$abs_path_exec_pattern" skills agents --include='*.md')"
+abs_path_exec_exit=$?
 prefixed_launcher_hits="$(grep -rnE "$prefixed_launcher_pattern" skills agents --include='*.md')"
 prefixed_launcher_exit=$?
 
-if [ "$quoted_exec_exit" -ge 2 ] || [ "$prefixed_launcher_exit" -ge 2 ]; then
+if [ "$plugin_root_exec_exit" -ge 2 ] || [ "$abs_path_exec_exit" -ge 2 ] || [ "$prefixed_launcher_exit" -ge 2 ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
   FAILED_TESTS+=("allowlist できない実行形チェックの grep 実行に失敗")
-  echo "  NG - grep 実行エラー（exit ${quoted_exec_exit}/${prefixed_launcher_exit}）のため判定不能"
+  echo "  NG - grep 実行エラー（exit ${plugin_root_exec_exit}/${abs_path_exec_exit}/${prefixed_launcher_exit}）のため判定不能"
 else
-  bad_exec_violations="${quoted_exec_hits}
+  bad_exec_violations="${plugin_root_exec_hits}
+${abs_path_exec_hits}
 ${prefixed_launcher_hits}"
   bad_exec_violations="$(printf '%s\n' "$bad_exec_violations" | grep -v '^[[:space:]]*$')"
 
   if [ -z "$bad_exec_violations" ]; then
     PASS_COUNT=$((PASS_COUNT + 1))
-    echo "  ok - allowlist できない実行形（引用符付きパス実行・ランチャーへの前置）は無い"
+    echo "  ok - allowlist できない実行形（\${CLAUDE_PLUGIN_ROOT} 実行・絶対パス直書き・ランチャーへの前置）は無い"
   else
     FAIL_COUNT=$((FAIL_COUNT + 1))
     FAILED_TESTS+=("allowlist できない実行形を検出")

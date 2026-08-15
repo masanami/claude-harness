@@ -27,7 +27,7 @@ PR番号（省略可能）: $ARGUMENTS
 
 ## Step 1: コメント取得
 
-> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run fetch-pr-comments <PR番号>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/fetch-pr-comments.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash <プラグインルート>/scripts/fetch-pr-comments.sh <PR番号>` にフォールバックする（引用符で囲まない。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run fetch-pr-comments <PR番号>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/fetch-pr-comments.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/fetch-pr-comments.sh" <PR番号>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 Bash で上記コマンドを実行する。標準出力の JSON（`{pr, diff_stat, comments: [...]}`）をそのまま以降のステップで使う。出力JSONのフィールド定義の正本はプラグイン配下の `scripts/specs/fetch-pr-comments.md`（ここには複製しない）。Readする場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/fetch-pr-comments.md` として解決すること。
@@ -192,12 +192,12 @@ git push
 
 ## Step 11: 返信・Resolved化の実行
 
-> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run reply-and-resolve <PR番号> <items_json_file>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/reply-and-resolve.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash <プラグインルート>/scripts/reply-and-resolve.sh <PR番号> <items_json_file>` にフォールバックする（引用符で囲まない。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run reply-and-resolve <PR番号> "<items_json_file>"` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/reply-and-resolve.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/reply-and-resolve.sh" <PR番号> "<items_json_file>"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 1. Bash で `mktemp` を実行し、一時ファイルパスを得る
 2. Write ツールで、手順1の一時ファイルへ Step 10 の `items` 配列を JSON として書き出す（`reply_body` に改行・引用符・バックスラッシュ等を含む複数行の文面が含まれる場合も、妥当な JSON となるよう正しくエスケープすること。不正な JSON は次の手順の `reply-and-resolve.sh` の入力検証で拒否され、返信・Resolved化がすべて失敗する）
-3. Bash で `claude-harness-run reply-and-resolve <PR番号> <手順1の一時ファイルパス>` を実行する
+3. Bash で `claude-harness-run reply-and-resolve <PR番号> "<手順1の一時ファイルパス>"` を実行する
 4. 標準出力の JSON（`{pr, results, succeeded, failed}`）をそのまま Step 13 の完了報告に使う。`failed > 0` の場合は、Step 12 のサマリーコメント投稿より前にその旨をユーザーへ提示する
 5. 手順1で作成した一時ファイルを `rm -f` で削除する（コマンドの成否に関わらず実行する）
 

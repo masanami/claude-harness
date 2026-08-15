@@ -53,7 +53,7 @@ Issue 数が **5件以上**の場合のみ、直列化の判断材料として `
 
 リードが並列化対象の各 Issue について `scripts/worktree-setup.sh` を呼び、worktree と作業ブランチを作成する（Phase 3 に相当）:
 
-> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run worktree-setup <引数>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/worktree-setup.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash <プラグインルート>/scripts/worktree-setup.sh <引数>` にフォールバックする（引用符で囲まない。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run worktree-setup <引数>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/worktree-setup.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/worktree-setup.sh" <引数>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 **Issueごとに逐次（1件ずつ）呼ぶこと（並列実行しない）**: `git worktree add`/`git fetch` は共有 `.git` を書き換える操作のため、複数Issue分をリードが同時（バックグラウンド実行等）に走らせると競合しうる。1件分の呼び出しが完了（stdout JSON取得）してから、次のIssueについて同様に呼ぶ:
@@ -127,8 +127,10 @@ spawn プロンプトに含めるもの:
 上記3条件を満たす各チケットの worktree に対してのみ呼ぶ:
 
 ```bash
-claude-harness-run worktree-cleanup {チケットのworktree_path}
+claude-harness-run worktree-cleanup "{チケットのworktree_path}"
 ```
+
+`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/worktree-cleanup.sh" "{チケットのworktree_path}"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 
 既定（フラグ省略）の dirty時削除拒否は、上記3条件による選定を通過したチケットに対する**セカンダリの安全網**（レビュー対応の最終コミットのpush漏れ等、想定外の未コミット差分が残っていた場合の最終防御）として働く。3条件を満たすが一時的にdirtyな場合はエラーで停止するため、原因を確認してから再実行する。`--skip-if-dirty` は、3条件を満たす対象群を一括ループする際に一時的なdirtyが混在するケース向けの補助フラグであり、3条件そのものの代替（failure・判断待ちチケットの保護手段）としては使わない。出力JSON（`removed`/`skipped`/`dirty`）の**フィールド定義の正本は、プラグイン配下の `scripts/specs/worktree-setup.md`**（ここには複製しない。Read する場合は `<base>/../../scripts/specs/worktree-setup.md` として解決すること）。
 

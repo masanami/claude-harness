@@ -33,7 +33,7 @@
 1. **ワイルドカードはトークン境界でのみ効く**。1トークンであるパスの内部に `*` を置いても解釈されない（バージョン部分だけの `*` も不可）。`:*` は末尾引数側にのみ効く。
 2. **`:` より手前はルール側とコマンド側で完全一致が要る**。引用符も1文字として一致が必要（片方だけ引用符付きは不一致）。
 3. **`:*` が受ける末尾引数側は引用符を含んでよい**（実測2のB）。したがって `--lint "npm run lint"` のような引数の引用符は外さなくてよい。
-4. **コマンドの先頭トークンが一致しないとマッチしない**（実測2のC）。実行系（`bash `）やパス、環境変数の前置はすべて先頭トークンを変えるため不可。
+4. **コマンドの先頭トークンが一致しないとマッチしない**（実測2のC）。実行系（`bash`）やパス、環境変数の前置はすべて先頭トークンを変えるため不可。
 
 → 「引用符を外す」だけでは不十分（バージョン固定が残り、更新のたびに黙って外れる）。**呼び出し形からパスとバージョンを消す**＝ランチャー経由が必要。
 
@@ -44,15 +44,24 @@
 PATH 上のディレクトリ（例: `~/.local/bin`）へランチャーを配置する。
 
 ```bash
-# 1. インストール済みプラグインの現在地を確認する
-jq -r '.plugins | to_entries[] | select(.key | startswith("claude-harness@")) | .value[0].installPath' \
-  ~/.claude/plugins/installed_plugins.json
+# 1. インストール先を、ランチャー自身と同じ規則で解決する
+#    （CLAUDE_HARNESS_ROOT 優先 → installed_plugins.json の有効な installPath のうち
+#      最大バージョン → cache 配下の最大バージョン）
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SRC="${CLAUDE_HARNESS_ROOT:-$(jq -r '
+  [ .plugins | to_entries[]
+    | select(.key | startswith("claude-harness@"))
+    | .value[]? | select(type == "object" and .installPath != null)
+  ]
+  | max_by(.version // "0" | split(".") | map(tonumber? // 0))
+  | .installPath // empty
+' "$CONFIG_DIR/plugins/installed_plugins.json" 2>/dev/null)}"
+[ -f "$SRC/bin/claude-harness-run" ] || SRC="$(ls -d "$CONFIG_DIR"/plugins/cache/*/claude-harness/*/ 2>/dev/null \
+  | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
 
 # 2. ランチャーを PATH 上へコピーする
 mkdir -p ~/.local/bin
-install -m 0755 \
-  "$(jq -r '.plugins | to_entries[] | select(.key | startswith("claude-harness@")) | .value[0].installPath' ~/.claude/plugins/installed_plugins.json)/bin/claude-harness-run" \
-  ~/.local/bin/claude-harness-run
+install -m 0755 "$SRC/bin/claude-harness-run" ~/.local/bin/claude-harness-run
 
 # 3. 疎通確認（シェルからと、Claude Code の Bash ツールからの両方で実行する）
 claude-harness-run --plugin-root   # プラグインルートの絶対パスが表示される
@@ -61,7 +70,8 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 - **シンボリックリンクではなくコピーにする理由**: プラグインキャッシュのパスは `…/claude-harness/<version>/` を含むため、リンクはプラグイン更新で切れる。一方コピーしたランチャーは**実行のたびに現行版のプラグインルートを解決し直す**ので、プラグインを更新してもコピーを置き直す必要は無い（ランチャー自身の仕様が変わったときだけ再コピーする）。
 - `~/.local/bin` が PATH に無い場合はシェルの設定（`~/.zshrc` 等）へ追加する。Claude Code の Bash ツールはユーザーのプロファイルから初期化されるため、プロファイルに書けばセッションからも見える。手順3の疎通確認は**必ず Claude Code の Bash ツール側でも**行うこと。
-- ローカルチェックアウトで開発している場合は、コピーせず `CLAUDE_HARNESS_ROOT=/path/to/claude-harness` を設定すればそのツリーが使われる。
+- **解決規則はランチャー本体（§4）と一致させてある**。`~/.claude` 決め打ち・`.value[0]` 固定にすると、`CLAUDE_CONFIG_DIR` を使う環境や `claude-harness@` エントリが複数ある環境で、導入失敗や旧版の固定化につながる。
+- ローカルチェックアウトで開発している場合は、コピーせず `CLAUDE_HARNESS_ROOT=/path/to/claude-harness` を設定すればそのツリーが使われる（`claude --plugin-dir` で起動している場合も同様）。
 
 ### allowlist の設定
 
@@ -99,14 +109,14 @@ claude-harness-run collect-review-diff main
 
 # スキル同梱スクリプト（プラグインルート相対パス）
 claude-harness-run skills/demo/scripts/walkthrough-setup.sh
-claude-harness-run skills/demo/scripts/run-walkthrough.mjs /絶対パス/flow.mjs
+claude-harness-run skills/demo/scripts/run-walkthrough.mjs "/絶対パス/flow.mjs"
 
 # 環境変数を渡す場合（前置形は allowlist にマッチしないため --env を使う）
-claude-harness-run --env WALKTHROUGH_PROJECT_ROOT=/abs/project demo-e2e-out 'CASE-101'
+claude-harness-run --env WALKTHROUGH_PROJECT_ROOT="/abs/project" demo-e2e-out 'CASE-101'
 ```
 
 - **ランチャー名・target をパスで修飾しない／引用符で囲まない**（先頭トークンが変わる・完全一致が崩れるため）
-- **引数側の引用符は従来どおり**でよい（`:*` が受ける。実測2のB）
+- **引数側は引用してよい／すべき**（`:*` が受けるため allowlist に影響しない。実測2のB）。空白を含みうる値（ファイルパス・worktree パス等）は必ず引用する
 - `cd` はしない。ランチャーは cwd を変更せず、呼び出し元の cwd のまま対象スクリプトを実行する
 
 ### 単独コマンドとして呼ぶ（allowlist 以前の関門）
@@ -131,7 +141,7 @@ permission チェックの手前に**シェル構文の静的解析**があり�
 
 ## 4. ランチャーの契約
 
-```
+```text
 claude-harness-run [--env KEY=VALUE]... <target> [args...]
 claude-harness-run --plugin-root | --list | --help
 ```
@@ -172,11 +182,13 @@ claude-harness-run --plugin-root | --list | --help
 ランチャーが PATH に無い環境では `claude-harness-run: command not found` になる。この場合に限り、スキルは従来形にフォールバックする:
 
 ```bash
-bash <解決済みプラグインルート>/scripts/xxx.sh <引数>
+bash "<解決済みプラグインルート>/scripts/xxx.sh" <引数>
 ```
 
 - プラグインルートは、スキル起動時にコンテキストへ与えられる「Base directory for this skill」から導出した絶対パスに置換する（`${CLAUDE_PLUGIN_ROOT}` は Bash 環境変数ではない）
-- **パスを引用符で囲まない**（実測1のとおり、引用符付きは前方一致ルールが書けなくなるため）。この結果、プラグインルートに空白を含む環境ではフォールバック形が壊れる。空白を含む環境では引用符が必要になるが、その形は allowlist できない。ランチャー導入が唯一の恒久解である
+- **パスは引用符で囲む**。空白やシェルメタ文字を含むプラグインルート（ローカル checkout・`CLAUDE_HARNESS_ROOT` 指定・スペース入りのホームディレクトリ等）でも確実に実行するため
+  - 引用符を付けると実測1のとおり前方一致の allow ルールは書けなくなる。ただし**フォールバック経路はもともと「引用符なし＋バージョン完全固定」でしか許可できず**、それはプラグイン更新のたびに黙って外れる形＝ Issue #154 が「使えない」と結論づけたものである。守る価値の薄い allowlist 可能性より、**空白を含むパスでも確実に動くこと**を優先する
+  - allowlist を効かせたい経路はランチャー形（§3）が担う。フォールバックは対話セッションでの承認を前提とした縮退経路と位置づける
 - フォールバックで実行した場合は、**利用者にランチャー導入（本ドキュメントの §2）を案内する**
 
 ---

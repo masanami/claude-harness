@@ -44,11 +44,28 @@ claude --plugin-dir /path/to/claude-harness
 スキルが同梱スクリプトを実行する際は、PATH 上のランチャー `claude-harness-run` を経由します。これを導入すると、利用側は `Bash(claude-harness-run:*)` の1行を許可するだけでよく、プラグイン更新で許可が外れません（未導入でも動きますが、headless 実行では permission 拒否になりえます）。
 
 ```bash
+# 1. インストール先を、ランチャー自身と同じ規則で解決する
+#    （CLAUDE_HARNESS_ROOT 優先 → installed_plugins.json の有効な installPath のうち
+#      最大バージョン → cache 配下の最大バージョン）
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SRC="${CLAUDE_HARNESS_ROOT:-$(jq -r '
+  [ .plugins | to_entries[]
+    | select(.key | startswith("claude-harness@"))
+    | .value[]? | select(type == "object" and .installPath != null)
+  ]
+  | max_by(.version // "0" | split(".") | map(tonumber? // 0))
+  | .installPath // empty
+' "$CONFIG_DIR/plugins/installed_plugins.json" 2>/dev/null)}"
+[ -f "$SRC/bin/claude-harness-run" ] || SRC="$(ls -d "$CONFIG_DIR"/plugins/cache/*/claude-harness/*/ 2>/dev/null \
+  | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+
+# 2. ランチャーを PATH 上へコピーする
 mkdir -p ~/.local/bin
-install -m 0755 \
-  "$(jq -r '.plugins | to_entries[] | select(.key | startswith("claude-harness@")) | .value[0].installPath' ~/.claude/plugins/installed_plugins.json)/bin/claude-harness-run" \
-  ~/.local/bin/claude-harness-run
-claude-harness-run --plugin-root   # 疎通確認
+install -m 0755 "$SRC/bin/claude-harness-run" ~/.local/bin/claude-harness-run
+
+# 3. 疎通確認（シェルからと、Claude Code の Bash ツールからの両方で実行する）
+claude-harness-run --plugin-root   # プラグインルートの絶対パスが表示される
+claude-harness-run --list          # 実行可能なスクリプト一覧が表示される
 ```
 
 手順の詳細・allowlist の書き方・トラブルシューティングは [スクリプトランチャー](docs/script-launcher.md) を参照してください。

@@ -25,13 +25,13 @@ stdout JSON:
 | `auto_fix.applied` | bool | `--auto-fix` が1つ以上指定されたか |
 | `auto_fix.summary` | string | 実行した auto-fix コマンドを検出順に `" → "` 区切りで連結したもの |
 
-### 件数の集計方針
+## 件数の集計方針
 
 npm workspaces・cargo のように**1回の実行で集計行が複数回出力される**ツールチェインでは、最後の1行だけを採用すると実態と乖離する（Issue #154 の実測: 934 tests に対し最後のワークスペース分の `246` を報告していた）。このため**該当する集計行をすべて合算**する。二重計上を避けるため、対象行は次の優先順位で絞り込む:
 
 | ゲート | 優先して集計する行（在る場合） | 無い場合 |
 |---|---|---|
-| test | 複数形 `Tests` を含む集計行（Jest の `Tests:` / Vitest の `Tests `）。単数形の `Test Suites:` / `Test Files` はスイート数なので除外される | 件数パターンを含む全行を合算（pytest の `M passed, N failed`、cargo の `test result: ok. N passed; …` 等） |
+| test | 複数形 `Tests` の直後に `:` または空白が続く集計行（Jest の `Tests:` 行、Vitest の `Tests` 行）。単数形の `Test Suites:` / `Test Files` はスイート数なので除外される | 件数パターンを含む全行を合算（pytest の `M passed, N failed`、cargo の `test result: ok. N passed; …` 等） |
 | lint | `N problems` を含む集計行（ESLint）。個別の指摘行は除外される | 件数パターンを含む全行を合算 |
 | typecheck | `Found N errors` を含む集計行（tsc）のみ。個別の型エラー行は常に除外される | （該当行が無ければ `null`） |
 
