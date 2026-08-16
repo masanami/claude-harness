@@ -245,4 +245,4 @@ Task ツールで `claude-harness:spec-critic`（`subagent_type: 'claude-harness
 - GitHub Issue 作成（`/create-ticket`）
 - 実装計画のチケット粒度展開（`/create-ticket` の実装分解モード）
 - TDD実装（`feature-implementer`）
-- 個別の設計判断記録（ADR が必要なら別スキル）
+- 恒常的な設計決定の記録（ADR）— `/create-adr`。本スキルで決めるクリティカル設計決定のうち、**この機能が終わったあとも今後の実装が従い続けるもの**だけが ADR の対象。オンデマンドであり、機能定義のたびに ADR を作る必要はない

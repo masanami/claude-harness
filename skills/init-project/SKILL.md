@@ -56,7 +56,7 @@ effort: medium
 | `commands` | `test`/`lint`/`typecheck`/`format`/`build`/`dev` コマンド（2c相当） |
 | `testPrereqs` | セットアップファイル・`pretest` の有無（2c-2相当） |
 | `dirTree` | 除外・深さ制限付きディレクトリ構造（2d相当） |
-| `docs` | `docsDir` と設計ドキュメント一覧、`guaranteesLedger`（保証台帳 `docs/guarantees.md` の有無。2e相当） |
+| `docs` | `docsDir` と設計ドキュメント一覧、`guaranteesLedger`（保証台帳 `docs/guarantees.md` の有無）、`adrDir`（設計判断記録の置き場 `docs/adr/` の有無。`*.md` が1件以上あるときのみ非 null。2e相当） |
 | `testDirs` / `e2eDirs` | テスト/E2E配置（2e相当） |
 | `colocatedTests` | `src/foo.test.ts` のようにテスト対象と同じディレクトリに置く co-located 配置の有無（真偽値、2e相当）。`testDirs` はディレクトリ名ベースの検出のため、co-located 配置はこのフィールドで別途表現する |
 | `branchEvidence` | `branches`（`git branch -a`）、`recentMergeStyles`（直近コミットのsquash/merge集計）、`contributingPath` の**証拠のみ**（2g相当）。**戦略の推定・解釈（GitHub Flow既定の採用など）はスクリプトでは行わない。次項の手順で本スキル側が判断する** |
@@ -125,6 +125,7 @@ CLAUDE.md に出力する「開発フェーズ」（`SDD期` / `GDD期` の2値�
   - 既に存在するドキュメント（`docs.designDocs` 検出）: 状態「整備済み」
   - ユーザーが選定した作成対象（ステップ3）: 状態「作成予定」、パスは規約に沿った標準パス（例: `docs/coding-guidelines.md`）
   - 選定されなかった候補は記載しない
+  - **設計判断記録（ADR）**: `docs.adrDir` が非 null のときだけ `| 設計判断記録 | docs/adr/ | 整備済み |` の行を足す。**null のときは行を作らない**（「作成予定」にもしない）。ADR は恒常的な設計決定が発生したときに1件ずつ増えるオンデマンドの記録であり、初期設定で空の受け皿を用意してもエージェントの Glob/Grep に露出するだけで中身が無い。最初の1件が作られた時点で `/create-adr` がこの行を追加する
 
 ### 5. 選定ドキュメントの雛形作成（任意）
 
