@@ -17,7 +17,8 @@
 #     "commands": {"test":..., "lint":..., "typecheck":..., "format":..., "build":..., "dev":...},
 #     "testPrereqs": {"setupFiles":[...], "pretest": "..."|null},
 #     "dirTree": {"entries":[...], "depthLimit":N, "maxEntries":N, "truncated":bool},
-#     "docs": {"docsDir":"docs"|null, "designDocs":[...], "guaranteesLedger":"docs/guarantees.md"|null},
+#     "docs": {"docsDir":"docs"|null, "designDocs":[...], "guaranteesLedger":"docs/guarantees.md"|null,
+#              "adrDir":"docs/adr"|null},
 #     "testDirs": [...], "e2eDirs": [...], "colocatedTests": true|false,
 #     "branchEvidence": {"status":"ok"|"not_a_git_repo", "branches":[...],
 #       "recentMergeStyles":{"squash":N,"merge":N}, "contributingPath":"..."|null},
@@ -617,9 +618,18 @@ fetch_docs_evidence() {
   local guarantees_ledger="null"
   [ -f "$dir/docs/guarantees.md" ] && guarantees_ledger='"docs/guarantees.md"'
 
+  # 設計判断記録（ADR）の置き場の有無。/init-project がドキュメントマップに「整備済み」として
+  # 載せるかの判断材料。ADR はオンデマンドで1件ずつ増える運用のため、ディレクトリはあるが
+  # *.md が1件も無い状態は「未整備」と同じ扱い（null）にする（空の受け皿を整備済みと見せない）。
+  local adr_dir="null"
+  if [ -d "$dir/docs/adr" ] \
+    && [ -n "$(find "$dir/docs/adr" -maxdepth 1 -type f -name '*.md' -print -quit 2>/dev/null)" ]; then
+    adr_dir='"docs/adr"'
+  fi
+
   DOCS_JSON=$(jq -n --argjson docsDir "$docs_dir" --argjson designDocs "$design_docs_json" \
-    --argjson guaranteesLedger "$guarantees_ledger" \
-    '{docsDir:$docsDir, designDocs:$designDocs, guaranteesLedger:$guaranteesLedger}')
+    --argjson guaranteesLedger "$guarantees_ledger" --argjson adrDir "$adr_dir" \
+    '{docsDir:$docsDir, designDocs:$designDocs, guaranteesLedger:$guaranteesLedger, adrDir:$adrDir}')
 }
 
 fetch_named_dirs() {

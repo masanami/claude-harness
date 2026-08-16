@@ -20,7 +20,7 @@ Claude Code プラグインとして、任意のリポジトリに横展開で�
 | カテゴリ | 内容 |
 |---------|------|
 | エージェント (6) | コードレビュー、設計レビュー、機能実装(設計成果物＋TDD: feature-implementer)、チケット実装worker(ticket-worker)、ドキュメント整合性検証、E2Eテスト実装(e2e-engineer) |
-| スキル | 機能定義(要件＋クリティカル設計)、チケット作成、並列実装、TDD実装、技術負債チェック、プロジェクト初期設定、E2Eテスト作成、E2Eテストシナリオ解説＋独立検証、動作確認(デモ)、PRレビュー対応、PRマージ、Conventional Commits、PRセルフレビュー、品質ゲートチェック |
+| スキル | 機能定義(要件＋クリティカル設計)、チケット作成、並列実装、TDD実装、技術負債チェック、プロジェクト初期設定、E2Eテスト作成、E2Eテストシナリオ解説＋独立検証、動作確認(デモ)、PRレビュー対応、PRマージ、Conventional Commits、PRセルフレビュー、品質ゲートチェック、保証台帳の監査、設計判断記録(ADR)の作成 |
 | フック (1) | Write/Edit後の自動フォーマット |
 | ワークフロー定義 (1) | ブランチ戦略 |
 
@@ -122,6 +122,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 |--------|--------|------|
 | `/commit` | `/commit` | Conventional Commits形式でコミット |
 | `/init-project` | `/init-project` | プロジェクトを分析してCLAUDE.mdを自動生成 |
+| `/create-adr` | `/create-adr [テーマ]` / `/create-adr promote <機能仕様パス\|ディレクトリ...>` | 恒常的な設計決定を ADR(`docs/adr/NNNN-slug.md`)として記録。`promote` は退役する機能仕様から ADR 昇格の要否を判定するモードで、ファイル・ディレクトリを**複数指定**でき、ディレクトリ直下の `*.md` を一括判定する（例: `/create-adr promote docs/features/`）。定常フローに必須ではないオンデマンドスキル |
 
 ---
 
@@ -131,7 +132,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 ### 戦略・ワークフロー
 
-- [AI駆動開発戦略](docs/ai-driven-development-strategy.md) — 開発サイクル、レビュー優先順位、品質保証・テスト戦略、クリティカル箇所の定義、開発フェーズ（SDD期/GDD期）とドキュメントライフサイクル
+- [AI駆動開発戦略](docs/ai-driven-development-strategy.md) — 開発サイクル、レビュー優先順位、品質保証・テスト戦略、クリティカル箇所の定義、設計判断記録（ADR）の規約、開発フェーズ（SDD期/GDD期）とドキュメントライフサイクル
 - [ブランチ戦略](docs/branching-strategy.md) — GitHub Flow、Conventional Commits、マージ規約
 
 ### ガイド

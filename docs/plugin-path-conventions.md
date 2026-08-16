@@ -2,7 +2,7 @@
 
 本プラグイン（`skills/` `agents/` `scripts/`）は配布先プロジェクトにインストールされて動く。プラグイン自身のファイル（スクリプト・テンプレート・参照ドキュメント）への参照は、**導入先プロジェクトのファイルと混同されない形**で解決しなければならない。cwd 起点の裸の相対パス（例: `scripts/foo.sh`）は、導入先プロジェクトに同名のディレクトリ・ファイルが存在する場合に誤読・実行不能を起こす。
 
-本文書はパス参照メカニズムごとの規約を1箇所に集約する正本。`scripts/README.md` は scripts/ 配下の実装規約（jq前提・出力規約・テスト方針等）のみを扱い、プラグイン内ファイル参照のパス解決はここを参照する。Bash 実行のランチャー（`claude-harness-run`）については、規約は本文書 (a)、**ランチャー自身の契約・セットアップ手順・permission マッチャの実測記録は `docs/script-launcher.md`** が正本。Dynamic Workflow は全廃済み（Issue #106）。Workflow ランタイムに関する実機検証記録は `docs/adr/2026-08-01-dynamic-workflow-historical-record.md` に移設済み（Issue #126）。
+本文書はパス参照メカニズムごとの規約を1箇所に集約する正本。`scripts/README.md` は scripts/ 配下の実装規約（jq前提・出力規約・テスト方針等）のみを扱い、プラグイン内ファイル参照のパス解決はここを参照する。Bash 実行のランチャー（`claude-harness-run`）については、規約は本文書 (a)、**ランチャー自身の契約・セットアップ手順・permission マッチャの実測記録は `docs/script-launcher.md`** が正本。Dynamic Workflow は全廃済み（Issue #106）。Workflow ランタイムに関する実機検証記録は `docs/adr/archive-2026-08-01-dynamic-workflow-historical-record.md` に移設済み（Issue #126。ファイル名の `archive-` 接頭辞は、意思決定記録ではない記録を ADR の採番対象から外すための規約。正本は `docs/ai-driven-development-strategy.md` 4.3）。
 
 ## `${CLAUDE_PLUGIN_ROOT}` の位置づけ（重要）
 
