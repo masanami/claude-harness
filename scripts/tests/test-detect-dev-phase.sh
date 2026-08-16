@@ -74,6 +74,10 @@ assert_scan "太字なし・全角コロンも許容" "gdd" "declared_gdd" \
   "$(printf '## 開発フェーズ\n\n- フェーズ：GDD期\n')"
 assert_scan "値がバッククォート囲みでも許容" "sdd" "declared_sdd" \
   "$(printf '## 開発フェーズ\n\n- **フェーズ**: `SDD期`\n')"
+assert_scan "装飾が入れ子でも許容（バッククォートの内側に太字）" "gdd" "declared_gdd" \
+  "$(printf '## 開発フェーズ\n\n- **フェーズ**: `**GDD期**`\n')"
+assert_scan "装飾が入れ子でも許容（太字の内側にバッククォート）" "gdd" "declared_gdd" \
+  "$(printf '## 開発フェーズ\n\n- **フェーズ**: **`GDD期`**\n')"
 assert_scan "宣言の後に別セクションが続いても判定できる" "gdd" "declared_gdd" \
   "$(printf '# プロジェクト\n\n## 開発フェーズ\n\n- **フェーズ**: GDD期\n\n## テスト方針\n\n- テストを書く\n')"
 
@@ -104,6 +108,14 @@ assert_scan "~~~ フェンスも対象" "sdd" "no_phase_section" \
   "$(printf '# プロジェクト\n\n~~~\n## 開発フェーズ\n\n- **フェーズ**: GDD期\n~~~\n')"
 assert_scan "フェンス内のフェーズ行だけを除外し宣言は有効に保つ" "gdd" "declared_gdd" \
   "$(printf '## 開発フェーズ\n\n- **フェーズ**: GDD期\n\n```\n- **フェーズ**: SDD期\n```\n')"
+assert_scan "4個フェンスの内側の3個バッククォートでは閉じない（宣言なし扱いを維持）" "sdd" "no_phase_section" \
+  "$(printf '# プロジェクト\n\n````markdown\n```\n## 開発フェーズ\n\n- **フェーズ**: GDD期\n```\n````\n')"
+assert_scan "情報文字列付きの行は閉じフェンスにならない" "sdd" "no_phase_section" \
+  "$(printf '# プロジェクト\n\n```markdown\n```text\n## 開発フェーズ\n\n- **フェーズ**: GDD期\n```\n')"
+assert_scan "3個フェンスは4個の行でも閉じられる（開始以上の長さ）" "gdd" "declared_gdd" \
+  "$(printf '# プロジェクト\n\n```\n- **フェーズ**: SDD期\n````\n\n## 開発フェーズ\n\n- **フェーズ**: GDD期\n')"
+assert_scan "異なる記号の行ではフェンスを閉じない" "sdd" "no_phase_section" \
+  "$(printf '# プロジェクト\n\n```\n~~~\n## 開発フェーズ\n\n- **フェーズ**: GDD期\n```\n')"
 
 echo "=== test: CRLF 改行でも判定できる ==="
 assert_scan "CRLF の CLAUDE.md" "gdd" "declared_gdd" \
@@ -113,6 +125,8 @@ echo "=== test: dev_phase_trim（値の正規化） ==="
 assert_eq "前後の空白を除去" "GDD期" "$(dev_phase_trim "  GDD期  ")"
 assert_eq "太字装飾を除去" "GDD期" "$(dev_phase_trim "**GDD期**")"
 assert_eq "バッククォートを除去" "GDD期" "$(dev_phase_trim '`GDD期`')"
+assert_eq "入れ子の装飾を除去順に依存せず除去（バッククォート→太字）" "GDD期" "$(dev_phase_trim '`**GDD期**`')"
+assert_eq "入れ子の装飾を除去順に依存せず除去（太字→バッククォート）" "GDD期" "$(dev_phase_trim '**`GDD期`**')"
 
 echo "=== test: CLI（cwd の CLAUDE.md を判定する） ==="
 GDD_DIR="${TMP_ROOT}/gdd-project"

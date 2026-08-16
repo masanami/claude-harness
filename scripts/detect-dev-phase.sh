@@ -30,24 +30,28 @@ DETECT_DEV_PHASE_VALUE_GDD="GDD期"
 
 # 正規表現は変数へ入れてから `=~` の右辺に置く（バッククォートを含むパターンを
 # [[ ]] へ直接書くとコマンド置換として解釈される余地があるため）。
-DETECT_DEV_PHASE_FENCE_RE='^[[:space:]]{0,3}(```+|~~~+)'
+# フェンス行。開始記号の連なり（3個以上）と、その後ろの情報文字列を捕捉する。
+DETECT_DEV_PHASE_FENCE_RE='^[[:space:]]{0,3}(`{3,}|~{3,})[[:space:]]*(.*)$'
 DETECT_DEV_PHASE_ANY_HEADING_RE='^#{1,6}[[:space:]]'
 # 「- **フェーズ**: GDD期」の行。太字の有無・全角コロンは許容し、値は後段で正規化する。
 DETECT_DEV_PHASE_FIELD_RE='^[[:space:]]*[-*][[:space:]]+\*{0,2}フェーズ\*{0,2}[[:space:]]*(:|：)[[:space:]]*(.+)$'
 
 # 前後の空白・囲みの装飾（`**` / バッククォート）を除去する。
+# 装飾は入れ子になりうる（`` `**GDD期**` `` / `` **`GDD期`** ``）ため、除去順に依存させず
+# 値が変化しなくなるまで反復する。
 dev_phase_trim() {
   local value="$1"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  while [ ${#value} -ge 4 ] && [[ "$value" == '**'*'**' ]]; do
-    value="${value:2:${#value}-4}"
+  local previous=""
+  while [ "$value" != "$previous" ]; do
+    previous="$value"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [ ${#value} -ge 4 ] && [[ "$value" == '**'*'**' ]]; then
+      value="${value:2:${#value}-4}"
+    elif [ ${#value} -ge 2 ] && [[ "$value" == '`'*'`' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
   done
-  while [ ${#value} -ge 2 ] && [[ "$value" == '`'*'`' ]]; do
-    value="${value:1:${#value}-2}"
-  done
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "$value"
 }
 
@@ -61,8 +65,9 @@ detect_dev_phase_scan() {
   body="${body//$'\r'/}"
 
   local line
-  local marker
+  local marker_run marker fence_info
   local fence_marker=""
+  local fence_len=0
   local heading_level2=0
   local heading_other_level=0
   local in_section="false"
@@ -70,13 +75,20 @@ detect_dev_phase_scan() {
   local heading_re="^(#{1,6})[[:space:]]+${DETECT_DEV_PHASE_HEADING}[[:space:]]*$"
 
   while IFS= read -r line; do
-    # コードフェンス（``` / ~~~）の内側は判定対象外
+    # コードフェンス（``` / ~~~）の内側は判定対象外。
+    # 閉じフェンスは「同じ記号・開始フェンス以上の長さ・情報文字列なし」の行だけとする
+    # （4個のフェンス内に現れる3個のバッククォートで閉じてしまい、以降の本文を
+    #   判定対象に戻してしまうのを防ぐ）。
     if [[ "$line" =~ $DETECT_DEV_PHASE_FENCE_RE ]]; then
-      marker="${BASH_REMATCH[1]:0:1}"
+      marker_run="${BASH_REMATCH[1]}"
+      fence_info="${BASH_REMATCH[2]}"
+      marker="${marker_run:0:1}"
       if [ -z "$fence_marker" ]; then
         fence_marker="$marker"
-      elif [ "$fence_marker" = "$marker" ]; then
+        fence_len="${#marker_run}"
+      elif [ "$fence_marker" = "$marker" ] && [ "${#marker_run}" -ge "$fence_len" ] && [ -z "$fence_info" ]; then
         fence_marker=""
+        fence_len=0
       fi
       continue
     fi
