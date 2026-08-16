@@ -38,11 +38,19 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 
 まず台帳を読み、保証の一覧（`guarantee_id` / 約束文 / テスト参照）を取り出す。ここで得られるテスト参照の集合が、Step D4 の突き合わせの基準にもなる。
 
+**台帳を最後まで読み切り、全エントリを解析できたことを検証する**（SKILL.md「共通規約」の**部分成功の扱い**を適用する。参照集合の不完全さは Step D4 で**誤検出**を生むため、部分的な読み取りは `partial` ではなく `not_analyzed` として扱う）:
+
+- ファイルを**末尾まで**読む（オフセット・行数制限で途中までしか読んでいない状態のまま先へ進まない）。
+- 保証節内の `###` 見出しを**1件残らず**解析し、それぞれから `{guarantee_id, 約束文, テスト参照}` を取り出す。
+- **`index.counts` を取得できている場合は突き合わせる**: 自分が取り出した保証の件数が `index.counts.guarantees` と、テスト参照の件数が `index.counts.refs` と一致することを確認する。**一致しなければ自分の解析が不完全**であり `not_analyzed` とする（同じ台帳を独立した2経路で数え、食い違いを検出する）。`index.counts` が `null`（Step D2 が失敗）の場合は、上2つの自己検証だけで判断する。
+- 「解析はできたが**テスト参照を持たない**保証」は解析失敗ではない（台帳側の欠陥であり Step D2 が `missing_test_ref` として検出する）。参照集合に寄与しないだけで、`analyzed` を維持する。
+
 **読み取りの成否で扱いを分ける**（「読めなかった」を「0件だった」と同一視しない）:
 
-- **読み取りに失敗した場合**（ファイルを読めない・`## 保証` 節が無い・書式が崩れていて保証を1件も取り出せない）: 意味整合を `semantic.status: "not_analyzed"` として報告し、**fan-out を行わない**。`checked` は `null` とし、**`checked: 0`（＝0件を検証した）と書かない**。`human_review_required` に `kind: "ledger_unreadable"` / `step: "D3"` を積む。この場合 **Step D4 も `not_analyzed`** になる（Step D2 の分岐表）。
+- **読み取りに失敗した場合**（ファイルを読めない・`## 保証` 節が無い・**1件でも解析できないエントリがある**・上記の件数突き合わせが一致しない）: 意味整合を `semantic.status: "not_analyzed"` として報告し、**fan-out を行わない**。`checked` は `null` とし、**`checked: 0`（＝0件を検証した）と書かない**。`human_review_required` に `kind: "ledger_unreadable"` / `step: "D3"` を積み、**どのエントリで解析が止まったか**を `detail` に書く。この場合 **Step D4 も `not_analyzed`** になる（Step D2 の分岐表）。
+  - **台帳の先頭だけ読めて後半で解析に失敗した場合も、ここに該当する**。部分的な参照集合を Step D4 へ渡すと、**台帳に登録済みのテストを「未登録」＝ GAP 候補として誤報する**（登録されているのに参照集合から漏れているだけ）。「1件も取り出せなかった場合」ではなく「**全件を取り出せた場合以外**」が `not_analyzed` である。
 - **台帳の書式は正しく、保証が0件だった場合**: `semantic.status: "analyzed"` / `checked: 0` とする（「台帳に保証が1件も登録されていない」ことを**検査した結果**として報告する。未解析と区別する）。
-- **保証を取り出せた場合**: 以下の fan-out に進む。
+- **全件を取り出せた場合**: 以下の fan-out に進む。
 
 取り出せた保証を**10件ずつ**のチャンクに分けて `subagent_type: 'claude-harness:guarantee-auditor'` を並列 spawn する。
 
@@ -61,6 +69,8 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 ```text
 { guarantee_id, verdict: "verification_failed", evidence: "guarantee-auditor agent failed" }
 ```
+
+**集約の扱い**（共通規約の部分成功の扱い）: `semantic.total` に対象とした保証の件数、`checked` に**判定が返った件数**を入れ、`checked + failed の件数 = total` が成り立つことを確認する。`failed` が空なら `semantic.status: "analyzed"`、**1件でもあれば `"partial"`** とする（検証できなかった保証があるだけで、返ってきた判定自体は有効なため `not_analyzed` にはしない）。`partial` のとき、意味整合の結果を**網羅的な検査結果として提示しない**（未検証の保証が残っている旨をサマリーに明記する）。
 
 索引が壊れている保証（Step D2 の `broken` に `test_file_not_found` / `test_name_not_found` で挙がっているもの）も**意味検証の対象から外さない**（参照が複数あり一部だけ壊れている場合があるため）。ただし `evidence` に索引側の問題も併記する。
 
@@ -83,10 +93,15 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
    - 無指定時: 列挙結果の全件を対象にする。
    - `list-test-files` が**非0終了した場合、または stdout が JSON としてパースできない場合**も同様に `not_analyzed` とし、`human_review_required` に `kind: "enumeration_error"` / `step: "D4"` を積んで GAP 候補を生成しない。
    - `status` が `no_test_files_found` の場合は、列挙規則がプロジェクトのレイアウトに合っていない可能性を疑い、bootstrap モードの Step B2 と同じくオプション補正を検討する。補正しても0件なら、それは**正常に列挙した結果の0件**として扱ってよい。
+   - **`counts.skipped` が0でない場合、列挙は不完全である**（パスにタブ・改行を含むファイルが列挙対象から外れている）。`reverse_check.status` を `partial` とし、`human_review_required` に `kind: "enumeration_error"` / `step: "D4"` と skipped 件数を積む（列挙から漏れたファイルの中に未登録の公開面がありうるため、「GAP 候補0件＝漏れなし」と読ませない）。
    - **`--scope` は対象ファイルの絞り込みにだけ使う**。対象になったファイルの中では、どのテストを見るかを絞らない（全テストケースを突き合わせる）。
 2. 対象ファイル**全件**について `guarantee-auditor`（`mode: extract`）を走らせ、各テストケースの `test_ref` を得る。**「台帳から1件も参照されていないファイル」だけに事前に絞り込まないこと**（**理由**: 同一ファイル内に登録済みのテストと未登録のテストが混在する場合、ファイル単位で絞ると未登録のテストを丸ごと取りこぼす。例えば `tests/foo.test.ts::test_a` が台帳にあり `tests/foo.test.ts::test_b` が無いとき、ファイル単位の絞り込みでは `test_b` の公開面が永久に検出されない。どのテストが未登録かはファイルの中身を見るまで分からないため、対象ファイルは一律に抽出へ掛ける）。
    - プロンプトの構成（`mode: extract` / `testFiles` / 返却形式）と抽出結果の仕分けは **bootstrap モードの Step B3 と同一**であり、チャンク分割・完全性 join は SKILL.md の「共通規約」に従う。
-   - **抽出に失敗したファイル**（完全性 join で `extraction_failed` になったもの・`unreadable` として返されたもの）は、**そのファイルのテストを1件も突き合わせていない**。`reverse_check.extraction_failed` に積み、`human_review_required` に `kind: "extraction_failed"` / `step: "D4"` として登録する（「GAP 候補0件」に紛れ込ませない。未登録の公開面が残っている可能性がある）。
+   - **`files[].status` を1件ずつ確認する**（`analyzed` / `indeterminate` / `unreadable`）。**`behaviors` が空であることを「そのファイルにテストが無い」と解釈してはならない** — 判断できるのは `status` だけである:
+     - `analyzed` → 振る舞い0件でも**解析済み**として扱う（突き合わせ対象に含める）。
+     - `indeterminate` / `unreadable` → **そのファイルのテストを突き合わせていない**。`reverse_check.extraction_failed` に `{path, status, reason}` として積み、`human_review_required` に `kind: "extraction_failed"` / `step: "D4"` を登録する。
+     - 完全性 join で結果が返らなかったファイル（`files` に現れないもの）も同様に `extraction_failed` として扱う。
+   - **`extraction_failed` が1件でもあれば `reverse_check.status` は `partial`**（見つかった GAP 候補は有効だが、網羅ではない）。全件 `analyzed` のときだけ `analyzed` とする。
    - 全件抽出になるため fan-out のコストは対象ファイル数に比例する。範囲を絞りたい場合は `--scope` を使う（drift は定期実行・昇格前を想定した低頻度の監査であり、取りこぼしの回避をコストより優先する）。
 3. Step D3 で台帳から読み取ったテスト参照の全件を参照集合とし、手順2で得た `test_ref` を**1件ずつ**突き合わせる。参照集合に無い `test_ref` を「**未登録テスト**」とし、`surface` で仕分ける:
    - `public` → **GAP 候補**として報告する
@@ -118,8 +133,8 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
     "counts": { "guarantees": 12, "refs": 15, "gaps": 3, "broken": 0 },
     "broken": []
   },
-  "semantic": { "status": "analyzed|not_analyzed", "checked": 12, "drifted": [], "uncertain": [], "failed": [] },
-  "reverse_check": { "status": "analyzed|not_analyzed", "files_checked": 40, "extraction_failed": [] },
+  "semantic": { "status": "analyzed|partial|not_analyzed", "total": 12, "checked": 12, "drifted": [], "uncertain": [], "failed": [] },
+  "reverse_check": { "status": "analyzed|partial|not_analyzed", "files_total": 40, "files_checked": 40, "extraction_failed": [] },
   "gap_candidates": [{ "test_ref": "...", "behavior_ja": "...", "rationale": "..." }],
   "human_review_required": [{ "kind": "...", "step": "D2|D3|D4", "detail": "..." }]
 }
@@ -134,13 +149,16 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 | `ledger` / `base` / `counts` | スクリプトの出力をそのまま。**exit 2 では stdout が空のため取得できない。その場合は `null` にする**（`counts` を 0 で埋めない） |
 | `broken` | 検出した壊れた索引の一覧。**`error` が非 null のときの空配列は「問題なし」を意味しない**（検査自体が走っていない） |
 
-各ステップの `status` と、それが `not_analyzed` になる条件:
+各ステップの `status`（値の意味は SKILL.md「共通規約」の**部分成功の扱い**に従う）:
 
-| フィールド | `not_analyzed` になる条件 | そのとき満たすこと |
-|---|---|---|
-| `index.error`（非 null） | 索引検査を実行できない（Step D2） | `human_review_required` に `kind: "index_error"` |
-| `semantic.status` | 台帳を読めない・保証を取り出せない（Step D3） | `checked` は `null`（`0` にしない）。`kind: "ledger_unreadable"` |
-| `reverse_check.status` | 上流が未解析／`--scope` の git エラー／列挙エラー（Step D4） | `gap_candidates` は空のまま。`kind` は `not_analyzed` / `scope_error` / `enumeration_error` のいずれか |
+| フィールド | `analyzed`（全件成功） | `partial`（一部だけ成功・**検出漏れ**） | `not_analyzed`（結果を出さない・**誤検出**を防ぐ） |
+|---|---|---|---|
+| `index.error`（非 null が未解析） | 索引検査が完了（`pass` / `fail`） | — | 索引検査を実行できない（Step D2）。`kind: "index_error"` |
+| `semantic.status` | 全保証の判定が返った（`checked == total`） | 一部の保証で判定が返らなかった（`failed` が非空） | 台帳を読めない・**全件を取り出せない**（Step D3）。`checked` は `null`（`0` にしない）。`kind: "ledger_unreadable"` |
+| `reverse_check.status` | 全対象ファイルが `analyzed`（`files_checked == files_total`） | `extraction_failed` が非空、または列挙の `skipped` が非0 | 上流が未解析／`--scope` の git エラー／列挙エラー（Step D4）。`gap_candidates` は空のまま。`kind` は `not_analyzed` / `scope_error` / `enumeration_error` |
+
+- **`partial` の集約値は「下限」であり、網羅的な検査結果ではない**。件数・一覧をそのまま「検査した結果」として提示せず、未処理分が残っている旨を必ず添える。
+- `semantic` は `checked + failed の件数 = total`、`reverse_check` は `files_checked + extraction_failed の件数 = files_total` が成り立つこと（成り立たない場合は突き合わせに漏れがある）。
 
 上の骨格で空配列として示した各要素の形（人間向けサマリーの表がそのまま参照する）:
 
@@ -148,7 +166,7 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 |---|---|---|
 | `index.broken` | `{guarantee_id, ref, reason}` | `guarantee-index-check` の出力仕様（Step D2 に記載の spec） |
 | `semantic.drifted` / `uncertain` / `failed` | `{guarantee_id, verdict, evidence}` | Step D3 の返却形式 |
-| `reverse_check.extraction_failed` | `{path, reason}` | Step D4 の完全性 join |
+| `reverse_check.extraction_failed` | `{path, status, reason}`（`status` は `indeterminate` / `unreadable` / `extraction_failed`） | Step D4 の完全性 join |
 | `gap_candidates` | `{test_ref, behavior_ja, rationale}` | 上の骨格に記載 |
 
 - `gap_candidates` は **`reverse_check.status` が `analyzed` のときだけ意味を持つ**。`not_analyzed` のときの空配列を「GAP 候補なし」と読ませない。
@@ -174,7 +192,7 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 
 ### 意味整合
 
-{semantic.status === 'not_analyzed' ? '⚠️ 未解析（台帳から保証の一覧を取り出せませんでした。要人間対応）' : `${semantic.checked} 件を検証`}
+{semantic.status === 'not_analyzed' ? '⚠️ 未解析（台帳から保証の一覧を全件は取り出せませんでした。要人間対応）' : semantic.status === 'partial' ? `⚠️ 部分的（対象 ${semantic.total} 件のうち ${semantic.checked} 件を検証。残り ${semantic.total - semantic.checked} 件は未検証。網羅的な結果ではありません）` : `${semantic.checked} 件すべてを検証`}
 
 | 保証ID | 判定 | 根拠 |
 |---|---|---|
@@ -184,7 +202,7 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 
 ### GAP 候補（台帳に無い公開面テスト）
 
-{reverse_check.status === 'not_analyzed' ? '⚠️ 未解析（逆方向チェックを実行できませんでした。要人間対応）' : `対象 ${reverse_check.files_checked} ファイルを突き合わせ`}
+{reverse_check.status === 'not_analyzed' ? '⚠️ 未解析（逆方向チェックを実行できませんでした。要人間対応）' : reverse_check.status === 'partial' ? `⚠️ 部分的（対象 ${reverse_check.files_total} ファイル中 ${reverse_check.files_checked} ファイルを突き合わせ。下記は網羅ではなく下限です）` : `対象 ${reverse_check.files_checked} ファイルすべてを突き合わせ`}
 
 | テスト参照 | 振る舞い |
 |---|---|
@@ -198,9 +216,9 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 ### 総合
 
 - 索引ドリフト: {index.error ? "未解析" : `${index.broken の件数} 件`}
-- 意味ドリフト: {semantic.status === 'not_analyzed' ? "未解析" : `${drifted の件数} 件`}
+- 意味ドリフト: {semantic.status === 'not_analyzed' ? "未解析" : `${drifted の件数} 件${semantic.status === 'partial' ? "（未検証 " + (semantic.total - semantic.checked) + " 件あり・下限）" : ""}`}
 - 検証失敗: {semantic.status === 'not_analyzed' ? "未解析" : `${failed の件数} 件`}（**握りつぶしていません。上表を参照してください**）
-- GAP 候補: {reverse_check.status === 'not_analyzed' ? "未解析" : `${gap_candidates の件数} 件`}
+- GAP 候補: {reverse_check.status === 'not_analyzed' ? "未解析" : `${gap_candidates の件数} 件${reverse_check.status === 'partial' ? "（下限。未突き合わせのファイルあり）" : ""}`}
 - 抽出できなかったファイル: {reverse_check.extraction_failed の件数} 件（この分は突き合わせていません）
 
 **本監査は検出のみです。修正は行っていません。** 検出された項目は Issue を起こし、通常の実装フロー（保証の変更を伴う場合は宣言元 Issue の保証節の更新と再裁可）で対応してください。
@@ -208,4 +226,4 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 
 `drifted` / `uncertain` / `verification_failed` が1件でもあれば、サマリー冒頭に**要対応**である旨を明示する。
 
-**「0件」と「未解析」を書き分けること**（本モード全体で守る規律）: 検査を実施して問題が無かった項目は「0件」、実施できなかった項目は「未解析」と書く。**未解析の項目を 0件・pass・空表として出さない**。`human_review_required` が非空の場合は、サマリー冒頭にも**未解析の項目がある**旨を明示し、この監査結果が網羅的でないことを読み手に分かるようにする。
+**「0件」「部分的」「未解析」を書き分けること**（本モード全体で守る規律。根拠は SKILL.md「共通規約」の部分成功の扱い）: 全件を検査して問題が無かった項目は「0件」、一部しか検査できなかった項目は「**下限**」であることを添え、実施できなかった項目は「未解析」と書く。**未解析・部分的な項目を、0件・pass・完全な一覧として出さない**。`human_review_required` が非空の場合は、サマリー冒頭にも**未解析・未処理の項目がある**旨を明示し、この監査結果が網羅的でないことを読み手に分かるようにする。
