@@ -1,7 +1,7 @@
 # 保証駆動開発（GDD）導入設計ドラフト
 
 > Refs: Issue #152（保証駆動開発の導入検討）
-> **ステータス: 採用決定済み（2026-08-15・人間判断）／段階実装中**。P1（フェーズ宣言規約・保証台帳フォーマット・`detect-dev-phase.sh`・init-project / define-feature 対応。§6 の P1・Issue #156）は実装済み。P2 以降は未着手。
+> **ステータス: 採用決定済み（2026-08-15・人間判断）／段階実装中**。P1（フェーズ宣言規約・保証台帳フォーマット・`detect-dev-phase.sh`・init-project / define-feature 対応。§6 の P1・Issue #156）と P2（`/guarantee-audit` の bootstrap / drift・`guarantee-auditor`・`guarantee-index-check.sh` / `list-test-files.sh`。§6 の P2・Issue #157）は実装済み。P3 以降は未着手。
 > **規約の正本は `docs/ai-driven-development-strategy.md`「5. 開発フェーズとドキュメントライフサイクル」へ移管済み**（フェーズ宣言の書式・保証台帳の書式・切り替え判断・退役手順・フェーズ判定の共通文言）。本ドキュメントは**ロールアウト計画（§6）と設計判断の記録（§7）**として残す。両者が食い違った場合は戦略ドキュメント側が正。
 > 本文中の「D-n」は本ドラフトで置いた設計判断（意思決定）、「A-n」は検証していない明示的な仮定を指す。一覧は末尾 §7 参照。
 

@@ -114,6 +114,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 | `/demo-e2e` | `/demo-e2e [カタログCSV/CASE_ID/specファイル/画面名]` | E2Eテストケースカタログと突き合わせ、1ケースごとに解説→実演（Headed Playwright）→人間判定を繰り返す |
 | `/quality-check` | `/quality-check` | lint + typecheck + test の一括実行（機械可読な結果） |
 | `/self-review` | `/self-review` | コード変更のセルフレビュー |
+| `/guarantee-audit` | `/guarantee-audit <bootstrap\|drift>` | 保証台帳（GDD期）の監査。既存テストから台帳ドラフトを生成、または台帳と実態の乖離を検出（報告のみ・修正しない） |
 
 ### ユーティリティ
 
