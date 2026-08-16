@@ -52,7 +52,7 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 - **台帳の書式は正しく、保証が0件だった場合**: `semantic.status: "analyzed"` / `checked: 0` とする（「台帳に保証が1件も登録されていない」ことを**検査した結果**として報告する。未解析と区別する）。
 - **全件を取り出せた場合**: 以下の fan-out に進む。
 
-取り出せた保証を**10件ずつ**のチャンクに分けて `subagent_type: 'claude-harness:guarantee-auditor'` を並列 spawn する。
+取り出せた保証を**10件ずつ**のチャンクに分けて `subagent_type: 'claude-harness:guarantee-auditor'` を並列 spawn する（チャンク分割・データブロックの分離・完全性 join の規約は SKILL.md の「共通規約」に従う）。
 
 プロンプトに含めるもの:
 
@@ -94,14 +94,16 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
    - `list-test-files` が**非0終了した場合、または stdout が JSON としてパースできない場合**も同様に `not_analyzed` とし、`human_review_required` に `kind: "enumeration_error"` / `step: "D4"` を積んで GAP 候補を生成しない。
    - `status` が `no_test_files_found` の場合は、列挙規則がプロジェクトのレイアウトに合っていない可能性を疑い、bootstrap モードの Step B2 と同じくオプション補正を検討する。補正しても0件なら、それは**正常に列挙した結果の0件**として扱ってよい。
    - **`counts.skipped` が0でない場合、列挙は不完全である**（パスにタブ・改行を含むファイルが列挙対象から外れている）。`reverse_check.status` を `partial` とし、`human_review_required` に `kind: "enumeration_error"` / `step: "D4"` と skipped 件数を積む（列挙から漏れたファイルの中に未登録の公開面がありうるため、「GAP 候補0件＝漏れなし」と読ませない）。
+   - **台帳との突き合わせによる健全性チェック**: `--scope` 無指定（全量）なのに列挙結果が0件で、かつ **Step D3 の参照集合が非空**の場合、台帳はテストを参照しているのに列挙側は1件も見つけていないことになる（＝列挙規則がプロジェクトに合っていない）。この矛盾を「対象0件」として通さず、`not_analyzed` とし `kind: "enumeration_error"` を積む（独立した2経路の食い違いは、どちらかが壊れている兆候として扱う）。
    - **`--scope` は対象ファイルの絞り込みにだけ使う**。対象になったファイルの中では、どのテストを見るかを絞らない（全テストケースを突き合わせる）。
 2. 対象ファイル**全件**について `guarantee-auditor`（`mode: extract`）を走らせ、各テストケースの `test_ref` を得る。**「台帳から1件も参照されていないファイル」だけに事前に絞り込まないこと**（**理由**: 同一ファイル内に登録済みのテストと未登録のテストが混在する場合、ファイル単位で絞ると未登録のテストを丸ごと取りこぼす。例えば `tests/foo.test.ts::test_a` が台帳にあり `tests/foo.test.ts::test_b` が無いとき、ファイル単位の絞り込みでは `test_b` の公開面が永久に検出されない。どのテストが未登録かはファイルの中身を見るまで分からないため、対象ファイルは一律に抽出へ掛ける）。
-   - プロンプトの構成（`mode: extract` / `testFiles` / 返却形式）と抽出結果の仕分けは **bootstrap モードの Step B3 と同一**であり、チャンク分割・完全性 join は SKILL.md の「共通規約」に従う。
+   - プロンプトの構成（`mode: extract` / `testFiles` / 返却形式）と抽出結果の仕分けは **bootstrap モードの Step B3 と同一**であり、チャンク分割・データブロックの分離・完全性 join は SKILL.md の「共通規約」に従う。
    - **`files[].status` を1件ずつ確認する**（`analyzed` / `indeterminate` / `unreadable`）。**`behaviors` が空であることを「そのファイルにテストが無い」と解釈してはならない** — 判断できるのは `status` だけである:
      - `analyzed` → 振る舞い0件でも**解析済み**として扱う（突き合わせ対象に含める）。
      - `indeterminate` / `unreadable` → **そのファイルのテストを突き合わせていない**。`reverse_check.extraction_failed` に `{path, status, reason}` として積み、`human_review_required` に `kind: "extraction_failed"` / `step: "D4"` を登録する。
      - 完全性 join で結果が返らなかったファイル（`files` に現れないもの）も同様に `extraction_failed` として扱う。
    - **`extraction_failed` が1件でもあれば `reverse_check.status` は `partial`**（見つかった GAP 候補は有効だが、網羅ではない）。全件 `analyzed` のときだけ `analyzed` とする。
+   - **ここで `not_analyzed`（結果を出さない）まで倒さない理由**（bootstrap の Step B4 と扱いが逆になるので注意。**この非対称は意図的であり、揃えてはならない**）: 本ステップは**テスト側から列挙して「台帳に載っているか」を問う**ため、抽出できなかったファイルは**単に問われなかった**だけで、誤った GAP 候補にはならない（＝検出漏れに留まる）。一方 bootstrap の Step B4 は**公開面側から列挙して「対応する振る舞いが無いか」を問う否定の判定**であり、抽出の欠落がそのまま「テストが無い」という**誤検出**になる。不完全さが誤検出を生むか検出漏れに留まるかで扱いを分ける、という共通規約の適用結果である。
    - 全件抽出になるため fan-out のコストは対象ファイル数に比例する。範囲を絞りたい場合は `--scope` を使う（drift は定期実行・昇格前を想定した低頻度の監査であり、取りこぼしの回避をコストより優先する）。
 3. Step D3 で台帳から読み取ったテスト参照の全件を参照集合とし、手順2で得た `test_ref` を**1件ずつ**突き合わせる。参照集合に無い `test_ref` を「**未登録テスト**」とし、`surface` で仕分ける:
    - `public` → **GAP 候補**として報告する
