@@ -31,9 +31,11 @@
    rebase + push で PR の状態（CI・`mergeable`・レビュー）が変わるため、**Phase 0-1 の判定結果はここで無効になる**。CI完了を待った上で preflight を再実行し、値を取り直す（`$GATE`/`$BASE` はブランチ構成由来のため不変）:
    ```bash
    gh pr checks "$PR_NUM" --watch
-   PREFLIGHT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-merge-preflight.sh" "$PR_NUM")
+   PREFLIGHT=$(claude-harness-run pr-merge-preflight "$PR_NUM")
    BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")
    ```
+
+   `claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/pr-merge-preflight.sh" "$PR_NUM"` にフォールバックする（パスは引用符で囲む。プラグインルートは `/pr-merge` 起動時の「Base directory for this skill」から解決した絶対パス）。フォールバックした場合はユーザーにランチャー導入を案内すること。
    Phase 4 のマージ実行は、この再実行後の値で判断する（Phase 2 に入る前の古い値を使い回さない）。
 
    `.base` / `.gate` も再取得し、初回値（Phase 0-1 で取得した `$BASE`/`$GATE`）と異なる場合は、値を黙って更新せず**処理を中断して Phase 0-1 からやり直す**（base retarget は稀な操作であり、途中の rebase 前提が崩れているため）。

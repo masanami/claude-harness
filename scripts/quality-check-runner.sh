@@ -38,6 +38,41 @@ compute_result() {
   echo "pass"
 }
 
+# 件数抽出の共通処理。対象行それぞれから1件ずつ抽出して**合算**する。
+# 引数: $1 出力全体 / $2 集計対象行を絞り込む ERE（空文字なら全行が対象） /
+#       $3 1行から件数だけを取り出す sed -nE の式
+# 出力: 合計値。1件も抽出できなければ文字列 "null"（jq --argjson でそのまま null になる）。
+#
+# 最後の1行だけを採用（tail -1）していないのは、npm workspaces や cargo のように
+# **1回の実行で集計行が複数回出力される**場合に実態と乖離するため（実測: 934 tests に
+# 対し最後のワークスペース分の 246 だけを報告していた。Issue #154）。
+# 二重計上の回避は呼び出し側が $2 で集計行を絞り込むことで担保する。
+sum_line_matches() {
+  local output="$1" filter="$2" extract="$3"
+  local lines line value total=""
+
+  if [ -n "$filter" ]; then
+    lines="$(printf '%s\n' "$output" | grep -E "$filter")"
+  else
+    lines="$output"
+  fi
+
+  if [ -n "$lines" ]; then
+    while IFS= read -r line; do
+      value="$(printf '%s\n' "$line" | sed -nE "$extract")"
+      [ -z "$value" ] && continue
+      # 10# を付けて基数10で解釈する（"08" 等の先頭ゼロを8進数と解釈させない）
+      total=$((${total:-0} + 10#$value))
+    done <<<"$lines"
+  fi
+
+  if [ -z "$total" ]; then
+    printf 'null\n'
+  else
+    printf '%s\n' "$total"
+  fi
+}
+
 # lint 出力から errors/warnings 件数を best-effort 抽出する。
 # 対応形式の例: ESLint の "X problems (Y errors, Z warnings)"
 # 抽出できない場合は文字列 "null" を返す（jq --argjson でそのまま null になる）。
@@ -48,23 +83,24 @@ compute_result() {
 # "8" のみを誤って抽出しない）。
 parse_lint_counts() {
   local output="$1"
-  local errors warnings
-  errors="$(printf '%s\n' "$output" | sed -nE 's/.*(^|[^0-9])([0-9]+) errors?.*/\2/p' | tail -1)"
-  warnings="$(printf '%s\n' "$output" | sed -nE 's/.*(^|[^0-9])([0-9]+) warnings?.*/\2/p' | tail -1)"
-  [ -z "$errors" ] && errors="null"
-  [ -z "$warnings" ] && warnings="null"
+  local filter="" errors warnings
+  # ESLint 形式の集計行（"X problems (...)"）が在る場合はその行だけを合算対象にする。
+  # 個別の指摘行を巻き込んで二重計上しないため。無い場合は全行を対象にする。
+  if printf '%s\n' "$output" | grep -qE '[0-9]+ problems?'; then
+    filter='[0-9]+ problems?'
+  fi
+  errors="$(sum_line_matches "$output" "$filter" 's/.*(^|[^0-9])([0-9]+) errors?.*/\2/p')"
+  warnings="$(sum_line_matches "$output" "$filter" 's/.*(^|[^0-9])([0-9]+) warnings?.*/\2/p')"
   printf '%s %s\n' "$errors" "$warnings"
 }
 
 # 型チェック出力から errors 件数を best-effort 抽出する。
 # 対応形式の例: tsc の "Found N error(s)."
 # "Found " の直後は常に非数字（スペース）のため境界ガードは不要。
+# 集計行（"Found N errors"）のみを対象にするため、個別の型エラー行は合算に混ざらない。
 parse_typecheck_errors() {
   local output="$1"
-  local errors
-  errors="$(printf '%s\n' "$output" | sed -nE 's/.*Found ([0-9]+) errors?.*/\1/p' | tail -1)"
-  [ -z "$errors" ] && errors="null"
-  printf '%s\n' "$errors"
+  sum_line_matches "$output" 'Found [0-9]+ errors?' 's/.*Found ([0-9]+) errors?.*/\1/p'
 }
 
 # テスト出力から passed/failed/skipped 件数を best-effort 抽出する。
@@ -73,13 +109,17 @@ parse_typecheck_errors() {
 # 出力: "<passed> <failed> <skipped>"（スペース区切り）
 parse_test_counts() {
   local output="$1"
-  local passed failed skipped
-  passed="$(printf '%s\n' "$output" | sed -nE 's/.*(^|[^0-9])([0-9]+) passed.*/\2/p' | tail -1)"
-  failed="$(printf '%s\n' "$output" | sed -nE 's/.*(^|[^0-9])([0-9]+) failed.*/\2/p' | tail -1)"
-  skipped="$(printf '%s\n' "$output" | sed -nE 's/.*(^|[^0-9])([0-9]+) skipped.*/\2/p' | tail -1)"
-  [ -z "$passed" ] && passed="null"
-  [ -z "$failed" ] && failed="null"
-  [ -z "$skipped" ] && skipped="null"
+  local filter="" passed failed skipped
+  # Jest/Vitest は "Test Suites:"/"Test Files"（スイート数）と "Tests:"（テスト件数）の
+  # 2行を出すため、複数形 "Tests" の集計行が在る場合はその行だけを合算対象にして
+  # スイート数の二重計上を防ぐ。無い場合（pytest・cargo 等）は全行を対象にする。
+  local tests_marker='(^|[^A-Za-z])Tests[[:space:]:]'
+  if printf '%s\n' "$output" | grep -qE "$tests_marker"; then
+    filter="$tests_marker"
+  fi
+  passed="$(sum_line_matches "$output" "$filter" 's/.*(^|[^0-9])([0-9]+) passed.*/\2/p')"
+  failed="$(sum_line_matches "$output" "$filter" 's/.*(^|[^0-9])([0-9]+) failed.*/\2/p')"
+  skipped="$(sum_line_matches "$output" "$filter" 's/.*(^|[^0-9])([0-9]+) skipped.*/\2/p')"
   printf '%s %s %s\n' "$passed" "$failed" "$skipped"
 }
 

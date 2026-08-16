@@ -26,11 +26,11 @@ gh issue view {親Issue番号} --json title,body,number
 
 `scripts/extract-acceptance-criteria.sh {親Issue番号}` で受入基準に安定ID（`AC-1` 等）を振る。この抽出は Step 3-2 の Task 委譲より前に行う。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-acceptance-criteria.sh" {親Issue番号}` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/extract-acceptance-criteria.sh` では呼び出さないこと。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run extract-acceptance-criteria {親Issue番号}` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/extract-acceptance-criteria.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/extract-acceptance-criteria.sh" {親Issue番号}` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/extract-acceptance-criteria.sh" {親Issue番号}
+claude-harness-run extract-acceptance-criteria {親Issue番号}
 ```
 
 出力JSON（`{issue, criteria: [{id, text, checked}], parse_status}`）の `parse_status` が `no_checklist_found` の場合（`create-ticket` 経由でない手書き Issue など）、親Issue本文から受入基準相当の記述を LLM 抽出し、`{id: "AC-1", text, checked: false}` 形式に整形してフォールバックする。この出力（以下 `acceptanceCriteria`）はそのまま Step 3-2・3-3 で使う。

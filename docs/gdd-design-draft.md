@@ -157,7 +157,7 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 | 新エージェント | `agents/guarantee-auditor.md`（tools: Read, Glob, Grep。mode パラメータ `extract` / `verify` で観点を切り替える。spec-critic の focus 方式と同型） |
 | 新スクリプト | `scripts/guarantee-index-check.sh`（§5.5 と共用）、`scripts/list-test-files.sh`（テストファイル列挙。CLAUDE.md/検出規則ベース）、`scripts/detect-dev-phase.sh`（§2.1） |
 
-新スクリプトはいずれもプラグイン配下に置かれるため、SKILL.md 上の呼び出しはすべて `bash "${CLAUDE_PLUGIN_ROOT}/scripts/<名前>.sh"` 形式で記載する（既存の quality-check / promote-verify と同じ規約。正本: `docs/plugin-path-conventions.md`。プロジェクト相対パスでの呼び出しは cwd 依存で別ファイルを実行しうるため禁止）。本ドラフト内のスクリプト名の略記はすべてこの形式を指す。
+新スクリプトはいずれもプラグイン配下に置かれるため、SKILL.md 上の呼び出しはすべて PATH 上のランチャー経由の `claude-harness-run <名前> <引数>` 形式で記載する（既存の quality-check / promote-verify と同じ規約。正本: `docs/plugin-path-conventions.md` (a) と `docs/script-launcher.md`。プロジェクト相対パスでの呼び出しは cwd 依存で別ファイルを実行しうるため禁止。パス・バージョンを含む形は allowlist できないため禁止）。本ドラフト内のスクリプト名の略記はすべてこの形式を指す。
 
 **D-9: bootstrap / drift の2モード構成とする。** どちらも**報告と成果物ドラフト生成まで**で、台帳の正への反映（コミット・マージ）は行わない（裁可は PR レビュー = 既存の人間ゲートに載せる）。
 
@@ -173,7 +173,7 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
 
 ### 4.3 drift モード（台帳と実態の乖離検出）
 
-1. **索引整合（決定的）**: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/guarantee-index-check.sh" docs/guarantees.md` を実行し、壊れたテスト参照を検出する。
+1. **索引整合（決定的）**: `claude-harness-run guarantee-index-check docs/guarantees.md` を実行し、壊れたテスト参照を検出する。
 2. **意味整合（fan-out）**: 台帳の各保証について `guarantee-auditor`（mode: verify）をチャンク分割で並列委譲。約束の文言と参照先テストの実際のアサーション内容を突き合わせ、`{guarantee_id, verdict: "consistent"|"drifted"|"uncertain", evidence}` を返却させる。構造化返却が得られないエージェントの担当分は「検証失敗」として報告に残す（握りつぶさない。promote-verify の完全性 join と同じ規律）。
 3. **逆方向チェック**: `--scope` 指定時は diff 範囲、無指定時は全量で、台帳に無い新しい公開面テストを抽出し GAP 候補として報告する。
 4. **報告**: `{index: {broken}, semantic: {drifted, uncertain, failed}, gap_candidates}` の機械可読 JSON ＋人間向けサマリー。**修正はしない**（修正は Issue 起票→通常フローへ。監査と修正の分離）。

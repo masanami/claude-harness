@@ -146,7 +146,7 @@ Step 6 で作成した機能仕様ドキュメントは、後続の `/create-tic
 
 #### 6.5-1 Lint（決定的チェック）とスナップショット取得
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/spec-lint.sh" <specPath>` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/spec-lint.sh` では呼び出さないこと。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run spec-lint "<specPath>"` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/spec-lint.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/spec-lint.sh" "<specPath>"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 1. Bash で上記コマンドを実行する。`specPath` は Step 6 で保存した機能仕様ドキュメント（`docs/features/{slug}.md`）の絶対パス。標準出力の JSON（`spec_file`, `ambiguous_words`, `template_placeholders`, `broken_references`, `checklist_format_issues`）のフィールド定義の正本はプラグイン配下の `scripts/specs/spec-lint.md`（ここには複製しない。Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/specs/spec-lint.md` として解決する）。取得した JSON はそのまま 6.5-2 の Critique fan-out で使う

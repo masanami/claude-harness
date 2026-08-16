@@ -18,18 +18,24 @@ effort: high
 
 ## 作業規律
 
-- **すべてのコマンドを worktree 起点で実行する**: サブエージェントの Bash は**呼び出しごとに cwd がリセットされる**ため、git / gh / ビルド・テストコマンドは毎回 `cd {worktreeパス} && {コマンド}` の複合形式で実行する。複合コマンドの permission はサブコマンド単位で評価されるため、`cd` と各コマンドの allow が揃っていれば通る（`Bash(cd:*)` は `/init-project` のステップ6 の共通権限に含まれる）。`git -C {path}` 形式は `Bash(git commit:*)` 等の prefix allow にマッチしないため使わない
+- **すべてのコマンドを worktree 起点で実行する**: サブエージェントの Bash は**呼び出しごとに cwd がリセットされる**ため、git / gh / ビルド・テストコマンドは毎回 `cd "{worktreeパス}" && {コマンド}` の複合形式で実行する（パスは引用符で囲む。空白を含む worktree パスでも壊れないため。`Bash(cd:*)` の前方一致はコマンド名までなので、引数側の引用符は allow にマッチしなくなる要因にはならない）。複合コマンドの permission はサブコマンド単位で評価されるため、`cd` と各コマンドの allow が揃っていれば通る（`Bash(cd:*)` は `/init-project` のステップ6 の共通権限に含まれる）。`git -C {path}` 形式は `Bash(git commit:*)` 等の prefix allow にマッチしないため使わない
 - **ファイル操作も worktree 配下に限定する**: Read / Edit / Write / Glob / Grep は worktree の**絶対パス**配下のみを対象とし、メインチェックアウト側のファイルには触れない
 - **依存関係のインストール**: 作業開始時に必要であれば worktree 内で実施する（CLAUDE.md またはパッケージマネージャの構成に従う）
 - **worker 間通信はしない**: 他チケットとの調整が必要になった場合（共有ファイルの衝突等）は、自分で解決しようとせず作業を止めてリードに返す
-- **Phase 4-5 は `feature-implementer` エージェントに委譲する**（Task ツールの `subagent_type` は plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定する。prefix 無しの `feature-implementer` は名称解決エラーになる）。プロンプトには要件チケットの「クリティカル設計決定」セクションに加えて **worktree の絶対パスを必ず含め、すべての作業をその配下で行うよう指示する**（ファイル操作は worktree 絶対パス、Bash は `cd {worktreeパス} && {コマンド}` 形式）
+- **Phase 4-5 は `feature-implementer` エージェントに委譲する**（Task ツールの `subagent_type` は plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定する。prefix 無しの `feature-implementer` は名称解決エラーになる）。プロンプトには要件チケットの「クリティカル設計決定」セクションに加えて **worktree の絶対パスを必ず含め、すべての作業をその配下で行うよう指示する**（ファイル操作は worktree 絶対パス、Bash は `cd "{worktreeパス}" && {コマンド}` 形式）
 
 ## CI確認と loop-until-green（Phase 9）
 
-CI確認は `gh pr checks --watch` ではなく、リードの spawn プロンプトで渡される **`ci-wait.sh` の絶対パス**を使う（スクリプトの所在はプラグイン配下のため、パスは必ずリードから受け取る。自分で解決しようとしない）:
+CI確認は `gh pr checks --watch` ではなく `ci-wait.sh` を使う。実行は PATH 上のランチャー経由で行う（パス・バージョン・引用符を付けない形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）:
 
 ```bash
-cd {worktreeパス} && bash {ci-wait.shの絶対パス} {PR番号}
+cd "{worktreeパス}" && claude-harness-run ci-wait {PR番号}
+```
+
+`claude-harness-run: command not found` になった場合のみ、リードの spawn プロンプトで渡される **`ci-wait.sh` の絶対パス**を使ってフォールバックする（スクリプトの所在はプラグイン配下のため、パスは必ずリードから受け取る。自分で解決しようとしない。パスは引用符で囲む——空白を含む環境でも壊れないため）:
+
+```bash
+cd "{worktreeパス}" && bash "{ci-wait.shの絶対パス}" {PR番号}
 ```
 
 - 出力 JSON の `ci` が `green` → 完了。`none`（checks が1件も無いリポジトリ）も green 相当として扱い、ブロックしない

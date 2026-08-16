@@ -23,12 +23,12 @@ effort: medium
 
 ### 2. プロジェクト自動分析
 
-`${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh [対象ディレクトリ]`（所在は直後の注記を参照）を実行し、プロジェクト情報を検出する。検出規則（ロックファイル→PM対応、技術スタック判定、コマンド優先順位、除外ディレクトリ、設計ドキュメントglob、9軸の定義・判定ルール等）はすべてスクリプト側に実装されており、決定的に判定される。本セクションではスクリプトの入出力契約と、LLM側が担う補完のみを記す。
+`analyze-project.sh [対象ディレクトリ]`（プラグイン配下。実行形は直後の注記を参照）を実行し、プロジェクト情報を検出する。検出規則（ロックファイル→PM対応、技術スタック判定、コマンド優先順位、除外ディレクトリ、設計ドキュメントglob、9軸の定義・判定ルール等）はすべてスクリプト側に実装されており、決定的に判定される。本セクションではスクリプトの入出力契約と、LLM側が担う補完のみを記す。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず `bash "${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh"` の形式（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）を用い、相対パス `scripts/analyze-project.sh` では呼び出さないこと。分析対象ディレクトリ（引数）にはユーザープロジェクトの対象パスを渡す。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run analyze-project` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/analyze-project.sh` では呼び出さないこと。分析対象ディレクトリ（引数）にはユーザープロジェクトの対象パスを渡す。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/analyze-project.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-- 実行例: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh" .`
+- 実行例: `claude-harness-run analyze-project .`
 - stdout に JSON が1個返る。トップレベルの `status` が `"ok"` であることを確認する
 - `status: "error"`（jq不在・対象ディレクトリ不在等）の場合はエラー内容をユーザーに報告し、手動分析へフォールバックするかを確認する
 
@@ -106,20 +106,20 @@ effort: medium
 
 権限の合成（共通権限 ＋ pm別/testFW別/infra別の条件付き権限）と、既存ファイルとの冪等マージは本スキルの `scripts/generate-settings.sh` が決定的に行う。本セクションはこのスクリプトの入出力契約と、deny の設計思想（規律文）のみを記す。
 
-> **スクリプトの所在**: `${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh` を参照すること。
+> **スクリプトの実行形**: `generate-settings.sh` はプラグイン配下（`skills/init-project/scripts/`）にある。実行は PATH 上のランチャー経由で `claude-harness-run skills/init-project/scripts/generate-settings.sh <引数>` を用いる。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/skills/init-project/scripts/generate-settings.sh" <引数>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 
 **実行例**（Step 2 の `analyze-project.sh` 出力をそのまま入力にできる）:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/analyze-project.sh" . > /tmp/analyze-output.json
-bash "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh" \
+claude-harness-run analyze-project . > /tmp/analyze-output.json
+claude-harness-run skills/init-project/scripts/generate-settings.sh \
   --input /tmp/analyze-output.json --target .claude/settings.json
 ```
 
 個別の検出結果を明示的に渡すことも可能（`--test` / `--infra` は複数回指定可）:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh" \
+claude-harness-run skills/init-project/scripts/generate-settings.sh \
   --pm npm --test playwright --infra docker --target .claude/settings.json
 ```
 

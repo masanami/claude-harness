@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+# claude-harness-run
+# claude-harness プラグイン同梱スクリプトを、**パスもバージョンも含まない形**で実行するランチャー。
+#
+#   claude-harness-run quality-check-runner --lint "npm run lint"
+#   claude-harness-run skills/demo/scripts/run-walkthrough.mjs /abs/path/flow.mjs
+#
+# 目的: Claude Code の Bash permission マッチャはワイルドカードがトークン境界でしか効かず、
+# パス中間の `*`（バージョン部分）を解釈しない。呼び出し形からパスとバージョンを消すことで
+# `Bash(claude-harness-run:*)` の一行で allowlist できるようにする。
+#
+# 契約・セットアップ手順・allow パターンの正本は docs/script-launcher.md。
+# 本ファイルは PATH 上へコピー（またはリンク）されて単体で動くため、プラグイン内の
+# 他ファイルを source しない（自己完結）。
+
+set -u
+
+CHR_SELF_NAME="claude-harness-run"
+CHR_PLUGIN_NAME="claude-harness"
+
+# ランチャー自身のエラー終了コード（sysexits 準拠）。
+# 対象スクリプトの終了コードはそのまま透過するため、衝突を避けて高い値を使う。
+CHR_EX_USAGE=64       # 引数不正
+CHR_EX_NOINPUT=66     # 対象スクリプトが見つからない
+CHR_EX_UNAVAILABLE=69 # プラグインルート／実行系（bash・node）を解決できない
+
+chr_err() {
+  printf '%s: %s\n' "$CHR_SELF_NAME" "$*" >&2
+}
+
+chr_usage() {
+  cat >&2 <<EOF
+Usage: ${CHR_SELF_NAME} [--env KEY=VALUE]... <target> [args...]
+       ${CHR_SELF_NAME} --plugin-root
+       ${CHR_SELF_NAME} --list
+       ${CHR_SELF_NAME} --help
+
+  <target>  プラグイン同梱スクリプトの指定。次の2形式を受け付ける:
+              - 短縮名（'/' を含まない）: scripts/<target>.sh に解決される
+                例: quality-check-runner -> scripts/quality-check-runner.sh
+              - プラグインルート相対パス（'/' を含む）: そのまま解決される
+                例: skills/demo/scripts/run-walkthrough.mjs
+            拡張子 .sh は bash、.mjs / .js は node で実行する。
+            絶対パス・'..' を含むパスは受け付けない。
+
+  --env KEY=VALUE  対象スクリプトに環境変数を渡す（0回以上）。
+                   コマンド先頭が ${CHR_SELF_NAME} でなくなる env 前置形
+                   （FOO=bar ${CHR_SELF_NAME} ...）は allowlist にマッチしないため、
+                   環境変数はこのフラグ経由で渡すこと。
+  --plugin-root    解決したプラグインルートの絶対パスを表示して終了
+  --list           実行可能な target 一覧を表示して終了
+  -h, --help       このヘルプを表示して終了
+
+<target> より後ろの引数はすべて対象スクリプトへそのまま渡す。
+cwd は変更しない（呼び出し元の cwd のまま対象スクリプトを実行する）。
+
+プラグインルートの解決順:
+  1. 環境変数 CLAUDE_HARNESS_ROOT（設定されていて不正な場合はエラー終了）
+  2. 自身の配置位置（<dir>/../.claude-plugin/plugin.json が在ればその親をルートとみなす。
+     シンボリックリンクは解決しないため、PATH 上のリンク経由の起動では 3 以降へ進む）
+  3. <config>/plugins/installed_plugins.json の installPath（jq が在る場合。現行版の正本）
+  4. <config>/plugins/cache/*/${CHR_PLUGIN_NAME}/* の最大バージョン（3 が使えない場合の予備）
+  ※ <config> は CLAUDE_CONFIG_DIR、未設定なら \$HOME/.claude
+EOF
+}
+
+# 指定ディレクトリがプラグインルートか判定する。
+chr_is_plugin_root() {
+  [ -n "${1:-}" ] && [ -f "${1}/.claude-plugin/plugin.json" ]
+}
+
+chr_config_dir() {
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    printf '%s\n' "$CLAUDE_CONFIG_DIR"
+  else
+    printf '%s\n' "${HOME:-}/.claude"
+  fi
+}
+
+# stdin: "<version>\t<path>" の行群。stdout: 最大バージョンの path。
+# sort -V は BSD sort で可搬性が無いため、'.' 区切りの数値ソートで代用する
+# （"3.10.0" > "3.9.0" を正しく判定できる。プレリリース接尾辞は数値部までで比較）。
+chr_pick_latest_path() {
+  sort -t. -k1,1n -k2,2n -k3,3n | tail -1 | cut -f2-
+}
+
+# installed_plugins.json から "<version>\t<installPath>" を列挙する（jq 必須）。
+chr_entries_from_installed_json() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -r --arg name "$CHR_PLUGIN_NAME" '
+    (.plugins // {})
+    | to_entries[]
+    | select(.key | startswith($name + "@"))
+    | (if (.value | type) == "array" then .value[] else .value end)
+    | select(type == "object")
+    | [(.version // "0"), (.installPath // "")]
+    | @tsv
+  ' "$file" 2>/dev/null
+}
+
+chr_resolve_from_installed_json() {
+  local file="$1" version path candidates=""
+  while IFS=$'\t' read -r version path; do
+    [ -n "${path:-}" ] || continue
+    chr_is_plugin_root "$path" || continue
+    candidates="${candidates}$(printf '%s\t%s' "$version" "$path")
+"
+  done <<EOF
+$(chr_entries_from_installed_json "$file")
+EOF
+  [ -n "$candidates" ] || return 1
+  printf '%s' "$candidates" | chr_pick_latest_path
+}
+
+chr_resolve_from_cache() {
+  local cache_dir="$1" dir candidates=""
+  [ -d "$cache_dir" ] || return 1
+  for dir in "$cache_dir"/*/"$CHR_PLUGIN_NAME"/*; do
+    chr_is_plugin_root "$dir" || continue
+    candidates="${candidates}$(printf '%s\t%s' "$(basename "$dir")" "$dir")
+"
+  done
+  [ -n "$candidates" ] || return 1
+  printf '%s' "$candidates" | chr_pick_latest_path
+}
+
+# 自身の配置位置からの解決。$0 のシンボリックリンクは意図的に解決しない
+# （PATH 上のリンクを辿るとリンク先の固定バージョンに張り付いてしまうため。
+#  リンク経由の起動では解決に失敗させ、installed_plugins.json 側へ委ねる）。
+chr_resolve_from_self() {
+  local dir root
+  dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || return 1
+  root="$(cd "${dir}/.." 2>/dev/null && pwd)" || return 1
+  chr_is_plugin_root "$root" || return 1
+  printf '%s\n' "$root"
+}
+
+chr_resolve_plugin_root() {
+  local root config_dir
+
+  if [ -n "${CLAUDE_HARNESS_ROOT:-}" ]; then
+    if chr_is_plugin_root "$CLAUDE_HARNESS_ROOT"; then
+      printf '%s\n' "$CLAUDE_HARNESS_ROOT"
+      return 0
+    fi
+    chr_err "CLAUDE_HARNESS_ROOT is set but is not a plugin root: ${CLAUDE_HARNESS_ROOT}"
+    return 1
+  fi
+
+  root="$(chr_resolve_from_self)"
+  if [ -n "$root" ]; then
+    printf '%s\n' "$root"
+    return 0
+  fi
+
+  config_dir="$(chr_config_dir)"
+
+  root="$(chr_resolve_from_installed_json "${config_dir}/plugins/installed_plugins.json")"
+  if [ -n "$root" ]; then
+    printf '%s\n' "$root"
+    return 0
+  fi
+
+  root="$(chr_resolve_from_cache "${config_dir}/plugins/cache")"
+  if [ -n "$root" ]; then
+    printf '%s\n' "$root"
+    return 0
+  fi
+
+  chr_err "could not locate the ${CHR_PLUGIN_NAME} plugin."
+  chr_err "  checked: CLAUDE_HARNESS_ROOT, ${config_dir}/plugins/installed_plugins.json, ${config_dir}/plugins/cache"
+  chr_err "  install the plugin, or set CLAUDE_HARNESS_ROOT to a checkout of it."
+  return 1
+}
+
+chr_list_targets() {
+  local root="$1" file
+  for file in "$root"/scripts/*.sh; do
+    [ -f "$file" ] || continue
+    printf '%s\n' "${file#"${root}"/}"
+  done
+  for file in "$root"/skills/*/scripts/*; do
+    [ -f "$file" ] || continue
+    case "$file" in
+      *.sh | *.mjs | *.js) printf '%s\n' "${file#"${root}"/}" ;;
+    esac
+  done
+}
+
+# 短縮名／プラグインルート相対パスを、ルート相対の実ファイルパスへ写像する。
+chr_map_target() {
+  local rel="$1"
+  case "$rel" in
+    */*) ;;
+    *) rel="scripts/${rel}" ;;
+  esac
+  case "$rel" in
+    *.sh | *.mjs | *.js) ;;
+    *) rel="${rel}.sh" ;;
+  esac
+  printf '%s\n' "$rel"
+}
+
+main() {
+  local env_assignments=()
+  local show_root="false" show_list="false"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --env)
+        if [ "$#" -lt 2 ]; then
+          chr_err "--env requires KEY=VALUE"
+          chr_usage
+          exit "$CHR_EX_USAGE"
+        fi
+        case "$2" in
+          [A-Za-z_]*=*) ;;
+          *)
+            chr_err "--env expects KEY=VALUE (got: $2)"
+            exit "$CHR_EX_USAGE"
+            ;;
+        esac
+        env_assignments+=("$2")
+        shift 2
+        ;;
+      --plugin-root)
+        show_root="true"
+        shift
+        ;;
+      --list)
+        show_list="true"
+        shift
+        ;;
+      -h | --help)
+        chr_usage
+        exit 0
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        chr_err "unknown option: $1"
+        chr_usage
+        exit "$CHR_EX_USAGE"
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  local root
+  root="$(chr_resolve_plugin_root)" || exit "$CHR_EX_UNAVAILABLE"
+
+  if [ "$show_root" = "true" ]; then
+    printf '%s\n' "$root"
+    exit 0
+  fi
+
+  if [ "$show_list" = "true" ]; then
+    chr_list_targets "$root"
+    exit 0
+  fi
+
+  if [ "$#" -lt 1 ]; then
+    chr_err "missing <target>"
+    chr_usage
+    exit "$CHR_EX_USAGE"
+  fi
+
+  local target="$1"
+  shift
+
+  case "$target" in
+    /*)
+      chr_err "target must be plugin-relative, not absolute: ${target}"
+      exit "$CHR_EX_USAGE"
+      ;;
+    .. | ../* | */.. | */../*)
+      chr_err "target must not contain '..': ${target}"
+      exit "$CHR_EX_USAGE"
+      ;;
+    "")
+      chr_err "target must not be empty"
+      exit "$CHR_EX_USAGE"
+      ;;
+  esac
+
+  local rel script_path runner
+  rel="$(chr_map_target "$target")"
+  script_path="${root}/${rel}"
+
+  if [ ! -f "$script_path" ]; then
+    chr_err "script not found: ${rel}"
+    chr_err "  plugin root: ${root}"
+    chr_err "  run '${CHR_SELF_NAME} --list' to see available targets."
+    exit "$CHR_EX_NOINPUT"
+  fi
+
+  case "$rel" in
+    *.sh) runner="bash" ;;
+    *.mjs | *.js) runner="node" ;;
+    *)
+      chr_err "unsupported script type: ${rel}"
+      exit "$CHR_EX_USAGE"
+      ;;
+  esac
+
+  if ! command -v "$runner" >/dev/null 2>&1; then
+    chr_err "required runtime not found in PATH: ${runner}"
+    exit "$CHR_EX_UNAVAILABLE"
+  fi
+
+  # bash 3.2（macOS既定）は set -u 下で空配列の "${arr[@]}" 展開が
+  # unbound variable エラーになるため、"${arr[@]+"${arr[@]}"}" イディオムで回避する。
+  exec env ${env_assignments[@]+"${env_assignments[@]}"} "$runner" "$script_path" "$@"
+}
+
+main "$@"

@@ -18,6 +18,8 @@
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 
+スキルからのスクリプト実行は、`bin/claude-harness-run`（PATH 上へ導入するランチャー）経由で `claude-harness-run <スクリプト名> <引数>` の形で行う。ランチャー自身の契約・セットアップ手順・permission allowlist の実測記録は `docs/script-launcher.md` が正本。`scripts/` に新しいスクリプトを追加した場合、`scripts/` 直下の `*.sh` は追加設定なしでランチャーの target になる（`claude-harness-run <ファイル名から .sh を除いたもの>`）。
+
 ## 前提
 
 - bash + jq を前提とする

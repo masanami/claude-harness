@@ -47,7 +47,7 @@ AI が **Headed Playwright**（可視ブラウザ）でアプリケーション�
 
 dev server とテストデータを整えたうえで、**同梱スクリプト**で Playwright(Headed) 環境を準備する。ブラウザ導入・OS依存・module 解決・runner はスクリプトが肩代わりするため、エージェントがアドホックに再実装しない。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。実行する際は必ず `${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/` 配下のファイルを絶対パス（引用符必須）で参照し、相対パス `skills/demo/scripts/...` では呼び出さないこと（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）。`cd` はせず、**dev server を起動したプロジェクトを cwd にしたまま**スクリプトを実行する（runner は cwd の git root から `@playwright/test` を解決する）。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。実行は必ず PATH 上のランチャー経由で `claude-harness-run skills/demo/scripts/<ファイル名>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `skills/demo/scripts/...` では呼び出さないこと。環境変数（`WALKTHROUGH_*`）は**コマンドの前に置かず**、`claude-harness-run --env KEY=VALUE ...` で渡す（前置形は allowlist にマッチしない）。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/skills/demo/scripts/<ファイル名>"`（`.mjs` は `node`）にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。`cd` はせず、**dev server を起動したプロジェクトを cwd にしたまま**スクリプトを実行する（runner は cwd の git root から `@playwright/test` を解決する）。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 1. **dev server / テストデータ**
@@ -55,7 +55,7 @@ dev server とテストデータを整えたうえで、**同梱スクリプト*
    - 必要なテストデータを投入する
 
 2. **セットアップスクリプトを実行**
-   - `bash "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/walkthrough-setup.sh"` を実行する。
+   - `claude-harness-run skills/demo/scripts/walkthrough-setup.sh` を実行する。
    - 内部で `playwright install chromium` を行い、**`uname` で OS 判定**して依存導入を分岐する（macOS は依存導入をスキップ／Linux は full chromium に対し `ldd` で不足を検出）。
    - 出力末尾の `WALKTHROUGH_SETUP_STATUS=<ready|deps-missing|error>` を確認する。
    - `error` の場合は再実行せず、まずセットアップログを確認して原因（Playwright 未導入など）を解消してから `2.` をやり直す。
@@ -65,7 +65,7 @@ dev server とテストデータを整えたうえで、**同梱スクリプト*
    - 表示されたコマンドを**ユーザーに実行してもらう**よう促す（非対話環境ではエージェントは実行できない）。導入後に再度 `2.` を実行する。
 
 4. **runner で起動**
-   - `node "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/run-walkthrough.mjs" "/絶対パス/flow.mjs"` を**プロジェクトを cwd にしたまま**実行する。
+   - `claude-harness-run skills/demo/scripts/run-walkthrough.mjs "/絶対パス/flow.mjs"` を**プロジェクトを cwd にしたまま**実行する。
      runner は `createRequire` で（cwd の git root 起点に）プロジェクトの `@playwright/test` を解決するため、**プラグイン配下の場所から実行しても壊れない**。
    - **headed + slowMo + trace** が既定 ON。ステップ実況ログ・スクショ・動画保存も runner が行う。
    - `WALKTHROUGH_PAUSE_MS`（任意）に正の整数msを指定すると、`ctx.step` / `ctx.goto` 完了直後に runner が自動でその時間だけ静止する（ゆっくり見せたい場合に使う）。未指定・不正値（0/負数/非数値・2147483647超過等）の場合は静止しない＝従来どおりの挙動。

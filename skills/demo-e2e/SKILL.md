@@ -59,12 +59,12 @@ E2Eテストケースカタログ（CASE_ID付きCSV。例: `e2e/playwright-test
 
 dev server とテストデータを整えたうえで、**`/demo` と同梱の Playwright(Headed) セットアップスクリプトをそのまま流用**する（複製・再実装しない）。
 
-> **スクリプトの所在（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。**walkthrough セットアップ関連スクリプト**（`walkthrough-setup.sh` / `run-walkthrough.mjs`）を実行する際は必ず `${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/` 配下のファイルを絶対パス（引用符必須）で参照し、相対パス `skills/demo/scripts/...` では呼び出さないこと（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）。**成果物パス決定スクリプト（`demo-e2e-out.sh`）はこの配下ではなく、プラグインルート直下の `${CLAUDE_PLUGIN_ROOT}/scripts/` 配下**にある点に注意（Phase 2 Step 2-2 参照）。`cd` はせず、**dev server を起動したプロジェクトを cwd にしたまま**スクリプトを実行する（runner は cwd の git root から `@playwright/test` を解決する）。
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。実行は必ず PATH 上のランチャー経由で行う（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）。**walkthrough セットアップ関連スクリプト**（`walkthrough-setup.sh` / `run-walkthrough.mjs`）は `claude-harness-run skills/demo/scripts/<ファイル名>`、**成果物パス決定スクリプト（`demo-e2e-out.sh`）はこの配下ではなくプラグインルート直下**のため `claude-harness-run demo-e2e-out` で呼ぶ（Phase 2 Step 2-2 参照）。相対パス `skills/demo/scripts/...` では呼び出さないこと。環境変数（`WALKTHROUGH_*`）は**コマンドの前に置かず**、`claude-harness-run --env KEY=VALUE ...` で渡す（前置形は allowlist にマッチしない）。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/skills/demo/scripts/<ファイル名>"`（`.mjs` は `node`）／`bash "<プラグインルート>/scripts/demo-e2e-out.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。`cd` はせず、**dev server を起動したプロジェクトを cwd にしたまま**スクリプトを実行する（runner は cwd の git root から `@playwright/test` を解決する）。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 **Step 0-1（dev server / テストデータ）**: dev server をバックグラウンドで起動して `BASE_URL` を控え、カタログが前提とするシードデータを投入する
 
-**Step 0-2（セットアップスクリプトを実行）**: `bash "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/walkthrough-setup.sh"` を実行し、`WALKTHROUGH_SETUP_STATUS=<ready|deps-missing|error>` を確認する（`deps-missing` の場合は表示された案内コマンドをユーザーに実行してもらう。`error` の場合は原因解消後に再実行する。詳細な分岐は `skills/demo/SKILL.md` Phase 2 と同一のため重複記載しない）
+**Step 0-2（セットアップスクリプトを実行）**: `claude-harness-run skills/demo/scripts/walkthrough-setup.sh` を実行し、`WALKTHROUGH_SETUP_STATUS=<ready|deps-missing|error>` を確認する（`deps-missing` の場合は表示された案内コマンドをユーザーに実行してもらう。`error` の場合は原因解消後に再実行する。詳細な分岐は `skills/demo/SKILL.md` Phase 2 と同一のため重複記載しない）
 
 **Step 0-3（project root の明示・monorepo 注意）**: monorepoでPlaywrightがサブワークスペース配下にある場合、`walkthrough-setup.sh` / `run-walkthrough.mjs` は既定で git root を基準に `@playwright/test` を解決しようとするため、**Playwright が実際に入っているサブワークスペースを `WALKTHROUGH_PROJECT_ROOT` で明示しないと解決に失敗する**。`CLAUDE.md` のディレクトリ構成を確認し、必要なら `WALKTHROUGH_PROJECT_ROOT=<Playwrightプロジェクトの絶対パス>` を以降のスクリプト呼び出しに付与する。この値は `WALKTHROUGH_OUT`（成果物の出力先）の解決基準にもなる（Step 2-2 参照）。
 
@@ -143,19 +143,19 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
    }
    ```
 
-2. **成果物パスをスクリプトで決定的に求める**。CASE_ID はケースカタログ由来の外部入力であり、素朴に成果物パスへ組み込むとパストラバーサル・衝突・上書き（NG回のtrace消失）の実害につながるため、`bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" <CASE_ID>` を毎回（実演のたびに）呼び出し、SAFE_CASE_ID導出とattempt採番を行わせる（`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない。実行前に、スキル起動時の「Base directory for this skill」から解決したプラグインルートの絶対パスに置換して実行する）。出力JSON（`safe_case_id`/`out_dir`/`attempt`/`gitignore_warning`）の**フィールド定義・導出規則の正本はプラグイン配下の `scripts/specs/demo-e2e-out.md`**（ここには複製しない。Read する場合はスキル起動時の「Base directory for this skill」から `<base>/../../scripts/specs/demo-e2e-out.md` として解決する）。
+2. **成果物パスをスクリプトで決定的に求める**。CASE_ID はケースカタログ由来の外部入力であり、素朴に成果物パスへ組み込むとパストラバーサル・衝突・上書き（NG回のtrace消失）の実害につながるため、`claude-harness-run demo-e2e-out <CASE_ID>` を毎回（実演のたびに）呼び出し、SAFE_CASE_ID導出とattempt採番を行わせる（実行形は Phase 0 冒頭の「スクリプトの実行形」注記に従う）。出力JSON（`safe_case_id`/`out_dir`/`attempt`/`gitignore_warning`）の**フィールド定義・導出規則の正本はプラグイン配下の `scripts/specs/demo-e2e-out.md`**（ここには複製しない。Read する場合はスキル起動時の「Base directory for this skill」から `<base>/../../scripts/specs/demo-e2e-out.md` として解決する）。
 
    - **cwd / project root**: 手順3の runner 実行と同じく、**dev server を起動したプロジェクトを cwd のまま**実行する（本スクリプトは `WALKTHROUGH_PROJECT_ROOT` 未指定時に cwd 基準の `git rev-parse --show-toplevel` をプロジェクトrootとして使うため、プラグインルート等の別ディレクトリを cwd にしたまま呼ぶと手順3と基準がずれ、既存 `attempt-*` を見落として上書きしうる）。project root を Step 0-3 で明示した場合は、この呼び出しにも同じ `WALKTHROUGH_PROJECT_ROOT` を付与する:
 
    - **シェルクォート安全埋め込み（重要）**: CASE_ID はケースカタログ由来の外部入力（非信頼値）であり、値中に `'` やシェルメタ文字（`;`・バッククォート・`$()` 等）が入りうる。コマンド文字列へ埋め込む際は必ず、値中の各 `'` を `'\''` に置換した上で全体をシングルクォート `'` で囲むこと（ダブルクォートでの埋め込みや無加工の連結はコマンドインジェクションの余地があるため禁止。`skills/pr-merge/SKILL.md` の「シェルクォート安全埋め込み（重要）」と同一規約）。
 
      ```bash
-     bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" 'CASE-101'
-     # Step 0-3 で WALKTHROUGH_PROJECT_ROOT を明示した場合はそれも付与する:
-     # WALKTHROUGH_PROJECT_ROOT="<Step 0-3で明示した絶対パス>" bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" 'CASE-101'
+     claude-harness-run demo-e2e-out 'CASE-101'
+     # Step 0-3 で WALKTHROUGH_PROJECT_ROOT を明示した場合はそれも付与する（前置ではなく --env で渡す）:
+     # claude-harness-run --env WALKTHROUGH_PROJECT_ROOT="<Step 0-3で明示した絶対パス>" demo-e2e-out 'CASE-101'
      # -> {"safe_case_id":"CASE-101-3f2a1c9d","out_dir":"demo-e2e-artifacts/CASE-101-3f2a1c9d/attempt-1","attempt":1,"gitignore_warning":false}
      # CASE_ID に ' が含まれる場合の埋め込み例（値: O'Brien-Case）:
-     #   bash "${CLAUDE_PLUGIN_ROOT}/scripts/demo-e2e-out.sh" 'O'\''Brien-Case'
+     #   claude-harness-run demo-e2e-out 'O'\''Brien-Case'
      ```
 
    - **失敗時**: 非0 exit（CASE_ID空・jq/shasum等のコマンド不在・project root不在等）の場合は実演に進まず、stderr のエラー内容をそのままユーザーに提示する（アドホックな成果物パスへフォールバックしない）
@@ -166,10 +166,11 @@ Phase 1 で確定した対象ケースを**1件ずつ**、次のサイクルで�
 3. **runner で実演を実行する**。dev server を起動したプロジェクトを cwd のまま実行する:
 
    ```bash
-   WALKTHROUGH_SLOWMO=1500 \
-   WALKTHROUGH_PAUSE_MS=5000 \
-   WALKTHROUGH_OUT="<手順2で得たout_dir>" \
-   node "${CLAUDE_PLUGIN_ROOT}/skills/demo/scripts/run-walkthrough.mjs" "/絶対パス/flow.mjs"
+   claude-harness-run \
+     --env WALKTHROUGH_SLOWMO=1500 \
+     --env WALKTHROUGH_PAUSE_MS=5000 \
+     --env WALKTHROUGH_OUT="<手順2で得たout_dir>" \
+     skills/demo/scripts/run-walkthrough.mjs "/絶対パス/flow.mjs"
    ```
 
    - `WALKTHROUGH_SLOWMO` は上記コマンド例のとおり本スキルの運用既定値 `1500`（ms）を明示指定している（人間が明示的に依頼した場合のみ、その回に限り値を変更する。「入力パラメータ」節参照）
