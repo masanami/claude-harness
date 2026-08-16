@@ -18,8 +18,11 @@
 
 stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` として保持する。フィールド定義・`reason` の語彙・exit code の意味の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（ここには複製しない）。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること。
 
-- exit 0（`pass`）/ exit 1（`fail`）はいずれも正常な検査結果として続行する。
-- **exit 2（実行前提の欠落）・stdout が JSON としてパースできない場合は、「検査対象なし」＝ pass に読み替えない**。索引整合を `{status: "fail", error: "..."}` として扱い、以降のステップを続けたうえで報告に明示する（台帳の取り違え・節名の変更で全保証が未検査になった状態を素通りさせないため）。
+- exit 0（`pass`）/ exit 1（`fail`）はいずれも正常な検査結果として続行する。この場合 `index.error` は `null` にする。
+- **exit 2（実行前提の欠落）・stdout が JSON としてパースできない場合は、「検査対象なし」＝ pass に読み替えない**。索引整合を `{status: "fail", error: "..."}` として扱い、以降のステップを続けたうえで報告に明示する（台帳の取り違え・節名の変更で全保証が未検査になった状態を素通りさせないため）。このとき Step D5 では次の2つを**必ず**行う:
+  - `index.error` に stderr のメッセージ（または JSON をパースできなかった旨）を入れる。**`broken` が空であることをもって「壊れた参照が無い」と読ませない**（実際には検査自体が走っていない）。
+  - `human_review_required` に `kind: "index_error"` の項目を積む。
+- **「台帳に実際の破損がある（`fail` かつ `broken` が非空）」と「検査を実行できなかった（`fail` かつ `error` が非 null）」は、機械可読結果の上で区別できなければならない**。前者は台帳・テストの修正、後者は実行環境や台帳パスの調査、と対処が全く異なるため。
 
 ### Step D3: 意味整合（guarantee-auditor fan-out）
 
@@ -54,12 +57,22 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 
 プロジェクト固有のレイアウトに対するオプション補正（`--e2e` / `--integration` / `--include` / `--exclude`）は、**bootstrap モードの Step B2 と同じ方針**で行う（規約の正本はそちら。「Base directory for this skill」を起点に `<base>/references/bootstrap-mode.md` として解決する）。
 
+**突き合わせはテスト参照（`<パス>::<テスト名>`）単位で行う。ファイル単位で絞り込まないこと。**
+
 1. 対象テストファイルを決める:
    - `--scope <base>..<head>` 指定時: `git diff --name-only <base>..<head>` の結果と、`claude-harness-run list-test-files` の列挙結果の**積集合**を対象にする（diff にはテスト以外のファイルも含まれるため、テスト判定は列挙側の規則に委ねる）。
    - 無指定時: 列挙結果の全件を対象にする。
-2. 台帳の全テスト参照のファイルパス集合と突き合わせ、**台帳から1件も参照されていないテストファイル**を抽出する。
-3. 抽出したファイルについて `guarantee-auditor`（`mode: extract`）を走らせ、`surface` が `public` のものを **GAP 候補**として報告する（`internal` は件数のみ、`uncertain` は要人間判定へ）。プロンプトの構成（`mode: extract` / `testFiles` / 返却形式）と抽出結果の仕分けは **bootstrap モードの Step B3 と同一**であり、チャンク分割・完全性 join は SKILL.md の「共通規約」に従う。
+   - **`--scope` は対象ファイルの絞り込みにだけ使う**。対象になったファイルの中では、どのテストを見るかを絞らない（全テストケースを突き合わせる）。
+2. 対象ファイル**全件**について `guarantee-auditor`（`mode: extract`）を走らせ、各テストケースの `test_ref` を得る。**「台帳から1件も参照されていないファイル」だけに事前に絞り込まないこと**（**理由**: 同一ファイル内に登録済みのテストと未登録のテストが混在する場合、ファイル単位で絞ると未登録のテストを丸ごと取りこぼす。例えば `tests/foo.test.ts::test_a` が台帳にあり `tests/foo.test.ts::test_b` が無いとき、ファイル単位の絞り込みでは `test_b` の公開面が永久に検出されない。どのテストが未登録かはファイルの中身を見るまで分からないため、対象ファイルは一律に抽出へ掛ける）。
+   - プロンプトの構成（`mode: extract` / `testFiles` / 返却形式）と抽出結果の仕分けは **bootstrap モードの Step B3 と同一**であり、チャンク分割・完全性 join は SKILL.md の「共通規約」に従う。
+   - 全件抽出になるため fan-out のコストは対象ファイル数に比例する。範囲を絞りたい場合は `--scope` を使う（drift は定期実行・昇格前を想定した低頻度の監査であり、取りこぼしの回避をコストより優先する）。
+3. Step D3 で台帳から読み取ったテスト参照の全件を参照集合とし、手順2で得た `test_ref` を**1件ずつ**突き合わせる。参照集合に無い `test_ref` を「**未登録テスト**」とし、`surface` で仕分ける:
+   - `public` → **GAP 候補**として報告する
+   - `internal` → 件数のみ報告する
+   - `uncertain` → 要人間判定へ回す
 4. **台帳への追記は行わない**。GAP は人間の台帳 PR でのみ採番・追記される。
+
+**突き合わせの限界（既知）**: 照合は `<パス>::<テスト名>` の文字列一致で行う（前後の空白のみ除去し、それ以外の正規化はしない）。このため、テスト名が実行時に組み立てられている場合（テンプレート文字列・パラメタライズドテストの動的生成）は、**台帳に登録済みであっても未登録として現れうる**。`guarantee-auditor` が `rationale` に「動的生成のため参照が不安定」と記したものは、GAP 候補ではなく**要人間判定**へ回すこと（存在しない不足を人間に追わせないため）。この限界は索引整合チェック側と同じ性質のもので、正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`「テスト名の一致判定の限界（既知）」（Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決する）。
 
 対象が0件の場合（`--scope` の範囲にテスト変更が無い等）は、「検査した結果0件」であることを報告に明記する（検査しなかったことと区別する）。
 
@@ -74,12 +87,22 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
   "mode": "drift",
   "scope": "<base>..<head> または null",
   "phase": "gdd",
-  "index": { "status": "pass|fail", "broken": [] },
+  "index": { "status": "pass|fail", "error": null, "broken": [] },
   "semantic": { "checked": 12, "drifted": [], "uncertain": [], "failed": [] },
   "gap_candidates": [{ "test_ref": "...", "behavior_ja": "...", "rationale": "..." }],
   "human_review_required": [{ "kind": "uncertain|not_analyzed|index_error", "detail": "..." }]
 }
 ```
+
+`index` の各フィールド:
+
+| フィールド | 意味 |
+|---|---|
+| `status` | `guarantee-index-check` の判定（`pass` / `fail`）。**検査を実行できなかった場合も `fail`**（`pass` に読み替えない） |
+| `error` | 検査を**実行できなかった**場合のみ理由の文字列。正常に検査できた場合（exit 0 / exit 1）は `null` |
+| `broken` | 検出した壊れた索引の一覧。**`error` が非 null のときの空配列は「問題なし」を意味しない**（検査自体が走っていない） |
+
+`error` が非 null の場合は、`human_review_required` に `kind: "index_error"` の項目を**必ず**含める（Step D2 参照）。
 
 人間向けサマリー:
 
@@ -92,7 +115,7 @@ stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` とし�
 
 ### 索引整合（機械チェック）
 
-{status === 'pass' ? '✅ pass' : '❌ fail'}
+{error ? `⚠️ 検査を実行できませんでした: ${error}（下表は空ですが「問題なし」ではありません。要人間対応）` : (status === 'pass' ? '✅ pass' : '❌ fail')}
 
 | 保証ID | 参照 | 問題 |
 |---|---|---|
