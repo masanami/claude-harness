@@ -122,7 +122,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 |--------|--------|------|
 | `/commit` | `/commit` | Conventional Commits形式でコミット |
 | `/init-project` | `/init-project` | プロジェクトを分析してCLAUDE.mdを自動生成 |
-| `/create-adr` | `/create-adr [テーマ]` / `/create-adr promote <機能仕様パス>` | 恒常的な設計決定を ADR(`docs/adr/NNNN-slug.md`)として記録。退役する機能仕様から ADR 昇格の要否を判定するモードあり。定常フローに必須ではないオンデマンドスキル |
+| `/create-adr` | `/create-adr [テーマ]` / `/create-adr promote <機能仕様パス\|ディレクトリ...>` | 恒常的な設計決定を ADR(`docs/adr/NNNN-slug.md`)として記録。`promote` は退役する機能仕様から ADR 昇格の要否を判定するモードで、ファイル・ディレクトリを**複数指定**でき、ディレクトリ直下の `*.md` を一括判定する（例: `/create-adr promote docs/features/`）。定常フローに必須ではないオンデマンドスキル |
 
 ---
 
