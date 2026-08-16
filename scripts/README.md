@@ -15,6 +15,7 @@
 | ci-wait.sh | `scripts/specs/ci-wait.md` |
 | worktree-setup.sh / worktree-cleanup.sh | `scripts/specs/worktree-setup.md` |
 | demo-e2e-out.sh | `scripts/specs/demo-e2e-out.md` |
+| detect-dev-phase.sh | `scripts/specs/detect-dev-phase.md` |
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 

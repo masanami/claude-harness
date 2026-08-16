@@ -17,7 +17,7 @@
 #     "commands": {"test":..., "lint":..., "typecheck":..., "format":..., "build":..., "dev":...},
 #     "testPrereqs": {"setupFiles":[...], "pretest": "..."|null},
 #     "dirTree": {"entries":[...], "depthLimit":N, "maxEntries":N, "truncated":bool},
-#     "docs": {"docsDir":"docs"|null, "designDocs":[...]},
+#     "docs": {"docsDir":"docs"|null, "designDocs":[...], "guaranteesLedger":"docs/guarantees.md"|null},
 #     "testDirs": [...], "e2eDirs": [...], "colocatedTests": true|false,
 #     "branchEvidence": {"status":"ok"|"not_a_git_repo", "branches":[...],
 #       "recentMergeStyles":{"squash":N,"merge":N}, "contributingPath":"..."|null},
@@ -611,8 +611,15 @@ fetch_docs_evidence() {
   local design_docs_json
   design_docs_json=$(printf '%s\n' "${results[@]:-}" | awk 'NF' | sort -u | jq -R -s 'split("\n") | map(select(length>0))')
 
+  # 保証台帳（GDD期の駆動文書）の有無。フェーズの自動判定には使わない（フェーズを確定できるのは
+  # CLAUDE.md の宣言のみ。detect-dev-phase.sh 参照）。/init-project が「GDD期を既定候補として
+  # 人間に提示する」ための材料として返す。
+  local guarantees_ledger="null"
+  [ -f "$dir/docs/guarantees.md" ] && guarantees_ledger='"docs/guarantees.md"'
+
   DOCS_JSON=$(jq -n --argjson docsDir "$docs_dir" --argjson designDocs "$design_docs_json" \
-    '{docsDir:$docsDir, designDocs:$designDocs}')
+    --argjson guaranteesLedger "$guarantees_ledger" \
+    '{docsDir:$docsDir, designDocs:$designDocs, guaranteesLedger:$guaranteesLedger}')
 }
 
 fetch_named_dirs() {

@@ -21,6 +21,19 @@ effort: medium
 - **存在する場合**: ユーザーに上書き・マージ・中止を確認する
 - **存在しない場合**: そのまま続行
 
+`CLAUDE.md` が既に存在する場合は、続けて**現在の開発フェーズ宣言**を取得する（既存の宣言を Step 4 の生成で取りこぼさないため）。
+
+> **開発フェーズの判定（重要）**: フェーズは必ず `claude-harness-run detect-dev-phase` の出力だけで判定し、`CLAUDE.md` を自分で grep しないこと（判定規約の重複実装を防ぐため）。stdout に `{"phase":"sdd"|"gdd"|"invalid","reason":"...","source":"..."}` が1個返る。フェーズ依存の追加挙動は **`phase` が `gdd` のときだけ**行い、`sdd`（宣言なしを含む）では一切挙動を変えない。**`phase` が `invalid`（exit 1）、またはスクリプトを実行できない・stdout が JSON としてパースできない（exit 2 等）場合は、`sdd` とみなさない**。フェーズ依存の処理を停止し、`reason` と `source`（および stderr のメッセージ）を添えて「要人間判定」としてユーザーに報告すること（不正な宣言や実行失敗によって GDD のゲート群が暗黙に無効化される事故を防ぐため）。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/detect-dev-phase.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。
+<!-- 正本: docs/ai-driven-development-strategy.md 5.2 / docs/plugin-path-conventions.md -->
+
+本スキルでの使い方（`reason` で「宣言あり」と「宣言なし」を区別する）:
+
+| `phase` / `reason` | 扱い |
+|---|---|
+| `gdd` / `declared_gdd`、`sdd` / `declared_sdd` | 既に人間が宣言している。**その値を維持する**（Step 3 では確定値として提示するだけで、変更を促さない） |
+| `sdd` / `no_phase_section`（宣言なし） | 未宣言。Step 3 の確認対象（既定は SDD期） |
+| `invalid` | 宣言が壊れている。**SDD期 とみなさず**、`reason` を添えてユーザーに修正を促し、フェーズ節の生成を進めない（他の生成物の作業を続けるかはユーザーの判断を仰ぐ） |
+
 ### 2. プロジェクト自動分析
 
 `analyze-project.sh [対象ディレクトリ]`（プラグイン配下。実行形は直後の注記を参照）を実行し、プロジェクト情報を検出する。検出規則（ロックファイル→PM対応、技術スタック判定、コマンド優先順位、除外ディレクトリ、設計ドキュメントglob、9軸の定義・判定ルール等）はすべてスクリプト側に実装されており、決定的に判定される。本セクションではスクリプトの入出力契約と、LLM側が担う補完のみを記す。
@@ -42,7 +55,7 @@ effort: medium
 | `commands` | `test`/`lint`/`typecheck`/`format`/`build`/`dev` コマンド（2c相当） |
 | `testPrereqs` | セットアップファイル・`pretest` の有無（2c-2相当） |
 | `dirTree` | 除外・深さ制限付きディレクトリ構造（2d相当） |
-| `docs` | `docsDir` と設計ドキュメント一覧（2e相当） |
+| `docs` | `docsDir` と設計ドキュメント一覧、`guaranteesLedger`（保証台帳 `docs/guarantees.md` の有無。2e相当） |
 | `testDirs` / `e2eDirs` | テスト/E2E配置（2e相当） |
 | `colocatedTests` | `src/foo.test.ts` のようにテスト対象と同じディレクトリに置く co-located 配置の有無（真偽値、2e相当）。`testDirs` はディレクトリ名ベースの検出のため、co-located 配置はこのフィールドで別途表現する |
 | `branchEvidence` | `branches`（`git branch -a`）、`recentMergeStyles`（直近コミットのsquash/merge集計）、`contributingPath` の**証拠のみ**（2g相当）。**戦略の推定・解釈（GitHub Flow既定の採用など）はスクリプトでは行わない。次項の手順で本スキル側が判断する** |
@@ -74,6 +87,14 @@ effort: medium
 
 > **ポイント**: 自動判定した軸（DB中心性・API外部公開度・テスト戦略の複雑度）はそのまま提示し、ユーザーは判定不能な軸（規模・複雑度、ドメイン、コード規約、データ、運用、規制）と修正点だけを答えればよい形にする。全項目の逐一確認は避ける。固定リストにない**プロジェクト固有のドキュメント**（例: SLO定義、データフロー図、リリース手順）もここで追加できる。
 
+#### 開発フェーズの確定
+
+CLAUDE.md に出力する「開発フェーズ」（`SDD期` / `GDD期` の2値）をここで確定する。Step 1 で既存の宣言（`declared_sdd` / `declared_gdd`）が取得できていた場合は**その値を維持し**、確定値として提示するだけでよい。宣言が無い場合のみ、次の既定値を提示する:
+
+- **既定は `SDD期`**（機能仕様 `docs/features/{slug}.md` を駆動文書とする従来の運用）。立ち上げ期に GDD を選ぶ理由がないため、既定値として提示するだけで逐一質問はしない
+- Step 2 の `docs.guaranteesLedger` が非 null（保証台帳が既にある）場合のみ、**`GDD期` を既定候補として提示し**、ユーザーに確認する
+- **台帳ファイルの存在をフェーズの自動判定に使わない**。これはユーザーへ提示する推奨値の算出にのみ使う材料であり、フェーズを確定できるのは人間が CLAUDE.md に記載する宣言だけである（エージェントが勝手にフェーズを切り替えない）
+
 ### 4. テンプレート読み込み & CLAUDE.md 生成
 
 > **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/templates/CLAUDE.md.template`）。
@@ -88,6 +109,9 @@ effort: medium
 - 品質方針はプロジェクトのレビュー・テスト方針（重視する観点・E2E整備方針・クリティカル箇所）を記入する
 - ディレクトリ構成は実際のスキャン結果を記入する
 - **ブランチ戦略**: `{BRANCH_STRATEGY}`（既定 GitHub Flow）、`{BRANCH_FORMAT}`、`{MERGE_STRATEGY}`、`{SCOPES}` 等を `branchEvidence` の検出結果・ユーザー指定で埋める
+- **開発フェーズ**: `{DEV_PHASE}` に Step 3 で確定した値（`SDD期` または `GDD期`）を、`{DRIVING_DOC}` に対応する駆動文書のパス（SDD期: `docs/features/`、GDD期: `docs/guarantees.md`。CLAUDE.md 側で別パスを採用する場合はそれ）を入れる
+  - **プレースホルダのまま残さない**。`{DEV_PHASE}` が未置換だとフェーズ判定が `invalid`（`unreplaced_placeholder`）になり、以降のフェーズ依存処理が停止する
+  - 既存 CLAUDE.md へのマージの場合は、Step 1 で取得した既存の宣言をそのまま維持する（勝手に別のフェーズへ書き換えない）
 - **ドキュメントマップ（`{DOCUMENT_MAP}`）**: 各行を `| カテゴリ | パス | 状態 |` で埋める
   - 既に存在するドキュメント（`docs.designDocs` 検出）: 状態「整備済み」
   - ユーザーが選定した作成対象（ステップ3）: 状態「作成予定」、パスは規約に沿った標準パス（例: `docs/coding-guidelines.md`）
@@ -156,6 +180,7 @@ claude-harness-run skills/init-project/scripts/generate-settings.sh \
 
 - 生成ファイル: `CLAUDE.md`, `.claude/settings.json`{生成した雛形ドキュメントがあれば列挙}
 - ブランチ戦略: {採用した戦略}
+- 開発フェーズ: {SDD期|GDD期}
 - ドキュメント: 整備済み {N} 件 / 作成予定 {M} 件
 
 次のステップ:
