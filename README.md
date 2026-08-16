@@ -130,7 +130,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 ### 戦略・ワークフロー
 
-- [AI駆動開発戦略](docs/ai-driven-development-strategy.md) — 開発サイクル、レビュー優先順位、品質保証・テスト戦略、クリティカル箇所の定義
+- [AI駆動開発戦略](docs/ai-driven-development-strategy.md) — 開発サイクル、レビュー優先順位、品質保証・テスト戦略、クリティカル箇所の定義、開発フェーズ（SDD期/GDD期）とドキュメントライフサイクル
 - [ブランチ戦略](docs/branching-strategy.md) — GitHub Flow、Conventional Commits、マージ規約
 
 ### ガイド
