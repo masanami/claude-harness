@@ -200,6 +200,30 @@ assert_eq "source が find" "find" "$(jq -r '.source' <<<"$PLAIN_OUT")"
 assert_eq "テストを1件列挙する" "1" "$(jq -r '.counts.total' <<<"$PLAIN_OUT")"
 assert_eq "node_modules は除外される" "0" "$(jq -r '[.files[] | select(.path | startswith("node_modules"))] | length' <<<"$PLAIN_OUT")"
 
+echo "=== test: CLI（タブ・改行を含むパスは skipped として除外する） ==="
+# タブ・改行はファイル名として有効だが、TSV 中間表現の区切りと衝突して1件が複数の
+# 不正なエントリに割れる。黙って落とさず skipped として数えることを検証する。
+WEIRD_DIR="${TMP_ROOT}/weird-names"
+mkdir -p "${WEIRD_DIR}/tests"
+printf 'it("normal", () => {});\n' > "${WEIRD_DIR}/tests/normal.test.ts"
+WEIRD_LF_PATH="${WEIRD_DIR}/tests/$(printf 'lf\nname').test.ts"
+WEIRD_TAB_PATH="${WEIRD_DIR}/tests/$(printf 'tab\tname').test.ts"
+printf 'it("lf", () => {});\n' > "$WEIRD_LF_PATH" 2>/dev/null
+printf 'it("tab", () => {});\n' > "$WEIRD_TAB_PATH" 2>/dev/null
+if [ -f "$WEIRD_LF_PATH" ] && [ -f "$WEIRD_TAB_PATH" ]; then
+  WEIRD_OUT="$(cd "$WEIRD_DIR" && bash "$TARGET_SCRIPT" 2>/dev/null)"
+  WEIRD_EXIT=$?
+  assert_eq "exit code が 0" "0" "$WEIRD_EXIT"
+  assert_eq "skipped が2件（タブ・改行）" "2" "$(jq -r '.counts.skipped' <<<"$WEIRD_OUT")"
+  assert_eq "正常なテストだけが列挙される" "1" "$(jq -r '.counts.total' <<<"$WEIRD_OUT")"
+  assert_eq "列挙されたのは正常なパス" "tests/normal.test.ts" "$(jq -r '.files[0].path' <<<"$WEIRD_OUT")"
+  assert_eq "分断された不正エントリが混ざらない" "0" \
+    "$(jq -r '[.files[] | select(.category == null or .rule == null or (.path | test("^(lf|tab|name)")))] | length' <<<"$WEIRD_OUT")"
+else
+  # 一部のファイルシステムはこれらの文字を拒否する。その場合は検証をスキップする
+  echo "  skip - タブ・改行を含むファイル名を作成できないファイルシステムのためスキップ"
+fi
+
 echo "=== test: CLI（テストが1件も無い場合は明示ステータスを返す） ==="
 EMPTY_DIR="${TMP_ROOT}/empty-project"
 mkdir -p "${EMPTY_DIR}/src"

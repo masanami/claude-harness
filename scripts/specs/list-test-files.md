@@ -36,7 +36,7 @@ stdout JSON:
 | `status` | `"ok"` \| `"no_test_files_found"` | テストファイルを1件でも列挙できたか |
 | `root` | string | 列挙の起点（絶対パス） |
 | `source` | `"git"` \| `"find"` | 列挙元。git リポジトリなら `git`、それ以外は `find` へフォールバック |
-| `counts` | object | 区分ごとの件数と `total`。`skipped` はパスにタブ文字を含み列挙対象から外した件数（通常 0） |
+| `counts` | object | 区分ごとの件数と `total`。`skipped` はパスにタブ文字または改行文字を含み列挙対象から外した件数（通常 0。中間表現の区切り文字と衝突するため除外し、stderr に警告を出す） |
 | `files` | `[{path, category, rule}]` | `path` は root 相対。`category` は `"e2e"` \| `"integration"` \| `"unit"`。`rule` は `<テスト判定規則>\|<分類規則>` |
 
 `files` は **`LC_ALL=C` のパス昇順で固定**する（同じ入力からは常に同じ順序・同じ内容が返る。チャンク分割の再現性のため）。

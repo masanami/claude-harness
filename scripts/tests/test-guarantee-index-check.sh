@@ -109,6 +109,18 @@ assert_eq "重複した ID を報告する" "G-123-1" "$(first_id_for_reason dup
 gic_scan "$(printf '## 保証（Guarantees）\n\n### G-1-1: 約束\n\n- テスト: `a.test.ts::x`\n\n## Gaps\n\n- [ ] GAP-001: ひとつめ\n- [ ] GAP-001: 重複\n')"
 assert_eq "duplicate_gap_id を1件検出" "1" "$(count_reason duplicate_gap_id)"
 
+echo "=== test: 書式違反の GAP ID を黙って読み飛ばさない ==="
+gic_scan "$(printf '## 保証（Guarantees）\n\n### G-1-1: 約束\n\n- テスト: `a.test.ts::x`\n\n## Gaps\n\n- [ ] GAP-?-1: 仮 ID が残っている\n')"
+assert_eq "仮 ID の GAP 行を malformed_gap_id として検出" "1" "$(count_reason malformed_gap_id)"
+assert_eq "書式違反の行は GAP 件数に数えない" "0" "$GIC_GAP_COUNT"
+
+gic_scan "$(printf '## 保証（Guarantees）\n\n### G-1-1: 約束\n\n- テスト: `a.test.ts::x`\n\n## Gaps\n\n- [ ] ID を書き忘れた公開面\n')"
+assert_eq "ID の無いチェックリスト行も malformed_gap_id" "1" "$(count_reason malformed_gap_id)"
+
+gic_scan "$(printf '## 保証（Guarantees）\n\n### G-1-1: 約束\n\n- テスト: `a.test.ts::x`\n\n## Gaps（テストのない公開面）\n\nこの節はテスト未整備の公開面を並べる。\n\n- [ ] GAP-001: 正しい書式\n')"
+assert_eq "チェックリストでない散文は書式違反にしない" "0" "$(count_reason malformed_gap_id)"
+assert_eq "正しい書式の GAP は数える" "1" "$GIC_GAP_COUNT"
+
 echo "=== test: 書式違反の検出 ==="
 gic_scan "$(printf '## 保証（Guarantees）\n\n### G-?-1: 裁可待ちの仮 ID が残っている\n\n- テスト: `a.test.ts::x`\n')"
 assert_eq "malformed_guarantee_id を検出" "1" "$(count_reason malformed_guarantee_id)"

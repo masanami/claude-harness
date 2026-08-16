@@ -370,10 +370,11 @@ main() {
   while IFS= read -r -d '' path; do
     [ -z "$path" ] && continue
     case "$path" in
-      *$'\t'*)
-        # タブを含むパスは TSV 中間表現の境界を壊すため、黙って落とさず件数として報告する
+      *$'\t'* | *$'\n'*)
+        # タブ・改行を含むパスは TSV 中間表現（タブ区切り・行区切り）の境界を壊し、
+        # 1件のファイルが複数の不正なエントリに割れる。黙って落とさず件数として報告する。
         skipped=$((skipped + 1))
-        echo "Warning: skipped path containing a tab character: ${path}" >&2
+        echo "Warning: skipped path containing a tab or newline character: ${path}" >&2
         continue
         ;;
     esac

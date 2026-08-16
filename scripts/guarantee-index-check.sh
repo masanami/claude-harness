@@ -42,6 +42,10 @@ GIC_H3_RE='^###[[:space:]]+(.+)$'
 GIC_GUARANTEE_ID_RE='^(G-[0-9]+-[0-9]+)[[:space:]]*(:|：)[[:space:]]*(.*)$'
 GIC_TEST_FIELD_RE='^[[:space:]]*[-*][[:space:]]+\*{0,2}テスト\*{0,2}[[:space:]]*(:|：)[[:space:]]*(.+)$'
 GIC_GAP_RE='^[[:space:]]*[-*][[:space:]]+\[[[:space:]xX]\][[:space:]]*(GAP-[0-9]+)[[:space:]]*(:|：)'
+# Gaps 節のチェックリスト行すべて。GIC_GAP_RE に合致しないものは書式違反として検出するため、
+# 「GAP 行の候補」を先に広く拾う（`GAP-?-1` のような不正 ID が件数にも問題一覧にも現れず、
+#  台帳が pass してしまうのを防ぐ）。
+GIC_GAP_CHECKLIST_RE='^[[:space:]]*[-*][[:space:]]+\[[[:space:]xX]\][[:space:]]*(.*)$'
 # shellcheck disable=SC2016 # バッククォートは正規表現リテラル（テスト参照の囲み）であり、
 # コマンド置換を意図していない。単一引用符のまま保持する必要がある
 GIC_BACKTICK_RE='`([^`]+)`'
@@ -198,13 +202,21 @@ gic_scan() {
       continue
     fi
 
-    if [ "$section" = "gaps" ] && [[ "$line" =~ $GIC_GAP_RE ]]; then
-      local gap_id="${BASH_REMATCH[1]}"
-      GIC_GAP_COUNT=$((GIC_GAP_COUNT + 1))
-      if printf '%s\n' "$seen_gap_ids" | grep -Fxq -- "$gap_id"; then
-        gic_add_issue "$gap_id" "" "duplicate_gap_id"
+    if [ "$section" = "gaps" ] && [[ "$line" =~ $GIC_GAP_CHECKLIST_RE ]]; then
+      local gap_entry gap_id
+      # 書式違反の報告に使うため、厳密判定より先に行の中身を控える
+      gap_entry="$(gic_trim "${BASH_REMATCH[1]}")"
+      if [[ "$line" =~ $GIC_GAP_RE ]]; then
+        gap_id="${BASH_REMATCH[1]}"
+        GIC_GAP_COUNT=$((GIC_GAP_COUNT + 1))
+        if printf '%s\n' "$seen_gap_ids" | grep -Fxq -- "$gap_id"; then
+          gic_add_issue "$gap_id" "" "duplicate_gap_id"
+        else
+          seen_gap_ids="${seen_gap_ids}${gap_id}"$'\n'
+        fi
       else
-        seen_gap_ids="${seen_gap_ids}${gap_id}"$'\n'
+        # Gaps 節のチェックリスト行なのに `GAP-NNN:` 書式でない（仮 ID の残留・ID の書き忘れ）
+        gic_add_issue "$gap_entry" "" "malformed_gap_id"
       fi
       continue
     fi
