@@ -407,7 +407,7 @@ ct_category_state() {
   local line marker_run marker fence_info title
   local fence_marker="" fence_len=0
   local in_section="false" in_target="false" seen="false"
-  local has_entry="false" has_none="false"
+  local has_entry="false" has_none="false" has_bad="false" none_count=0
 
   body="${body//$'\r'/}"
 
@@ -452,15 +452,25 @@ ct_category_state() {
     fi
     [ "$in_target" = "true" ] || continue
 
+    # カテゴリ配下は全件走査する（部分成功≠完全成功）。
+    # 受理できるのは「完全な保証 ID 行」か「単独の `- なし`」だけで、
+    # それ以外の非空行（壊れた ID 行・ID を持たないリスト行・リスト行以外の散文）は不正とする。
+    if [ -z "${line//[[:space:]]/}" ]; then
+      continue
+    fi
     if [[ "$line" =~ $CT_NONE_ITEM_RE ]]; then
       has_none="true"
+      none_count=$((none_count + 1))
       continue
     fi
     if [ "$require_id" = "true" ]; then
       if [[ "$line" =~ $CT_NEW_ITEM_RE ]] || [[ "$line" =~ $CT_KEEP_ITEM_RE ]]; then
         has_entry="true"
+      else
+        has_bad="true"
       fi
     else
+      # 判定保留は ID を持たないエントリが正規のため、リスト行はすべて受理する
       if [[ "$line" =~ ^[[:space:]]*[-*][[:space:]]+ ]]; then
         has_entry="true"
       fi
@@ -469,6 +479,12 @@ ct_category_state() {
 
   if [ "$seen" = "false" ]; then
     printf 'absent'
+  elif [ "$has_bad" = "true" ]; then
+    printf 'invalid'
+  elif [ "$has_none" = "true" ] && [ "$has_entry" = "true" ]; then
+    printf 'invalid'  # ID 行と `- なし` の混在
+  elif [ "$none_count" -gt 1 ]; then
+    printf 'invalid'  # `- なし` が複数行
   elif [ "$has_none" = "true" ]; then
     printf 'none'
   elif [ "$has_entry" = "true" ]; then
@@ -1371,17 +1387,127 @@ assert_eq "(A-22) 判定保留の状態（entries/none/blank/absent）は妥当�
   "valid valid valid valid " "$pending_variation_result"
 
 echo ""
+echo "=== (A-24) カテゴリ配下の全件走査（部分成功≠完全成功） ==="
+
+# 有効な ID が1件あっても、同じカテゴリに壊れた行があれば不当
+mixed_broken="$(ct_build_section "$(printf '%s\n' '- [ ] G-158-1: 正しい宣言' '- [ ] G-158-x: 枝番が数値でない')" "$KEEP_ENTRY" "$NONE_LINE")"
+assert_eq "(A-24) 有効な ID + 壊れた ID 行は不当（1件でも有効なら受理、にしない）" "invalid" \
+  "$(ct_category_state "$mixed_broken" "新たに宣言する保証" true)"
+assert_eq "(A-24) 上記の節全体も不当と判定される" "invalid" "$(ct_section_valid "$mixed_broken")"
+
+# ID 行と `- なし` の混在
+mixed_none="$(ct_build_section "$(printf '%s\n' '- [ ] G-158-1: 正しい宣言' '- なし')" "$KEEP_ENTRY" "$NONE_LINE")"
+assert_eq "(A-24) ID 行と「- なし」の混在は不当" "invalid" \
+  "$(ct_category_state "$mixed_none" "新たに宣言する保証" true)"
+
+# ID を持たない任意の非空リスト行
+free_row="$(ct_build_section "$(printf '%s\n' '- [ ] G-158-1: 正しい宣言' '- 公開面かどうか後で決める')" "$KEEP_ENTRY" "$NONE_LINE")"
+assert_eq "(A-24) ID を持たない任意のリスト行の混入は不当" "invalid" \
+  "$(ct_category_state "$free_row" "新たに宣言する保証" true)"
+
+# リスト行以外の非空行（散文）
+prose_row="$(ct_build_section "$(printf '%s\n' '- [ ] G-158-1: 正しい宣言' '補足: 後で見直す')" "$KEEP_ENTRY" "$NONE_LINE")"
+assert_eq "(A-24) リスト行以外の非空行の混入は不当" "invalid" \
+  "$(ct_category_state "$prose_row" "新たに宣言する保証" true)"
+
+# `- なし` の複数行
+double_none="$(ct_build_section "$(printf '%s\n' '- なし' '- なし')" "$KEEP_ENTRY" "$NONE_LINE")"
+assert_eq "(A-24) 「- なし」が複数行なら不当" "invalid" \
+  "$(ct_category_state "$double_none" "新たに宣言する保証" true)"
+
+# 維持カテゴリでも同じ規則が効く
+keep_broken="$(ct_build_section "$NEW_ENTRY" "$(printf '%s\n' '- G-101-2: 既存の約束' '- G-101-x: 壊れた行')" "$NONE_LINE")"
+assert_eq "(A-24) 維持カテゴリでも壊れた行があれば不当" "invalid" \
+  "$(ct_category_state "$keep_broken" "維持する保証" true)"
+assert_eq "(A-24) 維持カテゴリの不正で節全体も不当" "invalid" "$(ct_section_valid "$keep_broken")"
+
+# 受理方向の維持: 正しい行だけなら複数行でも受理される
+multi_ok="$(ct_build_section "$(printf '%s\n' '- [ ] G-158-1: 宣言1' '- [x] G-158-2: 宣言2')" "$(printf '%s\n' '- G-101-2: 既存1' '- G-115-1: 既存2')" "$PENDING_ENTRY")"
+assert_eq "(A-24) 完全な ID 行だけなら複数行でも受理（チェック状態も問わない）" "valid" "$(ct_section_valid "$multi_ok")"
+assert_eq "(A-24) 受理された節からは全件が抽出される" "NEW G-158-1
+NEW G-158-2
+KEEP G-101-2
+KEEP G-115-1" "$(ct_extract_guarantee_section "$multi_ok")"
+
+# 判定保留は全件走査の対象外（ID を持たない行が正規）
+pending_free="$(ct_build_section "$NEW_ENTRY" "$KEEP_ENTRY" "$(printf '%s\n' '- 判断が付かない振る舞いA（理由）' '- 判断が付かない振る舞いB（理由）')")"
+assert_eq "(A-24) 判定保留は ID を持たない行が複数あっても受理される" "valid" "$(ct_section_valid "$pending_free")"
+
+assert_ref_contains "カテゴリ配下を全件走査する規律がある" \
+  '**カテゴリ配下は全件走査する（部分成功≠完全成功）**'
+assert_ref_contains "受理するのは完全な ID 行か単独の「- なし」だけ" \
+  '**`- なし` が単独で1行だけ**である（他のリスト行が無い）'
+assert_ref_contains "混在・壊れた行・非リスト行・なし複数を不当とする" \
+  '**保証 ID 行と `- なし` の混在**／**完全な ID 文法を満たさない行**'
+assert_ref_contains "1件でも有効なら受理、という判定を禁じている" \
+  '**「有効な ID が1件でもあれば受理」という判定にしないこと**'
+
+echo ""
+echo "=== (A-25) 保証節の識別規則が producer / consumer / スクリプト仕様で一致 ==="
+
+canon_rule='> **保証節の識別（台帳・Issue 本文に共通）**: **コードフェンスの外にある `## 保証` で始まる H2 見出し**を保証節とみなす'
+for target_file in "$REF_FILE" "$CONSUMER_FILE" "$STRATEGY_FILE"; do
+  has_canon="false"
+  grep -qF -- "$canon_rule" "$target_file" && has_canon="true"
+  assert_eq "(A-25) 識別規則の定型文が $(basename "$target_file") に逐語で存在する" "true" "$has_canon"
+done
+
+# 3ケース（完全一致・接頭辞一致・フェンス内）の扱いが定型文に含まれている
+assert_ref_contains "(A-25) 完全一致は生成側の書式規約だと明記している" \
+  '**生成側が書く見出しは常に `## 保証（Guarantees）`**（完全一致）であり、接頭辞一致は**読む側の識別規則**である'
+assert_ref_contains "(A-25) 接頭辞一致で識別すると明記している" \
+  '**接頭辞一致**。`## 保証（Guarantees）` の完全一致だけを見ない'
+assert_ref_contains "(A-25) フェンス内は対象外だと明記している" \
+  '**コードフェンスの内側の見出しは対象にしない**'
+assert_ref_contains "(A-25) 2つ以上ある本文は解釈できないと明記している" \
+  '**該当する見出しが2つ以上ある本文は「解釈できない」として扱う**'
+
+# 消費側（親Issue本文の読み取り）が完全一致の名指しではなく識別規則を使っている
+assert_file_contains "(A-25) 下流の親Issue読み取りが識別規則に従っている" "$CONSUMER_FILE" \
+  '本文の保証節（**上記の「保証節の識別」の定型文に従って識別する**'
+assert_file_not_contains "(A-25) 下流に完全一致名指しの旧記述が残っていない" "$CONSUMER_FILE" \
+  '本文の「## 保証（Guarantees）」節から次の2種を抽出する'
+assert_file_contains "(A-25) 下流は保証節が2つ以上の本文を解釈できないとして扱う" "$CONSUMER_FILE" \
+  '該当する H2 が2つ以上ある（どちらを正とするか決められない）'
+
+# 索引チェックの仕様（台帳側の決定的実装）も接頭辞一致
+assert_file_contains "(A-25) 索引チェック仕様が接頭辞一致で書かれている" \
+  "${REPO_ROOT}/scripts/specs/guarantee-index-check.md" '`## 保証` で始まる見出し'
+
+# 実スクリプトの挙動と一致することをフィクスチャで確認（`## 保証ポリシー` を節として扱う）
+POLICY_WS="${TMP_ROOT}/policy"
+mkdir -p "${POLICY_WS}/docs" "${POLICY_WS}/tests"
+cat >"${POLICY_WS}/tests/example.test.sh" <<'EOF'
+test_ok() { :; }
+EOF
+cat >"${POLICY_WS}/docs/guarantees.md" <<'EOF'
+# 保証台帳
+
+## 保証ポリシー
+
+### G-101-2: 接頭辞一致の見出し配下の保証
+
+- テスト: `tests/example.test.sh::test_ok`
+- 宣言元: #101
+EOF
+policy_out="$(cd "$POLICY_WS" && bash "$GIC_SCRIPT" docs/guarantees.md 2>/dev/null)"
+assert_eq "(A-25) 索引チェックの実挙動も接頭辞一致（## 保証ポリシー 配下を保証として数える）" "1" \
+  "$(printf '%s' "$policy_out" | jq -r '.counts.guarantees')"
+assert_eq "(A-25) 参照実装の節検出も同じ件数になる" "1" \
+  "$(ct_count_guarantee_sections "$(cat "${POLICY_WS}/docs/guarantees.md")")"
+
+echo ""
 echo "=== (A-23) 状態空間表の網羅性（構造不変条件） ==="
 
 state_table="$(awk '/^\*\*生成される保証節の状態空間/{f=1} /^- 受理と判定した節は/{f=0} f && /^\|/{print}' "$REF_FILE" \
   | grep -v -E '^\|[[:space:]]*(#|-+)[[:space:]]*\|')"
 state_rows="$(printf '%s\n' "$state_table" | grep -c '^|')"
-assert_eq "(A-23) 状態空間表は11行ある（カテゴリ3種の全状態＋全体条件）" "11" "$state_rows"
+assert_eq "(A-23) 状態空間表は13行ある（カテゴリ3種の全状態＋全体条件）" "13" "$state_rows"
 state_empty="$(printf '%s\n' "$state_table" | grep -c -E '\|[[:space:]]*\|')"
 assert_eq "(A-23) 状態空間表に空セルが無い（行を足して埋め忘れると落ちる）" "0" "$state_empty"
 
 # カテゴリごとの行数（新規宣言3・維持3・判定保留4・全体1）
-for pair in "新たに宣言する保証:3" "維持する保証:3" "判定保留（要人間判定）:4" "全体:1"; do
+for pair in "新たに宣言する保証:4" "維持する保証:4" "判定保留（要人間判定）:4" "全体:1"; do
   cat_name="${pair%%:*}"
   cat_expected="${pair##*:}"
   cat_rows="$(printf '%s\n' "$state_table" | awk -F'|' -v c="$cat_name" '$3 ~ c {n++} END {print n+0}')"
