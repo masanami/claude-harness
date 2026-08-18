@@ -69,7 +69,7 @@ SKILL.md の Step 5.5 で確定したフェーズに応じて、本ファイル�
 
 維持する保証は台帳に既存である前提のため本手順の対象外だが、同じ3条件で見つからない場合は同様に `registered: false` / `verdict: "not_registered"` とする。
 
-**読み取り規則の突き合わせ（独立2経路の食い違い検出）**: `index` が非 null かつ `index.error` が null の場合、**自分が読み取った保証見出しの件数**（「保証」節内・フェンス外の `###` 見出しの数）が **`index.counts.guarantees` と一致すること**を確認する。一致しなければ、あなたの読み取り規則とスクリプトの規則が食い違っている（フェンス・節の範囲の解釈ずれ）ため、**どちらか一方の数字だけを採用して先へ進めない**。`allConsistent: false` とし、`humanReview` に `{ kind: "ledger_read_mismatch", detail: "自分の読み取り <N> 件 / index.counts.guarantees <M> 件" }` を積む（同じ台帳を独立した2経路で数え、食い違いを検出する）。
+**読み取り規則の突き合わせ（独立2経路の食い違い検出）**: `index` が非 null かつ `index.error` が null の場合、**自分が読み取った保証見出しの件数**（「保証」節内・フェンス外の `###` 見出しの数）が **`index.counts.guarantees` と一致すること**を確認する。一致しなければ、あなたの読み取り規則とスクリプトの規則が食い違っている（フェンス・節の範囲の解釈ずれ）ため、**どちらか一方の数字だけを採用して先へ進めない**。`allConsistent: false` とし、`humanReview` に `{ kind: "ledger_read_mismatch", detail: "自分の読み取り <N> 件 / index.counts.guarantees <M> 件" }` を積む（同じ台帳を独立した2経路で数え、食い違いを検出する）。**この不一致は 5.5-7 の算出式の (d) として反映される**ため、`targets` が空で (a)(c) が空虚に真になる場合でも `allConsistent` は `false` になる（索引自体は `pass` のまま食い違いだけが起きる状況を通さない）。
 
 ### 5.5-6. 意味整合の検証（guarantee-auditor fan-out）
 
@@ -101,14 +101,19 @@ guaranteeCheck.allConsistent =
      (a) targets の各 guarantee_id に対応する結果が guarantees に1件ずつ存在する（件数だけでなく ID を突き合わせる）
   AND (b) guaranteeCheck.index.status === 'pass'
   AND (c) すべての guarantees で verdict === 'consistent'
+  AND (d) guaranteeCheck.humanReview が空である（1件でもあれば allConsistent は false）
 ```
+
+**(d) は「要人間判定が記録されたら必ず算出式が落ちる」ための項**であり、理由コードごとに項を足す方式は採らない（**理由コードを追加したときに算出式へ接続し忘れる事故**を防ぐため、`humanReview` の非空そのものを項にしている）。したがって `humanReview` には**要人間判定＝昇格を止める理由だけ**を入れること（情報提供の注記を入れる場所ではない）。
+
+> **不変条件**: `humanReview` に1件でも理由が入るなら、`allConsistent` は必ず `false` になる。早期失敗（5.5-1〜5.5-3）は `allConsistent: false` を直接設定するため、この不変条件は経路によらず成り立つ。
 
 `verdict` の語彙は `consistent` / `drifted` / `uncertain` / `verification_failed` / `not_registered`。
 
 - **`drifted` / `uncertain` / `verification_failed` / `not_registered` / 結果の欠落は、いずれも `allConsistent: false`** とし、**`skipped` へ変換しない**。該当保証には `needsHumanReview: true` を付け、Step 9 の表に出す（検査できなかったものを `consistent` や `skipped` に丸めない。**検査不能は「問題0件」と同じではない**）
 - **対象の一部だけ検証できた状態を `allConsistent: true` にしない**（部分成功≠完全成功）。(a) の突き合わせを満たせるのは「調べた結果の0件」だけであり、「調べられなかった」では満たされない
 - 5.5-5 で `not_registered` になった保証も、fan-out の対象外だが `guarantees` に1件として記録する（(a) の突き合わせは満たしつつ、(c) を満たさないため `allConsistent` は `false` になる）。**未追記の保証を `targets` から取り除いて件数を合わせない**
-- `targets` が空（親Issueの保証節が「なし」と明示していた場合のみ成立）のとき、(a)(c) は0件について真であり、`allConsistent` は (b) の索引整合だけで決まる。**この経路に入れるのは 5.5-3 で「検査した結果の0件」と判定できた場合だけ**であり、抽出に失敗した場合は 5.5-3 で既に `allConsistent: false` が確定している
+- `targets` が空（親Issueの保証節が「なし」と明示していた場合のみ成立）のとき、**(a)(c) は0件について空虚に真になる**。この状態で `allConsistent` を決めるのは (b) の索引整合と **(d) の要人間判定の不在**であり、**空集合でも安全側に倒れる**（例: 5.5-5 の読み取り不一致が記録されていれば、対象が0件でも (d) により `false` になる）。**この経路に入れるのは 5.5-3 で「検査した結果の0件」と判定できた場合だけ**であり、抽出に失敗した場合は 5.5-3 で既に `allConsistent: false` が確定している
 - `skipped: true` の場合（SDD期のみ）は `allConsistent` を算出せず、フィールド自体を持たせない
 
 ### `guaranteeCheck` の形（SKILL.md の Step 7・Step 9 が参照する）

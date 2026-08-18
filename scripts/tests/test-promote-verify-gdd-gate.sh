@@ -110,6 +110,21 @@ assert_ref_contains() {
   fi
 }
 
+# 参照ファイルに「あってはならない文言」が無いことを検査する（緩和の再発防止）。
+assert_ref_not_contains() {
+  local description="$1" phrase="$2"
+  if grep -qF -- "$phrase" "$REF_FILE"; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       file:   ${REF_FILE}"
+    echo "       phrase: ${phrase}"
+  else
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  fi
+}
+
 TMP_ROOT="$(mktemp -d)"
 # shellcheck disable=SC2329 # trap 経由で呼ばれるため直接呼び出しが無くても false positive
 cleanup_tmp_root() {
@@ -750,6 +765,84 @@ if [ -n "$step55" ]; then
     assert_eq "早期失敗の guaranteeCheck は全経路が index/guarantees を null 初期化（${early_total} 経路）" \
       "$early_total" "$early_initialized"
   fi
+fi
+
+echo ""
+echo "=== (B-10) 要人間判定と allConsistent の接続（安全機構が算出式に入っていること） ==="
+
+# humanReview に理由が記録されるのに算出式へ反映されない項目があると、
+# 「安全機構が働いたのに allConsistent が true」になりうる。特に targets が空のときは
+# (a)(c) が空虚に真・(b) も真になり、読み取り不一致があっても素通りする（codex P1 指摘）。
+# 個別の理由コードごとに項を足すのではなく humanReview の非空そのものを項にすることで、
+# 将来 kind が増えても接続漏れが起きない形にしている。
+assert_ref_contains "算出式に (d) humanReview が空である の項がある" \
+  '(d) guaranteeCheck.humanReview が空である（1件でもあれば allConsistent は false）'
+assert_ref_contains "不変条件: humanReview に理由が入るなら allConsistent は必ず false" \
+  '**不変条件**: `humanReview` に1件でも理由が入るなら、`allConsistent` は必ず `false` になる'
+assert_ref_contains "理由コードごとに項を足す方式を採らない理由が明記されている" \
+  '**理由コードを追加したときに算出式へ接続し忘れる事故**'
+assert_ref_contains "humanReview は昇格を止める理由だけを入れる場所である" \
+  '**要人間判定＝昇格を止める理由だけ**'
+assert_ref_contains "targets が空でも安全側に倒れることを明記" \
+  '**空集合でも安全側に倒れる**'
+assert_ref_contains "空 targets で (a)(c) が空虚に真になることを明記" \
+  '**(a)(c) は0件について空虚に真になる**'
+assert_ref_contains "読み取り不一致は算出式の (d) として反映されると明記" \
+  '**この不一致は 5.5-7 の算出式の (d) として反映される**'
+assert_ref_not_contains "空 targets を「(b) だけで決まる」と書いていない（緩和の再発防止）" \
+  '(b) の索引整合だけで決まる'
+assert_skill_contains "Step 7 の注意に読み取り不一致（humanReview 非空）が含まれる" \
+  '台帳の読み取り件数がスクリプトと食い違っている（`humanReview` に理由が1件でもある）'
+
+# 算出式ブロックの構造検査: 項は (a)〜(d) の4本で、(d) が humanReview を参照していること
+ac_block="$(awk '/^guaranteeCheck.allConsistent =$/ {inside=1} inside {print} inside && /^```$/ {exit}' "$REF_FILE")"
+assert_eq "allConsistent の項は4本（(a) 突き合わせ / (b) 索引 / (c) verdict / (d) humanReview）" \
+  "4" "$(printf '%s\n' "$ac_block" | grep -cE '^ +(AND )?\([a-d]\) ')"
+assert_eq "(d) の項が humanReview を参照している" \
+  "1" "$(printf '%s\n' "$ac_block" | grep -E '^ +AND \(d\) ' | grep -cF 'humanReview')"
+
+# 契約の真理値表。上の構造検査で「項が (a)〜(d) の4本であること」を文書側から確認したうえで、
+# その AND 結合を評価し、安全側に倒れるべきケースが実際に false になることを固定する。
+eval_all_consistent() {
+  # 引数: a b c d（1=真 / 0=偽）。1つでも 0 なら false。
+  local operand
+  for operand in "$@"; do
+    if [ "$operand" != "1" ]; then
+      echo "false"
+      return 0
+    fi
+  done
+  echo "true"
+}
+
+assert_eq "①読み取り不一致あり（(a)(b)(c) は真）→ allConsistent は false" \
+  "false" "$(eval_all_consistent 1 1 1 0)"
+assert_eq "②targets が空で (a)(c) が空虚に真・索引 pass でも、不一致があれば false" \
+  "false" "$(eval_all_consistent 1 1 1 0)"
+assert_eq "③すべて満たすときだけ true（安全側に倒しすぎて常に false ではない）" \
+  "true" "$(eval_all_consistent 1 1 1 1)"
+
+# ③の構造版: 語彙にあるすべての kind について、humanReview に入れば false になること。
+# (d) は kind を問わない項のため、語彙を1件ずつ回して漏れが無いことを確認する
+# （将来 kind が追加されても、語彙行に足すだけで本検査の対象になる）。
+kinds_line="$(grep -F '`humanReview[].kind` の語彙:' "$REF_FILE")"
+kinds="$(printf '%s' "$kinds_line" | grep -oE '`[a-z_]+`' | tr -d '`' | grep -v '^humanReview$')"
+kind_total="$(printf '%s\n' "$kinds" | grep -c .)"
+if [ "$kind_total" -lt 5 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("humanReview の語彙行を解析できない（kind が ${kind_total} 件しか取れない）")
+  echo "  NG - humanReview の語彙行を解析できない（kind が ${kind_total} 件しか取れない）"
+else
+  kind_failures=0
+  for kind in $kinds; do
+    # humanReview に kind が1件でも入っている状態 = (d) が偽
+    if [ "$(eval_all_consistent 1 1 1 0)" != "false" ]; then
+      kind_failures=$((kind_failures + 1))
+      echo "       kind=${kind} で allConsistent が false にならない"
+    fi
+  done
+  assert_eq "語彙のすべての kind（${kind_total} 件）で humanReview 非空 → allConsistent は false" \
+    "0" "$kind_failures"
 fi
 
 echo ""

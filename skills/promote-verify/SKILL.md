@@ -217,7 +217,7 @@ readyForPromotion =
 
 （`allMerged` は Step 3-3 の結果。「スキップはOK扱い」という意味論も含め、この式の意味は変更しないこと）
 
-**最終項（`guaranteeCheck`）の注意**: この項で「スキップはOK扱い」を適用してよいのは、**Step 5.5-1 のフェーズ判定が `sdd` として確定した場合だけ**である（`guaranteeCheck.skipped === true` になる条件は Step 5.5-1 の1箇所しかない）。フェーズが `invalid`・判定不能、GDD期なのに台帳や親Issueの保証節が無い、意味検証が `drifted` / `uncertain` / `verification_failed` / `not_registered`、対象の一部しか検証できていない — これらはすべて `allConsistent: false` であり、**`skipped` へ倒して昇格可能に見せる経路を作らないこと**。
+**最終項（`guaranteeCheck`）の注意**: この項で「スキップはOK扱い」を適用してよいのは、**Step 5.5-1 のフェーズ判定が `sdd` として確定した場合だけ**である（`guaranteeCheck.skipped === true` になる条件は Step 5.5-1 の1箇所しかない）。フェーズが `invalid`・判定不能、GDD期なのに台帳や親Issueの保証節が無い、意味検証が `drifted` / `uncertain` / `verification_failed` / `not_registered`、対象の一部しか検証できていない、台帳の読み取り件数がスクリプトと食い違っている（`humanReview` に理由が1件でもある） — これらはすべて `allConsistent: false` であり、**`skipped` へ倒して昇格可能に見せる経路を作らないこと**。
 
 ### Step 8: 後始末（一時ファイルのクリーンアップ）
 
