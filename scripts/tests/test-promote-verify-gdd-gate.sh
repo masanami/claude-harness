@@ -36,6 +36,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 DETECT_SCRIPT="${REPO_ROOT}/scripts/detect-dev-phase.sh"
 GIC_SCRIPT="${REPO_ROOT}/scripts/guarantee-index-check.sh"
+EAC_SCRIPT="${REPO_ROOT}/scripts/extract-acceptance-criteria.sh"
 SKILL_FILE="${REPO_ROOT}/skills/promote-verify/SKILL.md"
 REF_FILE="${REPO_ROOT}/skills/promote-verify/references/guarantee-consistency.md"
 
@@ -123,6 +124,21 @@ assert_ref_not_contains() {
     PASS_COUNT=$((PASS_COUNT + 1))
     echo "  ok - ${description}"
   fi
+}
+
+# 5.5-7 の算出式（(a) AND (b) AND (c) AND (d)）の AND 結合を評価する。
+# 算出式の項が (a)〜(d) の4本であること・(d) が humanReview を参照していることは
+# (B-10) の構造検査で文書側から確認しており、本関数はその真理値表を固定する。
+eval_all_consistent() {
+  # 引数: a b c d（1=真 / 0=偽）。1つでも 0 なら false。
+  local operand
+  for operand in "$@"; do
+    if [ "$operand" != "1" ]; then
+      echo "false"
+      return 0
+    fi
+  done
+  echo "true"
 }
 
 TMP_ROOT="$(mktemp -d)"
@@ -436,6 +452,38 @@ assert_eq "「保証」節の外の見出しは保証件数に数えない" \
   "1" "$(printf '%s' "$out" | jq -r '.counts.guarantees')"
 assert_eq "3条件を適用しても節の外の G-158-8 は登録済みにならない" \
   "0" "$(ref_impl_guarantee_headings "${WS}/docs/guarantees-outside-section.md" | grep -cF -- 'G-158-8')"
+
+# ---------------------------------------------------------------------------
+# (A-7) チェックリストのマーカー状態で対象を絞らないこと
+#       5.5-3 の保証節の抽出は「既存の受入基準抽出と同じ扱い」を規定している。その基準に
+#       なる extract-acceptance-criteria.sh の実挙動（`- [ ]` / `- [x]` / `- [X]` を等しく
+#       抽出し、チェック状態は checked として記録するだけで絞り込みに使わない）を固定する。
+#       実装が進めばチェックは付くため、未チェックだけを拾う規則にすると完了した項目ほど
+#       黙って対象から外れる（codex P1 指摘と同型の欠陥）。
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== (A-7) チェックリスト: チェック済み・未チェックを等しく対象にする ==="
+
+mixed_body="$(printf '## 受入基準\n\n- [ ] 未チェックの項目\n- [x] 小文字でチェック済みの項目\n- [X] 大文字でチェック済みの項目\n')"
+out="$(printf '%s' "$mixed_body" | bash "$EAC_SCRIPT" --stdin 2>/dev/null)"
+code=$?
+assert_eq "混在チェックリスト: exit 0" "0" "$code"
+assert_eq "混在チェックリスト: 3件すべてを抽出する（チェック状態で絞らない）" \
+  "3" "$(printf '%s' "$out" | jq -r '.criteria | length')"
+assert_eq "混在チェックリスト: - [x] の項目も抽出される" \
+  "1" "$(printf '%s' "$out" | jq -r '[.criteria[] | select(.text == "小文字でチェック済みの項目")] | length')"
+assert_eq "混在チェックリスト: - [X]（大文字）の項目も抽出される" \
+  "1" "$(printf '%s' "$out" | jq -r '[.criteria[] | select(.text == "大文字でチェック済みの項目")] | length')"
+assert_eq "混在チェックリスト: チェック状態は checked として記録されるだけ（除外に使われない）" \
+  "false,true,true" "$(printf '%s' "$out" | jq -r '[.criteria[].checked | tostring] | join(",")')"
+
+# チェック済みだけの節でも全件が対象になる（「完了したら対象が消える」ことがない）
+all_checked="$(printf '## 受入基準\n\n- [x] 完了した項目A\n- [x] 完了した項目B\n')"
+out="$(printf '%s' "$all_checked" | bash "$EAC_SCRIPT" --stdin 2>/dev/null)"
+assert_eq "全件チェック済み: 2件とも抽出される（完了により対象が消えない）" \
+  "2" "$(printf '%s' "$out" | jq -r '.criteria | length')"
+assert_eq "全件チェック済み: parse_status は ok（no_checklist_found にならない）" \
+  "ok" "$(printf '%s' "$out" | jq -r '.parse_status')"
 
 # ---------------------------------------------------------------------------
 # (B) SKILL.md の契約文（正準文）の存在検査
@@ -768,6 +816,64 @@ if [ -n "$step55" ]; then
 fi
 
 echo ""
+echo "=== (B-5d) チェック状態で対象を絞らない（完了した保証が黙って抜けない） ==="
+
+assert_ref_contains "チェックリスト行は [ ] / [x] / [X] を等しく対象にする" \
+  '**チェックリスト行は `- [ ]` / `- [x]` / `- [X]` を等しく対象にする**'
+assert_ref_contains "既存の受入基準抽出と同じ扱いであることを明示" \
+  '既存の受入基準抽出 `extract-acceptance-criteria` と同じ扱い'
+assert_ref_contains "チェック状態を絞り込みにも判定にも使わない" \
+  '**チェック状態を対象の絞り込みにも判定にも使わないこと**'
+assert_ref_contains "未チェックだけを拾うと完了した保証が黙って抜けると明記" \
+  '**完了した保証ほど登録確認・意味検証から黙って抜け落ちる**'
+assert_ref_contains "targets から外れた保証は (a) にも現れないと明記" \
+  '`targets` から外れた保証は (a) の突き合わせにも現れないため、検証されないまま `allConsistent` が真になりうる'
+assert_ref_contains "人間のチェックは検証結果の代用にならない" \
+  '**人間が付けたチェックは検証結果の代用にならない**'
+assert_ref_contains "5.5-3 の新規宣言はチェック済み行も等しく対象にする" \
+  '**`- [x]` / `- [X]` のチェック済み行も等しく対象にする**'
+assert_ref_contains "5.5-3 の維持もチェック状態によらず対象にする" \
+  "またチェック状態によらず対象にする"
+
+# 構造不変条件: 抽出規則をチェック状態で絞る書き方（未チェックだけを挙げる記述）が
+# 混入していないこと。`- [ ]` を書いている行は、必ずチェック済みの表記も併記していること。
+unchecked_only=""
+marker_grep_failed=""
+for f in "$SKILL_FILE" "$REF_FILE"; do
+  hits="$(grep -nF -- '- [ ]' "$f")"
+  hits_exit=$?
+  if [ "$hits_exit" -ge 2 ]; then
+    marker_grep_failed="${marker_grep_failed}${f} "
+    continue
+  fi
+  [ -z "$hits" ] && continue
+  bad="$(printf '%s\n' "$hits" | grep -vF -e '[x]' -e '[X]')"
+  if [ -n "$bad" ]; then
+    unchecked_only="${unchecked_only}${f}: ${bad}
+"
+  fi
+done
+if [ -n "$marker_grep_failed" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("チェックリストマーカー検査の grep 実行に失敗")
+  echo "  NG - チェックリストマーカー検査の grep 実行に失敗: ${marker_grep_failed}"
+elif [ -n "$unchecked_only" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("未チェックのマーカーだけを対象にする記述がある")
+  echo "  NG - 未チェックのマーカーだけを対象にする記述がある（完了した項目が黙って抜ける）"
+  echo "       ${unchecked_only}"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - チェックリストの記述はすべてチェック済み・未チェックを併記している"
+fi
+
+# チェック済みの保証が未登録・不整合だったときに算出式が落ちること（(c) が偽になる経路）
+assert_eq "チェック済み保証が not_registered/drifted なら allConsistent は false" \
+  "false" "$(eval_all_consistent 1 1 0 1)"
+assert_eq "チェック済み保証が targets から落ちて (a) が偽なら allConsistent は false" \
+  "false" "$(eval_all_consistent 0 1 1 1)"
+
+echo ""
 echo "=== (B-10) 要人間判定と allConsistent の接続（安全機構が算出式に入っていること） ==="
 
 # humanReview に理由が記録されるのに算出式へ反映されない項目があると、
@@ -801,20 +907,8 @@ assert_eq "allConsistent の項は4本（(a) 突き合わせ / (b) 索引 / (c) 
 assert_eq "(d) の項が humanReview を参照している" \
   "1" "$(printf '%s\n' "$ac_block" | grep -E '^ +AND \(d\) ' | grep -cF 'humanReview')"
 
-# 契約の真理値表。上の構造検査で「項が (a)〜(d) の4本であること」を文書側から確認したうえで、
-# その AND 結合を評価し、安全側に倒れるべきケースが実際に false になることを固定する。
-eval_all_consistent() {
-  # 引数: a b c d（1=真 / 0=偽）。1つでも 0 なら false。
-  local operand
-  for operand in "$@"; do
-    if [ "$operand" != "1" ]; then
-      echo "false"
-      return 0
-    fi
-  done
-  echo "true"
-}
-
+# 真理値表の評価はファイル冒頭で定義した eval_all_consistent を使う
+# （構造検査で「項が (a)〜(d) の4本であること」を文書側から確認したうえで AND 結合を評価する）。
 assert_eq "①読み取り不一致あり（(a)(b)(c) は真）→ allConsistent は false" \
   "false" "$(eval_all_consistent 1 1 1 0)"
 assert_eq "②targets が空で (a)(c) が空虚に真・索引 pass でも、不一致があれば false" \
