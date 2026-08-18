@@ -150,6 +150,54 @@ cat >"${WS}/docs/guarantees-no-section.md" <<'EOF'
 - 節名が規約と異なる
 EOF
 
+# コードフェンス内に記入例を持つ台帳（フェンス外の実在保証は1件だけ）。
+# スクリプトはフェンス内を検査対象にしないため、散文側が素の文字列一致で読むと
+# 「記入例を登録済みと誤認するが索引チェックは pass のまま」という食い違いが起きる。
+cat >"${WS}/docs/guarantees-fenced-example.md" <<'EOF'
+# 保証台帳
+
+書式の記入例（実在の保証ではない）:
+
+```markdown
+### G-158-9: フェンス内の記入例
+
+- 種別: API契約
+- テスト: `tests/example.test.sh::test_contact_returns_400`
+- 宣言元: #158
+```
+
+## 保証（Guarantees）
+
+### G-158-1: 実在する保証
+
+- 種別: API契約
+- テスト: `tests/example.test.sh::test_contact_returns_400`
+- 宣言元: #158
+
+## Gaps（テストのない公開面）
+EOF
+
+# 「保証」節の外に保証見出しを持つ台帳
+cat >"${WS}/docs/guarantees-outside-section.md" <<'EOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-158-1: 実在する保証
+
+- 種別: API契約
+- テスト: `tests/example.test.sh::test_contact_returns_400`
+- 宣言元: #158
+
+## メモ
+
+### G-158-8: 節の外に置かれた保証
+
+- テスト: `tests/example.test.sh::test_contact_returns_400`
+
+## Gaps（テストのない公開面）
+EOF
+
 # 枝番の前方一致（G-158-1 と G-158-10 の併存）を持つ台帳
 cat >"${WS}/docs/guarantees-prefix.md" <<'EOF'
 # 保証台帳
@@ -283,6 +331,73 @@ assert_eq "G-158-10 自身は完全一致で検出できる" \
   "1" "$(grep -cF -- '### G-158-10:' "${WS}/docs/guarantees-prefix.md")"
 
 # ---------------------------------------------------------------------------
+# (A-6) 台帳の読み取り規則の一致（散文側とスクリプト側で同じ台帳を同じ規則で読む）
+#       5.5-5 の登録確認は SKILL.md の散文が指示する規則で行われるため、その規則が
+#       guarantee-index-check.sh の実装（フェンス内は対象外・「保証」節内のみ）と
+#       食い違うと、記入例を「登録済み」と誤認しても索引チェックは pass のままになる。
+#       ここではスクリプトの実挙動を固定したうえで、散文の3条件をそのまま適用した
+#       参照実装が同じ結果になることを突き合わせる。
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== (A-6) 台帳の読み取り規則: フェンス内の記入例を保証として数えない ==="
+
+# SKILL.md 5.5-5 の3条件（フェンス外・「保証」節内・`### ` 見出し）をそのまま適用した参照実装。
+# フィクスチャは列0のフェンス・見出しのみを使う（完全な CommonMark 実装ではなく、
+# 目的は「散文の規則がスクリプトと同じ結果を出すか」の突き合わせ）。
+ref_impl_guarantee_headings() {
+  awk '
+    /^(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    /^## / { section = ($0 ~ /^## 保証/) ? 1 : 0; next }
+    /^# /  { section = 0; next }
+    section && /^### / { print }
+  ' "$1"
+}
+
+# スクリプトの実挙動: フェンス内の `### G-158-9:` と `- テスト:` は一切数えない
+out="$(bash "$GIC_SCRIPT" "${WS}/docs/guarantees-fenced-example.md" --base "$WS" 2>/dev/null)"
+code=$?
+assert_eq "フェンス内に記入例がある台帳: exit 0（記入例は検査対象外）" "0" "$code"
+assert_eq "フェンス内の記入例は保証として数えない（guarantees は1件）" \
+  "1" "$(printf '%s' "$out" | jq -r '.counts.guarantees')"
+assert_eq "フェンス内のテスト参照も数えない（refs は1件）" \
+  "1" "$(printf '%s' "$out" | jq -r '.counts.refs')"
+assert_eq "フェンス内の記入例があっても status は pass（＝スクリプト側からは食い違いが見えない）" \
+  "pass" "$(printf '%s' "$out" | jq -r '.status')"
+
+# 素の文字列一致（散文が Grep だけで判定した場合）は記入例にヒットする＝誤認の再現
+assert_eq "素の Grep は記入例にヒットする（Grep のヒットを登録済みの根拠にできない）" \
+  "1" "$(grep -cF -- '### G-158-9:' "${WS}/docs/guarantees-fenced-example.md")"
+
+# 散文の3条件を適用した参照実装は記入例を除外し、実在の保証だけを返す
+ref_headings="$(ref_impl_guarantee_headings "${WS}/docs/guarantees-fenced-example.md")"
+assert_eq "3条件を適用すると記入例 G-158-9 は登録済みにならない" \
+  "0" "$(printf '%s\n' "$ref_headings" | grep -cF -- 'G-158-9')"
+assert_eq "3条件を適用すると実在の G-158-1 だけが登録済みになる" \
+  "1" "$(printf '%s\n' "$ref_headings" | grep -cF -- 'G-158-1')"
+
+# 独立2経路の突き合わせ（5.5-5 が指示する件数一致）が実際に成立すること
+assert_eq "散文の規則とスクリプトの件数が一致する（フェンス入り台帳）" \
+  "$(printf '%s' "$out" | jq -r '.counts.guarantees')" \
+  "$(printf '%s\n' "$ref_headings" | grep -c .)"
+
+ok_out="$(bash "$GIC_SCRIPT" "${WS}/docs/guarantees-ok.md" --base "$WS" 2>/dev/null)"
+assert_eq "散文の規則とスクリプトの件数が一致する（健全な台帳）" \
+  "$(printf '%s' "$ok_out" | jq -r '.counts.guarantees')" \
+  "$(ref_impl_guarantee_headings "${WS}/docs/guarantees-ok.md" | grep -c .)"
+
+# 「保証」節の外の見出しは登録済みとみなさない。スクリプトは黙って無視せず broken に出す
+out="$(bash "$GIC_SCRIPT" "${WS}/docs/guarantees-outside-section.md" --base "$WS" 2>/dev/null)"
+code=$?
+assert_eq "「保証」節の外の見出し: exit 1（黙って未検査にしない）" "1" "$code"
+assert_eq "「保証」節の外の見出しは guarantee_outside_section として報告される" \
+  "guarantee_outside_section" "$(printf '%s' "$out" | jq -r '.broken[0].reason')"
+assert_eq "「保証」節の外の見出しは保証件数に数えない" \
+  "1" "$(printf '%s' "$out" | jq -r '.counts.guarantees')"
+assert_eq "3条件を適用しても節の外の G-158-8 は登録済みにならない" \
+  "0" "$(ref_impl_guarantee_headings "${WS}/docs/guarantees-outside-section.md" | grep -cF -- 'G-158-8')"
+
+# ---------------------------------------------------------------------------
 # (B) SKILL.md の契約文（正準文）の存在検査
 # ---------------------------------------------------------------------------
 echo ""
@@ -357,7 +472,7 @@ assert_skill_contains "未追記の保証を targets から取り除かない" \
 assert_skill_contains "台帳登録確認は ID の完全一致（前方一致で取り違えない）" \
   '前方一致で `G-158-1` と `G-158-10` を取り違えないこと'
 assert_skill_contains "新規宣言の意味検証は親Issueの（裁可された）約束文を正とする" \
-  '**`statement` は、新規宣言なら親Issueの保証節の約束文（裁可された文言が正）、維持なら台帳の約束文**'
+  '**`statement` は、新規宣言なら親Issueの保証節の約束文（裁可された文言が正）'
 assert_skill_contains "台帳の約束文が親Issueの約束文と食い違う場合は drifted" \
   '**新規宣言で、台帳に登録された約束文が親Issueの約束文と食い違っている場合は、その不一致自体を `verdict: "drifted"` として記録する**'
 assert_skill_contains "(a) の突き合わせは件数だけでなく ID で行う" \
@@ -403,6 +518,53 @@ assert_skill_contains "報告: 空配列（保証節が「なし」）は対象0
   '**`guarantees` が空配列**（親Issueの保証節が「なし」と明示していた場合のみ）'
 assert_skill_contains "報告: 早期失敗では humanReview の一覧を必ず示す" \
   "早期失敗の経路ではこの一覧が唯一の理由の提示先になる"
+
+echo ""
+echo "=== (B-5c) 台帳・Issue本文の読み取り規則（散文とスクリプトの規則一致） ==="
+
+assert_skill_contains "読み取り規則を台帳・Issue本文の共通規約として置いている" \
+  '**読み取り規則（台帳・親Issue本文に共通。5.5-3 / 5.5-5 / 5.5-6 はこの規則に従う）**'
+assert_skill_contains "台帳はスクリプトと同じ規則で読む" \
+  '**同じ規則で読む**'
+assert_skill_contains "同じ台帳を2つの規則で読む状態を欠陥として明記" \
+  "**同じ台帳を2つの規則で読む**"
+assert_skill_contains "パース規約の正本は guarantee-index-check の spec" \
+  '`scripts/specs/guarantee-index-check.md`「パースの規約」'
+assert_skill_contains "コードフェンスの内側は判定対象にしない" \
+  '**コードフェンス（``` / ~~~。行頭スペース3個まで）の内側は、台帳・親Issue本文とも一切の判定対象にしない**'
+assert_skill_contains "保証は「保証」節の中だけを見る" \
+  '**保証は「保証」節の中だけを見る**'
+assert_skill_contains "節の外の見出しは登録済みとみなさない" \
+  '**節の外にある `### G-...` は登録済みとみなさない**'
+assert_skill_contains "保証見出しは ### 見出し行・ID 完全一致・区切りは半角/全角コロン" \
+  '**保証見出しは `### ` で始まる見出し行**であり、ID は `G-<数字>-<枝番>` の完全一致、直後の区切りは半角 `:` または全角 `：`'
+
+assert_skill_contains "5.5-5: Grep のヒット自体は登録済みの根拠にならない" \
+  '**ヒットしたこと自体は「登録済み」の根拠にならない**'
+assert_skill_contains "5.5-5: 条件1 フェンスの外" \
+  '1. **コードフェンスの外にある**'
+assert_skill_contains "5.5-5: 条件2 「保証」節の中" \
+  '2. **「保証」節の中にある**'
+assert_skill_contains "5.5-5: 条件3 見出し行かつ ID 完全一致" \
+  '3. **`### ` で始まる見出し行**であり、ID が完全一致している'
+assert_skill_contains "5.5-5: 記入例・節外・言及だけなら not_registered" \
+  "満たさない（見出しが無い／フェンス内の記入例だけ／「保証」節の外／見出しでない本文中の言及だけ）"
+
+assert_skill_contains "5.5-3: Issue本文もフェンス内を対象にしない" \
+  '**上記の読み取り規則に従い、コードフェンスの内側にある記述は対象にしない**'
+assert_skill_contains "5.5-6: test_refs は読み取り規則で読んだ行だけを転記する" \
+  '**上記の読み取り規則で読み取った、当該保証見出し直下の `- テスト:` 行のものだけ**'
+assert_skill_contains "5.5-6: 維持の statement も読み取り規則を満たす見出しの文言" \
+  "維持なら台帳の約束文（読み取り規則を満たす保証見出しの文言）"
+
+assert_skill_contains "独立2経路の件数突き合わせを義務づけている" \
+  '**読み取り規則の突き合わせ（独立2経路の食い違い検出）**'
+assert_skill_contains "件数が食い違ったら片方だけ採用して進めない" \
+  '**どちらか一方の数字だけを採用して先へ進めない**'
+assert_skill_contains "食い違いは ledger_read_mismatch として要人間判定に積む" \
+  '`{ kind: "ledger_read_mismatch", detail:'
+assert_skill_contains "ledger_read_mismatch が humanReview の語彙に入っている" \
+  '`index_error` / `ledger_read_mismatch` / `verification_failed`'
 
 echo ""
 echo "=== (B-6) 部分成功≠完全成功 ==="
@@ -506,6 +668,33 @@ if [ -n "$step55" ]; then
   else
     PASS_COUNT=$((PASS_COUNT + 1))
     echo "  ok - Step 5.5 の skipped は sdd 確定時に限定されたまま"
+  fi
+fi
+
+# 素の Grep 指示の再発防止。Step 5.5 内で Grep に言及する行は、必ず読み取り規則
+# （フェンス・節の範囲）で制約されていなければならない。素の文字列一致で台帳を読む
+# 指示が入ると、スクリプトが無視する記入例を「登録済み」と誤認する経路が再び開く。
+if [ -n "$step55" ]; then
+  grep_lines="$(printf '%s\n' "$step55" | grep -F 'Grep')"
+  grep_lines_exit=$?
+  if [ "$grep_lines_exit" -ge 2 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("Grep 指示チェックの grep 実行に失敗")
+    echo "  NG - Grep 指示チェックの grep 実行エラー（exit ${grep_lines_exit}）のため判定不能"
+  elif [ -z "$grep_lines" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - Step 5.5 に Grep の指示は無い（制約すべき箇所が存在しない）"
+  else
+    unconstrained="$(printf '%s\n' "$grep_lines" | grep -vE '読み取り規則|フェンス|根拠にならない')"
+    if [ -n "$unconstrained" ]; then
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      FAILED_TESTS+=("Step 5.5 に読み取り規則で制約されていない Grep 指示がある")
+      echo "  NG - Step 5.5 に読み取り規則で制約されていない Grep 指示がある"
+      echo "       ${unconstrained}"
+    else
+      PASS_COUNT=$((PASS_COUNT + 1))
+      echo "  ok - Step 5.5 の Grep 指示はすべて読み取り規則で制約されている"
+    fi
   fi
 fi
 
