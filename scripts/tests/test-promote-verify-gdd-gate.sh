@@ -11,7 +11,11 @@
 #      フィクスチャで固定する。各スクリプト単体の網羅は test-detect-dev-phase.sh /
 #      test-guarantee-index-check.sh の担当であり、ここでは重複させない。
 #
-#  (B) SKILL.md の契約文（正準文）の存在検査と構造不変条件
+#  (B) SKILL.md / 参照ファイルの契約文（正準文）の存在検査と構造不変条件
+#      Step 5.5 の手順の本体は skills/promote-verify/references/guarantee-consistency.md
+#      へ分割されている（SKILL.md 側には分岐の要点のみ）。検査は文言が実際に置かれている
+#      ファイルに対して行い（assert_skill_contains / assert_ref_contains）、構造不変条件は
+#      両者の結合テキストに対して掛けることで、分割前と同じ強度を保つ。
 #      Step 5.5 の分岐・フェイルセーフ規律・readyForPromotion の論理式は
 #      skills/promote-verify/SKILL.md の手順として実装されているため、正準文が逐語で
 #      存在することを grep で検査し、手順のドリフト（更新漏れ・緩和）を機械検出する
@@ -33,9 +37,15 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DETECT_SCRIPT="${REPO_ROOT}/scripts/detect-dev-phase.sh"
 GIC_SCRIPT="${REPO_ROOT}/scripts/guarantee-index-check.sh"
 SKILL_FILE="${REPO_ROOT}/skills/promote-verify/SKILL.md"
+REF_FILE="${REPO_ROOT}/skills/promote-verify/references/guarantee-consistency.md"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "NG - jq が見つからないためテストを実行できません（検査不能を pass にはしない）" >&2
+  exit 1
+fi
+
+if [ ! -r "$SKILL_FILE" ] || [ ! -r "$REF_FILE" ]; then
+  echo "NG - SKILL.md または参照ファイルを読めません（検査不能を pass にはしない）: ${SKILL_FILE} / ${REF_FILE}" >&2
   exit 1
 fi
 
@@ -83,6 +93,21 @@ skill_section() {
     inside && index($0, e) == 1 { inside = 0 }
     inside { print }
   ' "$SKILL_FILE"
+}
+
+# 参照ファイル（Step 5.5 の手順の正本）に正準文が逐語で存在することを検査する。
+assert_ref_contains() {
+  local description="$1" phrase="$2"
+  if grep -qF -- "$phrase" "$REF_FILE"; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       file:   ${REF_FILE}"
+    echo "       phrase: ${phrase}"
+  fi
 }
 
 TMP_ROOT="$(mktemp -d)"
@@ -405,13 +430,13 @@ echo "=== (B-1) Step 5.5 の発動判定とスクリプト実行形 ==="
 
 assert_skill_contains "発動判定はランチャー経由の detect-dev-phase" \
   "claude-harness-run detect-dev-phase"
-assert_skill_contains "索引整合はランチャー経由の guarantee-index-check" \
+assert_ref_contains "索引整合はランチャー経由の guarantee-index-check" \
   "claude-harness-run guarantee-index-check"
 assert_skill_contains "フェーズ判定はスクリプト出力のみ（CLAUDE.md を独自に grep しない）" \
   '`CLAUDE.md` を自分で grep しないこと'
-assert_skill_contains "意味整合は guarantee-auditor への fan-out" \
+assert_ref_contains "意味整合は guarantee-auditor への fan-out" \
   "subagent_type: 'claude-harness:guarantee-auditor'"
-assert_skill_contains "fan-out のチャンクサイズは Step 4 と同じ10件" \
+assert_ref_contains "fan-out のチャンクサイズは Step 4 と同じ10件" \
   "Step 4 と同じく **10件ずつ**のチャンクに区切り"
 
 echo ""
@@ -433,9 +458,9 @@ assert_skill_contains "invalid を sdd に読み替えない" \
   '`sdd` に読み替えない'
 assert_skill_contains "判定不能・実行不能を skipped へ倒さない" \
   '判定できなかった・実行できなかったものを `skipped` へ倒さないこと'
-assert_skill_contains "GDD期に台帳が無い場合は skipped にしない" \
+assert_ref_contains "GDD期に台帳が無い場合は skipped にしない" \
   '**`skipped` にしない**'
-assert_skill_contains "台帳欠落は運用前提の破れとして扱う" \
+assert_ref_contains "台帳欠落は運用前提の破れとして扱う" \
   "GDD期を宣言しているのに駆動文書が無い"
 assert_skill_contains "Step 7 でも skipped を sdd 以外へ広げないことを明記" \
   '**Step 5.5-1 のフェーズ判定が `sdd` として確定した場合だけ**である'
@@ -443,39 +468,39 @@ assert_skill_contains "Step 7 でも skipped を sdd 以外へ広げないこと
 echo ""
 echo "=== (B-4) 検査不能≠0件 ==="
 
-assert_skill_contains "索引整合の exit 2・パース不能・実行不能は fail 扱い" \
+assert_ref_contains "索引整合の exit 2・パース不能・実行不能は fail 扱い" \
   '`guaranteeCheck.index = { "status": "fail", "error": "<stderr のメッセージ>" }` とする'
-assert_skill_contains "索引整合の実行不能を pass・検査対象なしに読み替えない" \
+assert_ref_contains "索引整合の実行不能を pass・検査対象なしに読み替えない" \
   '**`pass` や「検査対象なし」に読み替えない**'
-assert_skill_contains "検査不能は問題0件と同じではない" \
+assert_ref_contains "検査不能は問題0件と同じではない" \
   "検査不能は「問題0件」と同じではない"
-assert_skill_contains "保証節を抽出できない場合に対象0件として進めない" \
+assert_ref_contains "保証節を抽出できない場合に対象0件として進めない" \
   "**対象0件（空配列）として先へ進めないこと**"
-assert_skill_contains "空配列で allConsistent が真になる罠を明記" \
+assert_ref_contains "空配列で allConsistent が真になる罠を明記" \
   '**保証を1件も検証していないのに `allConsistent: true` が成立する**'
-assert_skill_contains "報告では未検証を0件と書かない" \
+assert_ref_contains "報告では未検証を0件と書かない" \
   "「0件」ではなく「未検証」と書くこと"
 
 echo ""
 echo "=== (B-5) allConsistent が false になる各ケース（skipped へ変換しない） ==="
 
-assert_skill_contains "drifted/uncertain/verification_failed/not_registered/結果の欠落は allConsistent:false" \
+assert_ref_contains "drifted/uncertain/verification_failed/not_registered/結果の欠落は allConsistent:false" \
   '- **`drifted` / `uncertain` / `verification_failed` / `not_registered` / 結果の欠落は、いずれも `allConsistent: false`** とし、**`skipped` へ変換しない**'
-assert_skill_contains "検証失敗（構造化応答なし）は verification_failed として積む" \
+assert_ref_contains "検証失敗（構造化応答なし）は verification_failed として積む" \
   '`verdict: "verification_failed"` / `evidence: "guarantee-auditor agent failed"` として積む'
-assert_skill_contains "検証失敗を consistent にも skipped にも変換しない" \
+assert_ref_contains "検証失敗を consistent にも skipped にも変換しない" \
   '**`consistent` にも `skipped` にも変換しない**'
-assert_skill_contains "台帳未追記は not_registered（検証済み・スキップにしない）" \
+assert_ref_contains "台帳未追記は not_registered（検証済み・スキップにしない）" \
   '**未追記を「検証済み」にも「スキップ」にもしない**'
-assert_skill_contains "未追記の保証を targets から取り除かない" \
+assert_ref_contains "未追記の保証を targets から取り除かない" \
   '**未追記の保証を `targets` から取り除いて件数を合わせない**'
-assert_skill_contains "台帳登録確認は ID の完全一致（前方一致で取り違えない）" \
+assert_ref_contains "台帳登録確認は ID の完全一致（前方一致で取り違えない）" \
   '前方一致で `G-158-1` と `G-158-10` を取り違えないこと'
-assert_skill_contains "新規宣言の意味検証は親Issueの（裁可された）約束文を正とする" \
+assert_ref_contains "新規宣言の意味検証は親Issueの（裁可された）約束文を正とする" \
   '**`statement` は、新規宣言なら親Issueの保証節の約束文（裁可された文言が正）'
-assert_skill_contains "台帳の約束文が親Issueの約束文と食い違う場合は drifted" \
+assert_ref_contains "台帳の約束文が親Issueの約束文と食い違う場合は drifted" \
   '**新規宣言で、台帳に登録された約束文が親Issueの約束文と食い違っている場合は、その不一致自体を `verdict: "drifted"` として記録する**'
-assert_skill_contains "(a) の突き合わせは件数だけでなく ID で行う" \
+assert_ref_contains "(a) の突き合わせは件数だけでなく ID で行う" \
   "(a) targets の各 guarantee_id に対応する結果が guarantees に1件ずつ存在する（件数だけでなく ID を突き合わせる）"
 
 echo ""
@@ -485,95 +510,95 @@ echo "=== (B-5b) 早期失敗経路の出力契約（未検査フィールドの
 # index・guarantees を実施できないまま Step 9 へ進む。これらを未定義のまま残すと
 # 報告テンプレートが未定義値を読み、実行主体（LLM）が値を捏造することになるため、
 # 経路ごとに null で初期化し、報告側でも null を「未検査」として書き分けさせる。
-assert_skill_contains "早期失敗は未実施フィールドを null で明示的に初期化する" \
+assert_ref_contains "早期失敗は未実施フィールドを null で明示的に初期化する" \
   '**早期失敗（5.5-1〜5.5-3 で以降の手順を実行せずに Step 6 へ進む経路）の `guaranteeCheck` は、実施できなかったフィールドを `null` で明示的に初期化する**'
-assert_skill_contains "未検査を {} / [] / 0件 で埋めない" \
+assert_ref_contains "未検査を {} / [] / 0件 で埋めない" \
   '**`{}` や `[]`・`0件` で埋めないこと**'
-assert_skill_contains "早期失敗では humanReview を必ず1件以上入れる" \
+assert_ref_contains "早期失敗では humanReview を必ず1件以上入れる" \
   '早期失敗の経路では `humanReview` を必ず1件以上入れる'
 
 assert_skill_contains "経路1（フェーズ invalid）の guaranteeCheck が index/guarantees を初期化" \
   '`{ skipped: false, phase: "invalid", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "phase_invalid"'
-assert_skill_contains "経路2（台帳欠落）の guaranteeCheck が index/guarantees を初期化" \
+assert_ref_contains "経路2（台帳欠落）の guaranteeCheck が index/guarantees を初期化" \
   '`guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "ledger_missing"'
-assert_skill_contains "経路3（保証節がパース不能）の guaranteeCheck が index/guarantees を初期化" \
+assert_ref_contains "経路3（保証節がパース不能）の guaranteeCheck が index/guarantees を初期化" \
   '`guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "guarantee_section_missing"'
 
-assert_skill_contains "index: null / オブジェクトの意味が定義されている" \
+assert_ref_contains "index: null / オブジェクトの意味が定義されている" \
   '**`index` の意味**: `null` = 索引整合チェックを**実行していない**'
-assert_skill_contains "guarantees: null / 配列の意味が定義されている" \
+assert_ref_contains "guarantees: null / 配列の意味が定義されている" \
   '**`guarantees` の意味**: `null` = 検証対象を**確定できていない**'
-assert_skill_contains "空配列を使ってよいのは保証節が「なし」と明示された場合だけ" \
+assert_ref_contains "空配列を使ってよいのは保証節が「なし」と明示された場合だけ" \
   '**空配列を使ってよいのは、親Issueの保証節が「なし」と明示していた場合（＝検査した結果の0件）だけ**'
 
-assert_skill_contains "報告: index が null のときは未検査と書く" \
+assert_ref_contains "報告: index が null のときは未検査と書く" \
   '{index === null ? `⚠️ 未検査（索引整合チェックを実行していません。理由は下の「要人間判定」を参照）`'
-assert_skill_contains "報告: guarantees の状態で書き分ける（未検査を空表・0件にしない）" \
+assert_ref_contains "報告: guarantees の状態で書き分ける（未検査を空表・0件にしない）" \
   '保証ごとの判定は `guarantees` の状態で書き分ける（**未検査を空表・0件として描かない**）'
-assert_skill_contains "報告: guarantees が null のときは表を出さず未検査行を出す" \
+assert_ref_contains "報告: guarantees が null のときは表を出さず未検査行を出す" \
   '**`guarantees === null`（未検査。フェーズ不正・台帳欠落・保証節を抽出できなかった経路）** → 表を出さず'
-assert_skill_contains "報告: 未検査を「保証 0 件」「問題なし」と書かない" \
+assert_ref_contains "報告: 未検査を「保証 0 件」「問題なし」と書かない" \
   '**この状態を「保証 0 件」「問題なし」と書かないこと**'
-assert_skill_contains "報告: 空配列（保証節が「なし」）は対象0件として書く" \
+assert_ref_contains "報告: 空配列（保証節が「なし」）は対象0件として書く" \
   '**`guarantees` が空配列**（親Issueの保証節が「なし」と明示していた場合のみ）'
-assert_skill_contains "報告: 早期失敗では humanReview の一覧を必ず示す" \
+assert_ref_contains "報告: 早期失敗では humanReview の一覧を必ず示す" \
   "早期失敗の経路ではこの一覧が唯一の理由の提示先になる"
 
 echo ""
 echo "=== (B-5c) 台帳・Issue本文の読み取り規則（散文とスクリプトの規則一致） ==="
 
-assert_skill_contains "読み取り規則を台帳・Issue本文の共通規約として置いている" \
+assert_ref_contains "読み取り規則を台帳・Issue本文の共通規約として置いている" \
   '**読み取り規則（台帳・親Issue本文に共通。5.5-3 / 5.5-5 / 5.5-6 はこの規則に従う）**'
-assert_skill_contains "台帳はスクリプトと同じ規則で読む" \
+assert_ref_contains "台帳はスクリプトと同じ規則で読む" \
   '**同じ規則で読む**'
-assert_skill_contains "同じ台帳を2つの規則で読む状態を欠陥として明記" \
+assert_ref_contains "同じ台帳を2つの規則で読む状態を欠陥として明記" \
   "**同じ台帳を2つの規則で読む**"
-assert_skill_contains "パース規約の正本は guarantee-index-check の spec" \
+assert_ref_contains "パース規約の正本は guarantee-index-check の spec" \
   '`scripts/specs/guarantee-index-check.md`「パースの規約」'
-assert_skill_contains "コードフェンスの内側は判定対象にしない" \
+assert_ref_contains "コードフェンスの内側は判定対象にしない" \
   '**コードフェンス（``` / ~~~。行頭スペース3個まで）の内側は、台帳・親Issue本文とも一切の判定対象にしない**'
-assert_skill_contains "保証は「保証」節の中だけを見る" \
+assert_ref_contains "保証は「保証」節の中だけを見る" \
   '**保証は「保証」節の中だけを見る**'
-assert_skill_contains "節の外の見出しは登録済みとみなさない" \
+assert_ref_contains "節の外の見出しは登録済みとみなさない" \
   '**節の外にある `### G-...` は登録済みとみなさない**'
-assert_skill_contains "保証見出しは ### 見出し行・ID 完全一致・区切りは半角/全角コロン" \
+assert_ref_contains "保証見出しは ### 見出し行・ID 完全一致・区切りは半角/全角コロン" \
   '**保証見出しは `### ` で始まる見出し行**であり、ID は `G-<数字>-<枝番>` の完全一致、直後の区切りは半角 `:` または全角 `：`'
 
-assert_skill_contains "5.5-5: Grep のヒット自体は登録済みの根拠にならない" \
+assert_ref_contains "5.5-5: Grep のヒット自体は登録済みの根拠にならない" \
   '**ヒットしたこと自体は「登録済み」の根拠にならない**'
-assert_skill_contains "5.5-5: 条件1 フェンスの外" \
+assert_ref_contains "5.5-5: 条件1 フェンスの外" \
   '1. **コードフェンスの外にある**'
-assert_skill_contains "5.5-5: 条件2 「保証」節の中" \
+assert_ref_contains "5.5-5: 条件2 「保証」節の中" \
   '2. **「保証」節の中にある**'
-assert_skill_contains "5.5-5: 条件3 見出し行かつ ID 完全一致" \
+assert_ref_contains "5.5-5: 条件3 見出し行かつ ID 完全一致" \
   '3. **`### ` で始まる見出し行**であり、ID が完全一致している'
-assert_skill_contains "5.5-5: 記入例・節外・言及だけなら not_registered" \
+assert_ref_contains "5.5-5: 記入例・節外・言及だけなら not_registered" \
   "満たさない（見出しが無い／フェンス内の記入例だけ／「保証」節の外／見出しでない本文中の言及だけ）"
 
-assert_skill_contains "5.5-3: Issue本文もフェンス内を対象にしない" \
+assert_ref_contains "5.5-3: Issue本文もフェンス内を対象にしない" \
   '**上記の読み取り規則に従い、コードフェンスの内側にある記述は対象にしない**'
-assert_skill_contains "5.5-6: test_refs は読み取り規則で読んだ行だけを転記する" \
+assert_ref_contains "5.5-6: test_refs は読み取り規則で読んだ行だけを転記する" \
   '**上記の読み取り規則で読み取った、当該保証見出し直下の `- テスト:` 行のものだけ**'
-assert_skill_contains "5.5-6: 維持の statement も読み取り規則を満たす見出しの文言" \
+assert_ref_contains "5.5-6: 維持の statement も読み取り規則を満たす見出しの文言" \
   "維持なら台帳の約束文（読み取り規則を満たす保証見出しの文言）"
 
-assert_skill_contains "独立2経路の件数突き合わせを義務づけている" \
+assert_ref_contains "独立2経路の件数突き合わせを義務づけている" \
   '**読み取り規則の突き合わせ（独立2経路の食い違い検出）**'
-assert_skill_contains "件数が食い違ったら片方だけ採用して進めない" \
+assert_ref_contains "件数が食い違ったら片方だけ採用して進めない" \
   '**どちらか一方の数字だけを採用して先へ進めない**'
-assert_skill_contains "食い違いは ledger_read_mismatch として要人間判定に積む" \
+assert_ref_contains "食い違いは ledger_read_mismatch として要人間判定に積む" \
   '`{ kind: "ledger_read_mismatch", detail:'
-assert_skill_contains "ledger_read_mismatch が humanReview の語彙に入っている" \
+assert_ref_contains "ledger_read_mismatch が humanReview の語彙に入っている" \
   '`index_error` / `ledger_read_mismatch` / `verification_failed`'
 
 echo ""
 echo "=== (B-6) 部分成功≠完全成功 ==="
 
-assert_skill_contains "一部だけ検証できた状態を allConsistent:true にしない" \
+assert_ref_contains "一部だけ検証できた状態を allConsistent:true にしない" \
   '**対象の一部だけ検証できた状態を `allConsistent: true` にしない**'
-assert_skill_contains "(a) の突き合わせは「調べた結果の0件」でのみ満たされる" \
+assert_ref_contains "(a) の突き合わせは「調べた結果の0件」でのみ満たされる" \
   "(a) の突き合わせを満たせるのは「調べた結果の0件」だけであり、「調べられなかった」では満たされない"
-assert_skill_contains "索引の error 非 null 時の空 broken を「問題なし」と読ませない" \
+assert_ref_contains "索引の error 非 null 時の空 broken を「問題なし」と読ませない" \
   "「壊れた参照が無い」を意味しない"
 
 echo ""
@@ -632,7 +657,13 @@ check_section_free_of_gdd "Step 8（後始末）に GDD 依存の記述が無い
 # Step 5.5 セクション内で `skipped: true` を sdd 以外の状況へ広げる記述が無いこと
 # （「台帳が無い場合は skipped: true」のような緩和が入り込むと、未検査のまま
 #  readyForPromotion が true になりうる）。
+# 検査対象は「SKILL.md の Step 5.5」と「参照ファイル全体」の結合テキスト。
+# 手順の本体が参照ファイルへ分割されたため、片方だけを見ると検査強度が落ちる。
 step55="$(skill_section "### Step 5.5:" "### Step 6:")"
+if [ -n "$step55" ] && [ -r "$REF_FILE" ]; then
+  step55="${step55}
+$(cat "$REF_FILE")"
+fi
 if [ -z "$step55" ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
   FAILED_TESTS+=("Step 5.5 セクションを切り出せず判定不能")
@@ -720,6 +751,41 @@ if [ -n "$step55" ]; then
       "$early_total" "$early_initialized"
   fi
 fi
+
+echo ""
+echo "=== (B-9) 分割の整合（SKILL.md ↔ 参照ファイル） ==="
+
+# Step 5.5 の手順は参照ファイルへ分割されている。参照が「必要なら読む」ではなく
+# 「これに従って実行する」形で書かれていること、および手順の本体が SKILL.md 側へ
+# 二重に残っていないこと（更新漏れによる二重管理の防止）を検査する。
+assert_skill_contains "SKILL.md は手順の正本が参照ファイルであることを明示している" \
+  '**手順の正本は参照ファイル `references/guarantee-consistency.md`**'
+assert_skill_contains "SKILL.md は参照ファイルを Read してその手順に従わせる" \
+  '参照ファイルを Read し、その手順・形式に従って `guaranteeCheck` を組み立てる'
+assert_skill_contains "SKILL.md に参照ファイルのプラグイン配下パスが書かれている" \
+  '`${CLAUDE_PLUGIN_ROOT}/skills/promote-verify/references/guarantee-consistency.md`'
+assert_skill_contains "SKILL.md に Base directory 起点の解決手順が書かれている" \
+  '`<base>/references/guarantee-consistency.md`'
+assert_skill_contains "Step 9 は保証整合セクションの中身を参照ファイルの報告形式に従わせる" \
+  '「保証整合セクションの報告形式」に従う'
+assert_ref_contains "参照ファイルは SKILL.md 側で完了している前提を明示している" \
+  "**本ファイルの前提**"
+assert_ref_contains "参照ファイルは SKILL.md が正本の規律を複製しないと明示している" \
+  "本ファイルには複製しない"
+
+# 手順本体（サブステップ見出し）は参照ファイルにだけ存在し、SKILL.md には残っていない
+dup_violations=""
+missing_headings=""
+for heading in "### 5.5-2." "### 5.5-3." "### 5.5-4." "### 5.5-5." "### 5.5-6." "### 5.5-7."; do
+  if ! grep -qF -- "$heading" "$REF_FILE"; then
+    missing_headings="${missing_headings}${heading} "
+  fi
+  if grep -qF -- "#$heading" "$SKILL_FILE" || grep -qF -- "$heading" "$SKILL_FILE"; then
+    dup_violations="${dup_violations}${heading} "
+  fi
+done
+assert_eq "サブステップ見出しは参照ファイルにすべて存在する" "" "$missing_headings"
+assert_eq "サブステップ見出しは SKILL.md 側に残っていない（二重管理の防止）" "" "$dup_violations"
 
 # ---------------------------------------------------------------------------
 echo ""
