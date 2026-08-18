@@ -4,6 +4,11 @@ Parent: #{親チケット番号}
 <!-- 統合ブランチ方式（/create-ticket --base 指定）のときのみ、次行を残して統合ブランチ名を記入。
      通常（base = 既定ブランチ）のときはこの行を削除する。/para-impl がこの Base: 行を読んで PR の base を決める。 -->
 Base: {統合ブランチ}
+<!-- 開発フェーズの判定が gdd のときのみ、次行を残して親Issue番号を記入（判定は detect-dev-phase の
+     出力だけで行い、CLAUDE.md を自分で grep しない。判定手順は SKILL.md が正本）。
+     判定が sdd（フェーズ宣言なしを含む）のときはこの行を削除する。親の保証節の内容はここへ転記しない（親Issueが単一の正）。
+     裁可（guarantee:proposed → guarantee:approved）の単位は親Issueであり、実装チケットにはラベルを付けない。 -->
+保証: 親#{親チケット番号} の保証節参照
 
 ## 概要
 
