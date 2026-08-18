@@ -1,6 +1,6 @@
 ---
 name: promote-verify
-description: "統合ブランチ→main 昇格前に、親Issueの受入基準を全数チェックし、サブタスク完了状況・品質チェック・E2E結果をまとめた昇格前検証パッケージ（判断材料）を作成する。Triggers on: '/promote-verify', '昇格前検証', '昇格前チェック'"
+description: "統合ブランチ→main 昇格前に、親Issueの受入基準を全数チェックし、サブタスク完了状況・品質チェック・E2E結果をまとめた昇格前検証パッケージ（判断材料）を作成する。GDD期のプロジェクトでは保証整合チェックも行う。Triggers on: '/promote-verify', '昇格前検証', '昇格前チェック'"
 argument-hint: "[親Issue番号]"
 model: opus
 # effort: 受入基準ごとの整合判定・懐疑的検証の結果を人間向けに整形する統括作業のため high。
@@ -11,11 +11,11 @@ effort: high
 
 **あなたは統合ブランチ→main 昇格前検証パッケージの作成を統括するリードエージェントです。**
 
-> **本パッケージは報告のみ・修正しません。** 人間ゲート本体（`/demo` のOK/NG判断、昇格PRの承認）はこのスキルの外に残ります。本スキルの役割は、その人間ゲートの判断材料（受入基準の全数チェック済みチェックリスト・サブタスク完了状況・品質チェック/E2E結果）を決定的に揃えることだけです。
+> **本パッケージは報告のみ・修正しません。** 人間ゲート本体（`/demo` のOK/NG判断、昇格PRの承認）はこのスキルの外に残ります。本スキルの役割は、その人間ゲートの判断材料（受入基準の全数チェック済みチェックリスト・サブタスク完了状況・品質チェック/E2E結果、**GDD期はさらに保証整合チェックの結果**）を決定的に揃えることだけです。
 
 受入基準ごとの整合判定（doc-verifierのfan-out）・敵対的検証（finding-verifier単一懐疑者）・コンテキスト収集・品質チェック/E2E実行は、すべて Task ツールによる直接委譲と Bash による直接実行で行います。
 
-整合判定の観点そのもの（何を consistent/inconsistent/unimplemented とみなすか）は `agents/doc-verifier.md`、懐疑的検証の反証規範は `agents/finding-verifier.md` 側の責務です（レイヤリング。本 SKILL には重複記載しません）。本 SKILL が正本とするのは、fan-out・チャンク分割・完全性 join の手順、および `readyForPromotion` の算出規則という「構造」のみです。
+整合判定の観点そのもの（何を consistent/inconsistent/unimplemented とみなすか）は `agents/doc-verifier.md`、懐疑的検証の反証規範は `agents/finding-verifier.md`、保証と参照先テストの意味整合の観点は `agents/guarantee-auditor.md` 側の責務です（レイヤリング。本 SKILL には重複記載しません）。本 SKILL が正本とするのは、fan-out・チャンク分割・完全性 join の手順、および `readyForPromotion` の算出規則という「構造」のみです。
 
 ---
 
@@ -145,6 +145,39 @@ Step 4 で `status: 'consistent'` と判定された基準**のみ**を対象に
 - `refuted` → `adversarial: 'refuted'`, `needsHumanReview: true`。**`status` 自体は書き換えない**（finding-verifier は evidence の実在性・引用整合を反証するだけであり、doc-verifier 自身の整合判定を再度行うものではない。この区別は意図的な設計判断であり、消さないこと）
 - `uncertain`、または Task が構造化応答を返さなかった場合 → `adversarial: 'uncertain'`, `needsHumanReview: true`（フェイルセーフ）
 
+### Step 5.5: 保証整合チェック（GDD期のみ）
+
+保証台帳（GDD: Guarantee-Driven Development の駆動文書）を持つプロジェクトでのみ実行する追加チェック。結果を `guaranteeCheck` として組み立て、Step 7 の `readyForPromotion` に合流させる。**手順の正本は参照ファイル `references/guarantee-consistency.md`** であり、本 SKILL には分岐の要点だけを書く。
+
+**SDD期（フェーズ宣言なしを含む）では 5.5-2 以降を実行せず、本スキルの挙動・報告は従来と完全に同一**（`guaranteeCheck = { skipped: true, reason: "..." }` とし、Step 9 の報告に保証整合セクション自体を出さない。`⊘ スキップ` の行としても出さない）。
+
+まず開発フェーズを判定する。
+
+> **開発フェーズの判定（重要）**: フェーズは必ず `claude-harness-run detect-dev-phase` の出力だけで判定し、`CLAUDE.md` を自分で grep しないこと（判定規約の重複実装を防ぐため）。stdout に `{"phase":"sdd"|"gdd"|"invalid","reason":"...","source":"..."}` が1個返る。フェーズ依存の追加挙動は **`phase` が `gdd` のときだけ**行い、`sdd`（宣言なしを含む）では一切挙動を変えない。**`phase` が `invalid`（exit 1）、またはスクリプトを実行できない・stdout が JSON としてパースできない（exit 2 等）場合は、`sdd` とみなさない**。フェーズ依存の処理を停止し、`reason` と `source`（および stderr のメッセージ）を添えて「要人間判定」としてユーザーに報告すること（不正な宣言や実行失敗によって GDD のゲート群が暗黙に無効化される事故を防ぐため）。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/detect-dev-phase.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。
+<!-- 正本: docs/ai-driven-development-strategy.md 5.2 / docs/plugin-path-conventions.md -->
+
+判定結果ごとの扱い:
+
+| `phase` | `guaranteeCheck` | 以降の扱い |
+|---|---|---|
+| `sdd`（exit 0） | `{ skipped: true, reason: "SDD期（<reason>）" }` | **5.5-2 以降を実行しない**。従来どおり Step 6 へ進む |
+| `gdd`（exit 0） | 5.5-2 以降で組み立てる | 参照ファイル（後述）の 5.5-2 以降へ進む |
+| `invalid`（exit 1）／スクリプト実行不能・stdout が JSON としてパース不能 | `{ skipped: false, phase: "invalid", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "phase_invalid", detail: "<reason> / <source> / stderr のメッセージ" }] }` | **5.5-2 以降（保証節の抽出・索引整合・fan-out）は実行しない**。`sdd` に読み替えない |
+
+- **`skipped: true` にしてよいのは、フェーズ判定が `sdd` として確定した場合のみ**。判定できなかった・実行できなかったものを `skipped` へ倒さないこと（`skipped` は Step 7 の論理式で OK 扱いになるため、検査不能を「スキップ」と書くと未検査のまま昇格可能に見える）。
+- フェーズ判定が `invalid`・実行不能の場合、**本スキルは処理全体を中断せず、Step 6 以降を継続して検証パッケージを出す**（本スキルの成果物は人間ゲートの判断材料であり、`readyForPromotion` が `false` になることで昇格自体は止まるため、他の判断材料まで捨てない。判断材料を出せる範囲で出しつつ、要人間判定として表に出す方が運用上有用という判断）。ただしフェーズ依存の追加チェック（5.5-2 以降）は行わない。
+
+> **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/references/guarantee-consistency.md`）。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+判定が `sdd` **以外**（`gdd` / `invalid` / 判定不能）の場合は、以下の参照ファイルを Read し、その手順・形式に従って `guaranteeCheck` を組み立てる（`invalid` の場合も、Step 9 の保証整合セクションの報告形式は本ファイルが正本のため Read する）:
+
+| 対象 | 参照ファイル | 内容 |
+|---|---|---|
+| GDD期の保証整合チェック | `${CLAUDE_PLUGIN_ROOT}/skills/promote-verify/references/guarantee-consistency.md` | 5.5-1〜5.5-7 の手順（台帳・親Issue本文の読み取り規則、索引整合、`guarantee-auditor` fan-out、`allConsistent` の算出）、`guaranteeCheck` の形、Step 9 の保証整合セクションの報告形式 |
+
+組み立てた `guaranteeCheck` は Step 7 の `readyForPromotion` に合流する（合流条件は Step 7 の論理式が正本）。
+
 ### Step 6: 品質フェーズ（Bash直接実行）
 
 `quality-check-runner.sh` と E2E コマンドを、あなた自身が Bash ツールで直接実行する（git-ops エージェントは経由しない）。
@@ -179,9 +212,12 @@ readyForPromotion =
   AND すべての criterion で needsHumanReview !== true
   AND (qualityCheck.skipped === true OR qualityCheck.result === 'pass')
   AND (e2e.skipped === true OR e2e.passed === true)
+  AND (guaranteeCheck.skipped === true OR guaranteeCheck.allConsistent === true)
 ```
 
 （`allMerged` は Step 3-3 の結果。「スキップはOK扱い」という意味論も含め、この式の意味は変更しないこと）
+
+**最終項（`guaranteeCheck`）の注意**: この項で「スキップはOK扱い」を適用してよいのは、**Step 5.5-1 のフェーズ判定が `sdd` として確定した場合だけ**である（`guaranteeCheck.skipped === true` になる条件は Step 5.5-1 の1箇所しかない）。フェーズが `invalid`・判定不能、GDD期なのに台帳や親Issueの保証節が無い、意味検証が `drifted` / `uncertain` / `verification_failed` / `not_registered`、対象の一部しか検証できていない、台帳の読み取り件数がスクリプトと食い違っている（`humanReview` に理由が1件でもある） — これらはすべて `allConsistent: false` であり、**`skipped` へ倒して昇格可能に見せる経路を作らないこと**。
 
 ### Step 8: 後始末（一時ファイルのクリーンアップ）
 
@@ -219,6 +255,10 @@ Step 3-2 で取得した `diff_file` があれば、`rm -f "<diff_fileの絶対�
 
 {e2e.skipped ? `⊘ スキップ（理由: ${reason}）` : `${passed ? '✅ pass' : '❌ fail'}: ${summary}`}
 
+### 保証整合（GDD期のみ）
+
+（**このセクションは `guaranteeCheck.skipped === true`〈= SDD期〉のときは見出しごと出力しない**。`⊘ スキップ` の行としても出さない。出力する場合の中身 — 未検査・対象0件・判定表の3分岐と要人間判定の一覧 — は参照ファイル `references/guarantee-consistency.md`「保証整合セクションの報告形式」に従う）
+
 ### 総合判定
 
 readyForPromotion: {readyForPromotion ? "✅ 昇格可能な状態が揃っています" : "❌ 未充足の項目があります（上記表を参照）"}
@@ -229,3 +269,5 @@ readyForPromotion: {readyForPromotion ? "✅ 昇格可能な状態が揃って�
 ```
 
 Step 3 の中断条件（受入基準ゼロ件・スクリプト非ゼロ終了）に該当した場合は、上記の表形式ではなく、中断理由と中断したステップを明示したエラー報告として返す（`readyForPromotion` は算出しない）。
+
+Step 5.5 の各条件（フェーズ不正・台帳の欠落・保証節の欠落）は**中断条件ではない**。他の判断材料は上記の形式でそのまま報告し、保証整合セクションに未検証である旨と `humanReview` の一覧を出したうえで、`readyForPromotion` は `false` として算出する。
