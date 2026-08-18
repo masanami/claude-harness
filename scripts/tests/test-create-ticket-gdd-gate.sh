@@ -381,6 +381,54 @@ ct_id_scope_matches() {
   esac
 }
 
+# 裁可状態の参照実装（要件-4 の表の真理値表）。
+# 引数: <(i)(ii) 違反 1/0> <(iii) ID 文法違反 1/0> <(v) ラベル欠落 1/0> <判定保留件数> [<(iv) 枝番違反 1/0>]
+ct_approval_status() {
+  local placeholder="$1" scope="$2" label="$3" pending="$4" branch="${5:-0}"
+  if [ "$placeholder" = "1" ] || [ "$scope" = "1" ] || [ "$label" = "1" ] || [ "$branch" = "1" ]; then
+    printf '未完了'
+    return 0
+  fi
+  if [ "$pending" -gt 0 ]; then
+    printf '要人間判定あり'
+    return 0
+  fi
+  printf '裁可可'
+}
+
+# 要件-2 検証(iii) の参照実装: 完全な ID 文法 `G-<N>-<枝番>`（枝番は1文字以上の数字）に一致するか。
+# 接頭辞 `G-<N>-` の一致だけで通さない（`G-158-x` / `G-158-` を弾く）。
+ct_id_grammar_matches() {
+  local id="$1" number="$2"
+  local re="^G-${number}-[0-9]+$"
+  if [[ "$id" =~ $re ]]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
+# 旧実装（接頭辞のみ）。指摘Bの欠陥を再現し、完全文法との差を固定するために残す。
+ct_id_prefix_matches() {
+  local id="$1" number="$2"
+  case "$id" in
+    "G-${number}-"*) printf 'true' ;;
+    *) printf 'false' ;;
+  esac
+}
+
+# 要件-2 検証(iv) の参照実装: 枝番が 1 から始まる連番で重複が無いか。
+# 引数: 枝番の並び（例: 1 2 3）
+ct_branch_numbers_ok() {
+  local expected=1 branch
+  for branch in "$@"; do
+    [ "$branch" = "$expected" ] || { printf 'false'; return 0; }
+    expected=$((expected + 1))
+  done
+  [ "$#" -gt 0 ] || { printf 'false'; return 0; }
+  printf 'true'
+}
+
 # guarantee-section.md 内の ```markdown ブロックのうち、保証節テンプレートを取り出す。
 ct_extract_template_block() {
   awk '
@@ -766,6 +814,121 @@ assert_eq "(A-10) 本文全体への一括置換は転記したコード例も�
   "$(printf '%s\n' "$naive" | grep -c 'G-{ISSUE_NUMBER}-1 の形式で採番する（仕様中の例）')"
 
 echo ""
+echo "=== (A-14) 台帳パスの解決: サブディレクトリからでもリポジトリルートの台帳を見つける ==="
+
+# git リポジトリを模したワークスペース（ルートに CLAUDE.md と台帳、サブディレクトリから起動する）
+WS2="${TMP_ROOT}/repo"
+mkdir -p "${WS2}/docs" "${WS2}/tests" "${WS2}/packages/api"
+git init -q "$WS2" 2>/dev/null || git -C "$WS2" init -q
+cat >"${WS2}/CLAUDE.md" <<'EOF'
+# サンプルプロジェクト
+
+## 開発フェーズ
+
+- **フェーズ**: GDD期
+- 駆動文書: docs/guarantees.md
+EOF
+cat >"${WS2}/tests/example.test.sh" <<'EOF'
+test_contact_returns_400() {
+  echo "sample test body"
+}
+EOF
+cat >"${WS2}/docs/guarantees.md" <<'EOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-101-2: POST /api/contact は JSON パース不能時に 400 を返す
+
+- テスト: `tests/example.test.sh::test_contact_returns_400`
+- 宣言元: #101
+
+## Gaps（テストのない公開面）
+EOF
+
+# サブディレクトリからのフェーズ判定は gdd（リポジトリルートの CLAUDE.md を見つける）
+sub_phase="$(cd "${WS2}/packages/api" && bash "$DETECT_SCRIPT" 2>/dev/null)"
+assert_eq "(A-14) サブディレクトリからでもフェーズ判定は gdd を返す" "gdd" \
+  "$(printf '%s' "$sub_phase" | jq -r '.phase')"
+
+# 引数なしの索引チェックは cwd 相対で解決するため、サブディレクトリでは台帳を見つけられない
+sub_default_out="$(cd "${WS2}/packages/api" && bash "$GIC_SCRIPT" 2>/dev/null)"
+sub_default_code=$?
+assert_eq "(A-14) 引数なしはサブディレクトリで実行前提の欠落（exit 2）になる" "2" "$sub_default_code"
+assert_eq "(A-14) 引数なしでは件数を得られない（この経路が index_check_unavailable の中断になる）" "" "$sub_default_out"
+
+# リポジトリルートを解決して台帳パスを渡せば、サブディレクトリからでも検査できる
+sub_root="$(cd "${WS2}/packages/api" && git rev-parse --show-toplevel 2>/dev/null)"
+assert_eq "(A-14) git rev-parse --show-toplevel でリポジトリルートを解決できる" "$(cd "$WS2" && pwd -P)" \
+  "$(cd "$sub_root" && pwd -P)"
+sub_explicit_out="$(cd "${WS2}/packages/api" && bash "$GIC_SCRIPT" "${sub_root}/docs/guarantees.md" 2>/dev/null)"
+sub_explicit_code=$?
+assert_eq "(A-14) ルート基準の台帳パスを渡せばサブディレクトリからも pass する" "pass" \
+  "$(printf '%s' "$sub_explicit_out" | jq -r '.status')"
+assert_eq "(A-14) ルート基準なら exit code は 0" "0" "$sub_explicit_code"
+assert_eq "(A-14) ルート基準なら保証件数を取得できる" "1" \
+  "$(printf '%s' "$sub_explicit_out" | jq -r '.counts.guarantees')"
+assert_eq "(A-14) テスト参照の基準ディレクトリは台帳の位置からリポジトリルートに解決される（--base 不要）" \
+  "$(cd "$WS2" && pwd -P)" "$(cd "$(printf '%s' "$sub_explicit_out" | jq -r '.base')" && pwd -P)"
+
+assert_ref_contains "台帳パスをリポジトリルート基準で解決する規約がある" \
+  '**台帳のパスはリポジトリルート基準で解決する（引数を省略しない）**'
+assert_ref_contains "ルート解決を detect-dev-phase と同じ考え方だと明示している" \
+  '`git rev-parse --show-toplevel` で解決し（`detect-dev-phase` がサブディレクトリからでもリポジトリルートの `CLAUDE.md` を見つけるのと同じ考え方）'
+assert_ref_contains "cwd 相対で探さない・引数なしで呼ばないと明示している" \
+  '**cwd 相対で台帳を探さない・索引チェックを引数なしで呼ばない**'
+assert_ref_contains "食い違いの帰結（台帳が実在するのに中断）を明示している" \
+  '**台帳が実在するのに `index_check_unavailable` で中断する**'
+assert_ref_contains "ルートを解決できない場合の扱いを定めている" \
+  '黙って cwd 相対へ倒さない'
+assert_ref_contains "ランチャー呼び出しに台帳パスを渡している" \
+  '`claude-harness-run guarantee-index-check <リポジトリルート>/docs/guarantees.md`'
+assert_ref_contains "フォールバック形にも台帳パスを渡している" \
+  '`bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"`'
+assert_ref_contains "前提の確認表もルート基準のパスを指している" \
+  '| 保証台帳が存在し読める | リポジトリルートを解決し `<リポジトリルート>/docs/guarantees.md` を Read する（下記） |'
+
+echo ""
+echo "=== (A-15) 保証 ID は完全文法で検証する（接頭辞一致で通さない） ==="
+
+assert_eq "(A-15) G-158-1 は完全文法に一致" "true" "$(ct_id_grammar_matches "G-158-1" 158)"
+assert_eq "(A-15) G-158-10 は完全文法に一致（枝番2桁）" "true" "$(ct_id_grammar_matches "G-158-10" 158)"
+assert_eq "(A-15) G-158-x は完全文法に不一致（枝番が数値でない）" "false" "$(ct_id_grammar_matches "G-158-x" 158)"
+assert_eq "(A-15) G-158- は完全文法に不一致（枝番が無い）" "false" "$(ct_id_grammar_matches "G-158-" 158)"
+assert_eq "(A-15) G-158-1a は完全文法に不一致（数字以外の混入）" "false" "$(ct_id_grammar_matches "G-158-1a" 158)"
+assert_eq "(A-15) G-1580-1 は完全文法に不一致（別 Issue スコープ）" "false" "$(ct_id_grammar_matches "G-1580-1" 158)"
+assert_eq "(A-15) G-15-1 は完全文法に不一致" "false" "$(ct_id_grammar_matches "G-15-1" 158)"
+assert_eq "(A-15) G-999-1 は完全文法に不一致" "false" "$(ct_id_grammar_matches "G-999-1" 158)"
+
+# 接頭辞のみの検証だと壊れた ID が通ってしまう（指摘Bの欠陥の再現）
+assert_eq "(A-15) 接頭辞のみの検証は G-158-x を通してしまう" "true" "$(ct_id_prefix_matches "G-158-x" 158)"
+assert_eq "(A-15) 接頭辞のみの検証は G-158- も通してしまう" "true" "$(ct_id_prefix_matches "G-158-" 158)"
+
+# 壊れた ID は親Issue文法（下流）から黙って消える
+mixed_body="$(printf '%s\n' '## 保証（Guarantees）' '' '### 新たに宣言する保証' '' \
+  '- [ ] G-158-1: 正しい宣言' '- [ ] G-158-x: 枝番が数値でない宣言' '' '### 維持する保証' '' '- なし')"
+assert_eq "(A-15) 枝番が数値でない宣言は親Issue文法で抽出されず黙って消える" "NEW G-158-1
+KEEP_NONE" "$(ct_extract_guarantee_section "$mixed_body")"
+assert_eq "(A-15) それでも節はパースでき guarantee_section_missing にならない（＝黙って抜ける）" "0" \
+  "$(ct_extract_guarantee_section "$mixed_body" | grep -c 'NO_SECTION')"
+
+echo ""
+echo "=== (A-16) 枝番の連番・一意性 ==="
+
+assert_eq "(A-16) 1 2 3 は連番・一意" "true" "$(ct_branch_numbers_ok 1 2 3)"
+assert_eq "(A-16) 1 のみは連番・一意" "true" "$(ct_branch_numbers_ok 1)"
+assert_eq "(A-16) 1 3 は非連番（欠番）で不可" "false" "$(ct_branch_numbers_ok 1 3)"
+assert_eq "(A-16) 1 1 は重複で不可" "false" "$(ct_branch_numbers_ok 1 1)"
+assert_eq "(A-16) 2 は 1 始まりでないため不可" "false" "$(ct_branch_numbers_ok 2)"
+assert_eq "(A-16) 2 1 は順序が崩れており不可" "false" "$(ct_branch_numbers_ok 2 1)"
+
+# 裁可状態への接続（成功に丸めない）
+assert_eq "(A-16) ID 文法違反があれば裁可可にしない" "未完了" "$(ct_approval_status 0 1 0 0 0)"
+assert_eq "(A-16) 枝番違反があれば裁可可にしない" "未完了" "$(ct_approval_status 0 0 0 0 1)"
+assert_eq "(A-16) 判定保留0件でも ID 文法違反なら裁可可にしない" "未完了" "$(ct_approval_status 0 1 0 0 0)"
+assert_eq "(A-16) すべて満たし判定保留0件のときだけ裁可可" "裁可可" "$(ct_approval_status 0 0 0 0 0)"
+
+echo ""
 echo "=== (A-11) ヘッダ行の並び: テンプレートと散文が一致している ==="
 
 # テンプレートのヘッダ行の並び（Parent → Base → 保証）
@@ -849,8 +1012,8 @@ assert_ref_contains "索引の status fail は作成可否に使わない（過�
   '**`status` が `"fail"`（既存の索引ドリフト）であってもチケット作成の可否には使わない**'
 assert_ref_contains "既存ドリフトは黙らせず完了報告に転記する" \
   '既存ドリフトの存在を黙らせない'
-assert_ref_contains "索引チェックはランチャー経由で実行する" \
-  '`claude-harness-run guarantee-index-check`'
+assert_ref_contains "索引チェックはランチャー経由・台帳パス付きで実行する" \
+  '`claude-harness-run guarantee-index-check <リポジトリルート>/docs/guarantees.md`'
 assert_ref_contains "前提の確認は要件モードのみに適用する（分解モードを不要に止めない）" \
   '| 共通-1（前提の確認） | **要件モードのみ** |'
 assert_ref_contains "中断時の報告は項目を省略・推測で埋めない" \
@@ -972,8 +1135,8 @@ assert_ref_contains "検証(i) 新規宣言配下にプレースホルダが残�
   '(i) 「### 新たに宣言する保証」配下に `{ISSUE_NUMBER}` が**1箇所も残っていない**'
 assert_ref_contains "検証(i) 保証節の外の {ISSUE_NUMBER} は転記であり残っていて正しい" \
   '保証節の外に残っている `{ISSUE_NUMBER}` は機能仕様からの転記であり、**残っていることが正しい**'
-assert_ref_contains "検証(i-2) 差分が新規宣言の行だけであることを確認する" \
-  '(i-2) **置換前後の本文の差分が、「### 新たに宣言する保証」配下の行だけである**'
+assert_ref_contains "検証(ii) 差分が新規宣言の行だけであることを確認する" \
+  '(ii) **置換前後の本文の差分が、「### 新たに宣言する保証」配下の行だけである**'
 assert_ref_contains "置換対象は生成した ID に限定する" \
   '**置換してよいのは「### 新たに宣言する保証」配下で自分が生成した ID の `{ISSUE_NUMBER}` だけ**'
 assert_ref_contains "本文全体への一括置換を禁じている" '**本文全体への一括置換をしないこと**'
@@ -982,12 +1145,24 @@ assert_ref_contains "プレースホルダを新規宣言の行以外に書か�
   '**このプレースホルダを本節の新規宣言の行以外に書かないこと**'
 assert_file_not_contains "本文中を「すべて」置換する旧記述が残っていない" "$REF_FILE" \
   '本文中の `{ISSUE_NUMBER}` を**すべて**'
-assert_ref_contains "検証(ii) 全 ID が G-<N>- で始まること" \
-  '(ii) 「新たに宣言する保証」の全 ID が `G-<N>-` で始まる'
-assert_ref_contains "検証(ii) はハイフンまで含めて比較する" \
-  '**ハイフンまで含めて比較する**。`G-158-` と `G-1580-` / `G-15-` を前方一致で取り違えない'
-assert_ref_contains "検証(iii) proposed ラベルが付いていること" \
-  '(iii) `guarantee:proposed` ラベルが付いている'
+assert_ref_contains "検証(iii) 完全な ID 文法に一致すること" \
+  '(iii) 新規宣言の各 ID が**完全な ID 文法 `G-<N>-<枝番>` に一致する**'
+assert_ref_contains "検証(iii) 枝番は1文字以上の数字だけ" \
+  '`<枝番>` は**1文字以上の数字だけ**'
+assert_ref_contains "検証(iii) 接頭辞一致だけで通さない" \
+  '**接頭辞 `G-<N>-` の一致だけで通さない**'
+assert_ref_contains "検証(iii) はハイフンまで含めて比較する" \
+  '比較はハイフンまで含めて行い `G-1580-` / `G-15-` と取り違えない'
+assert_ref_contains "検証(iv) 枝番の連番・一意性を確認する" \
+  '(iv) 枝番が **1 から始まる連番**で、**重複が無い**'
+assert_ref_contains "検証(v) proposed ラベルが付いていること" \
+  '(v) `guarantee:proposed` ラベルが付いている'
+assert_ref_contains "接頭辞一致で済ませない理由（黙って抜け落ちる）を明示している" \
+  '**壊れた保証が黙って検証対象から抜け落ちたまま「裁可可」と報告される**'
+assert_ref_contains "要件-1 が枝番の連番・一意を課している" \
+  '**枝番は 1 から始まる連番の整数**（`-1`, `-2`, …）とし、**重複させない**'
+assert_ref_contains "失敗時の報告に ID 文法・枝番の結果を含める" \
+  '| ID の文法・枝番 | (iii)(iv) の結果'
 assert_ref_contains "失敗時は成功として報告しない" '**2 または 3 が失敗した場合の扱い（成功として報告しない）**'
 assert_ref_contains "失敗時の報告項目をすべて埋める（推測で埋めない）" \
   '次の項目を**すべて埋めて**要人間対応として報告する（埋められない項目を省略・推測で埋めない）'
@@ -1022,28 +1197,24 @@ echo "=== (B-7) 完了報告の裁可状態（要人間判定を判定式へ接�
 assert_ref_contains "裁可状態を必ず書く" \
   '**`裁可状態` は必ず書く**（判定保留を記録だけして報告に出さない、という状態を作らない）'
 assert_ref_contains "裁可状態の3値以外を作らない" '`裁可状態` の値の決め方（この対応以外の値を作らない）'
-assert_ref_contains "裁可可の条件（判定保留0件を含む）" \
-  '要件-2 の検証(i)(ii)(iii)をすべて満たし、**かつ**判定保留が0件'
+assert_ref_contains "裁可可の条件（検証5項目＋判定保留0件）" \
+  '要件-2 の検証(i)(ii)(iii)(iv)(v)をすべて満たし、**かつ**判定保留が0件'
+
+# 完全性 join: 要件-2 が定義する検証項目と、裁可状態の表が参照する項目が一致する
+# （検証項目を足して裁可条件へ接続し忘れると落ちる）
+verify_labels="$(awk '/^3\. \*\*検証\*\*/{f=1} /^\*\*2 または 3 が失敗した場合/{f=0} f && /^   - \(/{print}' "$REF_FILE" \
+  | sed -E 's/^   - \(([iv]+)\).*/\1/' | tr '\n' ',' | sed 's/,$//')"
+approve_labels="$(grep -F -- '| `裁可可` |' "$REF_FILE" | grep -o -E '\([iv]+\)' | tr -d '()' | tr '\n' ',' | sed 's/,$//')"
+pending_labels="$(grep -F -- '| `要人間判定あり` |' "$REF_FILE" | grep -o -E '\([iv]+\)' | tr -d '()' | tr '\n' ',' | sed 's/,$//')"
+assert_eq "(B-7) 要件-2 の検証項目は (i)〜(v) の5件" "i,ii,iii,iv,v" "$verify_labels"
+assert_eq "(B-7) 裁可可の条件が検証項目を全件参照している" "$verify_labels" "$approve_labels"
+assert_eq "(B-7) 要人間判定ありの条件も検証項目を全件参照している" "$verify_labels" "$pending_labels"
+assert_ref_contains "検証の件数が本文と一致している" '次の5点を確認する'
 assert_ref_contains "要人間判定ありの条件" '判定保留が1件以上ある'
 assert_ref_contains "未完了の条件" '要件-2 の検証のいずれかを満たさない'
 assert_ref_contains "完了報告に索引整合チェックの結果を転記する" '- 索引整合チェック: status='
 assert_ref_contains "完了報告に人間の次操作を書く" \
   '承認するならラベルを guarantee:proposed → guarantee:approved に付け替える'
-
-# 裁可状態の参照実装（要件-4 の表の真理値表）。
-# 引数: <プレースホルダ残存 1/0> <スコープ不一致 1/0> <ラベル欠落 1/0> <判定保留件数>
-ct_approval_status() {
-  local placeholder="$1" scope="$2" label="$3" pending="$4"
-  if [ "$placeholder" = "1" ] || [ "$scope" = "1" ] || [ "$label" = "1" ]; then
-    printf '未完了'
-    return 0
-  fi
-  if [ "$pending" -gt 0 ]; then
-    printf '要人間判定あり'
-    return 0
-  fi
-  printf '裁可可'
-}
 
 assert_eq "(B-7) 検証全通過・判定保留0件 → 裁可可" "裁可可" "$(ct_approval_status 0 0 0 0)"
 assert_eq "(B-7) 検証全通過でも判定保留1件 → 要人間判定あり（黙って裁可可にしない）" "要人間判定あり" "$(ct_approval_status 0 0 0 1)"
@@ -1161,7 +1332,7 @@ assert_eq "(B-10) 前提の確認表の全行に中断と reason コードがあ
 report_table="$(awk '/^\*\*2 または 3 が失敗した場合の扱い/{f=1} f && /^\|/{print} /^### 要件-3\./{f=0}' "$REF_FILE" | grep -v -E '^\|[[:space:]]*(報告項目|-+)')"
 report_rows="$(printf '%s\n' "$report_table" | grep -c '^|')"
 report_empty="$(printf '%s\n' "$report_table" | grep -c -E '\|[[:space:]]*\|')"
-assert_eq "(B-10) 失敗時の報告項目表は5行ある" "5" "$report_rows"
+assert_eq "(B-10) 失敗時の報告項目表は6行ある" "6" "$report_rows"
 assert_eq "(B-10) 失敗時の報告項目表に空セルが無い（未定義のまま残さない）" "0" "$report_empty"
 
 # 裁可状態の表: 3行・値は3種のみ
