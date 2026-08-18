@@ -937,8 +937,14 @@ assert_ref_contains "食い違いの帰結（台帳が実在するのに中断�
   '**台帳が実在するのに `index_check_unavailable` で中断する**'
 assert_ref_contains "ルートを解決できない場合の扱いを定めている" \
   '黙って cwd 相対へ倒さない'
-assert_ref_contains "ランチャー呼び出しに台帳パスを渡している" \
-  '`claude-harness-run guarantee-index-check <リポジトリルート>/docs/guarantees.md`'
+assert_ref_contains "ランチャー呼び出しに台帳パスを引用符付きで渡している" \
+  '`claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"`'
+assert_file_not_contains "引用符なしの台帳パス引数が残っていない（空白を含むパスで分割される）" "$REF_FILE" \
+  'guarantee-index-check <リポジトリルート>'
+assert_ref_contains "引数のパスを引用する理由（引数分割と too many arguments）を明示している" \
+  '**引数として渡すパスは引用符で囲む** — 空白を含むリポジトリパスで引数が分割され、`too many arguments` で exit 2 になるのを防ぐため'
+assert_ref_contains "引用符を付けないのは先頭トークンと target だけだと明示している" \
+  '先頭トークンと target には**パス・バージョン・引用符を付けない**'
 assert_ref_contains "フォールバック形にも台帳パスを渡している" \
   '`bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"`'
 assert_ref_contains "前提の確認表もルート基準のパスを指している" \
@@ -1089,15 +1095,99 @@ assert_eq "(A-18) 一意なら生成した宣言だけが抽出される" "NEW G
 KEEP_NONE" "$(ct_extract_guarantee_section "$normalized_body")"
 
 assert_ref_contains "生成後の本文で保証節がちょうど1つであることを要求している" \
-  '**追記後の本文には、フェンス外の `## 保証（Guarantees）` 見出しがちょうど1つ（＝いま追記したもの）だけ存在しなければならない**'
+  '**追記後の本文には、フェンス外の「`## 保証` で始まる H2 見出し」がちょうど1つ（＝いま追記した `## 保証（Guarantees）`）だけ存在しなければならない**'
 assert_ref_contains "下流が見出しで節を識別することを理由として示している" \
   '**この見出しで保証節を識別する**'
 assert_ref_contains "追記前に転記本文の保証節の有無を確認する" \
-  '**追記の前に、転記した本文にフェンス外の `## 保証（Guarantees）` 見出しが無いことを共通-2 (a) の規則で確認する**'
+  '**追記の前に、転記した本文にフェンス外の「`## 保証` で始まる H2 見出し」が無いことを共通-2 (a) の規則で確認する**'
+assert_ref_contains "事前検出は完全一致ではなく「## 保証」始まりで行うと明示している" \
+  '**検出は正規の見出し `## 保証（Guarantees）` との完全一致ではなく、`## 保証` で始まるかどうかで行う**'
+assert_ref_contains "完全一致だと素通りして ID が合算される機序を明示している" \
+  '**素通りしたうえで追記後に2つの節がパースされ ID が合算される**'
+assert_ref_contains "見出し改名の対処が「## 保証」始まりを外すことだと明示している" \
+  '**`## 保証` で始まらない見出し名に変える**（`（Guarantees）` を外すだけでは `## 保証` 始まりのままで衝突は解消しない）'
 assert_ref_contains "重複時は Issue を作成せずに中断する" \
   '**Issue を作成せずに中断する**（`duplicate_guarantee_section`）'
 assert_ref_contains "転記を書き換えて解決しない（人間に対処を依頼する）" \
   '転記は逐語で行う約束のため本文側を書き換えて解決せず'
+
+echo ""
+echo "=== (A-19) 台帳パスの引用: 空白を含むリポジトリパスでも1引数として渡る ==="
+
+WS3="${TMP_ROOT}/my repo"
+mkdir -p "${WS3}/docs" "${WS3}/tests"
+git init -q "$WS3" 2>/dev/null || git -C "$WS3" init -q
+cat >"${WS3}/tests/example.test.sh" <<'EOF'
+test_contact_returns_400() {
+  echo "sample test body"
+}
+EOF
+cat >"${WS3}/docs/guarantees.md" <<'EOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-101-2: POST /api/contact は JSON パース不能時に 400 を返す
+
+- テスト: `tests/example.test.sh::test_contact_returns_400`
+- 宣言元: #101
+
+## Gaps（テストのない公開面）
+EOF
+
+quoted_out="$(bash "$GIC_SCRIPT" "${WS3}/docs/guarantees.md" 2>/dev/null)"
+quoted_code=$?
+assert_eq "(A-19) 引用符付きなら空白を含むパスでも検査できる" "pass" \
+  "$(printf '%s' "$quoted_out" | jq -r '.status')"
+assert_eq "(A-19) 引用符付きの exit code は 0" "0" "$quoted_code"
+
+# 引用符を外すと引数が分割され、実行前提の欠落（exit 2）になる = 指摘Aの再現
+# shellcheck disable=SC2086 # 意図的に引用符を外し、引数分割による失敗を再現する
+unquoted_out="$(bash "$GIC_SCRIPT" ${WS3}/docs/guarantees.md 2>/dev/null)"
+unquoted_code=$?
+assert_eq "(A-19) 引用符を外すと引数が分割され exit 2 になる（index_check_unavailable の原因）" "2" "$unquoted_code"
+assert_eq "(A-19) 引用符なしでは stdout に結果が返らない" "" "$unquoted_out"
+
+echo ""
+echo "=== (A-20) 保証節の検出は「## 保証」始まりの H2（完全一致ではない） ==="
+
+# 転記元が `## 保証ポリシー` を持つ本文（完全一致の事前検出では素通りする）
+policy_spec="$(printf '%s\n' '> 機能仕様: docs/features/gdd-policy.md' '' '## 概要' '' \
+  '保証の運用ポリシーを扱う仕様。' '' '## 保証ポリシー' '' '### 新たに宣言する保証' '' \
+  '- [ ] G-999-1: 仕様側に書かれていた宣言' '' '### 維持する保証' '' '- なし')"
+
+assert_eq "(A-20) 「## 保証ポリシー」も保証節として数えられる（実際の文法）" "1" \
+  "$(ct_count_guarantee_sections "$policy_spec")"
+assert_eq "(A-20) 正規の見出しとの完全一致では検出できない（素通りする）" "0" \
+  "$(printf '%s\n' "$policy_spec" | grep -c '^## 保証（Guarantees）$')"
+
+policy_appended="${policy_spec}$(printf '\n%s\n' '' '## 保証（Guarantees）' '' '### 新たに宣言する保証' '' \
+  '- [ ] G-158-1: 生成した宣言（受入基準 AC-1 に対応）' '' '### 維持する保証' '' '- なし')"
+assert_eq "(A-20) 追記すると保証節が2つになる（事前検出で中断すべき状態）" "2" \
+  "$(ct_count_guarantee_sections "$policy_appended")"
+assert_eq "(A-20) 2つあると転記元の ID が生成分に合算される" "NEW G-999-1
+KEEP_NONE
+NEW G-158-1
+KEEP_NONE" "$(ct_extract_guarantee_section "$policy_appended")"
+
+# `## 保証` で始まらない見出しへ変えれば衝突しない（対処後の姿）
+renamed_spec="$(printf '%s\n' '> 機能仕様: docs/features/gdd-policy.md' '' '## 概要' '' \
+  '保証の運用ポリシーを扱う仕様。' '' '## 約束ポリシー' '' '### 新たに宣言する保証' '' \
+  '- [ ] G-999-1: 仕様側に書かれていた宣言' '' '### 維持する保証' '' '- なし')"
+renamed_appended="${renamed_spec}$(printf '\n%s\n' '' '## 保証（Guarantees）' '' '### 新たに宣言する保証' '' \
+  '- [ ] G-158-1: 生成した宣言（受入基準 AC-1 に対応）' '' '### 維持する保証' '' '- なし')"
+assert_eq "(A-20) 「## 保証」で始まらない見出しに変えれば保証節は1つ" "1" \
+  "$(ct_count_guarantee_sections "$renamed_appended")"
+assert_eq "(A-20) 一意なら生成した宣言だけが抽出される" "NEW G-158-1
+KEEP_NONE" "$(ct_extract_guarantee_section "$renamed_appended")"
+
+# cross-file 逐語照合: 節の検出文法が生産側・消費側・スクリプト仕様で一致している
+section_grammar='`## 保証` で始まる'
+for target_file in "$REF_FILE" "$CONSUMER_FILE" "${REPO_ROOT}/scripts/specs/guarantee-index-check.md"; do
+  has_grammar="false"
+  grep -qF -- "$section_grammar" "$target_file" && has_grammar="true"
+  assert_eq "(A-20) 節の検出文法が $(basename "$target_file") に逐語で存在する" "true" "$has_grammar"
+done
 
 echo ""
 echo "=== (B-1) SKILL.md のフェーズ判定と分岐（default-OFF の入口） ==="
@@ -1138,8 +1228,8 @@ assert_ref_contains "索引の status fail は作成可否に使わない（過�
   '**`status` が `"fail"`（既存の索引ドリフト）であってもチケット作成の可否には使わない**'
 assert_ref_contains "既存ドリフトは黙らせず完了報告に転記する" \
   '既存ドリフトの存在を黙らせない'
-assert_ref_contains "索引チェックはランチャー経由・台帳パス付きで実行する" \
-  '`claude-harness-run guarantee-index-check <リポジトリルート>/docs/guarantees.md`'
+assert_ref_contains "索引チェックはランチャー経由・引用符付きの台帳パスで実行する" \
+  '`claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"`'
 assert_ref_contains "前提の確認は要件モードのみに適用する（分解モードを不要に止めない）" \
   '| 共通-1（前提の確認） | **要件モードのみ** |'
 assert_ref_contains "中断時の報告は項目を省略・推測で埋めない" \
