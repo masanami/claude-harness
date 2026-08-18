@@ -54,8 +54,24 @@ SKILL.md の Step 5.5 で確定したフェーズに応じて、本ファイル�
 
 引数を付けずに実行し、既定の対象（`docs/guarantees.md`）を検査する（5.5-2 で存在を確認済みのファイル）。
 
-- **exit 0 または 1 で、stdout が妥当な JSON**（`status` が `"pass"` / `"fail"`）→ その JSON を**そのまま** `guaranteeCheck.index` とし、`error` は `null` にする（検査自体は実行できているため）。JSON の `status` と exit code が食い違う場合（`status: "pass"` なのに exit 1 等）は次項の fail 扱いに倒し、暗黙に pass へ倒さない
-- **exit 2（台帳が読めない・「保証」節が無い・jq 不在）／stdout が空または JSON としてパース不能／スクリプト実行不能** → `guaranteeCheck.index = { "status": "fail", "error": "<stderr のメッセージ>" }` とする。**`pass` や「検査対象なし」に読み替えない**（検査不能は「問題0件」と同じではない）。このとき `broken` は取得できていないため、**空配列を「壊れた参照が無い」と読ませない**（Step 9 の報告では未解析である旨を明記する）。あわせて `humanReview` に `{ kind: "index_error", detail: "..." }` を積む
+- **exit 0 または 1 で、stdout が妥当な JSON**（`status` が `"pass"` / `"fail"`）で、**`status` と exit code が整合している**（`pass`↔0 / `fail`↔1）→ その JSON を**そのまま** `guaranteeCheck.index` とし、`error` は `null` にする（検査自体は実行でき、結果も信頼できるため）
+- **`status` と exit code が食い違う場合**（`status: "pass"` なのに exit 1 等）→ **暗黙に pass へ倒さない**。取得できた JSON は**破棄せずそのまま保持**し、`status` を `"fail"` へ上書きしたうえで `error` に食い違いの内容を入れる（`{ ...取得した JSON, "status": "fail", "error": "status=<値> と exit code=<値> が食い違う" }`）。**`counts` / `broken` / `ledger` / `base` は取得できているので捨てない**（報告の情報量を落とさないため）。あわせて `humanReview` に `{ kind: "index_error", detail: "status と exit code の食い違い: ..." }` を積む（5.5-7 の (d) により `allConsistent` は `false` になる）
+- **exit 2（台帳が読めない・「保証」節が無い・jq 不在）／stdout が空または JSON としてパース不能／スクリプト実行不能** → 検査自体が実行できていないため、**取得できていないフィールドを `null` で明示的に初期化する**: `guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "broken": null, "error": "<stderr のメッセージ>" }`。**`pass` や「検査対象なし」に読み替えない**（検査不能は「問題0件」と同じではない）。**`broken` を `[]`、`counts` を 0 で埋めない**（空配列は「壊れた参照が無い」を意味してしまう）。あわせて `humanReview` に `{ kind: "index_error", detail: "..." }` を積む
+
+**`index` の形は経路によらず定義済みにする**（報告テンプレートが読むフィールドを未定義のまま残すと、実行主体が値を捏造することになる。早期失敗で `index` / `guarantees` を `null` 初期化しているのと同じ理由）。組み立てる全経路と、報告テンプレートが読むフィールドの定義状態は次のとおり:
+
+| 経路 | `index` 全体 | `status` | `error` | `counts` | `broken` |
+|---|---|---|---|---|---|
+| 正常 pass（exit 0・`status: "pass"`） | 取得した JSON をそのまま | `"pass"` | `null` | スクリプトの値 | スクリプトの値（空配列＝壊れた参照なし） |
+| 正常 fail（exit 1・`status: "fail"`） | 取得した JSON をそのまま | `"fail"` | `null` | スクリプトの値 | スクリプトの値（1件以上） |
+| `status` と exit code の食い違い | 取得した JSON を保持し `status` / `error` を上書き | `"fail"` | 食い違いの説明（非 null） | スクリプトの値（保持） | スクリプトの値（保持） |
+| exit 2（実行前提の欠落） | `null` 初期化した形 | `"fail"` | stderr のメッセージ | `null` | `null` |
+| stdout が空・JSON パース不能 | 同上 | `"fail"` | パースできない旨 | `null` | `null` |
+| スクリプト実行不能（ランチャー不在等） | 同上 | `"fail"` | 実行できない旨 | `null` | `null` |
+| 早期失敗（5.5-1〜5.5-3 で中断） | `index` 自体が `null` | — | — | — | — |
+
+- **`error` が非 null の経路では、`counts` が `null`（＝検査自体が走っていない）か、非 null（＝走ったが結果を採用しない）かで報告の文言が変わる**（「保証整合セクションの報告形式」を参照）。どちらの場合も `allConsistent` は `false` になる
+- `guarantees` 側も同様に、**配列の各要素は `{guarantee_id, kind, registered, verdict, evidence, needsHumanReview}` の全フィールドを必ず埋める**。fan-out に掛けなかった `not_registered` の要素でも `evidence` を空にせず、「台帳に登録が無いため意味検証の対象外」といった理由を書く（表の欄が空になると、検証したのに根拠が無いのか、検証していないのかが読み手に区別できない）
 
 ### 5.5-5. 新規宣言の台帳登録確認（決定的）
 
@@ -147,11 +163,23 @@ guaranteeCheck.allConsistent =
 }
 ```
 
+索引整合チェックの結果を採用できない経路（exit 2 / パース不能 / 実行不能）の `index` の形:
+
+```json
+{ "status": "fail", "ledger": null, "base": null, "counts": null, "broken": null, "error": "台帳に「保証」節がありません（exit 2）" }
+```
+
+`status` と exit code が食い違った経路の `index` の形（取得できた値は保持する）:
+
+```json
+{ "status": "fail", "ledger": "docs/guarantees.md", "base": "/abs/path", "counts": { "guarantees": 12, "refs": 15, "gaps": 3, "broken": 0 }, "broken": [], "error": "status=pass と exit code=1 が食い違う" }
+```
+
 - SDD期は `{ "skipped": true, "reason": "..." }` のみ（他のフィールドを持たせない）
-- **`index` の意味**: `null` = 索引整合チェックを**実行していない**（未検査。5.5-1〜5.5-3 の早期失敗）／オブジェクト = 実行した（`status` が `pass` / `fail`。`error` が非 null なら実行を試みて失敗した）
+- **`index` の意味**（形の正本は 5.5-4 の経路表）: `null` = 索引整合チェックを**実行していない**（未検査。5.5-1〜5.5-3 の早期失敗）／オブジェクト = 実行を試みた。オブジェクトの場合、**`status` / `error` / `counts` / `broken` は経路によらず必ず定義済み**であり、`error` が `null` なら結果を採用でき、非 null なら採用しない（`counts` が `null` なら検査自体が走っていない、非 null なら走ったが結果を採用しない参考値）
 - **`guarantees` の意味**: `null` = 検証対象を**確定できていない**（未検査。早期失敗）／配列 = 対象を確定した結果の判定一覧。**空配列を使ってよいのは、親Issueの保証節が「なし」と明示していた場合（＝検査した結果の0件）だけ**であり、未検査を空配列で表さない
 - `humanReview[].kind` の語彙: `phase_invalid` / `ledger_missing` / `guarantee_section_missing` / `index_error` / `ledger_read_mismatch` / `verification_failed`
-- `index.error` が非 null のとき、`index.broken` の空配列は「壊れた参照が無い」を意味しない（検査自体が走っていない）
+- `index.error` が非 null のとき、`index.broken` の値（空配列を含む）は「壊れた参照が無い」ことの根拠にならない。`counts` が `null` の経路では検査自体が走っておらず、`counts` が非 null の経路（`status` と exit code の食い違い）では**検証していない参考値**である
 
 ### 保証整合セクションの報告形式（SKILL.md の Step 9 が参照する）
 
@@ -161,7 +189,11 @@ SKILL.md の Step 9 の報告テンプレートのうち、「### 保証整合�
 （**このセクションは `guaranteeCheck.skipped === true`〈= SDD期〉のときは見出しごと出力しない**。`⊘ スキップ` の行としても出さない）
 
 - 開発フェーズ: {phase}
-- 索引整合: {index === null ? `⚠️ 未検査（索引整合チェックを実行していません。理由は下の「要人間判定」を参照）` : (index.error ? `⚠️ 未解析（検査を実行できませんでした）: ${index.error}（下表が空でも「問題なし」ではありません）` : (index.status === 'pass' ? '✅ pass' : `❌ fail（broken ${index.counts.broken} 件）`))}
+- 索引整合: {index === null ? `⚠️ 未検査（索引整合チェックを実行していません。理由は下の「要人間判定」を参照）`
+             : index.error && index.counts === null ? `⚠️ 未解析（検査を実行できませんでした）: ${index.error}（下表が空でも「問題なし」ではありません）`
+             : index.error ? `⚠️ 結果を採用できません（${index.error}）。参考値: broken ${index.counts.broken} 件（この値は検証していない参考値であり、pass の根拠にしない）`
+             : index.status === 'pass' ? '✅ pass'
+             : `❌ fail（broken ${index.counts.broken} 件）`}
 
 保証ごとの判定は `guarantees` の状態で書き分ける（**未検査を空表・0件として描かない**）:
 

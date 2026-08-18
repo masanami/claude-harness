@@ -532,7 +532,7 @@ echo ""
 echo "=== (B-4) 検査不能≠0件 ==="
 
 assert_ref_contains "索引整合の exit 2・パース不能・実行不能は fail 扱い" \
-  '`guaranteeCheck.index = { "status": "fail", "error": "<stderr のメッセージ>" }` とする'
+  '`guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "broken": null, "error": "<stderr のメッセージ>" }`'
 assert_ref_contains "索引整合の実行不能を pass・検査対象なしに読み替えない" \
   '**`pass` や「検査対象なし」に読み替えない**'
 assert_ref_contains "検査不能は問題0件と同じではない" \
@@ -588,7 +588,7 @@ assert_ref_contains "経路3（保証節がパース不能）の guaranteeCheck 
   '`guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "guarantee_section_missing"'
 
 assert_ref_contains "index: null / オブジェクトの意味が定義されている" \
-  '**`index` の意味**: `null` = 索引整合チェックを**実行していない**'
+  '**`index` の意味**（形の正本は 5.5-4 の経路表）: `null` = 索引整合チェックを**実行していない**'
 assert_ref_contains "guarantees: null / 配列の意味が定義されている" \
   '**`guarantees` の意味**: `null` = 検証対象を**確定できていない**'
 assert_ref_contains "空配列を使ってよいのは保証節が「なし」と明示された場合だけ" \
@@ -662,7 +662,7 @@ assert_ref_contains "一部だけ検証できた状態を allConsistent:true に
 assert_ref_contains "(a) の突き合わせは「調べた結果の0件」でのみ満たされる" \
   "(a) の突き合わせを満たせるのは「調べた結果の0件」だけであり、「調べられなかった」では満たされない"
 assert_ref_contains "索引の error 非 null 時の空 broken を「問題なし」と読ませない" \
-  "「壊れた参照が無い」を意味しない"
+  "「壊れた参照が無い」ことの根拠にならない"
 
 echo ""
 echo "=== (B-7) readyForPromotion の論理式 ==="
@@ -872,6 +872,61 @@ assert_eq "チェック済み保証が not_registered/drifted なら allConsiste
   "false" "$(eval_all_consistent 1 1 0 1)"
 assert_eq "チェック済み保証が targets から落ちて (a) が偽なら allConsistent は false" \
   "false" "$(eval_all_consistent 0 1 1 1)"
+
+echo ""
+echo "=== (B-5e) index の形は全経路で定義済み（報告テンプレートが未定義値を読まない） ==="
+
+# 索引整合チェックの結果を index に落とす経路は複数ある（正常 pass / 正常 fail /
+# status と exit code の食い違い / exit 2 / パース不能 / 実行不能 / 早期失敗）。
+# 報告テンプレートは index.error / index.counts.broken を読むため、経路ごとに形が
+# 定義されていないと実行主体が未定義値を読む（＝値を捏造する）ことになる。
+assert_ref_contains "index の形を経路によらず定義済みにする方針が明記されている" \
+  '**`index` の形は経路によらず定義済みにする**'
+assert_ref_contains "食い違い時は取得した JSON を破棄せず保持する" \
+  '取得できた JSON は**破棄せずそのまま保持**し、`status` を `"fail"` へ上書き'
+assert_ref_contains "食い違い時も counts/broken/ledger/base を捨てない" \
+  '**`counts` / `broken` / `ledger` / `base` は取得できているので捨てない**'
+assert_ref_contains "食い違いは humanReview に積み (d) で allConsistent が false になる" \
+  '5.5-7 の (d) により `allConsistent` は `false` になる'
+assert_ref_contains "実行不能系は counts/broken を null で明示初期化する" \
+  '`guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "broken": null, "error": "<stderr のメッセージ>" }`'
+assert_ref_contains "broken を [] ・counts を 0 で埋めない" \
+  '**`broken` を `[]`、`counts` を 0 で埋めない**'
+assert_ref_contains "報告は counts の null / 非 null で文言が変わると明記" \
+  '**`error` が非 null の経路では、`counts` が `null`（＝検査自体が走っていない）か、非 null（＝走ったが結果を採用しない）かで報告の文言が変わる**'
+assert_ref_contains "報告テンプレートに counts === null の分岐がある" \
+  'index.error && index.counts === null ?'
+assert_ref_contains "報告テンプレートに参考値（食い違い）の分岐がある" \
+  '⚠️ 結果を採用できません'
+assert_ref_contains "参考値を pass の根拠にしないと明記" \
+  "この値は検証していない参考値であり、pass の根拠にしない"
+assert_ref_contains "guarantees の各要素も全フィールドを必ず埋める" \
+  '**配列の各要素は `{guarantee_id, kind, registered, verdict, evidence, needsHumanReview}` の全フィールドを必ず埋める**'
+assert_ref_contains "not_registered でも evidence を空にしない" \
+  'fan-out に掛けなかった `not_registered` の要素でも `evidence` を空にせず'
+
+# 構造不変条件: 経路表の行数と、形が定義されている行数が一致すること。
+# 経路を足したのに形を書かない（セルが空・欠落）と落ちる。
+table_rows="$(awk '/^\| 経路 \| `index` 全体 \|/ {inside=1; next} inside && /^\|---/ {next} inside && /^\|/ {print} inside && !/^\|/ {exit}' "$REF_FILE")"
+row_total="$(printf '%s\n' "$table_rows" | grep -c .)"
+# 各行が6セル（経路 + index全体 + status + error + counts + broken）すべて非空であること
+defined_rows="$(printf '%s\n' "$table_rows" | awk -F'|' '{
+  ok = 1
+  for (i = 2; i <= 7; i++) {
+    cell = $i
+    gsub(/^[ \t]+|[ \t]+$/, "", cell)
+    if (cell == "") { ok = 0 }
+  }
+  if (ok && NF >= 7) { count++ }
+} END { print count + 0 }')"
+assert_eq "index の経路表は7経路を列挙している（正常2 / 食い違い / exit2 / パース不能 / 実行不能 / 早期失敗）" \
+  "7" "$row_total"
+assert_eq "経路表の全行で形が定義されている（空セルが無い）" \
+  "$row_total" "$defined_rows"
+
+# 食い違い経路: humanReview に積まれる → (d) が偽 → allConsistent は false
+assert_eq "status と exit code の食い違いがあれば allConsistent は false" \
+  "false" "$(eval_all_consistent 1 1 1 0)"
 
 echo ""
 echo "=== (B-10) 要人間判定と allConsistent の接続（安全機構が算出式に入っていること） ==="
