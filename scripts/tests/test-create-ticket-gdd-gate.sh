@@ -396,6 +396,102 @@ ct_approval_status() {
   printf '裁可可'
 }
 
+# 共通-2 (c) の状態空間表の参照実装。
+# 指定カテゴリの状態を返す: entries（対象となるエントリが1件以上）/ none（`- なし` の明示）/
+# blank（見出しはあるが該当行が無い）/ absent（カテゴリ見出しが無い）。
+# require_id=true のカテゴリ（新たに宣言する保証・維持する保証）では ID を持つリスト行だけを
+# entries と数える。判定保留（require_id=false）は ID を持たないエントリが正規のため、
+# 任意のリスト行を entries と数える。
+ct_category_state() {
+  local body="$1" want="$2" require_id="$3"
+  local line marker_run marker fence_info title
+  local fence_marker="" fence_len=0
+  local in_section="false" in_target="false" seen="false"
+  local has_entry="false" has_none="false"
+
+  body="${body//$'\r'/}"
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ $CT_FENCE_RE ]]; then
+      marker_run="${BASH_REMATCH[1]}"
+      fence_info="${BASH_REMATCH[2]}"
+      marker="${marker_run:0:1}"
+      if [ -z "$fence_marker" ]; then
+        fence_marker="$marker"
+        fence_len="${#marker_run}"
+      elif [ "$fence_marker" = "$marker" ] && [ "${#marker_run}" -ge "$fence_len" ] && [ -z "$fence_info" ]; then
+        fence_marker=""
+        fence_len=0
+      fi
+      continue
+    fi
+    [ -n "$fence_marker" ] && continue
+
+    if [[ "$line" =~ $CT_SECTION_RE ]]; then
+      in_section="true"
+      in_target="false"
+      continue
+    fi
+    if [[ "$line" =~ $CT_H12_RE ]]; then
+      in_section="false"
+      in_target="false"
+      continue
+    fi
+    [ "$in_section" = "true" ] || continue
+
+    if [[ "$line" =~ $CT_H3_RE ]]; then
+      title="${BASH_REMATCH[1]}"
+      title="${title%"${title##*[![:space:]]}"}"
+      if [ "$title" = "$want" ]; then
+        in_target="true"
+        seen="true"
+      else
+        in_target="false"
+      fi
+      continue
+    fi
+    [ "$in_target" = "true" ] || continue
+
+    if [[ "$line" =~ $CT_NONE_ITEM_RE ]]; then
+      has_none="true"
+      continue
+    fi
+    if [ "$require_id" = "true" ]; then
+      if [[ "$line" =~ $CT_NEW_ITEM_RE ]] || [[ "$line" =~ $CT_KEEP_ITEM_RE ]]; then
+        has_entry="true"
+      fi
+    else
+      if [[ "$line" =~ ^[[:space:]]*[-*][[:space:]]+ ]]; then
+        has_entry="true"
+      fi
+    fi
+  done <<<"$body"
+
+  if [ "$seen" = "false" ]; then
+    printf 'absent'
+  elif [ "$has_none" = "true" ]; then
+    printf 'none'
+  elif [ "$has_entry" = "true" ]; then
+    printf 'entries'
+  else
+    printf 'blank'
+  fi
+}
+
+# 共通-2 (c) の妥当性条件の参照実装。
+# 判定は「新たに宣言する保証」「維持する保証」の2カテゴリだけで行い、判定保留は参照しない。
+ct_section_valid() {
+  local body="$1" state
+  for want in "新たに宣言する保証" "維持する保証"; do
+    state="$(ct_category_state "$body" "$want" true)"
+    case "$state" in
+      entries | none) ;;
+      *) printf 'invalid'; return 0 ;;
+    esac
+  done
+  printf 'valid'
+}
+
 # 要件-2 検証(iii) の参照実装: 完全な ID 文法 `G-<N>-<枝番>`（枝番は1文字以上の数字）に一致するか。
 # 接頭辞 `G-<N>-` の一致だけで通さない（`G-158-x` / `G-158-` を弾く）。
 ct_id_grammar_matches() {
@@ -1190,6 +1286,132 @@ for target_file in "$REF_FILE" "$CONSUMER_FILE" "${REPO_ROOT}/scripts/specs/guar
 done
 
 echo ""
+echo "=== (A-21) 状態空間: 生成されうる形が受理される（受理方向のテスト） ==="
+
+# 保証節を組み立てるヘルパー（カテゴリごとの中身を差し替える）
+ct_build_section() {
+  local new_block="$1" keep_block="$2" pending_block="$3"
+  {
+    printf '%s\n' '> 機能仕様: docs/features/sample.md' '' '## 概要' '' 'サンプル。' '' '## 保証（Guarantees）' ''
+    if [ -n "$new_block" ]; then
+      printf '%s\n' '### 新たに宣言する保証' ''
+      [ "$new_block" != "__blank__" ] && printf '%s\n' "$new_block"
+      printf '\n'
+    fi
+    if [ -n "$keep_block" ]; then
+      printf '%s\n' '### 維持する保証' ''
+      [ "$keep_block" != "__blank__" ] && printf '%s\n' "$keep_block"
+      printf '\n'
+    fi
+    if [ -n "$pending_block" ]; then
+      printf '%s\n' '### 判定保留（要人間判定）' ''
+      [ "$pending_block" != "__blank__" ] && printf '%s\n' "$pending_block"
+      printf '\n'
+    fi
+  }
+}
+
+NEW_ENTRY='- [ ] G-158-1: 公開面の約束（受入基準 AC-1 に対応）'
+KEEP_ENTRY='- G-101-2: 既存の約束文'
+PENDING_ENTRY='- 他リポジトリが読んでいるか不明なデータ形式（判断が付かない）'
+NONE_LINE='- なし'
+
+# 行1・4・7: 3カテゴリすべてにエントリ（判定保留は ID を持たない）
+body_all_entries="$(ct_build_section "$NEW_ENTRY" "$KEEP_ENTRY" "$PENDING_ENTRY")"
+assert_eq "(A-21) 行1/4/7: 判定保留に ID なしエントリがあっても受理される" "valid" "$(ct_section_valid "$body_all_entries")"
+assert_eq "(A-21) 行7: 判定保留のエントリは抽出されない（機械処理の対象外）" "NEW G-158-1
+KEEP G-101-2" "$(ct_extract_guarantee_section "$body_all_entries")"
+assert_eq "(A-21) 行7: 判定保留の状態は entries として観測される" "entries" \
+  "$(ct_category_state "$body_all_entries" "判定保留（要人間判定）" false)"
+
+# 行2・5・8: 新規宣言・維持・判定保留のいずれも `- なし`
+body_all_none="$(ct_build_section "$NONE_LINE" "$NONE_LINE" "$NONE_LINE")"
+assert_eq "(A-21) 行2/5/8: すべて「- なし」でも受理される" "valid" "$(ct_section_valid "$body_all_none")"
+assert_eq "(A-21) 行2/5: 「- なし」は none 状態として観測される" "none" \
+  "$(ct_category_state "$body_all_none" "新たに宣言する保証" true)"
+
+# 行9: 判定保留が空欄（見出しだけ）でも受理される
+body_pending_blank="$(ct_build_section "$NEW_ENTRY" "$KEEP_ENTRY" "__blank__")"
+assert_eq "(A-21) 行9: 判定保留が空欄でも受理される" "valid" "$(ct_section_valid "$body_pending_blank")"
+assert_eq "(A-21) 行9: 判定保留の空欄は blank として観測される（不当の理由にしない）" "blank" \
+  "$(ct_category_state "$body_pending_blank" "判定保留（要人間判定）" false)"
+
+# 行10: 判定保留カテゴリ自体が無い（従来形・下流互換）
+body_no_pending="$(ct_build_section "$NEW_ENTRY" "$KEEP_ENTRY" "")"
+assert_eq "(A-21) 行10: 判定保留カテゴリが無い従来形でも受理される" "valid" "$(ct_section_valid "$body_no_pending")"
+assert_eq "(A-21) 行10: 判定保留は absent として観測される" "absent" \
+  "$(ct_category_state "$body_no_pending" "判定保留（要人間判定）" false)"
+
+# 混合（新規宣言なし・維持あり／新規宣言あり・維持なし）も受理
+assert_eq "(A-21) 行2+4: 新規宣言が「- なし」で維持にエントリがある形も受理" "valid" \
+  "$(ct_section_valid "$(ct_build_section "$NONE_LINE" "$KEEP_ENTRY" "$PENDING_ENTRY")")"
+assert_eq "(A-21) 行1+5: 新規宣言にエントリ・維持が「- なし」の形も受理" "valid" \
+  "$(ct_section_valid "$(ct_build_section "$NEW_ENTRY" "$NONE_LINE" "$NONE_LINE")")"
+
+echo ""
+echo "=== (A-22) 状態空間: 不当な形だけが拒否される（拒否方向のテスト） ==="
+
+assert_eq "(A-22) 行3: 新規宣言が空欄なら不当" "invalid" \
+  "$(ct_section_valid "$(ct_build_section "__blank__" "$KEEP_ENTRY" "$NONE_LINE")")"
+assert_eq "(A-22) 行6: 維持が空欄なら不当" "invalid" \
+  "$(ct_section_valid "$(ct_build_section "$NEW_ENTRY" "__blank__" "$NONE_LINE")")"
+assert_eq "(A-22) 行11: 維持の見出しが無ければ不当" "invalid" \
+  "$(ct_section_valid "$(ct_build_section "$NEW_ENTRY" "" "$NONE_LINE")")"
+assert_eq "(A-22) 行11: 新規宣言の見出しが無ければ不当" "invalid" \
+  "$(ct_section_valid "$(ct_build_section "" "$KEEP_ENTRY" "$NONE_LINE")")"
+assert_eq "(A-22) 行3: 空欄は blank として観測される（none と区別する）" "blank" \
+  "$(ct_category_state "$(ct_build_section "__blank__" "$KEEP_ENTRY" "$NONE_LINE")" "新たに宣言する保証" true)"
+
+# 判定保留の状態を変えても妥当性は変わらない（3回発生した欠陥型の再発防止）
+pending_variation_result=""
+for pending in "$PENDING_ENTRY" "$NONE_LINE" "__blank__" ""; do
+  pending_variation_result="${pending_variation_result}$(ct_section_valid "$(ct_build_section "$NEW_ENTRY" "$KEEP_ENTRY" "$pending")") "
+done
+assert_eq "(A-22) 判定保留の状態（entries/none/blank/absent）は妥当性に影響しない" \
+  "valid valid valid valid " "$pending_variation_result"
+
+echo ""
+echo "=== (A-23) 状態空間表の網羅性（構造不変条件） ==="
+
+state_table="$(awk '/^\*\*生成される保証節の状態空間/{f=1} /^- 受理と判定した節は/{f=0} f && /^\|/{print}' "$REF_FILE" \
+  | grep -v -E '^\|[[:space:]]*(#|-+)[[:space:]]*\|')"
+state_rows="$(printf '%s\n' "$state_table" | grep -c '^|')"
+assert_eq "(A-23) 状態空間表は11行ある（カテゴリ3種の全状態＋全体条件）" "11" "$state_rows"
+state_empty="$(printf '%s\n' "$state_table" | grep -c -E '\|[[:space:]]*\|')"
+assert_eq "(A-23) 状態空間表に空セルが無い（行を足して埋め忘れると落ちる）" "0" "$state_empty"
+
+# カテゴリごとの行数（新規宣言3・維持3・判定保留4・全体1）
+for pair in "新たに宣言する保証:3" "維持する保証:3" "判定保留（要人間判定）:4" "全体:1"; do
+  cat_name="${pair%%:*}"
+  cat_expected="${pair##*:}"
+  cat_rows="$(printf '%s\n' "$state_table" | awk -F'|' -v c="$cat_name" '$3 ~ c {n++} END {print n+0}')"
+  assert_eq "(A-23) 状態空間表の「${cat_name}」の行数" "$cat_expected" "$cat_rows"
+done
+
+# 表のカテゴリ集合が、要件-1 のテンプレートの H3 見出しと一致する
+# （テンプレートにカテゴリを足して表への追記を忘れると落ちる）
+tpl_categories="$(ct_extract_template_block | grep -E '^### ' | sed -E 's/^### //' | sort -u | tr '\n' ',' | sed 's/,$//')"
+table_categories="$(printf '%s\n' "$state_table" \
+  | awk -F'|' '{c=$3; sub(/^[[:space:]]+/, "", c); sub(/[[:space:]]+$/, "", c); print c}' \
+  | grep -v '^全体$' | sort -u | tr '\n' ',' | sed 's/,$//')"
+assert_eq "(A-23) 状態空間表のカテゴリ集合がテンプレートの見出しと一致する" "$tpl_categories" "$table_categories"
+
+assert_ref_contains "状態空間表が網羅の正本であると明示している" \
+  '**生成される保証節の状態空間と検証側の扱い（この表が網羅の正本）**'
+assert_ref_contains "受理方向の担保を明示している" \
+  '**「拒否すべきものを拒否する」だけでなく「受理すべきものを受理する」ことを表で担保する**'
+assert_ref_contains "カテゴリ・状態を増やすときは表を先に更新する規律がある" \
+  'カテゴリや状態を増やす場合は、この表に行を足してから実装・検証を変えること'
+assert_ref_contains "機械処理へ渡すのは2カテゴリだけだと明示している" \
+  '**新規宣言と維持の2カテゴリだけ**を機械処理へ渡す'
+
+# cross-file: 下流も2カテゴリだけを読む（判定保留を扱わない）
+assert_file_contains "下流の0件条件が新規宣言・維持の2カテゴリで書かれている" "$CONSUMER_FILE" \
+  '**節は存在し、「新規宣言」「維持」がいずれも明示的に「なし」と記されている場合**'
+assert_file_not_contains "下流は判定保留カテゴリを扱わない（表の「対象外」と一致）" "$CONSUMER_FILE" \
+  '判定保留'
+
+echo ""
 echo "=== (B-1) SKILL.md のフェーズ判定と分岐（default-OFF の入口） ==="
 
 assert_skill_contains "SKILL.md がフェーズ判定の定型文を持つ（独自 grep を禁じる）" \
@@ -1290,8 +1512,14 @@ assert_ref_contains "親Issueの保証 ID はリスト行にあると明示し�
   '**保証 ID は見出し行ではなく、カテゴリ配下のリスト行にある**'
 assert_ref_contains "カテゴリ見出しが ID を持たないことを解釈不能の理由にしない" \
   '**カテゴリ見出しが保証 ID を持たないことを理由に「解釈できない」と判定しない**'
-assert_ref_contains "解釈できないと判定してよい条件を限定している" \
-  '**「書式を解釈できない」と判定してよいのは**'
+assert_ref_contains "妥当性条件を新規宣言・維持の2カテゴリに限定している" \
+  '**妥当性条件（「書式を解釈できない」と判定してよい条件）は `### 新たに宣言する保証` と `### 維持する保証` の2カテゴリにだけ適用する**'
+assert_ref_contains "判定保留は妥当性条件の対象外だと明示している" \
+  '**`### 判定保留（要人間判定）` は妥当性条件の対象にしない**'
+assert_ref_contains "判定保留のエントリが意図的に ID を持たないと明示している" \
+  '**意図的に保証 ID を持たず**'
+assert_ref_contains "判定保留を理由に不当と判定すると分解が全件止まると明示している" \
+  '**正規の親Issueで分解-1 が実装チケットの作成を全件止める**'
 assert_ref_contains "親Issue文法が promote-verify 5.5-3 と同一だと明示している" \
   '下流の `/promote-verify`（Step 5.5-3）が親Issueを読む規則と同一'
 assert_file_contains "分解-1 が台帳の文法を適用しないと明示している" "$REF_FILE" \
@@ -1375,7 +1603,7 @@ assert_ref_contains "「- なし」は対象0件として (iii)(iv) 適合とす
   '**「### 新たに宣言する保証」に `- なし` が明示されている場合は、(iii)(iv) を対象0件として適合とする**'
 assert_ref_contains "宣言0件を理由に未完了にしないと明示している" '宣言が0件であることを理由に `未完了` にしない'
 assert_ref_contains "宣言行も「- なし」も無い場合は適合としない（検査不能）" \
-  '**ただし、カテゴリ配下に宣言行も `- なし` も無い場合・保証節そのものを読めない場合は適合としない**'
+  '**ただし、「### 新たに宣言する保証」配下に宣言行も `- なし` も無い場合（空欄）・保証節そのものを読めない場合は適合としない**'
 assert_ref_contains "「- なし」が正規のケースであると明示している" \
   '**これは正規のケースであり**（内部実装だけの変更・ドキュメント更新など）、宣言0件を理由に作成を失敗扱いにしない'
 assert_ref_contains "「- なし」と宣言行を同時に書かない" '**`- なし` と宣言行を同時に書かない**'
