@@ -151,6 +151,8 @@ Step 4 で `status: 'consistent'` と判定された基準**のみ**を対象に
 
 **SDD期（フェーズ宣言なしを含む）では 5.5-2 以降を実行せず、本スキルの挙動・報告は従来と完全に同一**（`guaranteeCheck = { skipped: true, reason: "..." }` とし、Step 9 の報告に保証整合セクション自体を出さない。`⊘ スキップ` の行としても出さない）。
 
+**早期失敗（5.5-1〜5.5-3 で以降の手順を実行せずに Step 6 へ進む経路）の `guaranteeCheck` は、実施できなかったフィールドを `null` で明示的に初期化する**（`index: null` / `guarantees: null`）。**`{}` や `[]`・`0件` で埋めないこと**（空配列は「調べた結果の0件」を意味するため、未検査を正常な検査結果に見せてしまう。検査不能≠0件）。Step 9 の報告はこの `null` を見て「未検査」と書き分け、**保証ごとの判定表を空表として描かない**。早期失敗の経路では `humanReview` を必ず1件以上入れる（何が検査不能だったかを表に出すため）。
+
 #### 5.5-1. 開発フェーズの判定
 
 > **開発フェーズの判定（重要）**: フェーズは必ず `claude-harness-run detect-dev-phase` の出力だけで判定し、`CLAUDE.md` を自分で grep しないこと（判定規約の重複実装を防ぐため）。stdout に `{"phase":"sdd"|"gdd"|"invalid","reason":"...","source":"..."}` が1個返る。フェーズ依存の追加挙動は **`phase` が `gdd` のときだけ**行い、`sdd`（宣言なしを含む）では一切挙動を変えない。**`phase` が `invalid`（exit 1）、またはスクリプトを実行できない・stdout が JSON としてパースできない（exit 2 等）場合は、`sdd` とみなさない**。フェーズ依存の処理を停止し、`reason` と `source`（および stderr のメッセージ）を添えて「要人間判定」としてユーザーに報告すること（不正な宣言や実行失敗によって GDD のゲート群が暗黙に無効化される事故を防ぐため）。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/detect-dev-phase.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。
@@ -162,7 +164,7 @@ Step 4 で `status: 'consistent'` と判定された基準**のみ**を対象に
 |---|---|---|
 | `sdd`（exit 0） | `{ skipped: true, reason: "SDD期（<reason>）" }` | **5.5-2 以降を実行しない**。従来どおり Step 6 へ進む |
 | `gdd`（exit 0） | 5.5-2 以降で組み立てる | 5.5-2 へ進む |
-| `invalid`（exit 1）／スクリプト実行不能・stdout が JSON としてパース不能 | `{ skipped: false, phase: "invalid", allConsistent: false, humanReview: [{ kind: "phase_invalid", detail: "<reason> / <source> / stderr のメッセージ" }] }` | **5.5-2 以降（保証節の抽出・索引整合・fan-out）は実行しない**。`sdd` に読み替えない |
+| `invalid`（exit 1）／スクリプト実行不能・stdout が JSON としてパース不能 | `{ skipped: false, phase: "invalid", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "phase_invalid", detail: "<reason> / <source> / stderr のメッセージ" }] }` | **5.5-2 以降（保証節の抽出・索引整合・fan-out）は実行しない**。`sdd` に読み替えない |
 
 - **`skipped: true` にしてよいのは、フェーズ判定が `sdd` として確定した場合のみ**。判定できなかった・実行できなかったものを `skipped` へ倒さないこと（`skipped` は Step 7 の論理式で OK 扱いになるため、検査不能を「スキップ」と書くと未検査のまま昇格可能に見える）。
 - フェーズ判定が `invalid`・実行不能の場合、**本スキルは処理全体を中断せず、Step 6 以降を継続して検証パッケージを出す**（本スキルの成果物は人間ゲートの判断材料であり、`readyForPromotion` が `false` になることで昇格自体は止まるため、他の判断材料まで捨てない。判断材料を出せる範囲で出しつつ、要人間判定として表に出す方が運用上有用という判断）。ただしフェーズ依存の追加チェック（5.5-2 以降）は行わない。
@@ -171,7 +173,7 @@ Step 4 で `status: 'consistent'` と判定された基準**のみ**を対象に
 
 統合ブランチの作業ツリーに `docs/guarantees.md` が存在するかを確認する。
 
-存在しない場合は**運用前提の破れ**（GDD期を宣言しているのに駆動文書が無い）として `guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, humanReview: [{ kind: "ledger_missing", detail: "GDD期だが docs/guarantees.md が存在しない" }] }` とし、5.5-3 以降を実行せずに Step 6 へ進む。**`skipped` にしない**（台帳の新設・正本化は人間の裁可事項であり、本スキルでは行わない）。
+存在しない場合は**運用前提の破れ**（GDD期を宣言しているのに駆動文書が無い）として `guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "ledger_missing", detail: "GDD期だが docs/guarantees.md が存在しない" }] }` とし、5.5-3 以降を実行せずに Step 6 へ進む。**`skipped` にしない**（台帳の新設・正本化は人間の裁可事項であり、本スキルでは行わない）。
 
 #### 5.5-3. 親Issueの保証節の抽出
 
@@ -182,7 +184,7 @@ Step 4 で `status: 'consistent'` と判定された基準**のみ**を対象に
 
 抽出結果の扱い:
 
-- **gh 呼び出しが非0終了した／「## 保証（Guarantees）」節が存在しない／節はあるが書式を解釈できない場合**は、`guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, humanReview: [{ kind: "guarantee_section_missing", detail: "..." }] }` とし、5.5-4 以降を実行せずに Step 6 へ進む。**対象0件（空配列）として先へ進めないこと**（**中断せず0件で進めると何が起きるか**: 5.5-7 の (a) の突き合わせと (c) の「すべての verdict が consistent」が空配列に対して論理的に真になり、**保証を1件も検証していないのに `allConsistent: true` が成立する**。Step 3-1 で受入基準ゼロ件を中断しているのと同じ罠であり、この防御を安易に削除しないこと）
+- **gh 呼び出しが非0終了した／「## 保証（Guarantees）」節が存在しない／節はあるが書式を解釈できない場合**は、`guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "guarantee_section_missing", detail: "..." }] }` とし、5.5-4 以降を実行せずに Step 6 へ進む。**対象0件（空配列）として先へ進めないこと**（**中断せず0件で進めると何が起きるか**: 5.5-7 の (a) の突き合わせと (c) の「すべての verdict が consistent」が空配列に対して論理的に真になり、**保証を1件も検証していないのに `allConsistent: true` が成立する**。Step 3-1 で受入基準ゼロ件を中断しているのと同じ罠であり、この防御を安易に削除しないこと）
 - **節は存在し、「新規宣言」「維持」がいずれも明示的に「なし」と記されている場合**のみ、対象0件（`targets` が空）として 5.5-4 へ進んでよい（これは**検査した結果の0件**であり、上記の「抽出できなかった」とは別状態として扱う）。この場合も索引整合（5.5-4）は実行する
 - 抽出した保証の全件を `targets` とする。**`targets` の各 `guarantee_id` が 5.5-7 の (a) の突き合わせ基準**になる
 
@@ -265,7 +267,23 @@ guaranteeCheck.allConsistent =
 }
 ```
 
+早期失敗（5.5-1〜5.5-3 で中断した経路）の形:
+
+```json
+{
+  "skipped": false,
+  "phase": "gdd",
+  "allConsistent": false,
+  "ledger": "docs/guarantees.md",
+  "index": null,
+  "guarantees": null,
+  "humanReview": [{ "kind": "ledger_missing", "detail": "GDD期だが docs/guarantees.md が存在しない" }]
+}
+```
+
 - SDD期は `{ "skipped": true, "reason": "..." }` のみ（他のフィールドを持たせない）
+- **`index` の意味**: `null` = 索引整合チェックを**実行していない**（未検査。5.5-1〜5.5-3 の早期失敗）／オブジェクト = 実行した（`status` が `pass` / `fail`。`error` が非 null なら実行を試みて失敗した）
+- **`guarantees` の意味**: `null` = 検証対象を**確定できていない**（未検査。早期失敗）／配列 = 対象を確定した結果の判定一覧。**空配列を使ってよいのは、親Issueの保証節が「なし」と明示していた場合（＝検査した結果の0件）だけ**であり、未検査を空配列で表さない
 - `humanReview[].kind` の語彙: `phase_invalid` / `ledger_missing` / `guarantee_section_missing` / `index_error` / `verification_failed`
 - `index.error` が非 null のとき、`index.broken` の空配列は「壊れた参照が無い」を意味しない（検査自体が走っていない）
 
@@ -350,13 +368,20 @@ Step 3-2 で取得した `diff_file` があれば、`rm -f "<diff_fileの絶対�
 
 （**このセクションは `guaranteeCheck.skipped === true`〈= SDD期〉のときは見出しごと出力しない**。`⊘ スキップ` の行としても出さない）
 
-- 索引整合: {index.error ? `⚠️ 未解析（検査を実行できませんでした）: ${index.error}（下表が空でも「問題なし」ではありません）` : (index.status === 'pass' ? '✅ pass' : `❌ fail（broken ${index.counts.broken} 件）`)}
+- 開発フェーズ: {phase}
+- 索引整合: {index === null ? `⚠️ 未検査（索引整合チェックを実行していません。理由は下の「要人間判定」を参照）` : (index.error ? `⚠️ 未解析（検査を実行できませんでした）: ${index.error}（下表が空でも「問題なし」ではありません）` : (index.status === 'pass' ? '✅ pass' : `❌ fail（broken ${index.counts.broken} 件）`))}
+
+保証ごとの判定は `guarantees` の状態で書き分ける（**未検査を空表・0件として描かない**）:
+
+- **`guarantees === null`（未検査。フェーズ不正・台帳欠落・保証節を抽出できなかった経路）** → 表を出さず、次の1行を出す: `⚠️ 保証ごとの判定は未検査です（検証対象を確定できませんでした。理由は下の「要人間判定」を参照）`。**この状態を「保証 0 件」「問題なし」と書かないこと**
+- **`guarantees` が空配列**（親Issueの保証節が「なし」と明示していた場合のみ） → `対象0件（親Issueが新規宣言・維持のいずれも「なし」と明示。索引整合の結果のみで判定）` と書く
+- **`guarantees` が1件以上** → 下表を出す
 
 | 保証ID | 種別 | 台帳登録 | 判定 | 根拠 | 要人間精査 |
 |--------|------|---------|------|------|-----------|
 | {guarantee_id} | {kind === 'new' ? "新規宣言" : "維持"} | {registered ? "✅" : "❌ 未追記"} | {verdict} | {evidence} | {needsHumanReview ? "⚠️ あり" : "-"} |
 
-（`humanReview` が1件以上ある場合は「保証整合で要人間判定になった項目」として `{kind}` / `{detail}` の一覧を別途示す。**保証節を抽出できなかった・台帳が無い・フェーズが不正の場合は「0件」ではなく「未検証」と書くこと**）
+（`humanReview` が1件以上ある場合は「保証整合で要人間判定になった項目」として `{kind}` / `{detail}` の一覧を**必ず**示す。早期失敗の経路ではこの一覧が唯一の理由の提示先になる。**保証節を抽出できなかった・台帳が無い・フェーズが不正の場合は「0件」ではなく「未検証」と書くこと**）
 
 ### 総合判定
 

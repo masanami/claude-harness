@@ -364,6 +364,47 @@ assert_skill_contains "(a) の突き合わせは件数だけでなく ID で行�
   "(a) targets の各 guarantee_id に対応する結果が guarantees に1件ずつ存在する（件数だけでなく ID を突き合わせる）"
 
 echo ""
+echo "=== (B-5b) 早期失敗経路の出力契約（未検査フィールドの明示的初期化と報告） ==="
+
+# fail-closed の早期分岐（フェーズ invalid / 台帳欠落 / 保証節がパース不能）は
+# index・guarantees を実施できないまま Step 9 へ進む。これらを未定義のまま残すと
+# 報告テンプレートが未定義値を読み、実行主体（LLM）が値を捏造することになるため、
+# 経路ごとに null で初期化し、報告側でも null を「未検査」として書き分けさせる。
+assert_skill_contains "早期失敗は未実施フィールドを null で明示的に初期化する" \
+  '**早期失敗（5.5-1〜5.5-3 で以降の手順を実行せずに Step 6 へ進む経路）の `guaranteeCheck` は、実施できなかったフィールドを `null` で明示的に初期化する**'
+assert_skill_contains "未検査を {} / [] / 0件 で埋めない" \
+  '**`{}` や `[]`・`0件` で埋めないこと**'
+assert_skill_contains "早期失敗では humanReview を必ず1件以上入れる" \
+  '早期失敗の経路では `humanReview` を必ず1件以上入れる'
+
+assert_skill_contains "経路1（フェーズ invalid）の guaranteeCheck が index/guarantees を初期化" \
+  '`{ skipped: false, phase: "invalid", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "phase_invalid"'
+assert_skill_contains "経路2（台帳欠落）の guaranteeCheck が index/guarantees を初期化" \
+  '`guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "ledger_missing"'
+assert_skill_contains "経路3（保証節がパース不能）の guaranteeCheck が index/guarantees を初期化" \
+  '`guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "guarantee_section_missing"'
+
+assert_skill_contains "index: null / オブジェクトの意味が定義されている" \
+  '**`index` の意味**: `null` = 索引整合チェックを**実行していない**'
+assert_skill_contains "guarantees: null / 配列の意味が定義されている" \
+  '**`guarantees` の意味**: `null` = 検証対象を**確定できていない**'
+assert_skill_contains "空配列を使ってよいのは保証節が「なし」と明示された場合だけ" \
+  '**空配列を使ってよいのは、親Issueの保証節が「なし」と明示していた場合（＝検査した結果の0件）だけ**'
+
+assert_skill_contains "報告: index が null のときは未検査と書く" \
+  '{index === null ? `⚠️ 未検査（索引整合チェックを実行していません。理由は下の「要人間判定」を参照）`'
+assert_skill_contains "報告: guarantees の状態で書き分ける（未検査を空表・0件にしない）" \
+  '保証ごとの判定は `guarantees` の状態で書き分ける（**未検査を空表・0件として描かない**）'
+assert_skill_contains "報告: guarantees が null のときは表を出さず未検査行を出す" \
+  '**`guarantees === null`（未検査。フェーズ不正・台帳欠落・保証節を抽出できなかった経路）** → 表を出さず'
+assert_skill_contains "報告: 未検査を「保証 0 件」「問題なし」と書かない" \
+  '**この状態を「保証 0 件」「問題なし」と書かないこと**'
+assert_skill_contains "報告: 空配列（保証節が「なし」）は対象0件として書く" \
+  '**`guarantees` が空配列**（親Issueの保証節が「なし」と明示していた場合のみ）'
+assert_skill_contains "報告: 早期失敗では humanReview の一覧を必ず示す" \
+  "早期失敗の経路ではこの一覧が唯一の理由の提示先になる"
+
+echo ""
 echo "=== (B-6) 部分成功≠完全成功 ==="
 
 assert_skill_contains "一部だけ検証できた状態を allConsistent:true にしない" \
@@ -465,6 +506,29 @@ if [ -n "$step55" ]; then
   else
     PASS_COUNT=$((PASS_COUNT + 1))
     echo "  ok - Step 5.5 の skipped は sdd 確定時に限定されたまま"
+  fi
+fi
+
+# 早期失敗オブジェクトの初期化漏れ検査（将来 fail-closed の経路が増えたときの再発防止）。
+# Step 5.5 内で `allConsistent: false` と `humanReview:` を同時に含む行は早期失敗の
+# guaranteeCheck リテラルであり、いずれも `index: null, guarantees: null` を持たねばならない
+# （持たないと Step 9 のテンプレートが未定義値を読み、実行主体が値を捏造することになる）。
+if [ -n "$step55" ]; then
+  early_lines="$(printf '%s\n' "$step55" | grep -F 'allConsistent: false' | grep -F 'humanReview:')"
+  early_grep_exit=$?
+  if [ "$early_grep_exit" -ge 2 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("早期失敗オブジェクトの初期化検査の grep 実行に失敗")
+    echo "  NG - 早期失敗オブジェクトの初期化検査の grep 実行エラー（exit ${early_grep_exit}）のため判定不能"
+  elif [ -z "$early_lines" ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("Step 5.5 に早期失敗の guaranteeCheck リテラルが1件も無い")
+    echo "  NG - Step 5.5 に早期失敗の guaranteeCheck リテラルが1件も無い（fail-closed 経路の記述が消えている）"
+  else
+    early_total="$(printf '%s\n' "$early_lines" | grep -c .)"
+    early_initialized="$(printf '%s\n' "$early_lines" | grep -cF 'index: null, guarantees: null')"
+    assert_eq "早期失敗の guaranteeCheck は全経路が index/guarantees を null 初期化（${early_total} 経路）" \
+      "$early_total" "$early_initialized"
   fi
 fi
 
