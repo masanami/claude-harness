@@ -386,6 +386,26 @@ assert_eq "G-158-10 だけの台帳を G-158-1 の登録済み判定に使わな
 assert_eq "G-158-10 自身は完全一致で検出できる" \
   "1" "$(grep -cF -- '### G-158-10:' "${WS}/docs/guarantees-prefix.md")"
 
+# 5.5-3 の ID スコープ検証（`G-<親Issue番号>-` の完全一致）が、別スコープの ID と
+# 桁違いの Issue 番号を取り違えないこと。親Issue #158 を想定した比較を固定する。
+id_in_scope() {
+  # 引数: <親Issue番号> <保証ID>。スコープ一致なら in-scope、そうでなければ out-of-scope。
+  case "$2" in
+    "G-${1}-"*) echo "in-scope" ;;
+    *) echo "out-of-scope" ;;
+  esac
+}
+assert_eq "親Issue #158 の新規宣言 G-158-1 はスコープ一致" \
+  "in-scope" "$(id_in_scope 158 "G-158-1")"
+assert_eq "親Issue #158 の新規宣言 G-158-10（枝番2桁）もスコープ一致" \
+  "in-scope" "$(id_in_scope 158 "G-158-10")"
+assert_eq "別 Issue スコープの G-999-1 は弾かれる" \
+  "out-of-scope" "$(id_in_scope 158 "G-999-1")"
+assert_eq "桁違いの G-1580-1 をハイフンまでの比較で取り違えない" \
+  "out-of-scope" "$(id_in_scope 158 "G-1580-1")"
+assert_eq "前方一致の G-15-1 も取り違えない" \
+  "out-of-scope" "$(id_in_scope 158 "G-15-1")"
+
 # ---------------------------------------------------------------------------
 # (A-6) 台帳の読み取り規則の一致（散文側とスクリプト側で同じ台帳を同じ規則で読む）
 #       5.5-5 の登録確認は SKILL.md の散文が指示する規則で行われるため、その規則が
@@ -652,7 +672,7 @@ assert_ref_contains "件数が食い違ったら片方だけ採用して進め�
 assert_ref_contains "食い違いは ledger_read_mismatch として要人間判定に積む" \
   '`{ kind: "ledger_read_mismatch", detail:'
 assert_ref_contains "ledger_read_mismatch が humanReview の語彙に入っている" \
-  '`index_error` / `ledger_read_mismatch` / `verification_failed`'
+  '`index_error` / `ledger_read_mismatch` / `guarantee_id_scope_mismatch` / `guarantee_provenance_mismatch` / `verification_failed`'
 
 echo ""
 echo "=== (B-6) 部分成功≠完全成功 ==="
@@ -927,6 +947,54 @@ assert_eq "経路表の全行で形が定義されている（空セルが無い
 # 食い違い経路: humanReview に積まれる → (d) が偽 → allConsistent は false
 assert_eq "status と exit code の食い違いがあれば allConsistent は false" \
   "false" "$(eval_all_consistent 1 1 1 0)"
+
+echo ""
+echo "=== (B-5f) 新規宣言の ID スコープと出自（D-11 の強制） ==="
+
+# 保証 ID は宣言元 Issue 番号をスコープに持つ（D-11）。親Issue が新たに宣言できるのは
+# G-<親Issue番号>- で始まる ID だけだが、guarantee-index-check は ID の一般形しか
+# 検証しないため、別 Issue スコープの ID（例: G-999-1）は台帳に見出しがあり参照テストが
+# 整合していれば索引・意味検証の両方を通過してしまう。散文側で targets に入れる前に弾く。
+assert_ref_contains "新規宣言は G-<親Issue番号>- で始まる ID だけであることを明記" \
+  '**親Issue が新たに宣言できるのは `G-<親Issue番号>-` で始まる ID だけ**'
+assert_ref_contains "ID スコープ検証は targets に入れる前に行う" \
+  '**新規宣言の ID スコープ検証（`targets` に入れる前に行う）**'
+assert_ref_contains "スコープ不一致は targets に入れない" \
+  '**`targets` に入れない**'
+assert_ref_contains "スコープ不一致は guarantee_id_scope_mismatch として積む" \
+  '`{ kind: "guarantee_id_scope_mismatch", detail:'
+assert_ref_contains "スコープ不一致を targets に入れて通す経路を作らない" \
+  '**`targets` に入れて検証を通す経路を作らないこと**'
+assert_ref_contains "index-check はスコープの誤りを捕まえられないと明記" \
+  '`guarantee-index-check` は ID の一般形しか検証せず、スコープの誤りは捕まえられない'
+assert_ref_contains "ハイフンまで含めて比較する（前方一致の取り違え防止）" \
+  '`G-158-` と `G-1580-` を前方一致で取り違えないよう、ハイフンまで含めて比較する'
+assert_ref_contains "スコープ制約は新規宣言にだけ課す" \
+  '**この制約は新規宣言にだけ課す**'
+assert_ref_contains "維持する保証は他 Issue 由来が正常でありスコープ検証の対象外" \
+  '**「維持する保証」は他 Issue 由来の既存保証を挙げるのが正常な運用**'
+assert_ref_contains "宣言元の突き合わせ手順がある" \
+  '**新規宣言の出自の突き合わせ（`宣言元` 行）**'
+assert_ref_contains "宣言元の不一致は guarantee_provenance_mismatch として積む" \
+  '`{ kind: "guarantee_provenance_mismatch", detail:'
+assert_ref_contains "宣言元が無い場合は弾かないが「確認した」とも書かない" \
+  '**「宣言元の一致を確認した」とは書かない**'
+assert_ref_contains "宣言元が無い場合の evidence の書き方が定義されている" \
+  '台帳に `宣言元` の記載が無く突き合わせ不能（ID スコープ検査は通過）'
+assert_ref_contains "維持する保証には宣言元の突き合わせを行わない" \
+  '**維持する保証には `宣言元` の突き合わせを行わない**'
+assert_ref_contains "読み取り規則に宣言元行の書式がある" \
+  '**宣言元は保証見出し直下の `- 宣言元: #<番号>` 行**'
+
+# ①別スコープの ID → humanReview に積まれる → (d) が偽 → allConsistent は false
+assert_eq "①別スコープの新規宣言 ID があれば allConsistent は false" \
+  "false" "$(eval_all_consistent 1 1 1 0)"
+# ②正しいスコープで他の条件も満たすなら true（過剰に落とさない）
+assert_eq "②正しいスコープの ID なら他の条件次第で true になりうる" \
+  "true" "$(eval_all_consistent 1 1 1 1)"
+# ③維持する保証は他 Issue 由来でも弾かれない（スコープ検証の対象外である旨は上の正準文で担保）
+assert_ref_not_contains "維持する保証にスコープ検証を課す記述が無い" \
+  '維持する保証も `G-<親Issue番号>-`'
 
 echo ""
 echo "=== (B-10) 要人間判定と allConsistent の接続（安全機構が算出式に入っていること） ==="
