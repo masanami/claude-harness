@@ -418,15 +418,71 @@ ct_id_prefix_matches() {
 }
 
 # 要件-2 検証(iv) の参照実装: 枝番が 1 から始まる連番で重複が無いか。
-# 引数: 枝番の並び（例: 1 2 3）
+# 引数: 枝番の並び（例: 1 2 3）。**空の並びは「検査対象が無い」を意味し true を返す**
+# （0件が妥当かどうか＝「- なし」の明示があるかは ct_declaration_check が判定する。
+#   ここで false を返すと、宣言0件が正規である `- なし` のチケットを落としてしまう）。
 ct_branch_numbers_ok() {
   local expected=1 branch
   for branch in "$@"; do
     [ "$branch" = "$expected" ] || { printf 'false'; return 0; }
     expected=$((expected + 1))
   done
-  [ "$#" -gt 0 ] || { printf 'false'; return 0; }
   printf 'true'
+}
+
+# 要件-1 / 要件-2 (iii)(iv) の参照実装: 新規宣言カテゴリの状態から適合を判定する。
+# 「検査した結果の0件（`- なし` の明示）」と「検査不能（宣言行も `- なし` も無い）」を区別する。
+# 引数: <なし明示 true/false> <枝番の並び...>
+ct_declaration_check() {
+  local none_marker="$1"
+  shift
+  if [ "$#" -gt 0 ]; then
+    # 宣言があるのに `- なし` も併記されているのは書式の破れ
+    if [ "$none_marker" = "true" ]; then
+      printf 'false'
+      return 0
+    fi
+    ct_branch_numbers_ok "$@"
+    return 0
+  fi
+  if [ "$none_marker" = "true" ]; then
+    printf 'true'   # 検査した結果の0件（正規のケース）
+  else
+    printf 'false'  # 検査不能（空欄・節が読めない）
+  fi
+}
+
+# 指摘B の参照実装: フェンス外の `## 保証（Guarantees）` 見出しの数を数える。
+# 生成後の本文ではちょうど1つでなければならない（下流はこの見出しで節を識別する）。
+ct_count_guarantee_sections() {
+  local body="$1"
+  local line marker_run marker fence_info
+  local fence_marker="" fence_len=0
+  local count=0
+
+  body="${body//$'\r'/}"
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ $CT_FENCE_RE ]]; then
+      marker_run="${BASH_REMATCH[1]}"
+      fence_info="${BASH_REMATCH[2]}"
+      marker="${marker_run:0:1}"
+      if [ -z "$fence_marker" ]; then
+        fence_marker="$marker"
+        fence_len="${#marker_run}"
+      elif [ "$fence_marker" = "$marker" ] && [ "${#marker_run}" -ge "$fence_len" ] && [ -z "$fence_info" ]; then
+        fence_marker=""
+        fence_len=0
+      fi
+      continue
+    fi
+    [ -n "$fence_marker" ] && continue
+    if [[ "$line" =~ $CT_SECTION_RE ]]; then
+      count=$((count + 1))
+    fi
+  done <<<"$body"
+
+  printf '%s' "$count"
 }
 
 # guarantee-section.md 内の ```markdown ブロックのうち、保証節テンプレートを取り出す。
@@ -974,6 +1030,76 @@ fi
 assert_eq "(A-13) 上記の検出パターンが既知の違反形を検出できる（自己検査）" "works" "$leak_detector"
 
 echo ""
+echo "=== (A-17) 宣言0件（「- なし」）は正規のケース: 未完了へ倒さない ==="
+
+assert_eq "(A-17) 「- なし」 明示・宣言0件は適合（検査した結果の0件）" "true" "$(ct_declaration_check true)"
+assert_eq "(A-17) 宣言行も 「- なし」 も無い（空欄）は不適合（検査不能）" "false" "$(ct_declaration_check false)"
+assert_eq "(A-17) 宣言1件以上なら従来どおり連番・一意性を検査する（1 2 3 は適合）" "true" "$(ct_declaration_check false 1 2 3)"
+assert_eq "(A-17) 宣言1件以上で欠番があれば不適合" "false" "$(ct_declaration_check false 1 3)"
+assert_eq "(A-17) 宣言1件以上で重複があれば不適合" "false" "$(ct_declaration_check false 1 1)"
+assert_eq "(A-17) 宣言があるのに 「- なし」 も併記されていれば不適合（書式の破れ）" "false" "$(ct_declaration_check true 1)"
+assert_eq "(A-17) 空の並びを渡した枝番検査自体は true（0件の妥当性は上位で判定する）" "true" "$(ct_branch_numbers_ok)"
+
+# 内部実装だけのチケット（保証は `- なし`）が 裁可可 になる
+none_only_body="$(printf '%s\n' '> 機能仕様: docs/features/internal-refactor.md' '' '## 概要' '' \
+  '内部ヘルパーの整理（公開面に影響しない）。' '' '## 保証（Guarantees）' '' '### 新たに宣言する保証' '' '- なし' '' \
+  '### 維持する保証' '' '- なし' '' '### 判定保留（要人間判定）' '' '- なし')"
+assert_eq "(A-17) 「- なし」 のチケットは保証節を対象0件として読める" "NEW_NONE
+KEEP_NONE" "$(ct_extract_guarantee_section "$none_only_body")"
+none_ok="$(ct_declaration_check true)"
+if [ "$none_ok" = "true" ]; then none_violation=0; else none_violation=1; fi
+assert_eq "(A-17) 「- なし」 のチケットは裁可可（未完了へ倒さない）" "裁可可" \
+  "$(ct_approval_status 0 0 0 0 "$none_violation")"
+
+# 空欄のチケットは裁可可にしない
+blank_ok="$(ct_declaration_check false)"
+if [ "$blank_ok" = "true" ]; then blank_violation=0; else blank_violation=1; fi
+assert_eq "(A-17) 宣言も 「- なし」 も無いチケットは未完了（検査不能を0件に丸めない）" "未完了" \
+  "$(ct_approval_status 0 0 0 0 "$blank_violation")"
+
+echo ""
+echo "=== (A-18) 生成する保証節は本文中で一意（転記元が保証節を持つ場合） ==="
+
+spec_with_section="$(printf '%s\n' '> 機能仕様: docs/features/gdd-workflow.md' '' '## 概要' '' \
+  'GDD のワークフロー自体を扱う仕様。仕様本文が保証節を含む。' '' \
+  '## 保証（Guarantees）' '' '### 新たに宣言する保証' '' '- [ ] G-999-1: 仕様側に書かれていた宣言' '' \
+  '### 維持する保証' '' '- なし')"
+
+generated_section="$(printf '%s\n' '' '## 保証（Guarantees）' '' '### 新たに宣言する保証' '' \
+  '- [ ] G-158-1: 生成した宣言（受入基準 AC-1 に対応）' '' '### 維持する保証' '' '- なし')"
+
+assert_eq "(A-18) 転記元だけでフェンス外の保証節が1つある" "1" "$(ct_count_guarantee_sections "$spec_with_section")"
+appended_body="${spec_with_section}${generated_section}"
+assert_eq "(A-18) そのまま追記すると保証節が2つになる（中断すべき状態）" "2" \
+  "$(ct_count_guarantee_sections "$appended_body")"
+# 2つあると下流の読み手は両方からエントリを拾い、転記元の ID が生成した宣言に混ざる
+assert_eq "(A-18) 保証節が2つあると転記元の ID が生成分に混ざる（一意性が必要な理由）" "NEW G-999-1
+KEEP_NONE
+NEW G-158-1
+KEEP_NONE" "$(ct_extract_guarantee_section "$appended_body")"
+
+# 仕様側の保証節がフェンス内の引用なら衝突しない（対処後の姿）
+spec_fenced="$(printf '%s\n' '> 機能仕様: docs/features/gdd-workflow.md' '' '## 概要' '' \
+  '書式例（引用）:' '' '```markdown' '## 保証（Guarantees）' '' '### 新たに宣言する保証' '' \
+  '- [ ] G-999-1: 仕様側の記入例' '```')"
+normalized_body="${spec_fenced}${generated_section}"
+assert_eq "(A-18) 仕様側がフェンス内の引用なら保証節はちょうど1つ" "1" \
+  "$(ct_count_guarantee_sections "$normalized_body")"
+assert_eq "(A-18) 一意なら生成した宣言だけが抽出される" "NEW G-158-1
+KEEP_NONE" "$(ct_extract_guarantee_section "$normalized_body")"
+
+assert_ref_contains "生成後の本文で保証節がちょうど1つであることを要求している" \
+  '**追記後の本文には、フェンス外の `## 保証（Guarantees）` 見出しがちょうど1つ（＝いま追記したもの）だけ存在しなければならない**'
+assert_ref_contains "下流が見出しで節を識別することを理由として示している" \
+  '**この見出しで保証節を識別する**'
+assert_ref_contains "追記前に転記本文の保証節の有無を確認する" \
+  '**追記の前に、転記した本文にフェンス外の `## 保証（Guarantees）` 見出しが無いことを共通-2 (a) の規則で確認する**'
+assert_ref_contains "重複時は Issue を作成せずに中断する" \
+  '**Issue を作成せずに中断する**（`duplicate_guarantee_section`）'
+assert_ref_contains "転記を書き換えて解決しない（人間に対処を依頼する）" \
+  '転記は逐語で行う約束のため本文側を書き換えて解決せず'
+
+echo ""
 echo "=== (B-1) SKILL.md のフェーズ判定と分岐（default-OFF の入口） ==="
 
 assert_skill_contains "SKILL.md がフェーズ判定の定型文を持つ（独自 grep を禁じる）" \
@@ -1028,7 +1154,7 @@ assert_ref_contains "台帳・親Issue本文を非信頼データとして扱う
 # 語彙表（共通-1）が定義の正本。ここへコードを足して他を更新し忘れると落ちる。
 vocab_codes="$(awk '/^\*\*中断理由コードの語彙/{f=1} f && /^\|/{print} /^\*\*中断時の報告/{f=0}' "$REF_FILE" \
   | grep -v -E '^\|[[:space:]]*(`reason`|-+)' | sed -E 's/^\|[[:space:]]*`([a-z_]+)`.*/\1/' | sort -u)"
-expected_codes="$(printf '%s\n' index_check_unavailable label_unavailable ledger_missing ledger_read_mismatch parent_guarantee_section_missing | sort -u)"
+expected_codes="$(printf '%s\n' duplicate_guarantee_section index_check_unavailable label_unavailable ledger_missing ledger_read_mismatch parent_guarantee_section_missing | sort -u)"
 assert_eq "(B-2) 語彙表の reason コードがテストの期待値と一致する（増減したらここで落ちる）" "$expected_codes" "$vocab_codes"
 
 # 中断報告テンプレートの `中断理由` の候補が語彙表と双方向で一致する
@@ -1055,7 +1181,7 @@ assert_ref_contains "分解-1 の中断理由が語彙表の一員として書�
 assert_ref_contains "コード増減時に語彙表と報告テンプレートを同時更新する規律がある" \
   '**コードを増減するときは、この表と下記の中断報告テンプレートの `中断理由` を必ず同時に更新する**'
 assert_file_contains "戦略ドキュメントが語彙の正本の所在を示している" "$STRATEGY_FILE" \
-  '**この5つの中断理由コードの語彙は `skills/create-ticket/references/guarantee-section.md` 共通-1 の表が正本**'
+  '**この6つの中断理由コードの語彙は `skills/create-ticket/references/guarantee-section.md` 共通-1 の表が正本**'
 
 echo ""
 echo "=== (B-3) 読み取り規則の一致（同じファイルを2つの規則で読まない） ==="
@@ -1153,8 +1279,16 @@ assert_ref_contains "検証(iii) 接頭辞一致だけで通さない" \
   '**接頭辞 `G-<N>-` の一致だけで通さない**'
 assert_ref_contains "検証(iii) はハイフンまで含めて比較する" \
   '比較はハイフンまで含めて行い `G-1580-` / `G-15-` と取り違えない'
-assert_ref_contains "検証(iv) 枝番の連番・一意性を確認する" \
-  '(iv) 枝番が **1 から始まる連番**で、**重複が無い**'
+assert_ref_contains "検証(iv) は宣言1件以上のときだけ連番・一意性を検査する" \
+  '(iv) **新規宣言が1件以上ある場合のみ**、枝番が **1 から始まる連番**で、**重複が無い**'
+assert_ref_contains "「- なし」は対象0件として (iii)(iv) 適合とする" \
+  '**「### 新たに宣言する保証」に `- なし` が明示されている場合は、(iii)(iv) を対象0件として適合とする**'
+assert_ref_contains "宣言0件を理由に未完了にしないと明示している" '宣言が0件であることを理由に `未完了` にしない'
+assert_ref_contains "宣言行も「- なし」も無い場合は適合としない（検査不能）" \
+  '**ただし、カテゴリ配下に宣言行も `- なし` も無い場合・保証節そのものを読めない場合は適合としない**'
+assert_ref_contains "「- なし」が正規のケースであると明示している" \
+  '**これは正規のケースであり**（内部実装だけの変更・ドキュメント更新など）、宣言0件を理由に作成を失敗扱いにしない'
+assert_ref_contains "「- なし」と宣言行を同時に書かない" '**`- なし` と宣言行を同時に書かない**'
 assert_ref_contains "検証(v) proposed ラベルが付いていること" \
   '(v) `guarantee:proposed` ラベルが付いている'
 assert_ref_contains "接頭辞一致で済ませない理由（黙って抜け落ちる）を明示している" \
