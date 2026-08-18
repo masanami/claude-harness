@@ -27,15 +27,28 @@ GDD期の Issue は保証節が確定していて初めて裁可（人間のレ�
 | 自分が読んだ保証見出しの件数が `counts.guarantees` と一致する | 共通-2 (b) の台帳の文法で数えて突き合わせる | **中断**（`ledger_read_mismatch`）。同じ台帳を2つの規則で読んでいる状態であり、維持する保証の列挙が信用できない |
 | `guarantee:proposed` ラベルを付与できる | 要件-3 の手順で存在を確認・無ければ作成 | **中断**（`label_unavailable`）。保証節を持つ Issue が裁可待ちの表示なしで存在する状態を作らない |
 
+**中断理由コードの語彙（この表が正本）**:
+
+| `reason` コード | 適用モード | 中断する条件 |
+|---|---|---|
+| `ledger_missing` | 要件モード | 保証台帳（`docs/guarantees.md`）が存在しない・読めない |
+| `index_check_unavailable` | 要件モード | 索引チェックが exit 2・stdout がパース不能・実行不能で `counts.guarantees` を取得できない |
+| `ledger_read_mismatch` | 要件モード | 自分が読んだ保証見出しの件数が `counts.guarantees` と一致しない |
+| `label_unavailable` | 要件モード | `guarantee:proposed` ラベルを付与できない（存在せず、作成もできない） |
+| `parent_guarantee_section_missing` | 実装分解モード | 親Issue本文に「## 保証（Guarantees）」節が無い／共通-2 (c) の文法で解釈できない（分解-1） |
+
+**コードを増減するときは、この表と下記の中断報告テンプレートの `中断理由` を必ず同時に更新する**（1箇所だけ増えると、定義されているのに報告されないコード／報告できるのに定義が無いコードが生まれる）。
+<!-- 規律の正本側の列挙（docs/ai-driven-development-strategy.md 5.7 の中断条件）と回帰テストの期待値も同時に更新する。一致は scripts/tests/test-create-ticket-gdd-gate.sh が検査する -->
+
 **中断時の報告（すべての `reason` コードに共通。項目を省略・推測で埋めない）**:
 
 ```text
 ## 保証節を確定できないため Issue を作成していません（GDD期）
 
-- 中断理由: {ledger_missing | index_check_unavailable | ledger_read_mismatch | label_unavailable}
+- 中断理由: {ledger_missing | index_check_unavailable | ledger_read_mismatch | label_unavailable | parent_guarantee_section_missing}
 - 詳細: {何を確認して何が満たされなかったか。件数の食い違いなら両方の数値を書く}
 - 作成した Issue: なし
-- 人間に依頼する対処: {台帳の整備 / 台帳の修正 / ランチャーの導入 / ラベル作成権限 など}
+- 人間に依頼する対処: {台帳の整備 / 台帳の修正 / ランチャーの導入 / ラベル作成権限 / 親Issueの保証節の整備 など}
 ```
 
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run guarantee-index-check` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/guarantee-index-check.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/guarantee-index-check.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
@@ -220,12 +233,12 @@ GitHub Issue には draft 状態が無いため、**保証節の裁可はラベ�
 
 親要件チケット本文に「## 保証（Guarantees）」節があることを、共通-2 (a) と **(c) 親Issue本文の文法**で確認する（**(b) 台帳の文法は適用しない**。`### ` 見出しが保証 ID を持たないことを理由に「解釈できない」と判定すると、要件-1 が書き出した正常な親Issueを全件はじいて分解が止まる）（**Issue 本文がテンプレートや台帳の書式例を引用している場合、フェンス内の `## 保証（Guarantees）` を節の存在とみなさない**）。
 
-- **節が無い／書式を解釈できない場合は、実装チケットを1件も作成せずに中断する**（`parent_guarantee_section_missing`）。GDD期の実装チケットは親の保証節を参照して実装されるため、参照先が無いまま分解すると、実装エージェントは守るべき約束を知らないまま実装することになる。報告は共通-1 の中断時の報告と同じ形式（`中断理由` に `parent_guarantee_section_missing`・`詳細`・`作成した Issue: なし`・`人間に依頼する対処`）で行い、対処（要件モードでの保証節の整備、または人間による親Issueへの追記）を書く
+- **節が無い／書式を解釈できない場合は、実装チケットを1件も作成せずに中断する**（`parent_guarantee_section_missing`）。GDD期の実装チケットは親の保証節を参照して実装されるため、参照先が無いまま分解すると、実装エージェントは守るべき約束を知らないまま実装することになる。報告は共通-1 の中断時の報告と同じ形式（`中断理由` は共通-1 の語彙表にある `parent_guarantee_section_missing`・`詳細`・`作成した Issue: なし`・`人間に依頼する対処`）で行い、対処（要件モードでの保証節の整備、または人間による親Issueへの追記）を書く
 - 親Issueの裁可状態（`guarantee:proposed` / `guarantee:approved` / どちらも無い）を `gh issue view <親Issue番号> --json labels` で取得し、Step 5 の完了報告に転記する。**本スキルは裁可の有無で分解を止めない**（裁可ゲートの強制は `/para-impl` の責務）
 
 ### 分解-2. 実装チケットへの保証参照（実装分解モード Step 4・Step 5）
 
-各実装チケットの本文に、`Parent:` 行の直下として次の1行を含める:
+各実装チケットの本文に、冒頭のヘッダ行として次の1行を含める。**位置はテンプレート `implementation-ticket.md` の並び（`Parent:` → `Base:`（`--base` 指定時のみ）→ `保証:`）に従う**（`Base:` 行がある場合はその直下、無い場合は `Parent:` 行の直下）:
 
 ```text
 保証: 親#{親Issue番号} の保証節参照

@@ -147,7 +147,7 @@ gh issue create \
   --label "implementation"
 ```
 
-> **GDD期のみ（SKILL.md のフェーズ判定が `gdd` の場合）**: 各 Issue 本文の `Parent: #{親Issue番号}` 行の直下に `保証: 親#{親Issue番号} の保証節参照` の1行を含める（親の保証節の内容は転記しない）。**実装チケットには裁可ラベル（`guarantee:proposed` / `guarantee:approved`）を付けない**（裁可の単位は親Issue）。詳細は参照ファイル `references/guarantee-section.md`（分解-2）が正本であり、そちらを Read して従うこと。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、本文にこの行を入れない。
+> **GDD期のみ（SKILL.md のフェーズ判定が `gdd` の場合）**: 各 Issue 本文の冒頭のヘッダ行に `保証: 親#{親Issue番号} の保証節参照` の1行を含める（位置はテンプレート `implementation-ticket.md` の並び `Parent:` → `Base:`（`--base` 指定時のみ）→ `保証:` に従う。親の保証節の内容は転記しない）。**実装チケットには裁可ラベル（`guarantee:proposed` / `guarantee:approved`）を付けない**（裁可の単位は親Issue）。詳細は参照ファイル `references/guarantee-section.md`（分解-2）が正本であり、そちらを Read して従うこと。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、本文にこの行を入れない。
 
 GitHub Sub-issue 機能が使えるなら `gh api` で親へ紐付ける（`/repos/{owner}/{repo}/issues/{N}/sub_issues`）。
 
