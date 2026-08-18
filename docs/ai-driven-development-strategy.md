@@ -318,7 +318,7 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 
 各 SKILL.md には規律の要点のみを書き、詳細は本章を参照する。
 
-> **段階導入中**: フェーズ宣言の判定（`detect-dev-phase.sh`）・本章の書式規約・**台帳の監査（`/guarantee-audit` の bootstrap / drift）**は導入済み。**各スキルへのフロー統合**（Issue の保証節・裁可ラベル・`/quality-check` の索引整合ゲート・`/promote-verify` の保証整合チェック・`feature-implementer` の保証ブリーフ）は未導入で、順次入れる。現時点で GDD期を選んだ場合、**台帳の起こし方と点検は `/guarantee-audit` で自動化されているが、実装フロー中の台帳更新（新しい保証の追記・テスト改名時の索引修正）は人間とエージェントの手動運用**になる。導入計画の全体像は `docs/gdd-design-draft.md`。
+> **段階導入中**: フェーズ宣言の判定（`detect-dev-phase.sh`）・本章の書式規約・**台帳の監査（`/guarantee-audit` の bootstrap / drift）**・**`/quality-check` の索引整合ゲート**・**`/promote-verify` の保証整合チェック（Step 5.5）**は導入済み。**残りのフロー統合**（Issue の保証節・裁可ラベル・`feature-implementer` の保証ブリーフ・`/define-feature` の GDD 挙動）は未導入で、順次入れる。現時点で GDD期を選んだ場合、**台帳の起こし方と点検・索引ドリフトの検出は自動化されているが、実装フロー中の台帳更新（新しい保証の追記・テスト改名時の索引修正）は人間とエージェントの手動運用**になる（`/promote-verify` は昇格前に親Issueの保証節を参照するため、保証節が無い Issue は要人間判定として報告される）。導入計画の全体像は `docs/gdd-design-draft.md`。
 
 ### 5.1 2つのフェーズ
 
@@ -369,7 +369,7 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 
 `reason` は `sdd` の中でも「明示的に SDD期 と宣言されている（`declared_sdd`）」と「宣言が無い（`no_phase_section` / `no_claude_md`）」を区別する。宣言の有無自体を扱うスキル（`/init-project` の CLAUDE.md 生成・マージ等）はこの区別を使ってよい。
 
-適用先（順次導入。**この定型文以外の判定手段を新たに実装しない**）: `/init-project`（適用済み）・`/define-feature`・`/create-ticket`・`/para-impl`（`feature-implementer` を含む）・`/quality-check`・`/promote-verify`。
+適用先（順次導入。**この定型文以外の判定手段を新たに実装しない**）: `/init-project`（適用済み）・`/quality-check`（適用済み）・`/promote-verify`（適用済み）・`/define-feature`・`/create-ticket`・`/para-impl`（`feature-implementer` を含む）。
 
 ### 5.3 保証台帳（`docs/guarantees.md`）の書式
 
@@ -471,8 +471,8 @@ ID の一意性は「書式」ではなく「**採番できる場所を1つに�
 
 | 種別 | 内容 | 検知手段 | タイミング |
 |---|---|---|---|
-| **索引ドリフト** | 台帳のテスト参照が実在しない（テストの改名・削除・移動）／ID の重複 | 決定的スクリプト `guarantee-index-check.sh`（入出力仕様の正本は `scripts/specs/guarantee-index-check.md`） | `/quality-check` の追加ゲートとして毎実装ループ（**ゲートへの組み込みは未導入**。現時点では `/guarantee-audit drift` 経由と手動実行で使う） |
-| **意味ドリフト** | 参照は生きているが、約束の文言とテストの実際の検証内容が乖離／台帳に無い公開面テストの出現 | `/guarantee-audit drift`（LLM fan-out） | 定期実行 ＋ `main` 昇格前（`/promote-verify` のスコープ付きチェック。**昇格前チェックへの組み込みは未導入**） |
+| **索引ドリフト** | 台帳のテスト参照が実在しない（テストの改名・削除・移動）／ID の重複 | 決定的スクリプト `guarantee-index-check.sh`（入出力仕様の正本は `scripts/specs/guarantee-index-check.md`） | `/quality-check` の追加ゲートとして毎実装ループ（**導入済み**。GDD期のみ発動する）＋ `/promote-verify` の昇格前チェック |
+| **意味ドリフト** | 参照は生きているが、約束の文言とテストの実際の検証内容が乖離／台帳に無い公開面テストの出現 | `/guarantee-audit drift`（LLM fan-out） | 定期実行 ＋ `main` 昇格前（`/promote-verify` Step 5.5 が親Issueの保証節へスコープを絞って `guarantee-auditor` に意味整合を検証させる。**導入済み**。台帳に無い公開面テストの洗い出しは `/guarantee-audit drift` 側の担当） |
 
 - 定期実行の**スケジューリングは導入先の運用に委ねる**（本プラグインは cron 相当の実行基盤を持たない）。CI の scheduled workflow・エージェントの定期サイクル・人間の手動実行のいずれでもよい。
 - 監査は**報告までで、修正はしない**（監査と修正の分離。修正は通常の Issue → 実装フローに載せる）。
