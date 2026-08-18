@@ -316,6 +316,60 @@ ct_has_unresolved_placeholder() {
   esac
 }
 
+# 要件-2 の置換の参照実装（スコープ限定）。
+# 「### 新たに宣言する保証」配下・フェンス外の、生成した ID を持つチェックリスト行だけを置換する。
+# 転記された機能仕様（保証節の外・フェンス内）の `{ISSUE_NUMBER}` には触れない。
+CT_NEW_PLACEHOLDER_RE='^[[:space:]]*[-*][[:space:]]+\[[[:space:]xX]\][[:space:]]+G-\{ISSUE_NUMBER\}-'
+
+ct_resolve_placeholder_scoped() {
+  local body="$1" number="$2"
+  local line marker_run marker fence_info title
+  local fence_marker="" fence_len=0
+  local in_section="false" in_new="false"
+  local out=""
+
+  body="${body//$'\r'/}"
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ $CT_FENCE_RE ]]; then
+      marker_run="${BASH_REMATCH[1]}"
+      fence_info="${BASH_REMATCH[2]}"
+      marker="${marker_run:0:1}"
+      if [ -z "$fence_marker" ]; then
+        fence_marker="$marker"
+        fence_len="${#marker_run}"
+      elif [ "$fence_marker" = "$marker" ] && [ "${#marker_run}" -ge "$fence_len" ] && [ -z "$fence_info" ]; then
+        fence_marker=""
+        fence_len=0
+      fi
+      out="${out}${line}"$'\n'
+      continue
+    fi
+    if [ -n "$fence_marker" ]; then
+      out="${out}${line}"$'\n'
+      continue
+    fi
+
+    if [[ "$line" =~ $CT_SECTION_RE ]]; then
+      in_section="true"
+      in_new="false"
+    elif [[ "$line" =~ $CT_H12_RE ]]; then
+      in_section="false"
+      in_new="false"
+    elif [ "$in_section" = "true" ] && [[ "$line" =~ $CT_H3_RE ]]; then
+      title="${BASH_REMATCH[1]}"
+      title="${title%"${title##*[![:space:]]}"}"
+      if [ "$title" = "新たに宣言する保証" ]; then in_new="true"; else in_new="false"; fi
+    elif [ "$in_new" = "true" ] && [[ "$line" =~ $CT_NEW_PLACEHOLDER_RE ]]; then
+      line="${line//\{ISSUE_NUMBER\}/${number}}"
+    fi
+
+    out="${out}${line}"$'\n'
+  done <<<"$body"
+
+  printf '%s' "$out"
+}
+
 # 新規宣言の ID が親（＝この Issue）のスコープかを判定する（ハイフンまで含めて比較）。
 ct_id_scope_matches() {
   local id="$1" number="$2"
@@ -587,6 +641,129 @@ for heading in '## 保証（Guarantees）' '### 新たに宣言する保証' '##
 done
 
 echo ""
+echo "=== (A-8) 文法の分離: 正しく生成された親Issueが分解モードでパース可能 ==="
+
+# 要件-1 が書き出す形の親Issue本文（機能仕様の転記＋フェンス内のコード例＋保証節）
+parent_body="$(printf '%s\n' \
+  '> 機能仕様: docs/features/contact.md' \
+  '' \
+  '## 概要' \
+  '' \
+  '問い合わせ API を追加する。' \
+  '' \
+  '```ts' \
+  'const id = `G-{ISSUE_NUMBER}-1`; // 仕様中のコード例' \
+  '```' \
+  '' \
+  '## 受入基準' \
+  '' \
+  '- [ ] AC-1: 不正な JSON で 400 を返す' \
+  '' \
+  '## 保証（Guarantees）' \
+  '' \
+  '### 新たに宣言する保証' \
+  '' \
+  '- [ ] G-158-1: POST /api/contact は JSON パース不能時に 400 を返す（受入基準 AC-1 に対応）' \
+  '' \
+  '### 維持する保証' \
+  '' \
+  '- G-101-2: 既存の約束文' \
+  '' \
+  '### 判定保留（要人間判定）' \
+  '' \
+  '- なし')"
+
+assert_eq "(A-8) 親Issue文法では新規宣言・維持が抽出できる（分解-1 がパース可能と判定する）" "NEW G-158-1
+KEEP G-101-2" "$(ct_extract_guarantee_section "$parent_body")"
+
+# 台帳文法を親Issueへ当てるとどうなるか（誤適用の再発検出）
+assert_eq "(A-8) 台帳文法を親Issueへ当てると保証 ID を1件も拾えない（誤適用の証跡）" "" \
+  "$(ct_list_guarantee_ids "$parent_body")"
+assert_eq "(A-8) 台帳文法の件数規則ではカテゴリ見出し3件を保証と数えてしまう" "3" \
+  "$(ct_count_ledger_headings "$parent_body")"
+
+# 台帳側は逆に親Issue文法では読めない（両文法が別物であることの対称な確認）
+assert_eq "(A-8) 台帳に親Issue文法を当てても新規宣言・維持は抽出されない" "" \
+  "$(ct_extract_guarantee_section "$(cat "${WS}/docs/guarantees.md")" | grep -E '^(NEW|KEEP) ')"
+
+# 判定保留は抽出対象にしない
+assert_eq "(A-8) 判定保留カテゴリからは保証を抽出しない" "0" \
+  "$(ct_extract_guarantee_section "$parent_body" | grep -c '判定保留')"
+
+echo ""
+echo "=== (A-9) 親Issue文法が下流（promote-verify 5.5-3）と逐語で一致している ==="
+
+for phrase in \
+  '「### 新たに宣言する保証」配下のチェックリスト行 `- [ ] G-<宣言元番号>-<枝番>: <約束文>`' \
+  '**`- [x]` / `- [X]` のチェック済み行も等しく対象にする**' \
+  '「### 維持する保証」配下に列挙された既存の保証 ID' \
+  '箇条書き・チェックリストのいずれの書き方でも、またチェック状態によらず対象にする'; do
+  produced="false"
+  consumed="false"
+  grep -qF -- "$phrase" "$REF_FILE" && produced="true"
+  grep -qF -- "$phrase" "$CONSUMER_FILE" && consumed="true"
+  assert_eq "(A-9) create-ticket 側が親Issue文法「${phrase:0:24}…」を持つ" "true" "$produced"
+  assert_eq "(A-9) promote-verify 側も同じ文言を持つ「${phrase:0:24}…」" "true" "$consumed"
+done
+
+# 構造不変条件: 親Issue文法のブロックに台帳専用の概念（counts.guarantees）を持ち込まない
+parent_grammar_block="$(awk '/^#### \(c\) 親Issue本文の文法/{f=1;next} f && /^### /{f=0} f' "$REF_FILE")"
+assert_eq "(A-9) 親Issue文法ブロックに台帳固有の counts.guarantees が混入していない" "0" \
+  "$(printf '%s\n' "$parent_grammar_block" | grep -c 'counts.guarantees')"
+assert_eq "(A-9) 親Issue文法ブロックはカテゴリ見出しとリスト行を定義している" "1" \
+  "$(printf '%s\n' "$parent_grammar_block" | grep -c '保証 ID は見出し行ではなく、カテゴリ配下のリスト行にある')"
+
+# 適用範囲表: 台帳の文法は親Issueへ「適用しない」
+assert_ref_contains "適用範囲表が台帳の文法を親Issueへ適用しないと定めている" \
+  '| (b) 台帳の文法 | 適用する | **適用しない** |'
+assert_ref_contains "適用範囲表が親Issue文法を台帳へ適用しないと定めている" \
+  '| (c) 親Issue本文の文法 | 適用しない | 適用する |'
+
+echo ""
+echo "=== (A-10) 置換のスコープ: 転記した機能仕様を書き換えない ==="
+
+spec_body="$(printf '%s\n' \
+  '> 機能仕様: docs/features/ticket-template.md' \
+  '' \
+  '## 概要' \
+  '' \
+  'Issue テンプレートの `{ISSUE_NUMBER}` プレースホルダを扱う機能。' \
+  '' \
+  '```text' \
+  'G-{ISSUE_NUMBER}-1 の形式で採番する（仕様中の例）' \
+  '```' \
+  '' \
+  '## 保証（Guarantees）' \
+  '' \
+  '### 新たに宣言する保証' \
+  '' \
+  '- [ ] G-{ISSUE_NUMBER}-1: テンプレートの採番規則を守る（受入基準 AC-1 に対応）' \
+  '' \
+  '### 維持する保証' \
+  '' \
+  '- なし')"
+
+scoped="$(ct_resolve_placeholder_scoped "$spec_body" 200)"
+naive="$(ct_resolve_placeholder "$spec_body" 200)"
+
+assert_eq "(A-10) スコープ限定の置換で新規宣言の ID が解決される" "NEW G-200-1
+KEEP_NONE" "$(ct_extract_guarantee_section "$scoped")"
+assert_eq "(A-10) 転記した散文中の {ISSUE_NUMBER} が残る（逐語保存）" "1" \
+  "$(printf '%s\n' "$scoped" | grep -c 'テンプレートの `{ISSUE_NUMBER}` プレースホルダを扱う機能。')"
+assert_eq "(A-10) 転記したコード例中の {ISSUE_NUMBER} が残る（逐語保存）" "1" \
+  "$(printf '%s\n' "$scoped" | grep -c 'G-{ISSUE_NUMBER}-1 の形式で採番する（仕様中の例）')"
+
+# 差分は新規宣言の行だけ（(i-2) の検証の機械化）
+diff_lines="$(diff <(printf '%s\n' "$spec_body") <(printf '%s\n' "$scoped") | grep -E '^[<>]' | grep -c .)"
+assert_eq "(A-10) 置換前後の差分は新規宣言の1行だけ（2行分の < > 表示）" "2" "$diff_lines"
+
+# 一括置換なら転記部分が壊れる（欠陥の再現。この差が (A-10) の存在理由）
+assert_eq "(A-10) 本文全体への一括置換は転記した散文を書き換えてしまう" "0" \
+  "$(printf '%s\n' "$naive" | grep -c 'テンプレートの `{ISSUE_NUMBER}` プレースホルダを扱う機能。')"
+assert_eq "(A-10) 本文全体への一括置換は転記したコード例も書き換えてしまう" "0" \
+  "$(printf '%s\n' "$naive" | grep -c 'G-{ISSUE_NUMBER}-1 の形式で採番する（仕様中の例）')"
+
+echo ""
 echo "=== (B-1) SKILL.md のフェーズ判定と分岐（default-OFF の入口） ==="
 
 assert_skill_contains "SKILL.md がフェーズ判定の定型文を持つ（独自 grep を禁じる）" \
@@ -653,6 +830,26 @@ echo "=== (B-3) 読み取り規則の一致（同じファイルを2つの規則
 
 assert_ref_contains "台帳をスクリプトと同じ規則で読むと明示している" \
   '台帳は索引チェック（`guarantee-index-check`）と**同じ規則で読む**こと'
+assert_ref_contains "台帳の文法を親Issue本文へ適用しないと明示している" \
+  '**台帳の文法（後述の (b)）を親Issue本文に適用しないこと**'
+assert_ref_contains "誤適用すると正常な親Issueが全件はじかれると明示している" \
+  '**正しく作られた親Issueが「書式を解釈できない」「件数不一致」と誤判定され、分解-1 が実装チケットの作成を全件止めてしまう**'
+assert_ref_contains "件数の突き合わせは台帳にだけ行うと明示している" \
+  '**親Issue本文に対してこの突き合わせを行わない**'
+assert_ref_contains "親Issueの ### 見出しはカテゴリ見出しであると明示している" \
+  '**「保証」節内の `### ` 見出しはカテゴリ見出し**'
+assert_ref_contains "親Issueの保証 ID はリスト行にあると明示している" \
+  '**保証 ID は見出し行ではなく、カテゴリ配下のリスト行にある**'
+assert_ref_contains "カテゴリ見出しが ID を持たないことを解釈不能の理由にしない" \
+  '**カテゴリ見出しが保証 ID を持たないことを理由に「解釈できない」と判定しない**'
+assert_ref_contains "解釈できないと判定してよい条件を限定している" \
+  '**「書式を解釈できない」と判定してよいのは**'
+assert_ref_contains "親Issue文法が promote-verify 5.5-3 と同一だと明示している" \
+  '下流の `/promote-verify`（Step 5.5-3）が親Issueを読む規則と同一'
+assert_file_contains "分解-1 が台帳の文法を適用しないと明示している" "$REF_FILE" \
+  '**(b) 台帳の文法は適用しない**'
+assert_file_contains "promote-verify 側も親Issueへの適用範囲を限定している" "$CONSUMER_FILE" \
+  '**親Issueへ適用してよいのはフェンス・節の範囲・チェックリスト行の扱いだけ**'
 assert_ref_contains "2つの規則で読む状態が危険であると明示している" \
   '**同じファイルを2つの規則で読む**状態になる'
 assert_ref_contains "フェンス内は判定対象外" \
@@ -702,8 +899,20 @@ echo "=== (B-5) 保証 ID の確定手順と異常系の出力契約 ==="
 assert_ref_contains "作成→置換→検証の3ステップを必ず通す" \
   '**作成 → 置換 → 検証の3ステップを必ず通す**（仮 ID を残したまま完了にしない）'
 assert_ref_contains "ラベルは作成と同じ呼び出しで付ける" '**ラベルは作成と同じ呼び出しで付ける**'
-assert_ref_contains "検証(i) プレースホルダが残っていないこと" \
-  '(i) 本文に `{ISSUE_NUMBER}` が**1箇所も残っていない**'
+assert_ref_contains "検証(i) 新規宣言配下にプレースホルダが残っていないこと" \
+  '(i) 「### 新たに宣言する保証」配下に `{ISSUE_NUMBER}` が**1箇所も残っていない**'
+assert_ref_contains "検証(i) 保証節の外の {ISSUE_NUMBER} は転記であり残っていて正しい" \
+  '保証節の外に残っている `{ISSUE_NUMBER}` は機能仕様からの転記であり、**残っていることが正しい**'
+assert_ref_contains "検証(i-2) 差分が新規宣言の行だけであることを確認する" \
+  '(i-2) **置換前後の本文の差分が、「### 新たに宣言する保証」配下の行だけである**'
+assert_ref_contains "置換対象は生成した ID に限定する" \
+  '**置換してよいのは「### 新たに宣言する保証」配下で自分が生成した ID の `{ISSUE_NUMBER}` だけ**'
+assert_ref_contains "本文全体への一括置換を禁じている" '**本文全体への一括置換をしないこと**'
+assert_ref_contains "転記部分は1文字も変更しない" '**転記部分（保証節より前の本文）は1文字も変更しない**'
+assert_ref_contains "プレースホルダを新規宣言の行以外に書かない" \
+  '**このプレースホルダを本節の新規宣言の行以外に書かないこと**'
+assert_file_not_contains "本文中を「すべて」置換する旧記述が残っていない" "$REF_FILE" \
+  '本文中の `{ISSUE_NUMBER}` を**すべて**'
 assert_ref_contains "検証(ii) 全 ID が G-<N>- で始まること" \
   '(ii) 「新たに宣言する保証」の全 ID が `G-<N>-` で始まる'
 assert_ref_contains "検証(ii) はハイフンまで含めて比較する" \
