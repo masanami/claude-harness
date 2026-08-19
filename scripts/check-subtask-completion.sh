@@ -15,12 +15,20 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
 
 # resolve_repo は lib/common.sh（scripts/lib/common.sh）に集約。
 
+# フォールバック検索の明示上限。gh search issues は --limit 未指定だと既定30件で
+# 黙って打ち切るため、必ず明示する。結果件数がこの上限に達した場合、main() は
+# 打ち切りの可能性ありとして status: "fallback_truncated" を返す（件数=上限を
+# 完全性の反証として扱う。仕様は scripts/specs/collect-promotion-context.md）。
+CSC_FALLBACK_SEARCH_LIMIT=300
+
 # Sub-issues API で子Issue一覧の生JSON配列を取得する。
 # 引数: parent_issue, owner, repo
 # 戻り値: stdout に生JSON配列。gh api が失敗（404等）した場合は非0を返す。
+# per_page=100 を明示する（既定30では31件以上の子が黙って欠落する）。GitHub の
+# sub-issues は親1件あたり最大100件のため、100を明示すれば1ページで全件になる。
 fetch_sub_issues_json() {
   local parent="$1" owner="$2" repo="$3"
-  gh api "repos/${owner}/${repo}/issues/${parent}/sub_issues" 2>/dev/null
+  gh api "repos/${owner}/${repo}/issues/${parent}/sub_issues?per_page=100" 2>/dev/null
 }
 
 # "Parent: #<parent>" を本文に含むIssueを検索する（フォールバック経路）。
@@ -28,7 +36,8 @@ fetch_sub_issues_json() {
 # 戻り値: stdout に生JSON配列（number, title, state）。
 fetch_fallback_issues_json() {
   local parent="$1" owner="$2" repo="$3"
-  gh search issues "Parent: #${parent} in:body" --repo "${owner}/${repo}" --json number,title,state 2>/dev/null
+  gh search issues "Parent: #${parent} in:body" --repo "${owner}/${repo}" \
+    --limit "$CSC_FALLBACK_SEARCH_LIMIT" --json number,title,state 2>/dev/null
 }
 
 # 子Issueをcloseした merged PR の番号を検索する。見つからなければ空文字を返す。
@@ -142,13 +151,20 @@ main() {
     status="no_children_found"
     final_children="[]"
   else
+    # フォールバック検索の結果件数が明示上限に達した場合、それより多い子が
+    # 打ち切られている可能性があり、この一覧を「全子」として扱えない（件数=上限は
+    # 完全性の反証）。children は取得分をそのまま返すが、mergedPr の判定は行わず
+    # （不完全な一覧に対する判定は無意味なため）、allMerged は false のままにする。
+    if [ "$source" = "parent_label_fallback" ] && [ "$children_count" -ge "$CSC_FALLBACK_SEARCH_LIMIT" ]; then
+      status="fallback_truncated"
+    fi
     local idx number title state entry merged_pr
     for ((idx = 0; idx < children_count; idx++)); do
       number=$(jq -r ".[$idx].number" <<<"$children_json")
       title=$(jq -r ".[$idx].title" <<<"$children_json")
       state=$(jq -r ".[$idx].state" <<<"$children_json")
       merged_pr=""
-      if [ "$state" = "CLOSED" ]; then
+      if [ "$status" = "ok" ] && [ "$state" = "CLOSED" ]; then
         merged_pr=$(fetch_merged_pr_number "$number" "$owner" "$repo")
       fi
       entry=$(build_child_entry "$number" "$title" "$state" "$merged_pr")

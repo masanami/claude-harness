@@ -167,6 +167,26 @@ assert_file_contains "(B-1) 禁止事項に裁可ゲートの迂回と自己裁�
   '裁可ゲートの迂回'
 
 echo ""
+echo "=== (B-1b) SKILL.md: フェーズ判定の入力は実装が到達する base の内容 ==="
+
+assert_file_contains "(B-1b) 判定器への入力は base の内容（手元 checkout ではない）" "$SKILL_FILE" \
+  '**判定器への入力は「実装が到達する base」の内容にする（本スキル固有・重要）**'
+assert_file_contains "(B-1b) 判定器を迂回しない（入力だけを変える）" "$SKILL_FILE" \
+  '**判定器を迂回しない**——フェーズの解釈は常にスクリプトの出力のみ'
+assert_file_contains "(B-1b) base の CLAUDE.md を git show で一時ファイル化して判定器へ渡す" "$SKILL_FILE" \
+  '`git show "origin/{base}:CLAUDE.md"` を一時ファイルへ書き出し、`claude-harness-run detect-dev-phase "<一時ファイルのパス>"` で判定する'
+assert_file_contains "(B-1b) fetch 失敗は判定不能として中断（sdd に読み替えない）" "$SKILL_FILE" \
+  '失敗した場合は判定不能として中断する。`sdd` に読み替えない'
+assert_file_contains "(B-1b) base に CLAUDE.md が無い場合は no_claude_md と同義（sdd・ゲートなし）" "$SKILL_FILE" \
+  '判定器の `no_claude_md` と同じ意味（宣言なし＝`sdd`）として扱い'
+assert_file_contains "(B-1b) base ごとに判定し gdd の base に属する Issue にのみゲートを適用" "$SKILL_FILE" \
+  '**`gdd` の base に属する Issue にのみ裁可ゲートを適用する**'
+assert_file_contains "(B-1b) 方向の設計根拠: base が SDD なら手元が GDD でも不変（default-OFF は対象基準）" "$SKILL_FILE" \
+  '**base が SDD なら手元が GDD 宣言でも従来どおり挙動を変えない**'
+assert_file_contains "(B-1b) Phase 3 以降の各層（checkout 済み base を読む）との整合を明記" "$SKILL_FILE" \
+  'checkout 済みの base 内容を読むため、この判定基準と整合する'
+
+echo ""
 echo "=== (B-2) SKILL.md: Phase 4-5 の保証節注入（合流ゲートと並記） ==="
 
 assert_file_contains "(B-2) 裁可対象（親）Issue の保証節を委譲プロンプトに含める" "$SKILL_FILE" \
@@ -315,6 +335,18 @@ assert_file_contains "(B-4c) スクリプトの0件丸め（失敗も exit 0）�
   '**0件・自分不在の結果を割当不要（全量注入）の根拠にしない**'
 assert_file_contains "(B-4c) 台帳を読めない場合は未登録とみなさず停止（登録済み判定の素通り防止）" "$GATE_FILE" \
   '**台帳を読めない場合は「未登録」とみなさず停止する**'
+assert_file_contains "(B-4c) 登録済み判定は base の台帳内容で行う（手元 checkout を読まない）" "$GATE_FILE" \
+  '**登録済み判定は、実装が到達する base の台帳内容（`git show "origin/{base}:docs/guarantees.md"`）で行う**'
+assert_file_contains "(B-4c) 打ち切り（fallback_truncated）は自分が含まれていても停止（完全性の反証）" "$GATE_FILE" \
+  '**自分自身が含まれていても停止する**'
+
+# status 語彙の cross-file 一致: スクリプト実装・仕様正本・消費側ゲートの3者で逐語一致
+CSC_SCRIPT="${REPO_ROOT}/scripts/check-subtask-completion.sh"
+CSC_SPEC="${REPO_ROOT}/scripts/specs/collect-promotion-context.md"
+for f in "$CSC_SCRIPT" "$CSC_SPEC" "$GATE_FILE"; do
+  assert_file_contains "(B-4c) status 語彙 fallback_truncated が $(basename "$f") に逐語で存在する" "$f" \
+    'fallback_truncated'
+done
 assert_file_contains "(B-4c) 割当の入力は検証済みの分解（未検証の検索結果を使わない）" "$GATE_FILE" \
   '検証済みの分解が1チケットだけなら'
 assert_file_contains "(B-4) 合流ゲート伝播条項の規定は維持し並記で追加する" "$GATE_FILE" \
@@ -751,6 +783,29 @@ assert_eq "(D-9) 検索が自分を返さない（一時的欠落）: 健全性�
   "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 ok '13:ok')"
 assert_eq "(D-9) 候補全滅（全件が文法不適合）: 空集合を分解として採用しない" \
   "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 ok '99:ng')"
+assert_eq "(D-9) fallback_truncated: 自分が含まれていても打ち切りの可能性で停止（完全性の反証）" \
+  "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 fallback_truncated '12:ok,13:ok')"
+
+echo ""
+echo "=== (D-11) フェーズ判定の入力の参照実装（base 基準・手元非依存） ==="
+
+# SKILL.md「判定器への入力は base の内容」の規則: 判定の入力は base の CLAUDE.md 内容
+# だけであり、手元 checkout のフェーズは結果に影響しない（第2引数は存在しないことが
+# 規則の写し）。base に CLAUDE.md が無い場合は no_claude_md と同義（sdd）。
+# 引数: $1=base の CLAUDE.md 状態（gdd|sdd|invalid|absent）
+pi_phase_basis() {
+  local base_state="$1"
+  if [ "$base_state" = "absent" ]; then
+    echo "sdd"
+  else
+    echo "$base_state"
+  fi
+}
+
+assert_eq "(D-11) base=GDD: 手元の状態によらずゲート発動の入力（gdd）" "gdd" "$(pi_phase_basis gdd)"
+assert_eq "(D-11) base=SDD: 手元が GDD 宣言でも従来どおり不変の入力（sdd）" "sdd" "$(pi_phase_basis sdd)"
+assert_eq "(D-11) base に CLAUDE.md なし: 宣言なし＝sdd（no_claude_md と同義）" "sdd" "$(pi_phase_basis absent)"
+assert_eq "(D-11) base=invalid: sdd に読み替えない（fail-closed の入力を保存）" "invalid" "$(pi_phase_basis invalid)"
 
 echo ""
 echo "=== (D-10) 決定的割当の参照実装（同一入力→同一割当・順序不変・タイブレーク） ==="

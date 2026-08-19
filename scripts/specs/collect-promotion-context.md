@@ -50,7 +50,7 @@ stdout JSON:
 | フィールド | 型 | 意味 |
 |---|---|---|
 | `source` | `"sub_issues_api"` \| `"parent_label_fallback"` | 子Issue一覧の取得経路。GitHub Sub-issues API を優先し、失敗（404等）または空配列の場合は本文 `Parent: #<parent>` 検索にフォールバックする |
-| `status` | `"ok"` \| `"no_children_found"` | 子Issueが1件も見つからなかった場合は `no_children_found`。この場合 `children` は空配列、`allMerged` は暗黙にtrueにせず常に `false`（空集合に対する論理的な真=trueの罠を避ける安全側の設計） |
+| `status` | `"ok"` \| `"no_children_found"` \| `"fallback_truncated"` | 子Issueが1件も見つからなかった場合は `no_children_found`。この場合 `children` は空配列、`allMerged` は暗黙にtrueにせず常に `false`（空集合に対する論理的な真=trueの罠を避ける安全側の設計）。フォールバック検索の結果件数が明示上限（`--limit 300`）に達した場合は `fallback_truncated`＝**打ち切りの可能性あり**（件数=上限を完全性の反証として扱う。消費側はこの `children` を「全子」として扱ってはならない）。このとき `children` は取得分をそのまま返すが `mergedPr` は判定せず全件 `null`、`allMerged` は常に `false` |
 | `children[].mergedPr` | integer \| null | その子Issueをcloseした merged PR の番号（`gh search prs --state merged` で検索した最初の1件）。見つからなければ `null` |
 | `allMerged` | bool | `children` が非空、かつ全要素が `state == "CLOSED"` かつ `mergedPr` が非nullの場合のみ `true` |
 
@@ -58,3 +58,4 @@ stdout JSON:
 
 - gh を呼ぶ関数（`resolve_repo`/`fetch_sub_issues_json`/`fetch_fallback_issues_json`/`fetch_merged_pr_number`）と、生JSONから出力を組み立てる純粋関数（`normalize_sub_issues_json`/`normalize_fallback_issues_json`/`build_child_entry`/`compute_all_merged`）を分離している。テストから gh 呼び出し関数をスタブ関数で上書きして main() 全体の分岐を検証できる（`fetch-pr-comments.sh`/`reply-and-resolve.sh` と同じテスト方針）
 - gh呼び出し自体の失敗（owner/repo解決失敗等）・jq不在は stderr にメッセージを出し exit 非0（sub_issues_api/フォールバック双方の「結果が空」はエラーではなく `no_children_found` として正常終了する点に注意）
+- **暗黙のページング・件数上限で結果を黙って切らない**: sub_issues API は `per_page=100` を明示する（既定30では31件以上の子が黙って欠落する。GitHub の sub-issues は親1件あたり最大100件のため、100の明示で1ページ完全）。フォールバック検索は `--limit 300` を明示し（既定30）、**結果件数が上限に達した場合は `fallback_truncated` を返す**（打ち切られた完全な件数をスクリプトから知る手段が無いため、件数=上限を打ち切りの可能性として fail-closed に倒す）

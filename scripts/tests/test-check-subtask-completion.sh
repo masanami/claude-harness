@@ -217,6 +217,47 @@ echo "=== main: (d) 子Issue0件（両経路とも空） ==="
   assert_eq "allMergedは暗黙にtrueにせずfalse" "false" "$(jq -r '.allMerged' <<<"$output")"
 }
 
+echo "=== main: (e) フォールバック件数=上限は fallback_truncated（打ち切りの可能性を成功に丸めない） ==="
+{
+  reset_stubs
+  SUB_ISSUES_EXIT=1
+  SUB_ISSUES_RESULT=""
+  # 上限ちょうどの件数（--limit で打ち切られた可能性と区別できない）。CLOSED を混ぜて
+  # mergedPr 判定が省かれる（＝MERGED_PR_MAP を引かず null になる）ことも確認する。
+  FALLBACK_ISSUES_RESULT="$(jq -nc --argjson n "$CSC_FALLBACK_SEARCH_LIMIT" \
+    '[range($n) | {number: (. + 1000), title: ("t" + (. | tostring)), state: (if . == 0 then "CLOSED" else "OPEN" end)}]')"
+  MERGED_PR_MAP="1000:900"
+
+  output=$(main "52")
+  assert_eq "statusはfallback_truncated" "fallback_truncated" "$(jq -r '.status' <<<"$output")"
+  assert_eq "childrenは取得分をそのまま返す" "$CSC_FALLBACK_SEARCH_LIMIT" "$(jq '.children | length' <<<"$output")"
+  assert_eq "打ち切り時はmergedPrを判定しない（CLOSEDでもnull）" "null" \
+    "$(jq -r '.children[] | select(.number == 1000) | .mergedPr' <<<"$output")"
+  assert_eq "allMergedはfalse（不完全な一覧を完全成功にしない）" "false" "$(jq -r '.allMerged' <<<"$output")"
+}
+
+echo "=== main: (e') 上限未満のフォールバックは従来どおり ok（後方互換） ==="
+{
+  reset_stubs
+  SUB_ISSUES_EXIT=1
+  SUB_ISSUES_RESULT=""
+  FALLBACK_ISSUES_RESULT="$(jq -nc --argjson n "$((CSC_FALLBACK_SEARCH_LIMIT - 1))" \
+    '[range($n) | {number: (. + 1000), title: ("t" + (. | tostring)), state: "OPEN"}]')"
+
+  output=$(main "52")
+  assert_eq "上限未満ならstatusはok" "ok" "$(jq -r '.status' <<<"$output")"
+  assert_eq "children件数は取得どおり" "$((CSC_FALLBACK_SEARCH_LIMIT - 1))" "$(jq '.children | length' <<<"$output")"
+}
+
+echo "=== 実関数: 暗黙のページング・件数上限を明示している（打ち切りの再発防止） ==="
+{
+  # shellcheck disable=SC2016 # 展開させないリテラル（実装中の変数参照そのもの）を検索する
+  assert_eq "フォールバック検索が明示 --limit を使う" "1" \
+    "$(grep -cF -- '--limit "$CSC_FALLBACK_SEARCH_LIMIT"' "$TARGET_SCRIPT")"
+  assert_eq "sub_issues API が per_page=100 を明示する" "1" \
+    "$(grep -cF -- 'sub_issues?per_page=100' "$TARGET_SCRIPT")"
+}
+
 echo "=== main: 引数不正(非数値)はexit非0 ==="
 {
   reset_stubs
