@@ -142,6 +142,18 @@ echo "=== (3) spawn 時手順（ターン維持を注意書きでなく手順と
 
 assert_skill_contains "(3) 起動のたびに起動台帳へ追記する" \
   'その場で起動台帳に追記する'
+assert_skill_contains "(3) 起動時に有限タスク／常駐サービスの区別を記録する" \
+  '**有限タスクか常駐サービスかの区別も記録する**'
+assert_skill_contains "(3) 常駐サービスの定義（最終返却を産まない前提の起動）" \
+  '**意図的に稼働し続け、最終返却を産まない前提**の起動（dev サーバ・watch プロセス等）'
+assert_skill_contains "(3) 常駐サービスの最終返却を待たない（待つと永遠に合流できない）" \
+  '**最終返却を待ってはならない**（待つと永遠に合流できず、ゲートを通過できない）'
+assert_skill_contains "(3) 常駐サービスの合流相当は停止確認の台帳記録である" \
+  '常駐サービスは**停止・後始末を実施し、停止を確認して台帳に記録した**状態（突合済み＝合流相当）'
+assert_skill_contains "(3) 常駐サービスには返却待機を適用しない（spawn 時手順）" \
+  '**常駐サービスにはこの待機を適用しない**'
+assert_skill_contains "(3) 区別が記録されていない起動は fail-closed の既定に従う" \
+  '区別が記録されていない・判別できない起動が残っている場合は、決定表の「どの行に該当するか判定できない場合」の既定（中断報告）に従う'
 assert_skill_contains "(3) 起動直後にテキストで応答を確定しない" \
   '**起動直後にテキストで応答を確定しない**'
 assert_skill_contains "(3) 待機宣言を手順違反として扱う（注意書きに格下げしない）" \
@@ -150,8 +162,8 @@ assert_skill_contains "(3) 合流までツール呼び出しでターンを維�
   'ツール呼び出しを続けてターンを維持する'
 assert_skill_contains "(3) ターン維持の具体手段（ブロッキング待機・ポーリング）を示している" \
   '結果取得ツールでのブロッキング待機、または状態確認のポーリングを合流まで繰り返す'
-assert_skill_contains "(3) 「起動に成功した」を合流とみなさない（用語の定義）" \
-  '「起動に成功した」「完了通知が来るはず」は合流ではない'
+assert_skill_contains "(3) 「起動に成功した」「稼働中である」を合流とみなさない（用語の定義）" \
+  '「起動に成功した」「完了通知が来るはず」「稼働中である」は合流ではない'
 assert_skill_contains "(3) 合流済みの定義は最終返却の受領である" \
   '最終返却（結果）をこのセッションで受領した'
 
@@ -163,18 +175,19 @@ gate_states="$(awk '/^### 手順（最終応答の直前）/{f=1; next} /^### /{
   | grep -vE '^\|[[:space:]]*(状態|-+)[[:space:]]*\|' \
   | sed -E 's/^\|[[:space:]]*//; s/[[:space:]]*\|.*$//')"
 expected_states='起動台帳が空（1つも起動していない）
-未合流 0件（起動台帳が1件以上あり、すべて合流済み）
-未合流 1件以上で、受領の見込みがある（稼働を確認できる、または結果取得の待機・タイムアウトが続いているだけ）
-未合流 1件以上のまま、受領の見込みがない（稼働確認も結果取得もできない状態が、確認の再試行上限まで続いた）
+未合流 0件（起動台帳が1件以上あり、有限タスクはすべて受領済み・常駐サービスはすべて停止確認済み）
+未合流の有限タスクが1件以上で、受領の見込みがある（稼働を確認できる、または結果取得の待機・タイムアウトが続いているだけ）
+未合流の有限タスクが1件以上のまま、受領の見込みがない（稼働確認も結果取得もできない状態が、確認の再試行上限まで続いた）
+未合流の有限タスクは0件で、停止確認の済んでいない常駐サービスが1件以上
 起動台帳と実状態を突き合わせられない（台帳の欠落・コンテキスト要約による消失・台帳に載っていない合流記録がある〔合流済み件数が起動台帳件数を上回る〕等）'
-assert_eq "(4) 決定表の状態が5件・期待の列挙と完全一致する（増減・改変で落ちる）" \
+assert_eq "(4) 決定表の状態が6件・期待の列挙と完全一致する（増減・改変で落ちる）" \
   "$expected_states" "$gate_states"
 
 # 排他性の宣言と判定不能時の fail-closed
 assert_skill_contains "(4) 各行の状態が互いに排他であることを宣言している" \
   '**各行の状態は互いに排他であり、どの状態も高々1行にだけ該当する**'
-assert_skill_contains "(4) 1〜4行目は突き合わせ成立が前提（最終行と重ならない）" \
-  '1〜4行目は台帳と実状態の突き合わせが成立していることが前提'
+assert_skill_contains "(4) 1〜5行目は突き合わせ成立が前提（最終行と重ならない）" \
+  '1〜5行目は台帳と実状態の突き合わせが成立していることが前提'
 assert_skill_contains "(4) 該当行を判定できない場合は中断報告へ倒す（fail-closed の既定）" \
   '**どの行に該当するか判定できない場合は、突き合わせ不能として最終行（中断報告）へ倒す**'
 assert_skill_contains "(4) 受領の見込みは実状態の確認で判定する（回数・経過時間だけで判定しない）" \
@@ -191,12 +204,14 @@ assert_file_not_contains "(4) 取得失敗を一律に回数へ数える旧規�
 # 状態→動作の対応（行単位の逐語検査）
 assert_skill_contains "(4) 起動0件（空集合）はゲート通過の正常経路である" \
   '| 起動台帳が空（1つも起動していない） | ゲート通過。そのまま最終応答へ |'
-assert_skill_contains "(4) 未合流0件（台帳1件以上）はゲート通過の正常経路である（空台帳の行と重ねない）" \
-  '| 未合流 0件（起動台帳が1件以上あり、すべて合流済み） | ゲート通過。そのまま最終応答へ |'
-assert_skill_contains "(4) 未合流1件以上・受領見込みありは応答を確定せず合流を続け、合流後にゲートを再実行する" \
-  '| 未合流 1件以上で、受領の見込みがある（稼働を確認できる、または結果取得の待機・タイムアウトが続いているだけ） | 最終応答を確定せず、ツール呼び出しで合流を続ける。合流できたら本ゲートを最初から再実行する |'
-assert_skill_contains "(4) 未合流1件以上のまま受領見込みなしは中断報告へ倒す（合流継続の行と排他）" \
-  '| 未合流 1件以上のまま、受領の見込みがない（稼働確認も結果取得もできない状態が、確認の再試行上限まで続いた） | 合流を断念し、完了報告ではなく**中断報告**（下記の出力契約）へ倒す |'
+assert_skill_contains "(4) 未合流0件（台帳1件以上・両区分とも解消済み）はゲート通過の正常経路である（空台帳の行と重ねない）" \
+  '| 未合流 0件（起動台帳が1件以上あり、有限タスクはすべて受領済み・常駐サービスはすべて停止確認済み） | ゲート通過。そのまま最終応答へ |'
+assert_skill_contains "(4) 未合流の有限タスク1件以上・受領見込みありは応答を確定せず合流を続け、合流後にゲートを再実行する" \
+  '| 未合流の有限タスクが1件以上で、受領の見込みがある（稼働を確認できる、または結果取得の待機・タイムアウトが続いているだけ） | 最終応答を確定せず、ツール呼び出しで合流を続ける。合流できたら本ゲートを最初から再実行する（常駐サービスの停止は、有限タスクの合流がすべて済むまで行わない） |'
+assert_skill_contains "(4) 未合流の有限タスク1件以上のまま受領見込みなしは中断報告へ倒す（合流継続の行と排他）" \
+  '| 未合流の有限タスクが1件以上のまま、受領の見込みがない（稼働確認も結果取得もできない状態が、確認の再試行上限まで続いた） | 合流を断念し、完了報告ではなく**中断報告**（下記の出力契約）へ倒す |'
+assert_skill_contains "(4) 常駐サービス残のみの状態は停止・確認・台帳記録のうえゲート再実行（返却を待たない）" \
+  '| 未合流の有限タスクは0件で、停止確認の済んでいない常駐サービスが1件以上 | 常駐サービスを停止・後始末し、停止を確認して台帳に記録してから本ゲートを最初から再実行する。**最終返却は待たない**。停止を確認できない場合は**中断報告**へ倒す |'
 assert_skill_contains "(4) 台帳突き合わせ不能を0件に丸めない（検査不能≠0件）" \
   '未合流 0件とみなさず、**中断報告**へ倒す（検査不能を0件に丸めない）'
 
@@ -215,123 +230,155 @@ assert_skill_contains "(5) 部分合流を全合流と報告しない" \
 echo ""
 echo "=== (6) 決定表の参照実装（真理値表・空集合ケース必須） ==="
 
-# 決定表の参照実装。引数: <起動台帳件数> <合流済み件数> <台帳突き合わせ可 true/false>
-#                     <受領見込みなし true/false>
-# 第4引数は「受領の見込みがない」ことが**実状態の確認**（稼働確認も結果取得も
-# できない状態が確認の再試行上限まで続いた）で確定したかを表す。待機・ポーリングの
-# 回数や経過時間だけでは true にならない（取得タイムアウトの継続は false のまま）。
-# 出力: pass（ゲート通過）/ continue_join（応答を確定せず合流継続）/ abort_report（中断報告）
+# 決定表の参照実装。引数:
+#   <有限タスク台帳件数> <有限タスク受領済み件数>
+#   <常駐サービス台帳件数> <常駐サービス停止確認済み件数>
+#   <台帳突き合わせ可 true/false> <受領見込みなし true/false>
+# 第6引数は**有限タスクについて**「受領の見込みがない」ことが実状態の確認
+# （稼働確認も結果取得もできない状態が確認の再試行上限まで続いた）で確定したかを表す。
+# 待機・ポーリングの回数や経過時間だけでは true にならない（取得タイムアウトの継続は
+# false のまま）。常駐サービスは最終返却を産まないため受領見込みの軸を持たず、
+# 停止確認の有無だけで突合する。
+# 出力: pass（ゲート通過）/ continue_join（応答を確定せず合流継続）/
+#       stop_residents（常駐サービスを停止・確認・台帳記録してゲート再実行）/
+#       abort_report（中断報告）
 jg_gate() {
-  local ledger="$1" joined="$2" reconcilable="$3" no_prospect="$4"
-  local unjoined
-  if [ "$reconcilable" != "true" ]; then
-    # 台帳と実状態を突き合わせられない場合は 0件とみなさない（検査不能≠0件）
+  local f_ledger="$1" f_joined="$2" r_ledger="$3" r_stopped="$4" reconcilable="$5" no_prospect="$6"
+  local f_unjoined r_unjoined
+  if [ "$reconcilable" != "true" ] || [ "$f_joined" -gt "$f_ledger" ] || [ "$r_stopped" -gt "$r_ledger" ]; then
+    # 台帳と実状態を突き合わせられない（台帳に載っていない合流記録・停止記録を含む）
+    # 場合は 0件とみなさない（検査不能≠0件）
     printf 'abort_report'
     return 0
   fi
-  unjoined=$((ledger - joined))
-  if [ "$unjoined" -lt 0 ]; then
-    # 合流済み件数が起動台帳件数を上回る＝台帳に載っていない合流記録がある。
-    # 台帳と実状態が突き合っていないため、0件（正常）に丸めず中断報告へ倒す
-    printf 'abort_report'
-    return 0
-  fi
-  if [ "$unjoined" -eq 0 ]; then
-    # 空集合（起動0件）も未合流0件も正常経路
+  f_unjoined=$((f_ledger - f_joined))
+  r_unjoined=$((r_ledger - r_stopped))
+  if [ "$f_unjoined" -eq 0 ] && [ "$r_unjoined" -eq 0 ]; then
+    # 空集合（起動0件）も、両区分とも解消済みの未合流0件も正常経路
     printf 'pass'
     return 0
   fi
-  if [ "$no_prospect" = "true" ]; then
-    printf 'abort_report'
-  else
-    printf 'continue_join'
+  if [ "$f_unjoined" -ge 1 ]; then
+    # 有限タスクの合流を先に解消する（常駐サービスの停止はその後）
+    if [ "$no_prospect" = "true" ]; then
+      printf 'abort_report'
+    else
+      printf 'continue_join'
+    fi
+    return 0
   fi
+  # 残るのは「有限タスク0件・停止未確認の常駐サービスあり」だけ
+  printf 'stop_residents'
 }
 
-assert_eq "(6) 起動0件・突き合わせ可はゲート通過（空集合＝正常経路）" "pass" "$(jg_gate 0 0 true false)"
-assert_eq "(6) 起動0件では受領見込みの判定は無関係にゲート通過" "pass" "$(jg_gate 0 0 true true)"
-assert_eq "(6) 全数合流済み（8/8）はゲート通過" "pass" "$(jg_gate 8 8 true false)"
+assert_eq "(6) 起動0件・突き合わせ可はゲート通過（空集合＝正常経路）" "pass" "$(jg_gate 0 0 0 0 true false)"
+assert_eq "(6) 起動0件では受領見込みの判定は無関係にゲート通過" "pass" "$(jg_gate 0 0 0 0 true true)"
+assert_eq "(6) 有限タスク全数受領済み（8/8）はゲート通過" "pass" "$(jg_gate 8 8 0 0 true false)"
 assert_eq "(6) 部分合流（5/6）・受領見込みありはゲート通過にならず合流継続（部分成功≠完全成功）" \
-  "continue_join" "$(jg_gate 6 5 true false)"
+  "continue_join" "$(jg_gate 6 5 0 0 true false)"
 assert_eq "(6) 稼働確認できる限り取得タイムアウトが何度続いても合流継続（回数で中断へ倒さない）" \
-  "continue_join" "$(jg_gate 6 5 true false)"
-assert_eq "(6) 部分合流（5/6）で受領見込みなしが確定したら中断報告" "abort_report" "$(jg_gate 6 5 true true)"
-assert_eq "(6) 全数未合流（0/8）で受領見込みなしが確定したら中断報告" "abort_report" "$(jg_gate 8 0 true true)"
+  "continue_join" "$(jg_gate 6 5 0 0 true false)"
+assert_eq "(6) 部分合流（5/6）で受領見込みなしが確定したら中断報告" "abort_report" "$(jg_gate 6 5 0 0 true true)"
+assert_eq "(6) 全数未合流（0/8）で受領見込みなしが確定したら中断報告" "abort_report" "$(jg_gate 8 0 0 0 true true)"
 assert_eq "(6) 台帳突き合わせ不能は起動0件でも pass にしない（検査不能を0件に丸めない）" \
-  "abort_report" "$(jg_gate 0 0 false false)"
+  "abort_report" "$(jg_gate 0 0 0 0 false false)"
 assert_eq "(6) 台帳突き合わせ不能は全数合流済みに見えても pass にしない" \
-  "abort_report" "$(jg_gate 3 3 false true)"
-assert_eq "(6) 合流済みが台帳件数を上回る（台帳3・合流4）は pass にしない（台帳に無い合流記録＝突合不能）" \
-  "abort_report" "$(jg_gate 3 4 true false)"
-assert_eq "(6) 台帳が空なのに合流記録がある（台帳0・合流1）も空集合の正常経路に丸めない" \
-  "abort_report" "$(jg_gate 0 1 true true)"
+  "abort_report" "$(jg_gate 3 3 0 0 false true)"
+assert_eq "(6) 受領済みが台帳件数を上回る（台帳3・受領4）は pass にしない（台帳に無い合流記録＝突合不能）" \
+  "abort_report" "$(jg_gate 3 4 0 0 true false)"
+assert_eq "(6) 台帳が空なのに合流記録がある（台帳0・受領1）も空集合の正常経路に丸めない" \
+  "abort_report" "$(jg_gate 0 1 0 0 true true)"
+assert_eq "(6) 常駐サービスのみ未停止（有限0件）は返却を待たず停止・確認へ" \
+  "stop_residents" "$(jg_gate 0 0 1 0 true false)"
+assert_eq "(6) 常駐サービスは受領見込みの軸を持たない（見込みなし扱いでも停止・確認へ）" \
+  "stop_residents" "$(jg_gate 0 0 1 0 true true)"
+assert_eq "(6) 常駐サービス停止確認済みはゲート通過" "pass" "$(jg_gate 0 0 1 1 true false)"
+assert_eq "(6) 有限タスクの未合流が残る間は常駐サービスの停止より合流継続を先にする" \
+  "continue_join" "$(jg_gate 6 5 1 0 true false)"
+assert_eq "(6) 有限タスク受領見込みなしなら常駐サービスの状態によらず中断報告" \
+  "abort_report" "$(jg_gate 6 5 1 0 true true)"
+assert_eq "(6) 停止確認件数が常駐台帳件数を上回る（台帳1・停止2）は突合不能として中断報告" \
+  "abort_report" "$(jg_gate 0 0 1 2 true false)"
 
 echo ""
 echo "=== (6b) 決定表の排他性（全状態で該当行がちょうど1行・動作の一貫性） ==="
 
 # 決定表の各行の状態条件の参照実装（SKILL.md の状態列を述語に写したもの）。
-# 引数: <行番号 1-5> <起動台帳件数> <合流済み件数> <突き合わせ可 true/false> <受領見込みなし true/false>
-# 第5引数の意味は jg_gate と同じ（実状態の確認で「受領の見込みがない」と確定したか。
-# 待機・ポーリングの回数や経過時間だけでは true にならない）。
-# 行5 は「突き合わせ不能」であり、reconcilable=false と「台帳に無い合流記録
-# （合流済み件数が起動台帳件数を上回る）」の両方を含む。行1〜4 は突き合わせ成立が前提。
+# 引数: <行番号 1-6> <有限タスク台帳件数> <有限タスク受領済み件数>
+#       <常駐サービス台帳件数> <常駐サービス停止確認済み件数>
+#       <突き合わせ可 true/false> <受領見込みなし true/false>
+# 第7引数の意味は jg_gate と同じ（有限タスクについて実状態の確認で「受領の見込みが
+# ない」と確定したか。回数・経過時間だけでは true にならない）。
+# 行6 は「突き合わせ不能」であり、reconcilable=false と「台帳に無い合流記録・停止記録
+# （受領済み・停止確認済みの件数が台帳件数を上回る）」の両方を含む。行1〜5 は突き合わせ
+# 成立が前提。
 jg_row_matches() {
-  local row="$1" ledger="$2" joined="$3" reconcilable="$4" no_prospect="$5"
+  local row="$1" f_ledger="$2" f_joined="$3" r_ledger="$4" r_stopped="$5" reconcilable="$6" no_prospect="$7"
   local sane="true"
-  if [ "$reconcilable" != "true" ] || [ "$joined" -gt "$ledger" ]; then
+  if [ "$reconcilable" != "true" ] || [ "$f_joined" -gt "$f_ledger" ] || [ "$r_stopped" -gt "$r_ledger" ]; then
     sane="false"
   fi
+  local f_unjoined=$((f_ledger - f_joined))
+  local r_unjoined=$((r_ledger - r_stopped))
   case "$row" in
-    1) [ "$sane" = "true" ] && [ "$ledger" -eq 0 ] ;;
-    2) [ "$sane" = "true" ] && [ "$ledger" -ge 1 ] && [ "$joined" -eq "$ledger" ] ;;
-    3) [ "$sane" = "true" ] && [ $((ledger - joined)) -ge 1 ] && [ "$no_prospect" != "true" ] ;;
-    4) [ "$sane" = "true" ] && [ $((ledger - joined)) -ge 1 ] && [ "$no_prospect" = "true" ] ;;
-    5) [ "$sane" = "false" ] ;;
+    1) [ "$sane" = "true" ] && [ $((f_ledger + r_ledger)) -eq 0 ] ;;
+    2) [ "$sane" = "true" ] && [ $((f_ledger + r_ledger)) -ge 1 ] && [ "$f_unjoined" -eq 0 ] && [ "$r_unjoined" -eq 0 ] ;;
+    3) [ "$sane" = "true" ] && [ "$f_unjoined" -ge 1 ] && [ "$no_prospect" != "true" ] ;;
+    4) [ "$sane" = "true" ] && [ "$f_unjoined" -ge 1 ] && [ "$no_prospect" = "true" ] ;;
+    5) [ "$sane" = "true" ] && [ "$f_unjoined" -eq 0 ] && [ "$r_unjoined" -ge 1 ] ;;
+    6) [ "$sane" = "false" ] ;;
     *) false ;;
   esac
 }
 
-# 行番号→動作（決定表の動作列。1,2=ゲート通過 / 3=合流継続 / 4,5=中断報告）
+# 行番号→動作（決定表の動作列。1,2=ゲート通過 / 3=合流継続 / 4,6=中断報告 /
+# 5=常駐サービスの停止・確認・台帳記録のうえゲート再実行）
 jg_row_action() {
   case "$1" in
     1 | 2) printf 'pass' ;;
     3) printf 'continue_join' ;;
-    4 | 5) printf 'abort_report' ;;
+    4 | 6) printf 'abort_report' ;;
+    5) printf 'stop_residents' ;;
     *) printf 'unknown' ;;
   esac
 }
 
 # 状態空間を列挙し、各状態で (a) 該当行がちょうど1行であること、
 # (b) 該当行の動作が参照実装 jg_gate の出力と一致することを検査する。
-# 合流済み件数は台帳件数の境界（0・1・全数・全数+1）を含めて振る。
+# 受領済み・停止確認済みの件数は台帳件数の境界（0・1・全数・全数+1）を含めて振る。
 exclusivity_violations=""
 action_mismatches=""
 state_count=0
-for ledger in 0 1 3; do
-  for joined in 0 1 3 4; do
-    [ "$joined" -le $((ledger + 1)) ] || continue
-    for reconcilable in true false; do
-      for no_prospect in true false; do
-        state_count=$((state_count + 1))
-        match_count=0
-        matched_row=0
-        for row in 1 2 3 4 5; do
-          if jg_row_matches "$row" "$ledger" "$joined" "$reconcilable" "$no_prospect"; then
-            match_count=$((match_count + 1))
-            matched_row="$row"
-          fi
+for f_ledger in 0 2; do
+  for f_joined in 0 1 2 3; do
+    [ "$f_joined" -le $((f_ledger + 1)) ] || continue
+    for r_ledger in 0 1; do
+      for r_stopped in 0 1 2; do
+        [ "$r_stopped" -le $((r_ledger + 1)) ] || continue
+        for reconcilable in true false; do
+          for no_prospect in true false; do
+            state_count=$((state_count + 1))
+            match_count=0
+            matched_row=0
+            for row in 1 2 3 4 5 6; do
+              if jg_row_matches "$row" "$f_ledger" "$f_joined" "$r_ledger" "$r_stopped" "$reconcilable" "$no_prospect"; then
+                match_count=$((match_count + 1))
+                matched_row="$row"
+              fi
+            done
+            state="F=${f_ledger}/${f_joined},S=${r_ledger}/${r_stopped},R=${reconcilable},N=${no_prospect}"
+            if [ "$match_count" -ne 1 ]; then
+              exclusivity_violations="${exclusivity_violations}${state}=${match_count}行 "
+            elif [ "$(jg_row_action "$matched_row")" != "$(jg_gate "$f_ledger" "$f_joined" "$r_ledger" "$r_stopped" "$reconcilable" "$no_prospect")" ]; then
+              action_mismatches="${action_mismatches}${state} "
+            fi
+          done
         done
-        state="L=${ledger},J=${joined},R=${reconcilable},N=${no_prospect}"
-        if [ "$match_count" -ne 1 ]; then
-          exclusivity_violations="${exclusivity_violations}${state}=${match_count}行 "
-        elif [ "$(jg_row_action "$matched_row")" != "$(jg_gate "$ledger" "$joined" "$reconcilable" "$no_prospect")" ]; then
-          action_mismatches="${action_mismatches}${state} "
-        fi
       done
     done
   done
 done
-assert_eq "(6b) 列挙した状態数が想定どおり（境界の取りこぼしなし）" "32" "$state_count"
+assert_eq "(6b) 列挙した状態数が想定どおり（境界の取りこぼしなし）" "120" "$state_count"
 assert_eq "(6b) 全状態で該当行がちょうど1行（重なり・漏れなし）" "" "$exclusivity_violations"
 assert_eq "(6b) 各状態の該当行の動作が参照実装 jg_gate と一致する" "" "$action_mismatches"
 
@@ -346,9 +393,11 @@ assert_skill_contains "(7) 不明項目は「不明」と書き、省略・推�
 # 必須項目の列挙（リテラル件数一致）
 abort_items="$(awk '/^### 中断報告の出力契約/{f=1; next} /^(---|## )/{f=0} f && /^- /{print}' "$SKILL_FILE")"
 abort_item_count="$(printf '%s\n' "$abort_items" | grep -c .)"
-assert_eq "(7) 中断報告の必須項目は4件" "4" "$abort_item_count"
+assert_eq "(7) 中断報告の必須項目は5件" "5" "$abort_item_count"
 assert_skill_contains "(7) 必須項目: 未合流の一覧（種別・担当Issue・指示概要）" \
   '- 未合流のサブエージェント・処理の一覧（種別・担当Issue・起動時の指示概要）'
+assert_skill_contains "(7) 必須項目: 稼働したままの常駐サービスの一覧（0件は「なし」を明示）" \
+  '- 稼働したままの常駐サービスの一覧（種別・停止と後始末の手順。無ければ「なし」と書く）'
 assert_skill_contains "(7) 必須項目: 未コミット差分の所在（worktree パス・作業ブランチ）" \
   '- 未コミット差分の所在（worktree パス・作業ブランチ）'
 assert_skill_contains "(7) 必須項目: 合流済みの成果と未合流分の切り分け" \
@@ -371,6 +420,10 @@ assert_star_contains "(8) spawn 時手順の正本が SKILL.md にあること�
   '（SKILL.md 本文の同名セクションが定義の正本）'
 assert_star_contains "(8) worker 以外のサブエージェント（衝突予測等）も起動台帳の対象である" \
   'その他のサブエージェント（`issue-conflict-predictor` 等）'
+assert_star_contains "(8) star 型でも常駐サービスは台帳に常駐として記録し、返却を待たず停止確認で突合する" \
+  '常駐サービス（dev サーバ等）を起動した場合も台帳に**常駐サービス**として記録し、同ゲートの規律に従う（**最終返却は待たず**、停止・後始末の確認をもって合流相当とする）'
+assert_star_contains "(8) star 型の Phase 10 の突き合わせ対象に常駐サービスが含まれる" \
+  '（衝突予測・`/explain-e2e` の独立検証委譲・dev サーバ等の常駐サービスを含む）'
 
 # 返却処理表: 未合流状態が表に接続されている（要判定状態が判定式に未接続にならない）
 assert_star_contains "(8) 返却処理表に「返却未受領（未合流のまま）」の行がある" \
