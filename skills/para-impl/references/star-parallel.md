@@ -78,6 +78,7 @@ spawn プロンプトに含めるもの:
 - 「1チケットの実装フロー」（SKILL.md 本文の同名セクション）の Phase 4-5〜9 の手順（Phase 3 はリードが worktree 作成で実施済み。Phase 7 は `/create-e2e` まで）
 - 要件チケットの「クリティカル設計決定」セクション
 - **`ci-wait.sh` の絶対パス**（Phase 9 の CI 確認のフォールバック用。worker は第一手として `claude-harness-run ci-wait {PR番号}` を使うが、ランチャー未導入環境に備えて絶対パスも渡す。`${CLAUDE_PLUGIN_ROOT}` をリードが絶対パスへ解決してから渡す——worker はプレースホルダを解決できない）
+- **合流ゲート伝播条項**（SKILL.md「合流ゲート」セクションの「ネストへの伝播」に定義された条項を**逐語で転記する**。worker は Phase 4-5 で `feature-implementer` をさらに spawn するため、この条項が無いと worker がネストの完了前に返却し、リードが worker を合流済みと誤認したままネストの処理が道連れで強制終了される）
 
 > 行動規範（permission 拒否時の振る舞い・headless 制約・worktree 内でのコマンド形式・CI確認と loop-until-green の規律）は `ticket-worker` のエージェント定義に含まれ、spawn 時に自動で伝播する。プロンプトへの手動注入は不要。
 

@@ -31,8 +31,11 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 SKILL_FILE="${REPO_ROOT}/skills/para-impl/SKILL.md"
 STAR_FILE="${REPO_ROOT}/skills/para-impl/references/star-parallel.md"
+# star 構成が spawn する Task 持ちエージェント（ネスト伝播の防御第二層を検査する）
+TW_FILE="${REPO_ROOT}/agents/ticket-worker.md"
+FI_FILE="${REPO_ROOT}/agents/feature-implementer.md"
 
-for f in "$SKILL_FILE" "$STAR_FILE"; do
+for f in "$SKILL_FILE" "$STAR_FILE" "$TW_FILE" "$FI_FILE"; do
   if [ ! -r "$f" ]; then
     echo "NG - 検査対象ファイルを読めません（検査不能を pass にはしない）: ${f}" >&2
     exit 1
@@ -443,6 +446,60 @@ assert_star_contains "(8) star 型の Phase 10 は全 worker・全サブエー�
   '未合流が0件であることを起動台帳と突き合わせて確認する'
 assert_star_contains "(8) star 型の Phase 10 は未合流残・突き合わせ不能で完了報告を出さない" \
   '未合流が残る場合・突き合わせ不能の場合は完了報告を出さず'
+
+echo ""
+echo "=== (9) ネストへの伝播（spawn プロンプト条項・agent 定義の防御第二層） ==="
+
+# 条項の正本は SKILL.md の「ネストへの伝播」だけ（複製しない）
+nest_heading_count="$(grep -cF -- '### ネストへの伝播（spawn プロンプト条項）' "$SKILL_FILE")"
+assert_eq "(9) SKILL.md にネスト伝播の小節がちょうど1箇所ある" "1" "$nest_heading_count"
+assert_skill_contains "(9) 台帳が検査できるのは直接起動分だけ（ネストは台帳で検査できない）" \
+  '起動台帳が把握できるのは**自分が直接起動したものだけ**である'
+assert_skill_contains "(9) spawn プロンプトへの逐語転記を必須にしている" \
+  'サブエージェントへ委譲する spawn プロンプトには、次の**合流ゲート伝播条項**を逐語で含める'
+assert_skill_contains "(9) 迷った場合は含める（適用側の fail-safe）" \
+  '含めるか迷った場合は含める'
+assert_skill_contains "(9) ネストの解消は委譲先が条項で保証する（返却受領の含意）" \
+  '**ネストの解消は各委譲先が本条項で保証する**'
+
+# 条項本文の4項目（逐語）と件数
+assert_skill_contains "(9) 条項見出しがある" '【合流ゲート伝播条項】'
+assert_skill_contains "(9) 条項(1): 返却確定前の全解消（有限=受領・常駐=停止確認）" \
+  '(1) 最終返却を確定する前に、起動したものをすべて解消する（有限タスクは返却の受領、常駐サービスは停止・後始末の確認）。'
+assert_skill_contains "(9) 条項(2): 待機宣言の禁止とターン維持" \
+  '(2) 「完了を待ちます」等の待機宣言を最終返却にしない。解消が済むまでツール呼び出しを続けてターンを維持する。'
+assert_skill_contains "(9) 条項(3): 解消不能時の出力契約（未解消一覧と実状態）" \
+  '(3) 解消できない場合は、未解消の一覧と実状態（未コミット差分の所在を含む）を返却に明記する。'
+assert_skill_contains "(9) 条項(4): 再帰伝播（さらに委譲する場合は条項をそのまま含める）" \
+  '(4) さらに委譲する場合は、この条項を委譲プロンプトへそのまま含める。'
+clause_item_count="$(awk '/【合流ゲート伝播条項】/{f=1; next} /^```/{f=0} f' "$SKILL_FILE" \
+  | grep -cE '^\([0-9]+\) ')"
+assert_eq "(9) 条項の項目は4件（リテラル件数一致）" "4" "$clause_item_count"
+
+# 接続検査: 単一Issue（Phase 4-5）と star 型（spawn プロンプト必須項目）の双方から条項へ接続
+assert_skill_contains "(9) 単一Issueの Phase 4-5 委譲プロンプトにも条項を含める" \
+  '委譲プロンプトには**合流ゲート伝播条項**（「合流ゲート（最終応答前の未合流確認）」セクションの「ネストへの伝播」に定義。逐語で転記する）も含める'
+assert_star_contains "(9) star 型の spawn プロンプト必須項目に条項の転記がある" \
+  '- **合流ゲート伝播条項**（SKILL.md「合流ゲート」セクションの「ネストへの伝播」に定義された条項を**逐語で転記する**'
+assert_star_contains "(9) 条項が無い場合の喪失経路（worker のネスト spawn）を明示している" \
+  'worker は Phase 4-5 で `feature-implementer` をさらに spawn するため'
+assert_file_not_contains "(9) star-parallel.md は条項本文を複製しない（正本は SKILL.md のみ）" "$STAR_FILE" \
+  '【合流ゲート伝播条項】'
+
+# agent 定義の防御第二層（spawn 時に自動伝播する行動規範側にも同じ規律を置く）
+for agent_file in "$TW_FILE" "$FI_FILE"; do
+  agent_name="$(basename "$agent_file")"
+  bullet_count="$(grep -cF -- '**返却前の合流（合流ゲートの伝播）**' "$agent_file")"
+  assert_eq "(9) ${agent_name} に「返却前の合流」規律がちょうど1箇所ある" "1" "$bullet_count"
+  assert_file_contains "(9) ${agent_name}: 最終返却の確定前にネストを全解消する" "$agent_file" \
+    '**最終返却を確定する前にすべて解消する**（有限タスクは返却の受領・常駐サービスは停止と後始末の確認）'
+  assert_file_contains "(9) ${agent_name}: 待機宣言を最終返却にしない（道連れ終了の明示）" "$agent_file" \
+    '**待機宣言を最終返却にしない**（返却の確定でネストの処理は道連れで強制終了される）'
+  assert_file_contains "(9) ${agent_name}: 解消不能時は未解消一覧と実状態を返却に明記する" "$agent_file" \
+    '解消できない場合は未解消の一覧と実状態（未コミット差分の所在を含む）を返却に明記する'
+  assert_file_contains "(9) ${agent_name}: 再帰伝播（さらに委譲する場合は規律を委譲プロンプトへ）" "$agent_file" \
+    'さらに委譲する場合は**この規律を委譲プロンプトにも含める**'
+done
 
 echo ""
 echo "=============================================="
