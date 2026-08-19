@@ -221,6 +221,28 @@ assert_file_contains "(B-4) 節が読めない場合は停止（保証なしに�
   '保証節の不在・読み取り不能を「保証なし」に丸めない'
 assert_file_contains "(B-4) star 型では worker がそのまま逐語で引き継ぐ" "$GATE_FILE" \
   '**そのまま逐語で引き継ぐ**'
+assert_file_contains "(B-4) 維持の判定根拠は転記ではなく現行台帳（コピーを正本にしない）" "$GATE_FILE" \
+  '**維持の約束文の判定根拠は転記ではなく現行の保証台帳**'
+
+echo ""
+echo "=== (B-4b) guarantee-gate.md: 新規宣言の担当割当（重複実装の防止） ==="
+
+assert_file_contains "(B-4b) 各新規宣言 ID をちょうど1つの実装チケットに割り当てる" "$GATE_FILE" \
+  '**新規宣言する保証は、各 ID をちょうど1つの実装チケットに割り当てる**'
+assert_file_contains "(B-4b) 重複割当も未割当も作らない" "$GATE_FILE" \
+  '**重複割当も未割当も作らない**'
+assert_file_contains "(B-4b) 維持する保証は全チケットに共通で渡す（抵触チェックは全員に必要）" "$GATE_FILE" \
+  '**維持する保証は全チケットに共通で渡す**'
+assert_file_contains "(B-4b) 注入の前に割当の全数検証を行う" "$GATE_FILE" \
+  '**割当の全数検証（注入の前に行う）**'
+assert_file_contains "(B-4b) 割当不能な ID があれば停止する（黙って割当を歪めない）" "$GATE_FILE" \
+  'どのチケットにも割り当てられない・単独で検証可能にできない ID が1件でもあれば **停止**'
+assert_file_contains "(B-4b) 跨り保証は依存順で最後に完成するチケットへ割り当てる" "$GATE_FILE" \
+  '依存順で最後に完成するチケットへ割り当てる'
+assert_file_contains "(B-4b) 注入ブロックの新規宣言は担当分だけ（行単位の抜粋・行内は逐語）" "$GATE_FILE" \
+  '**新規宣言する保証は担当割当に従い、当該チケットの担当分の行だけを転記する**'
+assert_file_contains "(B-4b) 割当表を実行計画に出力し注入に接続する（記録だけにしない）" "$GATE_FILE" \
+  '記録だけにせず注入に接続する'
 assert_file_contains "(B-4) 合流ゲート伝播条項の規定は維持し並記で追加する" "$GATE_FILE" \
   '**合流ゲート伝播条項の逐語転記の規定はそのまま維持し、本ブロックはそれと並記で追加する**'
 
@@ -249,6 +271,24 @@ assert_file_contains "(B-6) 2-3 と対になる位置づけ（クリティカル
   '「2-3. クリティカル設計決定との整合確認」と対になる'
 assert_file_contains "(B-6) D-13: 維持保証への抵触は既存の逸脱検知パスに合流して停止" "$FI_FILE" \
   '既存の「⚠️ クリティカル設計の逸脱検知」パス（2-3）にそのまま合流させて停止する'
+assert_file_contains "(B-6) 維持の判定根拠は現行台帳（転記文面を正本にしない）" "$FI_FILE" \
+  '台帳の約束文を判定根拠にする'
+assert_file_contains "(B-6) 注入ブロック・親 Issue の転記文面を判定根拠にしない" "$FI_FILE" \
+  '**注入ブロック・親 Issue の転記文面を判定根拠にしない**'
+assert_file_contains "(B-6) 台帳の読み取りは台帳の文法の正本（共通-2 (b)）に従う" "$FI_FILE" \
+  '`guarantee-section.md` 共通-2 (b)'
+assert_file_contains "(B-6) fail-closed: 台帳が無い・読めない場合は停止" "$FI_FILE" \
+  '**台帳（`docs/guarantees.md`）自体が無い・読めない**'
+assert_file_contains "(B-6) fail-closed: ID が現行台帳に存在しなければ停止" "$FI_FILE" \
+  '**ID が現行台帳に存在しない**'
+assert_file_contains "(B-6) fail-closed: 転記と台帳の文面ドリフトは停止（黙って台帳側を採用しない）" "$FI_FILE" \
+  '**転記の約束文と台帳の約束文が一致しない（文面ドリフト）**'
+assert_file_contains "(B-6) 維持対象なしに丸めて実装を進めない" "$FI_FILE" \
+  '**「維持対象なし」に丸めて実装を進めない**'
+assert_file_contains "(B-6) 担当外の新規宣言のテスト・台帳追記を行わない（重複実装の防止）" "$FI_FILE" \
+  '**担当外の新規宣言（ブロックに無い親の保証）のテスト作成・台帳追記を行わない**'
+assert_file_contains "(B-6) 直接呼び出し時は担当分を特定し根拠を明記（全量を黙って実装しない）" "$FI_FILE" \
+  '親の新規宣言の全量を黙って実装しない'
 assert_file_contains "(B-6) D-13: 新しい停止経路・返却形式を作らない" "$FI_FILE" \
   '保証逸脱のための新しい停止経路・新しい返却形式を作らない'
 assert_file_contains "(B-6) 保証逸脱の警告書式（既存の ⚠️ と同型）" "$FI_FILE" \
@@ -350,13 +390,14 @@ echo "=== (D-1) 判定表・語彙表の構造不変条件 ==="
 verdict_rows="$(grep -cE '^\| [0-9]+ \| ' "$GATE_FILE")"
 assert_eq "(D-1) 判定表の状態はちょうど5行（増減時は語彙表・停止報告と同時更新）" "5" "$verdict_rows"
 
-# reason 語彙表はちょうど6コード
+# reason 語彙表はちょうど7コード
 reason_rows="$(grep -cE '^\| `[a-z_]+` \| Phase' "$GATE_FILE")"
-assert_eq "(D-1) reason 語彙表はちょうど6コード" "6" "$reason_rows"
+assert_eq "(D-1) reason 語彙表はちょうど7コード" "7" "$reason_rows"
 
-# 各コードは定義（語彙表）と使用（判定表・転記の規律）の両方に現れる（定義だけ・使用だけを作らない）
+# 各コードは定義（語彙表）と使用（判定表・転記の規律・担当割当）の両方に現れる
+# （定義だけ・使用だけを作らない）
 for code in parent_mismatch labels_unavailable label_state_ambiguous approval_missing \
-  guarantee_section_unreadable guarantee_scope_mismatch; do
+  guarantee_section_unreadable guarantee_scope_mismatch guarantee_assignment_unresolvable; do
   occurrences="$(grep -cF -- "\`${code}\`" "$GATE_FILE")"
   if [ "$occurrences" -ge 2 ]; then
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -484,6 +525,62 @@ assert_eq "(D-5) 別スコープの ID（G-1580-1）をハイフンまで含め�
 assert_eq "(D-5) 桁の短い別スコープ（G-15-1）も弾く" "no" "$(pi_id_scope_ok G-15-1 158)"
 assert_eq "(D-5) 別 Issue スコープの ID（G-999-1）を弾く" "no" "$(pi_id_scope_ok G-999-1 158)"
 assert_eq "(D-5) 枝番の後ろに余分な文字が付く ID を弾く" "no" "$(pi_id_scope_ok G-158-1x 158)"
+
+echo ""
+echo "=== (D-6) 新規宣言の担当割当・全数検証の参照実装 ==="
+
+# guarantee-gate.md「割当の全数検証」と同じ規則:
+# $1=親の新規宣言 ID（カンマ区切り） $2=割当済み ID（カンマ区切り。チケット横断の連結）
+# 各 ID がちょうど1回割り当てられているときだけ ok。0回は unassigned、2回以上は duplicated。
+pi_assignment_check() {
+  local ids="$1" assigned="$2" id count
+  if [ -z "$ids" ]; then echo "ok"; return; fi
+  local old_ifs="$IFS"
+  IFS=','
+  for id in $ids; do
+    count=0
+    local a
+    for a in $assigned; do
+      [ "$a" = "$id" ] && count=$((count + 1))
+    done
+    if [ "$count" -eq 0 ]; then IFS="$old_ifs"; echo "stop:unassigned:${id}"; return; fi
+    if [ "$count" -ge 2 ]; then IFS="$old_ifs"; echo "stop:duplicated:${id}"; return; fi
+  done
+  IFS="$old_ifs"
+  echo "ok"
+}
+
+assert_eq "(D-6) 全 ID がちょうど1回割り当てられていれば通過" "ok" \
+  "$(pi_assignment_check 'G-10-1,G-10-2' 'G-10-1,G-10-2')"
+assert_eq "(D-6) 未割当の ID があれば停止（取りこぼしを作らない）" \
+  "stop:unassigned:G-10-2" "$(pi_assignment_check 'G-10-1,G-10-2' 'G-10-1')"
+assert_eq "(D-6) 同一 ID の重複割当は停止（複数チケットが同じ保証を実装しない）" \
+  "stop:duplicated:G-10-1" "$(pi_assignment_check 'G-10-1,G-10-2' 'G-10-1,G-10-2,G-10-1')"
+assert_eq "(D-6) 新規宣言が0件なら割当なしで通過（検査した結果の0件）" \
+  "ok" "$(pi_assignment_check '' '')"
+
+echo ""
+echo "=== (D-7) 維持保証の現行台帳での解決の参照実装（fail-closed） ==="
+
+# feature-implementer 2-5 の維持保証の解決と同じ規則:
+# $1=台帳の状態（readable|missing） $2=ID の台帳存在（found|absent）
+# $3=台帳の約束文 $4=転記の約束文
+pi_keep_resolve() {
+  local ledger="$1" id_state="$2" ledger_stmt="$3" transcribed="$4"
+  if [ "$ledger" != "readable" ]; then echo "stop:ledger_unreadable"; return; fi
+  if [ "$id_state" != "found" ]; then echo "stop:id_absent"; return; fi
+  if [ "$ledger_stmt" != "$transcribed" ]; then echo "stop:statement_drift"; return; fi
+  echo "resolve:${ledger_stmt}"
+}
+
+assert_eq "(D-7) 台帳と転記が一致: 台帳の約束文を判定根拠として解決する" \
+  "resolve:400を返す" "$(pi_keep_resolve readable found '400を返す' '400を返す')"
+assert_eq "(D-7) 台帳が読めない: 停止（維持対象なしに丸めない）" \
+  "stop:ledger_unreadable" "$(pi_keep_resolve missing found '400を返す' '400を返す')"
+assert_eq "(D-7) ID が現行台帳に無い: 停止（退役・改番済みの可能性を人間判断へ）" \
+  "stop:id_absent" "$(pi_keep_resolve readable absent '' '400を返す')"
+assert_eq "(D-7) 文面ドリフト: 停止（旧文面とも新文面とも黙って整合させない）" \
+  "stop:statement_drift" "$(pi_keep_resolve readable found '422を返す' '400を返す')"
 
 # ---------------------------------------------------------------------------
 echo ""

@@ -77,7 +77,7 @@ spawn プロンプトに含めるもの:
 - Issue 番号・worktree パス（`worktree-setup.sh` の出力 `worktree_path`）・作業ブランチ・base
 - 「1チケットの実装フロー」（SKILL.md 本文の同名セクション）の Phase 4-5〜9 の手順（Phase 3 はリードが worktree 作成で実施済み。Phase 7 は `/create-e2e` まで）
 - 要件チケットの「クリティカル設計決定」セクション
-- **保証節（GDD期のみ）**: 当該 Issue の裁可対象（親）Issue の保証節ブロック `【保証節（GDD期・裁可対象 Issue #{番号} より逐語転記）】`（`references/guarantee-gate.md`「Phase 4-5: 保証節の注入」の手順でリードが検証・逐語転記したもの）。worker はこれを `feature-implementer` への委譲プロンプトへ**そのまま逐語で引き継ぐ**。SDD期は含めない
+- **保証節（GDD期のみ）**: 当該 Issue の裁可対象（親）Issue の保証節ブロック `【保証節（GDD期・裁可対象 Issue #{番号} より逐語転記）】`（`references/guarantee-gate.md`「Phase 4-5: 保証節の注入」の手順でリードが検証・転記したもの。**新規宣言は担当割当済みの当該チケット担当分のみ・維持は全チケット共通**）。worker はこれを `feature-implementer` への委譲プロンプトへ**そのまま逐語で引き継ぐ**。SDD期は含めない
 - **`ci-wait.sh` の絶対パス**（Phase 9 の CI 確認のフォールバック用。worker は第一手として `claude-harness-run ci-wait {PR番号}` を使うが、ランチャー未導入環境に備えて絶対パスも渡す。`${CLAUDE_PLUGIN_ROOT}` をリードが絶対パスへ解決してから渡す——worker はプレースホルダを解決できない）
 - **合流ゲート伝播条項**（`references/join-gate.md`「ネストへの伝播」に定義された条項を**逐語で転記する**。worker は Phase 4-5 で `feature-implementer` をさらに spawn するため、この条項が無いと worker がネストの完了前に返却し、リードが worker を合流済みと誤認したままネストの処理が道連れで強制終了される）
 
