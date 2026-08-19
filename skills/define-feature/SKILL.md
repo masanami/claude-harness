@@ -37,8 +37,13 @@ effort: xhigh
 > **開発フェーズの判定（重要）**: フェーズは必ず `claude-harness-run detect-dev-phase` の出力だけで判定し、`CLAUDE.md` を自分で grep しないこと（判定規約の重複実装を防ぐため）。stdout に `{"phase":"sdd"|"gdd"|"invalid","reason":"...","source":"..."}` が1個返る。フェーズ依存の追加挙動は **`phase` が `gdd` のときだけ**行い、`sdd`（宣言なしを含む）では一切挙動を変えない。**`phase` が `invalid`（exit 1）、またはスクリプトを実行できない・stdout が JSON としてパースできない（exit 2 等）場合は、`sdd` とみなさない**。フェーズ依存の処理を停止し、`reason` と `source`（および stderr のメッセージ）を添えて「要人間判定」としてユーザーに報告すること（不正な宣言や実行失敗によって GDD のゲート群が暗黙に無効化される事故を防ぐため）。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/detect-dev-phase.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。
 <!-- 正本: docs/ai-driven-development-strategy.md 5.2 / docs/plugin-path-conventions.md -->
 
-**判定器への入力は手元 checkout（引数なしの実行）でよい（本スキル固有の判断）**: 本スキルは対話で仕様を作る最上流であり、`/para-impl` のような「実装が到達する base」がまだ存在しない（対象 Issue・base ブランチとも未確定）。成果物（機能仕様ドキュメント）は Step 1 でプロジェクト理解に使ったのと同じ手元 checkout に書き込まれるため、判定対象＝手元 checkout そのものであり、引数なしの実行（cwd → リポジトリルートの順で `CLAUDE.md` を解決する既定動作。仕様の正本はプラグイン配下の `scripts/specs/detect-dev-phase.md`。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/detect-dev-phase.md` として解決する）と一致する。
-<!-- /para-impl が判定入力を「実装が到達する base」に是正したのは、手元と base の宣言の食い違いで裁可ゲートが素通りするためだった。本スキルには到達先 base が存在せず、判定対象と成果物の書き込み先が同一の checkout のため、この乖離は構造的に起きない。 -->
+**判定器への入力は「手元 checkout のリポジトリルートの `CLAUDE.md`」を明示引数で渡す（本スキル固有・重要）**: 本スキルは対話で仕様を作る最上流であり、`/para-impl` のような「実装が到達する base」がまだ存在しない（対象 Issue・base ブランチとも未確定）ため、判定の基準は手元 checkout でよい。ただし**引数なしの実行は cwd の `CLAUDE.md` を最優先で読む**（仕様の正本はプラグイン配下の `scripts/specs/detect-dev-phase.md`。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/detect-dev-phase.md` として解決する）ため、サブディレクトリが独自の `CLAUDE.md`（フェーズ節なし）を持つ構成でサブディレクトリから起動されると、リポジトリルートの GDD 宣言が影に隠れて `sdd`（`no_phase_section`）と**正常系のまま誤判定され、GDD の追加挙動が黙ってスキップされる**。フェーズ宣言は導入先プロジェクト（リポジトリ）単位の宣言であるため、判定は次の手順で行う（**判定器を迂回しない**——フェーズの解釈は常にスクリプトの出力のみであり、ここで決めるのは判定器への入力だけ）:
+
+1. `git rev-parse --show-toplevel` でリポジトリルートを解決する。解決できない場合（git リポジトリでない等）のみ引数なしで実行し（スクリプトの既定解決に委ねる）、その事実を完了報告に明記する（黙って cwd 基準へ倒さない）。
+2. `<リポジトリルート>/CLAUDE.md` が存在しない場合は、判定器の `no_claude_md` と同じ意味（宣言なし＝`sdd`）として扱い、従来どおり進む（この存在確認はフェーズ文法の解釈ではない。`CLAUDE.md` の中身を自分で読む・grep することは引き続き行わない）。
+3. 存在する場合は `claude-harness-run detect-dev-phase "<リポジトリルート>/CLAUDE.md"` で判定する（引数のパスは引用符で囲む。`invalid`・実行不能の扱いは上記の定型文のとおり）。
+
+<!-- /para-impl が判定入力を「実装が到達する base」に是正した（手元⇔base の乖離）のと同型の是正であり、こちらは同一 checkout 内の cwd⇔リポジトリルートの乖離を塞ぐ。到達先 base が存在しないため base 基準は不要（手元 checkout のリポジトリルート基準で足りる）。 -->
 
 | 判定結果 | 動作 |
 |---|---|

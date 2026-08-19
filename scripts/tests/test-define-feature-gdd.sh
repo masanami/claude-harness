@@ -34,6 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 DETECT_SCRIPT="${REPO_ROOT}/scripts/detect-dev-phase.sh"
+EXTRACT_SCRIPT="${REPO_ROOT}/scripts/extract-acceptance-criteria.sh"
 SKILL_FILE="${REPO_ROOT}/skills/define-feature/SKILL.md"
 REF_FILE="${REPO_ROOT}/skills/define-feature/references/planned-guarantees.md"
 TPL_FILE="${REPO_ROOT}/skills/define-feature/templates/feature-spec.md"
@@ -53,7 +54,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-for f in "$DETECT_SCRIPT" "$SKILL_FILE" "$REF_FILE" "$TPL_FILE" "$CONSUMER_FILE" "$GATE_FILE" "$PARA_SKILL_FILE" "$STRATEGY_FILE" "$DRAFT_FILE" "$AC_SPEC_FILE"; do
+for f in "$DETECT_SCRIPT" "$EXTRACT_SCRIPT" "$SKILL_FILE" "$REF_FILE" "$TPL_FILE" "$CONSUMER_FILE" "$GATE_FILE" "$PARA_SKILL_FILE" "$STRATEGY_FILE" "$DRAFT_FILE" "$AC_SPEC_FILE"; do
   if [ ! -r "$f" ]; then
     echo "NG - 検査対象ファイルを読めません（検査不能を pass にはしない）: ${f}" >&2
     exit 1
@@ -210,6 +211,49 @@ rc=$?
 assert_eq "(A-3) 未置換プレースホルダは exit 1（sdd に読み替えない）" "1" "$rc"
 assert_eq "(A-3) 未置換プレースホルダは phase=invalid" "invalid" "$(printf '%s' "$out" | jq -r '.phase')"
 
+# (A-4) 引数なしの既定解決は cwd の CLAUDE.md を最優先で読むため、フェーズ節を持たない
+# サブディレクトリ CLAUDE.md がルートの GDD 宣言を影に隠す（SKILL.md Step 1.5 が
+# 「ルートの CLAUDE.md を明示引数で渡す」と規定する根拠の実演。sdd は正常系 exit 0 で
+# 返るため、規定なしではスキップが黙って起こる）。
+shadow_root="${TMP_ROOT}/shadow-repo"
+shadow_sub="${shadow_root}/subdir"
+mkdir -p "$shadow_sub"
+cp "${fixture_dir}/CLAUDE-gdd.md" "${shadow_root}/CLAUDE.md"
+cp "${fixture_dir}/CLAUDE-nosection.md" "${shadow_sub}/CLAUDE.md"
+
+out="$(cd "$shadow_sub" && bash "$DETECT_SCRIPT" 2>/dev/null)"
+rc=$?
+assert_eq "(A-4) 引数なし実行はサブディレクトリの CLAUDE.md に隠され sdd を返す（危険側の実演）" \
+  "0:sdd:no_phase_section" "${rc}:$(printf '%s' "$out" | jq -r '.phase'):$(printf '%s' "$out" | jq -r '.reason')"
+
+out="$(cd "$shadow_sub" && bash "$DETECT_SCRIPT" "${shadow_root}/CLAUDE.md" 2>/dev/null)"
+rc=$?
+assert_eq "(A-4) ルートの CLAUDE.md を明示引数で渡すと gdd を正しく返す（規定形）" \
+  "0:gdd" "${rc}:$(printf '%s' "$out" | jq -r '.phase')"
+
+# (A-5) AC 通し番号の採番規則: 参照ファイルの「要点の転記」が主張する規則
+# （列0のチェックリスト行のみ・「## 完了条件」も同一連番）がスクリプトの実挙動と
+# 一致することをフィクスチャで固定する（散文とスクリプトの2規則化の検出）。
+ac_fixture="$(cat <<'EOF'
+## 受入基準
+
+- [ ] 親A
+  - [ ] 子A-1
+- [ ] B
+
+## 完了条件
+
+- [ ] C
+EOF
+)"
+ac_out="$(printf '%s\n' "$ac_fixture" | bash "$EXTRACT_SCRIPT" --stdin 2>/dev/null)"
+assert_eq "(A-5) ネスト行は数えない・完了条件も同一連番（件数=3）" "3" \
+  "$(printf '%s' "$ac_out" | jq -r '.criteria | length')"
+assert_eq "(A-5) 2番目の対象行はネストを飛ばした B（AC-2）" "AC-2:B" \
+  "$(printf '%s' "$ac_out" | jq -r '.criteria[1] | "\(.id):\(.text)"')"
+assert_eq "(A-5) 「## 完了条件」配下の C は AC-3" "AC-3:C" \
+  "$(printf '%s' "$ac_out" | jq -r '.criteria[2] | "\(.id):\(.text)"')"
+
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== (B-1) SKILL.md: フェーズ判定の定型文と分岐の正準文 ==="
@@ -229,10 +273,20 @@ assert_skill_contains "SKILL.md に定型文の正本コメントがある" \
   '<!-- 正本: docs/ai-driven-development-strategy.md 5.2 / docs/plugin-path-conventions.md -->'
 
 # 判定入力の基準（本スキル固有の判断）が根拠付きで記録されている。
-assert_skill_contains "SKILL.md が判定器への入力を手元 checkout とする判断を明記する" \
-  '**判定器への入力は手元 checkout（引数なしの実行）でよい（本スキル固有の判断）**'
+assert_skill_contains "SKILL.md が判定器への入力をリポジトリルートの明示引数と規定する" \
+  '**判定器への入力は「手元 checkout のリポジトリルートの `CLAUDE.md`」を明示引数で渡す（本スキル固有・重要）**'
 assert_skill_contains "SKILL.md が手元基準の根拠（到達先 base が存在しない）を明記する" \
   '「実装が到達する base」がまだ存在しない（対象 Issue・base ブランチとも未確定）'
+assert_skill_contains "SKILL.md がルート明示の根拠（cwd 優先解決による陰り）を明記する" \
+  'リポジトリルートの GDD 宣言が影に隠れて `sdd`（`no_phase_section`）と**正常系のまま誤判定され、GDD の追加挙動が黙ってスキップされる**'
+assert_skill_contains "SKILL.md がルート解決の方法を規定する" \
+  '`git rev-parse --show-toplevel` でリポジトリルートを解決する。解決できない場合（git リポジトリでない等）のみ引数なしで実行し'
+assert_skill_contains "SKILL.md がルートに CLAUDE.md が無い場合を no_claude_md と同義に規定する" \
+  '判定器の `no_claude_md` と同じ意味（宣言なし＝`sdd`）として扱い、従来どおり進む'
+assert_skill_contains "SKILL.md が明示引数のランチャー実行形を規定する" \
+  'claude-harness-run detect-dev-phase "<リポジトリルート>/CLAUDE.md"'
+assert_skill_contains "SKILL.md が判定器を迂回しない原則を維持する" \
+  '**判定器を迂回しない**——フェーズの解釈は常にスクリプトの出力のみであり、ここで決めるのは判定器への入力だけ'
 
 # フェーズ別の分岐（default-OFF・invalid の停止・gdd の参照ファイル）。
 assert_skill_contains "SKILL.md: sdd は追加挙動なし（参照ファイルも Read しない）" \
@@ -262,9 +316,21 @@ assert_file_contains "設計ドラフトのステータスが P3 全系統実装
 assert_file_not_contains "設計ドラフトに define-feature 未着手の記述が残っていない" "$DRAFT_FILE" \
   'define-feature（§5.2 の GDD 部分）は未着手'
 
-# 掃引の再発防止: define-feature 配下にフェーズ判定を CLAUDE.md 直読みで行うと読める表現が無い。
-phase_grep_leak="$(grep -rn -E 'CLAUDE\.md (の)?(フェーズ)?宣言が (GDD期|SDD期)' "${REPO_ROOT}/skills/define-feature" || true)"
-assert_eq "(B-1) define-feature 配下にフェーズ判定の CLAUDE.md 直読み表現が無い" "" "$phase_grep_leak"
+# 掃引の再発防止（範囲限定）: 「CLAUDE.md の宣言が GDD期/SDD期」型の既知の1言い回しの不在
+# だけを検査する（直読み表現全般の網羅ではない。直読みの一次防衛は上の定型文の逐語 assert と、
+# リポジトリ横断の同型掃引 test-create-ticket-gdd-gate.sh (A-13) が担う。パターンを広げると
+# 正当な記述——定型文自身の「CLAUDE.md を自分で grep しないこと」やスクリプト既定動作の説明——を
+# 誤検出するため、語彙は広げず assert 名を検査範囲に合わせて縮小した）。
+leak_re='CLAUDE\.md (の)?(フェーズ)?宣言が (GDD期|SDD期)'
+phase_grep_leak="$(grep -rn -E "$leak_re" "${REPO_ROOT}/skills/define-feature" || true)"
+assert_eq "(B-1) define-feature 配下に「CLAUDE.md の宣言が GDD期/SDD期」型の直読み表現が無い" "" "$phase_grep_leak"
+# 検出器の自己検査（パターンが壊れて全件素通り＝空虚な真になっていないこと）。
+if printf '%s\n' 'CLAUDE.md のフェーズ宣言が GDD期 なら' | grep -qE "$leak_re"; then
+  leak_detector="works"
+else
+  leak_detector="broken"
+fi
+assert_eq "(B-1) 直読み表現の検出器が既知の言い回しに一致する（自己検査）" "works" "$leak_detector"
 
 # ---------------------------------------------------------------------------
 echo ""
@@ -279,6 +345,8 @@ assert_tpl_contains "テンプレートが書き方の正本（参照ファイ�
   'skills/define-feature/references/planned-guarantees.md'
 assert_tpl_contains "テンプレートが材料としての位置づけと採番の下流委譲を明記する" \
   '保証 ID の採番・公開面の最終判定・裁可は `/create-ticket` 以降の手順が担う'
+assert_tpl_contains "テンプレートが自動転記・引き継ぎ機構の不在を明記する（下流挙動の過剰主張をしない）" \
+  '**参照できる材料**（自動転記・引き継ぎの機構は無い）'
 assert_tpl_contains "テンプレートが保証 ID の記入を禁止する" \
   '**保証 ID（`G-...`）はここに書かない**'
 assert_tpl_contains "テンプレートの行書式が AC 対応注記を持つ" \
@@ -286,7 +354,9 @@ assert_tpl_contains "テンプレートの行書式が AC 対応注記を持つ"
 assert_tpl_contains "テンプレートに判定保留候補の行書式がある" \
   '- 判定保留候補: {公開面か内部実装か判断が付かなかった振る舞い}（{迷った理由}）'
 assert_tpl_contains "テンプレートに0件時の「- なし」規約（削除と区別）がある" \
-  '公開面に相当する受入基準が無い場合は `- なし` の1行だけを書く（セクションは削除しない。「調べた結果0件」と「調べていない」を区別するため）。'
+  '確定した公開面（約束文の行）が無い場合は `- なし` の行を書く（セクションは削除しない。「調べた結果0件」と「調べていない」を区別するため）。'
+assert_tpl_contains "テンプレートが「- なし」と判定保留候補の共存（併記）を規定する" \
+  '判定保留候補の行がある場合も `- なし` を省略せず併記する'
 
 # 実 ID がテンプレートに現れない（採番の単一経路をテンプレートが破らない）。
 tpl_real_ids="$(grep -n -E 'G-[0-9]+-[0-9]+' "$TPL_FILE" || true)"
@@ -331,23 +401,35 @@ assert_ref_contains "参照ファイルが公開面の1問を持つ" "$public_qu
 assert_file_contains "戦略ドキュメント（線引きの正本）にも同じ1問が存在する" "$STRATEGY_FILE" "$public_question"
 assert_file_contains "消費側（guarantee-section.md 共通-3）にも同じ1問が存在する" "$CONSUMER_FILE" "$public_question"
 
-# AC 対応注記: 通しIDの正本参照と、複数 AC 列挙形が下流の受理形と一致。
-assert_ref_contains "参照ファイルが AC 通しIDの正本を指す（別の採番規則を作らない）" \
-  '通しIDの正本は `scripts/specs/extract-acceptance-criteria.md`'
-assert_file_contains "AC 通しIDの正本ファイルが通しIDを定義している" "$AC_SPEC_FILE" '通しID'
+# AC 対応注記: 採番規則の正本参照・要点の逐語転記・複数 AC 列挙形が下流の受理形と一致。
+assert_ref_contains "参照ファイルが AC 採番規則の正本（スクリプト入出力仕様）を指す" \
+  '**採番規則の正本はスクリプトの入出力仕様 `scripts/specs/extract-acceptance-criteria.md`**'
+# 要点の転記は正本と逐語で一致させる（散文とスクリプトで2規則を作らない。実挙動は A-5 で固定）。
+ac_scope_grammar='「## 受入基準」または「## 完了条件」セクション配下の `- [ ]` / `- [x]` チェックリスト行（インデント付きのネスト行は対象外）'
+assert_ref_contains "参照ファイルの採番対象（列0のみ・完了条件を含む）が正本と逐語一致する" "$ac_scope_grammar"
+assert_file_contains "AC 採番規則の正本にも同じ採番対象の記述が存在する" "$AC_SPEC_FILE" "$ac_scope_grammar"
+ac_serial_grammar='両セクションが同一本文に存在する場合は連番で通しIDを振る'
+assert_ref_contains "参照ファイルの通し連番規則が正本と逐語一致する" "$ac_serial_grammar"
+assert_file_contains "AC 採番規則の正本にも同じ通し連番規則が存在する" "$AC_SPEC_FILE" "$ac_serial_grammar"
 ac_multi='（受入基準 AC-1, AC-2 に対応）'
 assert_ref_contains "参照ファイルの複数 AC 列挙の例が下流の受理形と同形" "$ac_multi"
 assert_file_contains "下流（guarantee-gate.md）が同じ複数 AC 列挙形を受理する" "$GATE_FILE" "$ac_multi"
 assert_ref_contains "参照ファイルが受入基準の編集時に注記の振り直しを義務付ける" \
-  '**受入基準を追加・削除・並べ替えたら、この注記の番号を必ず振り直す**'
+  '**受入基準・完了条件のチェックリストを追加・削除・並べ替え・ネスト変更したら、この注記の番号を必ず振り直す**'
 
 # 採番の単一経路・迷いの扱い・0件の扱い・機械処理対象外の明示。
 assert_ref_contains "参照ファイルが保証 ID の記入を禁止し採番の単一経路を指す" \
   '**保証 ID（`G-...`）を書かない**。採番は宣言元 Issue の裁可が唯一の経路であり（採番の単一経路）'
 assert_ref_contains "参照ファイルが迷った場合の判定保留候補（どちらへも倒さない）を規定する" \
   '**判断に迷ったものはどちらへも倒さず**、`- 判定保留候補: {内容}（{迷った理由}）` の1行として節内に残す'
+assert_ref_contains "参照ファイルが判定保留候補の自動引き継ぎ機構の不在を明記する（下流挙動を断定しない）" \
+  '**材料として参照できる**が、**自動で引き継がれる機構は無い**（下流は独自に公開面判定を行う）'
+assert_ref_contains "参照ファイルが節の位置づけ（参照できる材料・引き継ぎ機構なし）を明記する" \
+  '**参照できる材料**である（**自動転記・引き継ぎの機構は無い**。下流は保証節を受入基準・台帳・公開面判定から独自に組み立てる規定であり'
 assert_ref_contains "参照ファイルが0件時の「- なし」（削除しない・空欄にしない）を規定する" \
-  '公開面に相当する受入基準が1件も無い場合のみ `- なし` の1行だけを書く（節を削除しない・空欄にしない。「調べた結果0件」と「調べていない」を区別する）'
+  '**確定した公開面（約束文の行）が1件も無い場合は `- なし` の行を書く**（節を削除しない・空欄にしない。「調べた結果0件」と「調べていない」を区別する）'
+assert_ref_contains "参照ファイルが「- なし」と判定保留候補の共存（確定0件でも保留候補を削らない）を規定する" \
+  '**`- なし` と判定保留候補の行は共存できる**——確定0件で迷いだけが残る場合は `- なし` と判定保留候補の両方を書く'
 assert_ref_contains "参照ファイルが本節を機械処理の対象外と明示する（下流の自動読取を約束しない）" \
   'この節は下流の**機械処理の対象ではない**'
 
