@@ -113,30 +113,39 @@ main() {
   local owner="$REPO_OWNER" repo="$REPO_NAME"
 
   local source="" children_json="[]"
+  # 各取得経路が「照会に成功した」（gh が成功し、出力を正規化できた。結果が空配列で
+  # あることは成功に含む）かどうかを記録する。0件の結果を「検査した結果の0件」
+  # （no_children_found）と「検査不能」（children_lookup_failed）に区別するための入力。
+  local sub_lookup_ok="false" fallback_lookup_ok="false"
 
   local sub_raw
   if sub_raw=$(fetch_sub_issues_json "$parent" "$owner" "$repo"); then
     local normalized
     normalized=$(normalize_sub_issues_json "$sub_raw")
-    if [ -n "$normalized" ] && [ "$(jq 'length' <<<"$normalized" 2>/dev/null)" != "0" ]; then
-      source="sub_issues_api"
-      children_json="$normalized"
+    if [ -n "$normalized" ]; then
+      sub_lookup_ok="true"
+      if [ "$(jq 'length' <<<"$normalized" 2>/dev/null)" != "0" ]; then
+        source="sub_issues_api"
+        children_json="$normalized"
+      fi
     fi
   fi
 
-  # sub_issues_api経路が使えなかった（gh api失敗、または空配列）場合はフォールバックへ。
+  # sub_issues_api経路で子が得られなかった（gh api失敗、または空配列）場合はフォールバックへ。
   if [ -z "$source" ]; then
     # フォールバックは常に最終的に採用された経路として source に記録する
     # （フォールバックも空だった場合を含む。「見つからなかった」という事実そのものは、
-    # 後段の status: no_children_found が明示するため、source はどの経路を最後に
-    # 試みたかの記録に留める）。
+    # 後段の status が明示するため、source はどの経路を最後に試みたかの記録に留める）。
     source="parent_label_fallback"
     local fallback_raw
     if fallback_raw=$(fetch_fallback_issues_json "$parent" "$owner" "$repo"); then
       local normalized_fb
       normalized_fb=$(normalize_fallback_issues_json "$fallback_raw")
-      if [ -n "$normalized_fb" ] && [ "$(jq 'length' <<<"$normalized_fb" 2>/dev/null)" != "0" ]; then
-        children_json="$normalized_fb"
+      if [ -n "$normalized_fb" ]; then
+        fallback_lookup_ok="true"
+        if [ "$(jq 'length' <<<"$normalized_fb" 2>/dev/null)" != "0" ]; then
+          children_json="$normalized_fb"
+        fi
       fi
     fi
   fi
@@ -148,7 +157,15 @@ main() {
   [ -z "$children_count" ] && children_count="0"
 
   if [ "$children_count" = "0" ]; then
-    status="no_children_found"
+    # 0件は「検査した結果の0件」と「検査不能」を区別する。no_children_found を名乗れる
+    # のは両経路（sub-issues API と本文検索）が照会に成功したうえでの0件だけ。どちらか
+    # の照会が失敗した0件は children_lookup_failed とし、「子がいない」ことの証明に
+    # 使わせない（一時的な取得失敗を『未分解』『サブタスクなし』へ黙って丸めない）。
+    if [ "$sub_lookup_ok" = "true" ] && [ "$fallback_lookup_ok" = "true" ]; then
+      status="no_children_found"
+    else
+      status="children_lookup_failed"
+    fi
     final_children="[]"
   else
     # フォールバック検索の結果件数が明示上限に達した場合、それより多い子が

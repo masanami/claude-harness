@@ -88,7 +88,7 @@ fi
 1. `git fetch origin {base}` を実行する（失敗した場合は判定不能として中断する。`sdd` に読み替えない）
 2. `git cat-file -e "origin/{base}:CLAUDE.md"` で `CLAUDE.md` の存在を確認する。存在しない場合は判定器の `no_claude_md` と同じ意味（宣言なし＝`sdd`）として扱い、従来どおりゲートなしで進む（この存在確認はフェーズ文法の解釈ではない。`CLAUDE.md` の中身を自分で読む・grep することは引き続き行わない）
 3. 存在する場合は `git show "origin/{base}:CLAUDE.md"` を一時ファイルへ書き出し、`claude-harness-run detect-dev-phase "<一時ファイルのパス>"` で判定する（`invalid`・実行不能の扱いは上記の定型文のとおり）
-4. base が Issue ごとに異なる場合は base ごとに判定し、**`gdd` の base に属する Issue にのみ裁可ゲートを適用する**（1件でも `invalid`・判定不能の base があれば全体を中断する）
+4. base が Issue ごとに異なる場合は base ごとに判定し、**`gdd` の base に属する Issue にのみ裁可ゲートを適用する**（1件でも `invalid`・判定不能の base があれば全体を中断する）。**混在時に `gdd` 側で裁可ゲートの停止が出た場合も、停止は起動全体——`sdd` の base に属する Issue を含む全 Issue——に適用する**（部分実行しない。`guarantee-gate.md` 1-c と同じ理由）。停止時の報告（1-d）には `sdd` 側の Issue も `判定: 対象外（base が SDD期）` として列挙する（黙って落とさない）
 
 **判定の基準を base に置く理由**: 裁可ゲートが守るのは実装が到達するコードベース（base ブランチ）の開発規律であり、手元 checkout の状態は偶然（別作業の残り・古い既定ブランチ）でありうる。**base が SDD なら手元が GDD 宣言でも従来どおり挙動を変えない**（SDD期不変＝default-OFF の原則は「対象（base）が SDD なら不変」を意味する）。Phase 3 以降の各層（feature-implementer・`/quality-check` の GDD ゲート）は checkout 済みの base 内容を読むため、この判定基準と整合する。
 
@@ -167,7 +167,7 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 |---|---|
 | 通常完了 | Phase 6（コミット）へ |
 | `failure`（`/quality-check` 3回反復しても通らない） | 当該チケットをスキップ。並列モードでは他 worker は継続 |
-| クリティカル設計の逸脱検知で Phase 2 停止（GDD期の保証逸脱——維持する保証への抵触——も同じパスで返る） | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（**想定外のスコープ拡大を検知した場合のみ**） |
+| クリティカル設計の逸脱検知で Phase 2 停止（GDD期の保証逸脱——維持する保証への抵触——、保証節の読み取り不能・フェーズ判定 `invalid` による停止も同じパスで返る） | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（**この動作は同パスで返るすべての停止に適用する**。headless の場合は「判断待ち」として完了報告に明記する） |
 
 ### Phase 6: コミット
 

@@ -204,17 +204,54 @@ echo "=== main: (c') フォールバック経路（sub_issues APIが空配列を
   assert_eq "children 1件" "1" "$(jq '.children | length' <<<"$output")"
 }
 
-echo "=== main: (d) 子Issue0件（両経路とも空） ==="
+echo "=== main: (d) 子Issue0件（両経路とも照会成功で空＝検査した結果の0件） ==="
 {
+  reset_stubs
+  SUB_ISSUES_EXIT=0
+  SUB_ISSUES_RESULT='[]'
+  FALLBACK_ISSUES_RESULT='[]'
+
+  output=$(main "52")
+  assert_eq "両経路成功の0件: statusはno_children_found" "no_children_found" "$(jq -r '.status' <<<"$output")"
+  assert_eq "childrenは空配列" "0" "$(jq '.children | length' <<<"$output")"
+  assert_eq "allMergedは暗黙にtrueにせずfalse" "false" "$(jq -r '.allMerged' <<<"$output")"
+}
+
+echo "=== main: (d') 0件だが照会失敗を含む＝検査不能（0件に丸めない） ==="
+{
+  # sub-issues API が失敗（404等）・フォールバックは成功で空: 子がいないことを証明できない
   reset_stubs
   SUB_ISSUES_EXIT=1
   SUB_ISSUES_RESULT=""
   FALLBACK_ISSUES_RESULT='[]'
 
   output=$(main "52")
-  assert_eq "statusはno_children_found" "no_children_found" "$(jq -r '.status' <<<"$output")"
+  assert_eq "sub失敗+fallback空: statusはchildren_lookup_failed（no_children_foundに丸めない）" \
+    "children_lookup_failed" "$(jq -r '.status' <<<"$output")"
   assert_eq "childrenは空配列" "0" "$(jq '.children | length' <<<"$output")"
-  assert_eq "allMergedは暗黙にtrueにせずfalse" "false" "$(jq -r '.allMerged' <<<"$output")"
+  assert_eq "allMergedはfalse" "false" "$(jq -r '.allMerged' <<<"$output")"
+
+  # sub は成功で空・フォールバックの照会が失敗: 同じく検査不能
+  reset_stubs
+  SUB_ISSUES_EXIT=0
+  SUB_ISSUES_RESULT='[]'
+  FALLBACK_ISSUES_EXIT=1
+  FALLBACK_ISSUES_RESULT=""
+
+  output=$(main "52")
+  assert_eq "sub空+fallback失敗: statusはchildren_lookup_failed" \
+    "children_lookup_failed" "$(jq -r '.status' <<<"$output")"
+
+  # 両経路とも照会失敗
+  reset_stubs
+  SUB_ISSUES_EXIT=1
+  SUB_ISSUES_RESULT=""
+  FALLBACK_ISSUES_EXIT=1
+  FALLBACK_ISSUES_RESULT=""
+
+  output=$(main "52")
+  assert_eq "両経路失敗: statusはchildren_lookup_failed" \
+    "children_lookup_failed" "$(jq -r '.status' <<<"$output")"
 }
 
 echo "=== main: (e) フォールバック件数=上限は fallback_truncated（打ち切りの可能性を成功に丸めない） ==="

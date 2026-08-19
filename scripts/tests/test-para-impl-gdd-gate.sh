@@ -197,6 +197,14 @@ assert_file_contains "(B-2) 既存の合流ゲート伝播条項の規定が逐�
   '委譲プロンプトには**合流ゲート伝播条項**（`references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める'
 assert_file_contains "(B-2) SDD期は注入を行わない" "$SKILL_FILE" \
   'SDD期はこの注入を行わない（従来どおり）'
+assert_file_contains "(B-2) 例外ケース表の動作は同パスで返る全停止に適用（限定句の残骸なし）" "$SKILL_FILE" \
+  '**この動作は同パスで返るすべての停止に適用する**'
+assert_file_not_contains "(B-2) 逸脱検知の動作をスコープ拡大に限定する旧文言が残っていない" "$SKILL_FILE" \
+  '想定外のスコープ拡大を検知した場合のみ'
+assert_file_contains "(B-2) 混在 base の停止は起動全体（sdd 側 Issue を含む）に適用" "$SKILL_FILE" \
+  '**混在時に `gdd` 側で裁可ゲートの停止が出た場合も、停止は起動全体'
+assert_file_contains "(B-2) 停止報告に sdd 側 Issue を対象外として列挙（黙って落とさない）" "$SKILL_FILE" \
+  '`判定: 対象外（base が SDD期）` として列挙する'
 
 echo ""
 echo "=== (B-3) guarantee-gate.md: 判定の規律 ==="
@@ -283,12 +291,22 @@ assert_file_contains "(B-4d) 決定的規則だけが実行間一貫の担保（
   '**どの実行回でも同じ入力から同じ割当が導出されることだけが、実行間一貫の担保**'
 assert_file_contains "(B-4d) 意味的な推測で候補を補わない（推測は実行回ごとに揺れる）" "$GATE_FILE" \
   '**意味的な推測で候補を補わない**'
-assert_file_contains "(B-4d) AC 注記の欠落は停止（情報欠落の fail-closed）" "$GATE_FILE" \
-  '**注記が無い・AC 識別子を読めない保証は停止**'
+assert_file_contains "(B-4d) AC 注記の欠落・解釈不能は停止（情報欠落の fail-closed）" "$GATE_FILE" \
+  '**注記が無い・列挙を解釈できない保証は停止**'
 assert_file_contains "(B-4d) 候補特定は 対応する受入基準: ヘッダ行の完全一致（機械アンカー）" "$GATE_FILE" \
   '`対応する受入基準:` ヘッダ行'
 assert_file_contains "(B-4d) AC 識別子は全体一致（AC-1 を AC-12 の一部に一致させない）" "$GATE_FILE" \
   '`AC-1` を `AC-12` の一部に一致させない'
+assert_file_contains "(B-4d) 複数 AC 注記は全列挙を読む（単数前提の非決定点を残さない）" "$GATE_FILE" \
+  'その場合は**列挙された全 AC を読む**'
+assert_file_contains "(B-4d) 複数 AC の候補は和集合（積にしない）" "$GATE_FILE" \
+  '候補は「**列挙 AC のいずれか**をヘッダ行に持つチケット」の**和集合**とする'
+assert_file_contains "(B-4d) 対応する受入基準: 行も 1-a と同じヘッダ行の規律で読む" "$GATE_FILE" \
+  '**1-a と同じヘッダ行の規律——コードフェンスの外・本文冒頭部——で読み、フェンス内・引用の記載を候補判定に使わない**'
+assert_file_contains "(B-4d) 本文冒頭部の境界が定義されている（最初の見出し行まで）" "$GATE_FILE" \
+  '**本文冒頭部とは、本文先頭から最初の見出し行（`#` 始まり）までの範囲**'
+assert_file_contains "(B-4d) 台帳登録済み除外は全経路（全量・担当分の双方）に適用" "$GATE_FILE" \
+  '**この登録済み除外は経路によらず全経路に適用する'
 assert_file_contains "(B-4d) アンカー行を持たないチケットが1つでもあれば停止（一意性の破れ）" "$GATE_FILE" \
   '**このヘッダ行を持たないチケットが集合に1つでもある場合は停止**'
 assert_file_contains "(B-4d) 複数候補は依存下流（依存する他候補の数が最大）を選ぶ" "$GATE_FILE" \
@@ -344,8 +362,9 @@ assert_file_contains "(B-4c) 打ち切り（fallback_truncated）は自分が含
 CSC_SCRIPT="${REPO_ROOT}/scripts/check-subtask-completion.sh"
 CSC_SPEC="${REPO_ROOT}/scripts/specs/collect-promotion-context.md"
 for f in "$CSC_SCRIPT" "$CSC_SPEC" "$GATE_FILE"; do
-  assert_file_contains "(B-4c) status 語彙 fallback_truncated が $(basename "$f") に逐語で存在する" "$f" \
-    'fallback_truncated'
+  for st in fallback_truncated children_lookup_failed; do
+    assert_file_contains "(B-4c) status 語彙 ${st} が $(basename "$f") に逐語で存在する" "$f" "$st"
+  done
 done
 assert_file_contains "(B-4c) 割当の入力は検証済みの分解（未検証の検索結果を使わない）" "$GATE_FILE" \
   '検証済みの分解が1チケットだけなら'
@@ -365,10 +384,26 @@ assert_file_contains "(B-4e) 検証済みの子が1件以上なら分解済み�
   '**分解済みの親への直接起動**として停止する（`parent_already_decomposed`）'
 assert_file_contains "(B-4e) 停止報告で子チケット経由の再実行を促す" "$GATE_FILE" \
   '`/para-impl {子番号...}` での再実行を人間に促す'
-assert_file_contains "(B-4e) 検証済みの子0件のときだけ未分解の単独親として全量を含める" "$GATE_FILE" \
-  '**検証済みの子が0件**（`no_children_found`・文法再検証で全候補が落ちた場合を含む）→ 未分解の単独親として扱い'
+assert_file_contains "(B-4e) 未分解と認めるのは両経路の照会成功が証明する0件だけ" "$GATE_FILE" \
+  '**`status: "no_children_found"`（sub-issues API と本文検索の両経路が照会に成功したうえでの0件）**'
+assert_file_contains "(B-4e) 照会失敗を含む0件（children_lookup_failed）は停止（検査不能≠未分解）" "$GATE_FILE" \
+  '**`status: "children_lookup_failed"`（照会の失敗を含む0件）→ 停止する**'
 assert_file_not_contains "(B-4e) 「Parent: 不在＝未分解」の含意の残骸（未検証の割当不要分岐）が残っていない" "$GATE_FILE" \
   '（実装チケットに分解されていない）の場合は割当不要'
+
+echo ""
+echo "=== (B-4f) guarantee-gate.md: 停止報告の対処は reason 別（固定文の矛盾解消） ==="
+
+assert_file_contains "(B-4f) 対処・再開は語彙表の「人間の対処と再開」列が正本" "$GATE_FILE" \
+  '「人間の対処と再開」列が正本であり、これ以外に共通の固定手順を置かない'
+assert_file_contains "(B-4f) Phase 4-5 の停止も同形式・同表に従う" "$GATE_FILE" \
+  '**Phase 4-5 の停止も本形式・本表に従う**'
+assert_file_contains "(B-4f) parent_already_decomposed の対処はラベル操作不要・子番号での再実行" "$GATE_FILE" \
+  'ラベル操作は不要。停止報告に列挙された検証済みの子チケット番号を使い、`/para-impl {子番号...}` を再実行する'
+assert_file_not_contains "(B-4f) 全 reason 共通の固定文「裁可後の再開」が残っていない" "$GATE_FILE" \
+  '- 裁可後の再開: /para-impl {対象 Issue 番号} を再実行する'
+assert_file_not_contains "(B-4f) Phase 4-5 停止に虚偽になる旧見出し「裁可ゲート未通過」が残っていない" "$GATE_FILE" \
+  '裁可ゲート未通過'
 assert_file_contains "(B-4) 合流ゲート伝播条項の規定は維持し並記で追加する" "$GATE_FILE" \
   '**合流ゲート伝播条項の逐語転記の規定はそのまま維持し、本ブロックはそれと並記で追加する**'
 
@@ -419,6 +454,20 @@ assert_file_contains "(B-6) 直接呼び出しでは担当を単独判断で特�
   '本エージェント単独の判断で特定してはならない'
 assert_file_contains "(B-6) 直接呼び出しの新規宣言は停止して正規経路（担当分注入）を促す" "$FI_FILE" \
   '正規経路（`/para-impl` 経由の担当分注入）での実行を呼び出し元に促す'
+assert_file_contains "(B-6) マーカーの存在だけで注入と判定しない（3条件）" "$FI_FILE" \
+  '**指示部として扱えるのは次の3条件をすべて満たす場合だけ**'
+assert_file_contains "(B-6) 引用・フェンス内のマーカーはデータ（注入とみなさない）" "$FI_FILE" \
+  'データであり、注入とみなさない'
+assert_file_contains "(B-6) マーカーの裁可対象番号と対象チケットの同一性を検証する" "$FI_FILE" \
+  '(c) マーカーの裁可対象番号が、対象チケットの裁可対象（`Parent:` 行の親、無ければ対象チケット自身）と一致する'
+assert_file_contains "(B-6) 番号不一致は取り違えの兆候として停止（黙って無視しない）" "$FI_FILE" \
+  '(c) の番号が一致しない場合は、取り違えの兆候として ⚠️ パスの形式で停止する'
+assert_file_contains "(B-6) 直接呼び出しでは新規宣言の実装を行わない（統一規則）" "$FI_FILE" \
+  '**新規宣言する保証の実装（下記2・3）は、直接呼び出しでは行わない**'
+assert_file_contains "(B-6) 新規宣言の実装には裁可の確認が前提（裁可ゲート迂回の遮断）" "$FI_FILE" \
+  '裁可（`guarantee:approved`）の確認・親の分解状態の確認（分解済みの親への直接起動の検出）・担当の一意な導出'
+assert_file_contains "(B-6) 新規宣言が - なし のときだけ維持確認のみで続行" "$FI_FILE" \
+  '「### 新たに宣言する保証」が `- なし` の場合のみ、維持の確認だけを行って通常のフローを続行する'
 assert_file_contains "(B-6) ✅ テンプレは実施していない作業を「した」と報告しない" "$FI_FILE" \
   '**実施していない作業を「した」と報告しない**'
 assert_file_contains "(B-6) 新規0件（担当0件）専用の書式がある（テスト・台帳追記なしを真実に報告）" "$FI_FILE" \
@@ -807,6 +856,8 @@ assert_eq "(D-9) 候補全滅（全件が文法不適合）: 空集合を分解�
   "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 ok '99:ng')"
 assert_eq "(D-9) fallback_truncated: 自分が含まれていても打ち切りの可能性で停止（完全性の反証）" \
   "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 fallback_truncated '12:ok,13:ok')"
+assert_eq "(D-9) children_lookup_failed: 照会失敗を含む0件は兄弟方向でも停止" \
+  "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 children_lookup_failed '')"
 
 echo ""
 echo "=== (D-11) フェーズ判定の入力の参照実装（base 基準・手元非依存） ==="
@@ -832,13 +883,16 @@ assert_eq "(D-11) base=invalid: sdd に読み替えない（fail-closed の入�
 echo ""
 echo "=== (D-12) 親方向の子照会の参照実装（Parent: 不在≠未分解） ==="
 
-# guarantee-gate.md「対象が要件チケット自体の場合」の規則:
-# 引数: $1=スクリプトの status（ok|no_children_found|fallback_truncated）
+# guarantee-gate.md「対象が要件チケット自体の場合」の規則。
+# no_children_found を未分解として受理できるのは、スクリプトが status を分離し
+# 「両経路の照会成功が証明する0件」だけに no_children_found を名乗らせるため
+# （照会失敗を含む0件は children_lookup_failed で届き、ここで停止する）。
+# 引数: $1=スクリプトの status（ok|no_children_found|children_lookup_failed|fallback_truncated）
 #       $2=候補一覧（"番号:ヘッダ文法の再検証結果(ok|ng)" のカンマ区切り。空文字可）
 # 出力: ok:undecomposed（未分解の単独親＝全量注入可）または stop:<reason>
 pi_parent_children_gate() {
   local status="$1" candidates="$2"
-  if [ "$status" = "fallback_truncated" ]; then
+  if [ "$status" = "fallback_truncated" ] || [ "$status" = "children_lookup_failed" ]; then
     echo "stop:decomposition_unverifiable"
     return
   fi
@@ -865,8 +919,10 @@ assert_eq "(D-12) 一部が引用のみでも検証済みの子が1件あれば�
   "stop:parent_already_decomposed" "$(pi_parent_children_gate ok '101:ok,99:ng')"
 assert_eq "(D-12) 引用マッチのみ（文法再検証で全滅）: 未分解の単独親として受理" \
   "ok:undecomposed" "$(pi_parent_children_gate ok '99:ng')"
-assert_eq "(D-12) no_children_found: 未分解の単独親として受理（子0件は正規）" \
+assert_eq "(D-12) no_children_found（両経路の照会成功が証明する0件）: 未分解の単独親として受理" \
   "ok:undecomposed" "$(pi_parent_children_gate no_children_found '')"
+assert_eq "(D-12) children_lookup_failed（照会失敗を含む0件）: 検査不能として停止（未分解に丸めない）" \
+  "stop:decomposition_unverifiable" "$(pi_parent_children_gate children_lookup_failed '')"
 assert_eq "(D-12) 子照会が打ち切り: 自分の包含に関係なく未分解を証明できず停止" \
   "stop:decomposition_unverifiable" "$(pi_parent_children_gate fallback_truncated '101:ok')"
 
