@@ -243,6 +243,18 @@ assert_file_contains "(B-4b) 注入ブロックの新規宣言は担当分だけ
   '**新規宣言する保証は担当割当に従い、当該チケットの担当分の行だけを転記する**'
 assert_file_contains "(B-4b) 割当表を実行計画に出力し注入に接続する（記録だけにしない）" "$GATE_FILE" \
   '記録だけにせず注入に接続する'
+assert_file_contains "(B-4b) 割当の要否は起動形態でなく対象の構造（親の分解）で決める" "$GATE_FILE" \
+  '裁可対象（親）の構造——親が複数の実装チケットに分解されているか——で決める'
+assert_file_contains "(B-4b) 1チケットだけの逐次起動でも分解の全体像で割当を解決する" "$GATE_FILE" \
+  '**分解が複数なら、今回の起動対象が1チケットだけでも、分解の全体像に対して担当割当を解決してから、今回実装するチケットの担当分だけを注入する**'
+assert_file_contains "(B-4b) 分解の全体像は check-subtask-completion で取得する（既存手段の再利用）" "$GATE_FILE" \
+  'claude-harness-run check-subtask-completion {親Issue番号}'
+assert_file_contains "(B-4b) 台帳登録済みの新規宣言は先行チケット担当済みとして再割当しない" "$GATE_FILE" \
+  '先行チケットの実装で担当済み'
+assert_file_contains "(B-4b) 全数検証は今回実装しないチケットも含む分解の全チケットを通して行う" "$GATE_FILE" \
+  '**分解の全チケット（今回実装しないものを含む）を通してちょうど1回**'
+assert_file_contains "(B-4b) SKILL.md 側でも割当の要否は起動形態でなく親の分解の構造で決める" "$SKILL_FILE" \
+  '割当の要否は起動形態でなく親の分解の構造で決める'
 assert_file_contains "(B-4) 合流ゲート伝播条項の規定は維持し並記で追加する" "$GATE_FILE" \
   '**合流ゲート伝播条項の逐語転記の規定はそのまま維持し、本ブロックはそれと並記で追加する**'
 
@@ -289,6 +301,16 @@ assert_file_contains "(B-6) 担当外の新規宣言のテスト・台帳追記�
   '**担当外の新規宣言（ブロックに無い親の保証）のテスト作成・台帳追記を行わない**'
 assert_file_contains "(B-6) 直接呼び出し時は担当分を特定し根拠を明記（全量を黙って実装しない）" "$FI_FILE" \
   '親の新規宣言の全量を黙って実装しない'
+assert_file_contains "(B-6) ✅ テンプレは実施していない作業を「した」と報告しない" "$FI_FILE" \
+  '**実施していない作業を「した」と報告しない**'
+assert_file_contains "(B-6) 新規0件（担当0件）専用の書式がある（テスト・台帳追記なしを真実に報告）" "$FI_FILE" \
+  '`新規 なし（担当0件。テスト・台帳追記のタスクなし）`'
+assert_file_contains "(B-6) 維持なし専用の書式がある" "$FI_FILE" \
+  '`維持 なし（親Issueが「- なし」と明示）`'
+assert_file_contains "(B-6) 維持ありの書式は現行台帳で解決した旨を報告する" "$FI_FILE" \
+  '全{件数}件を現行台帳で解決し抵触なし'
+assert_file_not_contains "(B-6) 0件でもテスト配置・台帳追記を主張する無条件テンプレが残っていない" "$FI_FILE" \
+  '維持 {ID一覧 | なし} — 全{件数}件に抵触なし ／ 新規 {ID一覧 | なし} — 対応テストをテストリスト先頭に配置し'
 assert_file_contains "(B-6) D-13: 新しい停止経路・返却形式を作らない" "$FI_FILE" \
   '保証逸脱のための新しい停止経路・新しい返却形式を作らない'
 assert_file_contains "(B-6) 保証逸脱の警告書式（既存の ⚠️ と同型）" "$FI_FILE" \
@@ -386,9 +408,17 @@ assert_file_contains "(C-4) feature-implementer も文法の正本として guar
 echo ""
 echo "=== (D-1) 判定表・語彙表の構造不変条件 ==="
 
-# 判定表の行数（排他の状態空間）はちょうど5行
-verdict_rows="$(grep -cE '^\| [0-9]+ \| ' "$GATE_FILE")"
+# 判定表の行数（排他の状態空間）はちょうど5行（1-b の判定表の節にスコープして数える）
+verdict_rows="$(awk '/^\*\*判定表（各行は排他/{f=1; next} /^###/{f=0} f && /^\| [0-9]+ \| /{c++} END{print c+0}' "$GATE_FILE")"
 assert_eq "(D-1) 判定表の状態はちょうど5行（増減時は語彙表・停止報告と同時更新）" "5" "$verdict_rows"
+
+# 担当割当の経路の表（対象の構造 × 起動形態）はちょうど6行で、停止経路を含む
+route_rows="$(awk '/^\*\*経路の表（対象の構造/{f=1; next} /^###|^---/{f=0} f && /^\| [0-9]+ \| /{c++} END{print c+0}' "$GATE_FILE")"
+assert_eq "(D-1) 担当割当の経路の表はちょうど6行（受理5＋停止1。増減時は本文と同時更新）" "6" "$route_rows"
+assert_file_contains "(D-1) 経路の表に逐次実行（1チケットだけ起動）の受理経路が明示されている" "$GATE_FILE" \
+  '| 4 | 親が複数チケットに分解 | 1チケットだけ起動（逐次実行） | 必須（分解の全体像で割当を解決してから） | 当該チケットの担当分のみ | 受理 |'
+assert_file_contains "(D-1) 経路の表に割当解決不能の停止経路が明示されている" "$GATE_FILE" \
+  '| 注入しない | **停止**（`guarantee_assignment_unresolvable`） |'
 
 # reason 語彙表はちょうど7コード
 reason_rows="$(grep -cE '^\| `[a-z_]+` \| Phase' "$GATE_FILE")"
@@ -581,6 +611,34 @@ assert_eq "(D-7) ID が現行台帳に無い: 停止（退役・改番済みの�
   "stop:id_absent" "$(pi_keep_resolve readable absent '' '400を返す')"
 assert_eq "(D-7) 文面ドリフト: 停止（旧文面とも新文面とも黙って整合させない）" \
   "stop:statement_drift" "$(pi_keep_resolve readable found '422を返す' '400を返す')"
+
+echo ""
+echo "=== (D-8) 割当要否の参照実装（対象の構造で決める。起動形態は入力にしない） ==="
+
+# guarantee-gate.md「経路の表」と同じ規則: 割当の要否は親の分解の構造（実装チケット数）
+# だけで決まり、今回の起動形態（同時か1件ずつか）は入力に含めない。
+# 引数: $1=親の実装チケット数（0 = 要件チケット自体で分解なし）
+pi_assignment_required() {
+  local children="$1"
+  if [ "$children" -eq 0 ]; then
+    echo "not_required:inject_full"
+  elif [ "$children" -eq 1 ]; then
+    echo "trivial:inject_full"
+  else
+    echo "required:inject_share"
+  fi
+}
+
+assert_eq "(D-8) 経路1: 要件チケット自体（分解なし）は割当不要・全量注入" \
+  "not_required:inject_full" "$(pi_assignment_required 0)"
+assert_eq "(D-8) 経路2: 1チケットのみに分解は自明の割当・全量注入" \
+  "trivial:inject_full" "$(pi_assignment_required 1)"
+assert_eq "(D-8) 経路3/4: 複数チケットに分解は割当必須・担当分のみ注入" \
+  "required:inject_share" "$(pi_assignment_required 3)"
+# 起動形態の非依存: 同じ構造なら同時実装でも1チケット逐次でも同じ判定になる
+# （関数が起動形態を入力に取らないこと自体が規則の写しであり、ここで固定する）
+assert_eq "(D-8) 分解済み親への1チケット逐次起動と複数同時起動で判定が変わらない" \
+  "$(pi_assignment_required 3)" "$(pi_assignment_required 3)"
 
 # ---------------------------------------------------------------------------
 echo ""
