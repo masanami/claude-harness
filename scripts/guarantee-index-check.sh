@@ -9,6 +9,7 @@
 # - 各保証のテスト参照 `<パス>::<テスト名>` について、ファイルの存在とテスト名文字列の出現
 # - 保証 ID / GAP ID の重複（採番の単一経路が破れたときの検出。人間の目視に頼らない）
 # - 保証見出しの ID 書式・テスト参照の書式・テスト参照を1つも持たない保証
+# - 宣言元行（`- 宣言元: #<番号>` / `裁可待ち`）の存在・書式・重複
 #
 # 設計上の要点（正本の再掲ではなく、実装を読む人向けの注記）:
 # - 意味ドリフト（約束の文言とテストの実際の検証内容の乖離）はここでは検知しない。
@@ -17,6 +18,9 @@
 #   節名の変更・ファイルの取り違えで全保証が黙って未検査になり、索引ゲートが素通りする
 #   （＝壊れた索引が pass に見える）事故を防ぐため。
 # - コードフェンス内の記述は検査対象にしない（台帳が書式例を引用していても誤検出しない）。
+# - 読み取った保証の一覧（ID・約束文・テスト参照・宣言元）を `guarantees` として出力する。
+#   台帳の読み取り規則の正本を本スクリプト1箇所に集約し、呼び出し側（スキルの散文）が
+#   同じ台帳を別の規則で読み直す状態（＝同じものを2つの規則で読む）を作らないため。
 
 set -u
 
@@ -41,6 +45,8 @@ GIC_H1_RE='^#[[:space:]]+(.+)$'
 GIC_H3_RE='^###[[:space:]]+(.+)$'
 GIC_GUARANTEE_ID_RE='^(G-[0-9]+-[0-9]+)[[:space:]]*(:|：)[[:space:]]*(.*)$'
 GIC_TEST_FIELD_RE='^[[:space:]]*[-*][[:space:]]+\*{0,2}テスト\*{0,2}[[:space:]]*(:|：)[[:space:]]*(.+)$'
+GIC_PROV_FIELD_RE='^[[:space:]]*[-*][[:space:]]+\*{0,2}宣言元\*{0,2}[[:space:]]*(:|：)[[:space:]]*(.*)$'
+GIC_PROV_ISSUE_RE='^#([0-9]+)$'
 GIC_GAP_RE='^[[:space:]]*[-*][[:space:]]+\[[[:space:]xX]\][[:space:]]*(GAP-[0-9]+)[[:space:]]*(:|：)'
 # Gaps 節のチェックリスト行すべて。GIC_GAP_RE に合致しないものは書式違反として検出するため、
 # 「GAP 行の候補」を先に広く拾う（`GAP-?-1` のような不正 ID が件数にも問題一覧にも現れず、
@@ -50,10 +56,15 @@ GIC_GAP_CHECKLIST_RE='^[[:space:]]*[-*][[:space:]]+\[[[:space:]xX]\][[:space:]]*
 # コマンド置換を意図していない。単一引用符のまま保持する必要がある
 GIC_BACKTICK_RE='`([^`]+)`'
 
+# 裁可前のドラフトで宣言元の代わりに書かれる規約文字列（docs/ai-driven-development-strategy.md 5.3）
+GIC_PROV_PENDING_LITERAL="裁可待ち"
+
 # 走査結果の受け皿。bash 3.2 では未代入の配列を `"${arr[@]}"` で展開すると set -u が
 # unbound variable として落とすため、トップレベルで空配列として宣言しておく。
 GIC_REFS=()
 GIC_ISSUES=()
+GIC_GUARANTEES=()
+GIC_ALL_REFS=()
 
 # 前後の空白を除去する。
 gic_trim() {
@@ -69,10 +80,36 @@ gic_add_issue() {
   GIC_ISSUES+=("${1}"$'\t'"${2}"$'\t'"${3}")
 }
 
+# 直前まで読んでいた保証を1件閉じる。テスト参照ゼロ件・宣言元行の欠落／書式違反を
+# ここで一括して検出し、読み取り結果を GIC_GUARANTEES へ1件積む。
+# 呼び出し側は本関数を呼んだ直後に current_* を初期化すること。
+# 引数: <通し番号> <保証ID> <約束文> <テスト参照件数> <宣言元kind> <宣言元Issue番号>
+gic_close_guarantee() {
+  local seq="$1" id="$2" statement="$3" ref_count="$4" prov_kind="$5" prov_issue="$6"
+
+  # ID 書式を満たさない見出し（malformed_guarantee_id）は seq を持たない。
+  # 見出しとしては counts.guarantees に数えるが、読み取り結果には積まない。
+  [ -z "$seq" ] && return 0
+
+  if [ "$ref_count" -eq 0 ]; then
+    gic_add_issue "$id" "" "missing_test_ref"
+  fi
+
+  case "$prov_kind" in
+    missing) gic_add_issue "$id" "" "missing_provenance" ;;
+    malformed) gic_add_issue "$id" "" "malformed_provenance" ;;
+  esac
+
+  GIC_GUARANTEES+=("${seq}"$'\t'"${id}"$'\t'"${statement}"$'\t'"${prov_kind}"$'\t'"${prov_issue}")
+  return 0
+}
+
 # 台帳本文をスキャンし、結果を以下のグローバル変数へ格納する。
 #   GIC_HAS_GUARANTEE_SECTION : "true" | "false"
 #   GIC_GUARANTEE_COUNT / GIC_GAP_COUNT / GIC_REF_COUNT : 件数
 #   GIC_REFS   : "保証ID\tテスト参照" の配列（実ファイル検査の対象）
+#   GIC_ALL_REFS : "通し番号\tテスト参照" の配列（書式違反を含む全参照。出力の tests 用）
+#   GIC_GUARANTEES : "通し番号\t保証ID\t約束文\t宣言元kind\t宣言元Issue番号" の配列
 #   GIC_ISSUES : "保証ID\tテスト参照\t理由コード" の配列（書式・重複の問題）
 # 引数: 台帳本文テキスト
 gic_scan() {
@@ -84,7 +121,13 @@ gic_scan() {
   local fence_len=0
   local section="none" # none | guarantees | gaps | other
   local current_id=""
+  local current_seq=""
+  local current_statement=""
   local current_ref_count=0
+  local current_prov_kind="missing" # missing | issue | pending | malformed
+  local current_prov_issue=""
+  local current_prov_count=0
+  local guarantee_seq=0
   # bash 3.2 に連想配列が無いため、出現済み ID は改行区切りの文字列で保持する
   local seen_guarantee_ids=""
   local seen_gap_ids=""
@@ -94,6 +137,8 @@ gic_scan() {
   GIC_GAP_COUNT=0
   GIC_REF_COUNT=0
   GIC_REFS=()
+  GIC_ALL_REFS=()
+  GIC_GUARANTEES=()
   GIC_ISSUES=()
 
   while IFS= read -r line; do
@@ -116,12 +161,16 @@ gic_scan() {
 
     if [[ "$line" =~ $GIC_H2_RE ]]; then
       heading="$(gic_trim "${BASH_REMATCH[1]}")"
-      # 直前の保証を閉じる（テスト参照ゼロ件の検出）
-      if [ -n "$current_id" ] && [ "$current_ref_count" -eq 0 ]; then
-        gic_add_issue "$current_id" "" "missing_test_ref"
-      fi
+      # 直前の保証を閉じる（テスト参照ゼロ件・宣言元の欠落／書式違反の検出）
+      gic_close_guarantee "$current_seq" "$current_id" "$current_statement" \
+        "$current_ref_count" "$current_prov_kind" "$current_prov_issue"
       current_id=""
+      current_seq=""
+      current_statement=""
       current_ref_count=0
+      current_prov_kind="missing"
+      current_prov_issue=""
+      current_prov_count=0
       case "$heading" in
         保証*)
           section="guarantees"
@@ -138,22 +187,30 @@ gic_scan() {
     fi
 
     if [[ "$line" =~ $GIC_H1_RE ]]; then
-      if [ -n "$current_id" ] && [ "$current_ref_count" -eq 0 ]; then
-        gic_add_issue "$current_id" "" "missing_test_ref"
-      fi
+      gic_close_guarantee "$current_seq" "$current_id" "$current_statement" \
+        "$current_ref_count" "$current_prov_kind" "$current_prov_issue"
       current_id=""
+      current_seq=""
+      current_statement=""
       current_ref_count=0
+      current_prov_kind="missing"
+      current_prov_issue=""
+      current_prov_count=0
       section="none"
       continue
     fi
 
     if [[ "$line" =~ $GIC_H3_RE ]]; then
       heading="$(gic_trim "${BASH_REMATCH[1]}")"
-      if [ -n "$current_id" ] && [ "$current_ref_count" -eq 0 ]; then
-        gic_add_issue "$current_id" "" "missing_test_ref"
-      fi
+      gic_close_guarantee "$current_seq" "$current_id" "$current_statement" \
+        "$current_ref_count" "$current_prov_kind" "$current_prov_issue"
       current_id=""
+      current_seq=""
+      current_statement=""
       current_ref_count=0
+      current_prov_kind="missing"
+      current_prov_issue=""
+      current_prov_count=0
 
       if [ "$section" != "guarantees" ]; then
         # 「保証」節の外に置かれた保証見出しは黙って未検査にせず問題として報告する
@@ -166,6 +223,9 @@ gic_scan() {
       GIC_GUARANTEE_COUNT=$((GIC_GUARANTEE_COUNT + 1))
       if [[ "$heading" =~ $GIC_GUARANTEE_ID_RE ]]; then
         current_id="${BASH_REMATCH[1]}"
+        current_statement="$(gic_trim "${BASH_REMATCH[3]}")"
+        guarantee_seq=$((guarantee_seq + 1))
+        current_seq="$guarantee_seq"
         if printf '%s\n' "$seen_guarantee_ids" | grep -Fxq -- "$current_id"; then
           gic_add_issue "$current_id" "" "duplicate_guarantee_id"
         else
@@ -190,14 +250,36 @@ gic_scan() {
         rest="${rest#*\`"${raw_ref}"\`}"
         ref="$(gic_trim "$raw_ref")"
         found_backticked="true"
-        gic_record_ref "$current_id" "$ref"
+        gic_record_ref "$current_id" "$ref" "$current_seq"
         current_ref_count=$((current_ref_count + 1))
       done
       if [ "$found_backticked" = "false" ]; then
         # バッククォート囲みが無い書き方も参照としては受け付ける（装飾の欠落だけでは
         # 落とさない）。`<パス>::<テスト名>` の形になっていない場合のみ書式違反とする。
-        gic_record_ref "$current_id" "$value"
+        gic_record_ref "$current_id" "$value" "$current_seq"
         current_ref_count=$((current_ref_count + 1))
+      fi
+      continue
+    fi
+
+    if [ "$section" = "guarantees" ] && [ -n "$current_id" ] && [[ "$line" =~ $GIC_PROV_FIELD_RE ]]; then
+      value="$(gic_trim "${BASH_REMATCH[2]}")"
+      current_prov_count=$((current_prov_count + 1))
+      if [ "$current_prov_count" -gt 1 ]; then
+        # 宣言元が2行以上ある保証は、どちらを出自とするか決められない。黙って先頭を
+        # 採らず問題として報告する（同一性の未検証を残さない）。
+        gic_add_issue "$current_id" "" "duplicate_provenance"
+        continue
+      fi
+      if [[ "$value" =~ $GIC_PROV_ISSUE_RE ]]; then
+        current_prov_kind="issue"
+        current_prov_issue="${BASH_REMATCH[1]}"
+      elif [ "$value" = "$GIC_PROV_PENDING_LITERAL" ]; then
+        current_prov_kind="pending"
+        current_prov_issue=""
+      else
+        current_prov_kind="malformed"
+        current_prov_issue=""
       fi
       continue
     fi
@@ -222,21 +304,26 @@ gic_scan() {
     fi
   done <<<"$body"
 
-  if [ -n "$current_id" ] && [ "$current_ref_count" -eq 0 ]; then
-    gic_add_issue "$current_id" "" "missing_test_ref"
-  fi
+  gic_close_guarantee "$current_seq" "$current_id" "$current_statement" \
+    "$current_ref_count" "$current_prov_kind" "$current_prov_issue"
 
   return 0
 }
 
 # テスト参照を1件記録する。書式（`<パス>::<テスト名>`）を満たさないものは問題として積む。
-# 引数: <保証ID> <テスト参照>
+# 書式違反も含めた「台帳にそう書かれている参照」は GIC_ALL_REFS へ積む（出力の tests は
+# 台帳の記載をそのまま映し、書式違反は broken 側で別途報告する）。
+# 引数: <保証ID> <テスト参照> <通し番号>
 gic_record_ref() {
   local id="$1"
   local ref="$2"
+  local seq="${3:-}"
   local path name
 
   GIC_REF_COUNT=$((GIC_REF_COUNT + 1))
+  if [ -n "$seq" ]; then
+    GIC_ALL_REFS+=("${seq}"$'\t'"${ref}")
+  fi
 
   case "$ref" in
     *"::"*) ;;
@@ -410,13 +497,24 @@ main() {
   if [ "${#GIC_ISSUES[@]}" -gt 0 ]; then
     issues_text="$(printf '%s\n' "${GIC_ISSUES[@]}")"
   fi
+  local guarantees_text=""
+  if [ "${#GIC_GUARANTEES[@]}" -gt 0 ]; then
+    guarantees_text="$(printf '%s\n' "${GIC_GUARANTEES[@]}")"
+  fi
+  local all_refs_text=""
+  if [ "${#GIC_ALL_REFS[@]}" -gt 0 ]; then
+    all_refs_text="$(printf '%s\n' "${GIC_ALL_REFS[@]}")"
+  fi
 
   printf '%s' "$issues_text" | jq -R -s \
     --arg ledger "$ledger" \
     --arg base "$base" \
+    --arg guarantee_rows "$guarantees_text" \
+    --arg ref_rows "$all_refs_text" \
     --argjson guarantees "$GIC_GUARANTEE_COUNT" \
     --argjson refs "$GIC_REF_COUNT" \
     --argjson gaps "$GIC_GAP_COUNT" '
+      def rows($text): $text | split("\n") | map(select(length > 0) | split("\t"));
       [ split("\n")[]
         | select(length > 0)
         | split("\t")
@@ -426,6 +524,19 @@ main() {
             reason: .[2]
           }
       ] as $broken
+      | rows($ref_rows) as $ref_list
+      | [ rows($guarantee_rows)[]
+          | . as $g
+          | {
+              guarantee_id: $g[1],
+              statement: $g[2],
+              tests: [ $ref_list[] | select(.[0] == $g[0]) | .[1] ],
+              provenance: {
+                kind: $g[3],
+                issue: (if ($g[4] // "") == "" then null else ($g[4] | tonumber) end)
+              }
+            }
+        ] as $guarantee_list
       | {
           status: (if ($broken | length) == 0 then "pass" else "fail" end),
           ledger: $ledger,
@@ -436,6 +547,7 @@ main() {
             gaps: $gaps,
             broken: ($broken | length)
           },
+          guarantees: $guarantee_list,
           broken: $broken
         }
     '
