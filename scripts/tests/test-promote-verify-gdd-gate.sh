@@ -35,20 +35,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 DETECT_SCRIPT="${REPO_ROOT}/scripts/detect-dev-phase.sh"
+DECISION_SCRIPT="${REPO_ROOT}/scripts/promotion-decision.sh"
 GIC_SCRIPT="${REPO_ROOT}/scripts/guarantee-index-check.sh"
 EAC_SCRIPT="${REPO_ROOT}/scripts/extract-acceptance-criteria.sh"
 SKILL_FILE="${REPO_ROOT}/skills/promote-verify/SKILL.md"
 REF_FILE="${REPO_ROOT}/skills/promote-verify/references/guarantee-consistency.md"
+STRATEGY_FILE="${REPO_ROOT}/docs/ai-driven-development-strategy.md"
+DECISION_SPEC="${REPO_ROOT}/scripts/specs/promotion-decision.md"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "NG - jq が見つからないためテストを実行できません（検査不能を pass にはしない）" >&2
   exit 1
 fi
 
-if [ ! -r "$SKILL_FILE" ] || [ ! -r "$REF_FILE" ]; then
-  echo "NG - SKILL.md または参照ファイルを読めません（検査不能を pass にはしない）: ${SKILL_FILE} / ${REF_FILE}" >&2
-  exit 1
-fi
+for required_file in "$SKILL_FILE" "$REF_FILE" "$STRATEGY_FILE" "$DECISION_SPEC" "$DECISION_SCRIPT"; do
+  if [ ! -r "$required_file" ]; then
+    echo "NG - 必要なファイルを読めません（検査不能を pass にはしない）: ${required_file}" >&2
+    exit 1
+  fi
+done
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -96,6 +101,21 @@ skill_section() {
   ' "$SKILL_FILE"
 }
 
+# 任意のファイルに正準文が逐語で存在することを検査する（cross-file 逐語照合用）。
+assert_file_has() {
+  local description="$1" file="$2" phrase="$3"
+  if [ -r "$file" ] && grep -qF -- "$phrase" "$file"; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       file:   ${file}"
+    echo "       phrase: ${phrase}"
+  fi
+}
+
 # 参照ファイル（Step 5.5 の手順の正本）に正準文が逐語で存在することを検査する。
 assert_ref_contains() {
   local description="$1" phrase="$2"
@@ -112,6 +132,21 @@ assert_ref_contains() {
 }
 
 # 参照ファイルに「あってはならない文言」が無いことを検査する（緩和の再発防止）。
+# SKILL.md に「あってはならない文言」が無いことを検査する（緩和の再発防止）。
+assert_skill_not_contains() {
+  local description="$1" phrase="$2"
+  if grep -qF -- "$phrase" "$SKILL_FILE"; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       file:   ${SKILL_FILE}"
+    echo "       phrase: ${phrase}"
+  else
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  fi
+}
+
 assert_ref_not_contains() {
   local description="$1" phrase="$2"
   if grep -qF -- "$phrase" "$REF_FILE"; then
@@ -126,20 +161,55 @@ assert_ref_not_contains() {
   fi
 }
 
-# 5.5-7 の算出式（(a) AND (b) AND (c) AND (d)）の AND 結合を評価する。
+# 5.5-7 の算出式（(a) AND (b) AND (c) AND (d)）を、**判定式の正本である実スクリプト**
+# （scripts/promotion-decision.sh）に評価させる。散文の写しをテスト側で再実装すると、
+# 実装と写しがずれても検出できない（同じ論理を2箇所で持つことになる）ため、
+# ここでは各項が真／偽になる材料を組み立てて実スクリプトの出力を読む。
 # 算出式の項が (a)〜(d) の4本であること・(d) が humanReview を参照していることは
 # (B-10) の構造検査で文書側から確認しており、本関数はその真理値表を固定する。
 eval_all_consistent() {
-  # 引数: a b c d（1=真 / 0=偽）。1つでも 0 なら false。
-  local operand
-  for operand in "$@"; do
-    if [ "$operand" != "1" ]; then
-      echo "false"
-      return 0
-    fi
-  done
-  echo "true"
+  # 引数: a b c d（1=真 / 0=偽）
+  local a="$1" b="$2" c="$3" d="$4"
+  local targets guarantees index human input
+  if [ "$a" = "1" ]; then
+    targets='["G-158-1"]'
+  else
+    # targets にあるのに guarantees に結果が無い（部分成功≠完全成功）
+    targets='["G-158-1","G-158-2"]'
+  fi
+  if [ "$c" = "1" ]; then
+    guarantees='[{"guarantee_id":"G-158-1","verdict":"consistent"}]'
+  else
+    guarantees='[{"guarantee_id":"G-158-1","verdict":"drifted"}]'
+  fi
+  if [ "$b" = "1" ]; then
+    index='{"status":"pass","error":null}'
+  else
+    index='{"status":"fail","error":null}'
+  fi
+  if [ "$d" = "1" ]; then
+    human='[]'
+  else
+    human='[{"kind":"guarantee_provenance_mismatch","detail":"..."}]'
+  fi
+  input="$(printf '{"targets":%s,"guarantees":%s,"index":%s,"humanReview":%s}' \
+    "$targets" "$guarantees" "$index" "$human")"
+  printf '%s' "$input" | bash "$DECISION_SCRIPT" all-consistent 2>/dev/null | jq -r '.allConsistent'
 }
+
+# 検査ヘルパーの定義漏れ検出: 未定義の `assert_*` を呼んでも bash は
+# 「command not found」を出して次の行へ進むだけであり、そのアサーションは
+# 黙って実行されない（検査不能が pass に見える）。本ファイルが使う
+# ヘルパーがすべて定義済みであることを、アサーションを走らせる前に確認する。
+undefined_helpers=""
+while IFS= read -r helper; do
+  [ -z "$helper" ] && continue
+  declare -F "$helper" >/dev/null 2>&1 || undefined_helpers="${undefined_helpers}${helper} "
+done <<<"$(grep -ohE '\bassert_[a-z_]+' "${BASH_SOURCE[0]}" | sort -u)"
+if [ -n "$undefined_helpers" ]; then
+  echo "NG - 未定義の検査ヘルパーを参照しています（アサーションが黙って実行されません）: ${undefined_helpers}" >&2
+  exit 1
+fi
 
 TMP_ROOT="$(mktemp -d)"
 # shellcheck disable=SC2329 # trap 経由で呼ばれるため直接呼び出しが無くても false positive
@@ -582,7 +652,7 @@ assert_ref_contains "台帳登録確認は ID の完全一致（前方一致で�
 assert_ref_contains "新規宣言の意味検証は親Issueの（裁可された）約束文を正とする" \
   '**`statement` は、新規宣言なら親Issueの保証節の約束文（裁可された文言が正）'
 assert_ref_contains "台帳の約束文が親Issueの約束文と食い違う場合は drifted" \
-  '**新規宣言で、台帳に登録された約束文が親Issueの約束文と食い違っている場合は、その不一致自体を `verdict: "drifted"` として記録する**'
+  '**新規宣言で、`index.guarantees[].statement`（台帳に登録された約束文）が親Issueの約束文と食い違っている場合は、その不一致自体を `verdict: "drifted"` として記録する**'
 assert_ref_contains "(a) の突き合わせは件数だけでなく ID で行う" \
   "(a) targets の各 guarantee_id に対応する結果が guarantees に1件ずつ存在する（件数だけでなく ID を突き合わせる）"
 
@@ -610,7 +680,7 @@ assert_ref_contains "経路3（保証節がパース不能）の guaranteeCheck 
 assert_ref_contains "index: null / オブジェクトの意味が定義されている" \
   '**`index` の意味**（形の正本は 5.5-4 の経路表）: `null` = 索引整合チェックを**実行していない**'
 assert_ref_contains "guarantees: null / 配列の意味が定義されている" \
-  '**`guarantees` の意味**: `null` = 検証対象を**確定できていない**'
+  '**`guarantees` の意味**: `null` = 保証ごとの判定を**組み立てられていない**'
 assert_ref_contains "空配列を使ってよいのは保証節が「なし」と明示された場合だけ" \
   '**空配列を使ってよいのは、親Issueの保証節が「なし」と明示していた場合（＝検査した結果の0件）だけ**'
 
@@ -619,7 +689,7 @@ assert_ref_contains "報告: index が null のときは未検査と書く" \
 assert_ref_contains "報告: guarantees の状態で書き分ける（未検査を空表・0件にしない）" \
   '保証ごとの判定は `guarantees` の状態で書き分ける（**未検査を空表・0件として描かない**）'
 assert_ref_contains "報告: guarantees が null のときは表を出さず未検査行を出す" \
-  '**`guarantees === null`（未検査。フェーズ不正・台帳欠落・保証節を抽出できなかった経路）** → 表を出さず'
+  '**`guarantees === null`（未検査。フェーズ不正・台帳欠落・保証節を抽出できなかった・索引の結果を採用できなかった経路）** → 表を出さず'
 assert_ref_contains "報告: 未検査を「保証 0 件」「問題なし」と書かない" \
   '**この状態を「保証 0 件」「問題なし」と書かないこと**'
 assert_ref_contains "報告: 空配列（保証節が「なし」）は対象0件として書く" \
@@ -628,51 +698,99 @@ assert_ref_contains "報告: 早期失敗では humanReview の一覧を必ず�
   "早期失敗の経路ではこの一覧が唯一の理由の提示先になる"
 
 echo ""
-echo "=== (B-5c) 台帳・Issue本文の読み取り規則（散文とスクリプトの規則一致） ==="
+echo "=== (B-5c) 読み取り規則の一本化（台帳はスクリプト・親Issueは散文） ==="
 
-assert_ref_contains "読み取り規則を台帳・Issue本文の共通規約として置いている" \
-  '**読み取り規則（台帳・親Issue本文に共通。5.5-3 / 5.5-5 / 5.5-6 はこの規則に従う）**'
-assert_ref_contains "台帳はスクリプトと同じ規則で読む" \
-  '**同じ規則で読む**'
+# Issue #169 / #171-2,5 の是正: 台帳の読み取りは guarantee-index-check に一本化し、
+# 散文側は台帳を読み直さない（同じ台帳を2つの規則で読む状態を作らない）。
+# 散文が読むのは親Issue本文だけであり、そちらには索引チェックに相当する機械的手段が無い。
+assert_ref_contains "散文が読むのは親Issue本文だけだと明示している" \
+  '**読み取り規則**: 本手順が散文で読む対象は**親Issue本文だけ**である'
+assert_ref_contains "台帳は散文で読まないと明示している" \
+  '**台帳（`docs/guarantees.md`）は散文で読まない**'
+assert_ref_contains "台帳の読み取りの正本の定型文がある" \
+  '> **台帳の読み取りの正本（散文で読み直さない）**'
+assert_ref_contains "台帳の読み取りには index.guarantees を使う" \
+  '**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと'
+assert_ref_contains "台帳を自分で開いて数え直さない・Grep のヒットを根拠にしない" \
+  '**自分で台帳ファイルを開いて数え直さない・Grep のヒットを「登録済み」の根拠にしない**'
 assert_ref_contains "同じ台帳を2つの規則で読む状態を欠陥として明記" \
   "**同じ台帳を2つの規則で読む**"
-assert_ref_contains "パース規約の正本は guarantee-index-check の spec" \
-  '`scripts/specs/guarantee-index-check.md`「パースの規約」'
+assert_ref_contains "索引チェック仕様が台帳の読み取りの正本であることを示している" \
+  '`scripts/specs/guarantee-index-check.md`'
+
+# 親Issue本文側の規則（散文が読む唯一の対象）
 assert_ref_contains "コードフェンスの内側は判定対象にしない" \
-  '**コードフェンス（``` / ~~~。行頭スペース3個まで）の内側は、台帳・親Issue本文とも一切の判定対象にしない**'
+  '**コードフェンス（``` / ~~~。行頭スペース3個まで）の内側は一切の判定対象にしない**'
 assert_ref_contains "保証は「保証」節の中だけを見る" \
   '**保証は「保証」節の中だけを見る**'
-assert_ref_contains "節の外の見出しは登録済みとみなさない" \
-  '**節の外にある `### G-...` は登録済みとみなさない**'
-assert_ref_contains "保証見出しは ### 見出し行・ID 完全一致・区切りは半角/全角コロン" \
-  '**保証見出しは `### ` で始まる見出し行**であり、ID は `G-<数字>-<枝番>` の完全一致、直後の区切りは半角 `:` または全角 `：`'
+assert_ref_contains "保証節が2つ以上ある本文は解釈できないとして扱う（定型文）" \
+  '**該当する見出しが2つ以上ある本文は「解釈できない」として扱う**'
+assert_ref_contains "保証節が2つ以上の本文を下流でも中断条件にしている" \
+  '該当する H2 が2つ以上ある（どちらを正とするか決められない）'
+assert_ref_contains "親Issueへ台帳の文法を適用しない" \
+  '**親Issue本文に台帳の文法（`### G-...` の見出しを保証見出しとみなす読み方）を適用しないこと**'
 
-assert_ref_contains "5.5-5: Grep のヒット自体は登録済みの根拠にならない" \
-  '**ヒットしたこと自体は「登録済み」の根拠にならない**'
-assert_ref_contains "5.5-5: 条件1 フェンスの外" \
-  '1. **コードフェンスの外にある**'
-assert_ref_contains "5.5-5: 条件2 「保証」節の中" \
-  '2. **「保証」節の中にある**'
-assert_ref_contains "5.5-5: 条件3 見出し行かつ ID 完全一致" \
-  '3. **`### ` で始まる見出し行**であり、ID が完全一致している'
-assert_ref_contains "5.5-5: 記入例・節外・言及だけなら not_registered" \
-  "満たさない（見出しが無い／フェンス内の記入例だけ／「保証」節の外／見出しでない本文中の言及だけ）"
+# 5.5-5 が index.guarantees の消費に置き換わっていること
+assert_ref_contains "5.5-5 の入力は index.guarantees だけ" \
+  '**入力は 5.5-4 で得た `index.guarantees` だけ**である'
+assert_ref_contains "5.5-5 は台帳ファイルを開いて読み直さない" \
+  'ここで台帳ファイルを開いて読み直さないこと'
+assert_ref_contains "5.5-5 の ID 突き合わせは完全一致" \
+  'ID は**完全一致**で突き合わせる。前方一致で `G-158-1` と `G-158-10` を取り違えないこと'
+assert_ref_contains "index.guarantees に無いものは not_registered" \
+  '存在しない → `registered: false` とし、その保証の `verdict` を `not_registered` とする'
+assert_ref_contains "index.guarantees に並ぶ条件（フェンス外・節内・ID 書式）が明示されている" \
+  '**`index.guarantees` に並ぶのは、コードフェンスの外・「保証」節の中にある、ID 書式を満たす保証見出しだけ**'
+assert_ref_contains "未追記と壊れた追記を区別する根拠を evidence に書く" \
+  '**`index.broken` を見て、その ID が `guarantee_outside_section` / `malformed_guarantee_id` として報告されていれば `evidence` にその理由を書く**'
 
-assert_ref_contains "5.5-3: Issue本文もフェンス内を対象にしない" \
-  '**上記の読み取り規則に従い、コードフェンスの内側にある記述は対象にしない**'
-assert_ref_contains "5.5-6: test_refs は読み取り規則で読んだ行だけを転記する" \
-  '**上記の読み取り規則で読み取った、当該保証見出し直下の `- テスト:` 行のものだけ**'
-assert_ref_contains "5.5-6: 維持の statement も読み取り規則を満たす見出しの文言" \
-  "維持なら台帳の約束文（読み取り規則を満たす保証見出しの文言）"
+# 5.5-6 の入力も index.guarantees
+assert_ref_contains "5.5-6: test_refs は index.guarantees[].tests をそのまま渡す" \
+  '**`index.guarantees[].tests` をそのまま**渡す'
+assert_ref_contains "5.5-6: 台帳の - テスト: 行を自分で読み直さない" \
+  '**台帳を開いて `- テスト:` 行を自分で読み直さないこと**'
+assert_ref_contains "5.5-6: 維持の statement も index.guarantees[].statement" \
+  '維持なら `index.guarantees[].statement`（索引チェックが読み取った台帳の約束文）'
 
-assert_ref_contains "独立2経路の件数突き合わせを義務づけている" \
+# 索引の結果を採用できない経路では 5.5-5 以降を実行しない（散文の読み直しへ戻らない）
+assert_ref_contains "index.error が非 null なら 5.5-5 以降を実行しない" \
+  '**`index.error` が非 null の経路では 5.5-5 以降を実行しない**'
+assert_ref_contains "採用できない索引出力から登録確認を組み立てないと明記" \
+  '**結果を採用できない索引出力から登録確認・意味検証を組み立てることはできない**'
+assert_ref_contains "ここで散文が台帳を読みに行くと二重読みが復活すると明記" \
+  'ここで散文が台帳を自分で読みに行くと、まさに解消したはずの「同じ台帳を2つの規則で読む」状態が復活する'
+
+# 否定検査: 散文側の台帳読み取り手順（旧記述）が復活していないこと
+assert_ref_not_contains "旧: 散文が台帳の保証見出しを Read で確認する手順が残っていない" \
+  '次の3条件を**すべて**満たすことを Read で確認すること'
+assert_ref_not_contains "旧: 独立2経路の件数突き合わせ（散文が台帳を数える手順）が残っていない" \
   '**読み取り規則の突き合わせ（独立2経路の食い違い検出）**'
-assert_ref_contains "件数が食い違ったら片方だけ採用して進めない" \
-  '**どちらか一方の数字だけを採用して先へ進めない**'
-assert_ref_contains "食い違いは ledger_read_mismatch として要人間判定に積む" \
-  '`{ kind: "ledger_read_mismatch", detail:'
-assert_ref_contains "ledger_read_mismatch が humanReview の語彙に入っている" \
-  '`index_error` / `ledger_read_mismatch` / `guarantee_id_scope_mismatch` / `guarantee_provenance_mismatch` / `verification_failed`'
+assert_ref_not_contains "旧: 自分が読み取った保証見出しの件数を数える指示が残っていない" \
+  '**自分が読み取った保証見出しの件数**'
+assert_ref_not_contains "旧: ledger_read_mismatch（散文の読み取り不一致）が残っていない" \
+  'ledger_read_mismatch'
+assert_ref_not_contains "旧: 台帳の文法（保証見出しの読み方）が散文側に残っていない" \
+  '**保証見出しは `### ` で始まる見出し行**'
+assert_ref_not_contains "旧: テスト参照行の読み方が散文側に残っていない" \
+  '**テスト参照は保証見出し直下の `- テスト: ...` 行**'
+assert_ref_not_contains "旧: 宣言元行の読み方が散文側に残っていない" \
+  '**宣言元は保証見出し直下の `- 宣言元: #<番号>` 行**'
+
+# 台帳パスの解決（#171-1）: cwd 相対で台帳を探さない
+assert_ref_contains "台帳パスをリポジトリルート基準で解決する定型文がある" \
+  '**台帳のパスはリポジトリルート基準で解決する（引数を省略しない）**'
+assert_ref_contains "cwd 相対で探さない・引数なしで呼ばないと明示している" \
+  '**cwd 相対で台帳を探さない・索引チェックを引数なしで呼ばない**'
+assert_ref_contains "GDD 期と判定できるのに検査不能になる食い違いを明記している" \
+  '**GDD期と正しく判定したうえで、台帳が実在するのに検査不能になる**'
+assert_ref_contains "解決できない場合は黙って cwd 相対へ倒さない" \
+  '黙って cwd 相対へ倒さない'
+assert_ref_contains "索引チェックの引数にリポジトリルート基準のパスを渡す" \
+  'claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"'
+assert_ref_contains "引数として渡すパスは引用符で囲む" \
+  '**引数として渡すパスは引用符で囲む**'
+assert_ref_not_contains "旧: 引数を付けずに実行する指示が残っていない" \
+  '引数を付けずに実行し、既定の対象'
 
 echo ""
 echo "=== (B-6) 部分成功≠完全成功 ==="
@@ -974,17 +1092,27 @@ assert_ref_contains "スコープ制約は新規宣言にだけ課す" \
 assert_ref_contains "維持する保証は他 Issue 由来が正常でありスコープ検証の対象外" \
   '**「維持する保証」は他 Issue 由来の既存保証を挙げるのが正常な運用**'
 assert_ref_contains "宣言元の突き合わせ手順がある" \
-  '**新規宣言の出自の突き合わせ（`宣言元` 行）**'
+  '**新規宣言の出自の突き合わせ（`provenance`）**'
+assert_ref_contains "宣言元はスクリプトが読んだ provenance を使う" \
+  '`index.guarantees[].provenance` を親Issue番号と突き合わせる'
+assert_ref_contains "provenance の4状態がすべて表に並んでいる" \
+  '`provenance.kind` は `issue` / `pending` / `missing` / `malformed` の4状態であり'
 assert_ref_contains "宣言元の不一致は guarantee_provenance_mismatch として積む" \
   '`{ kind: "guarantee_provenance_mismatch", detail:'
 assert_ref_contains "宣言元が無い場合は弾かないが「確認した」とも書かない" \
   '**「宣言元の一致を確認した」とは書かない**'
-assert_ref_contains "宣言元が無い場合の evidence の書き方が定義されている" \
-  '台帳に `宣言元` の記載が無く突き合わせ不能（ID スコープ検査は通過）'
+assert_ref_contains "裁可待ちの場合の evidence の書き方が定義されている" \
+  '台帳の `宣言元` が `裁可待ち` のままで突き合わせ不能（ID スコープ検査は通過）'
+assert_ref_contains "宣言元の欠落・書式違反はスクリプトが broken に報告済みだと明記" \
+  '**索引チェックが `missing_provenance` / `malformed_provenance` として `broken` に報告済み**'
+assert_ref_contains "同じ事実を humanReview で二重に数えない" \
+  '本手順で重ねて `humanReview` に積まない（同じ事実を2箇所で数えない）'
 assert_ref_contains "維持する保証には宣言元の突き合わせを行わない" \
   '**維持する保証には `宣言元` の突き合わせを行わない**'
-assert_ref_contains "読み取り規則に宣言元行の書式がある" \
-  '**宣言元は保証見出し直下の `- 宣言元: #<番号>` 行**'
+# provenance の4状態を表として持つこと（生成側が作りうる状態を検証側が全部受けている）
+prov_rows="$(awk '/^\| `provenance.kind` \| 台帳の記載 \| 扱い \|/{f=1;next} f && /^\|---/{next} f && /^\|/{print} f && !/^\|/{exit}' "$REF_FILE")"
+assert_eq "provenance の扱いの表は4行（issue 一致 / issue 不一致 / pending / missing+malformed）" \
+  "4" "$(printf '%s\n' "$prov_rows" | grep -c .)"
 
 # ①別スコープの ID → humanReview に積まれる → (d) が偽 → allConsistent は false
 assert_eq "①別スコープの新規宣言 ID があれば allConsistent は false" \
@@ -1016,12 +1144,14 @@ assert_ref_contains "targets が空でも安全側に倒れることを明記" \
   '**空集合でも安全側に倒れる**'
 assert_ref_contains "空 targets で (a)(c) が空虚に真になることを明記" \
   '**(a)(c) は0件について空虚に真になる**'
-assert_ref_contains "読み取り不一致は算出式の (d) として反映されると明記" \
-  '**この不一致は 5.5-7 の算出式の (d) として反映される**'
+assert_ref_contains "空 targets でも出自の不一致があれば (d) で false になると明記" \
+  '例: 出自の不一致が記録されていれば、対象が0件でも (d) により `false` になる'
 assert_ref_not_contains "空 targets を「(b) だけで決まる」と書いていない（緩和の再発防止）" \
   '(b) の索引整合だけで決まる'
-assert_skill_contains "Step 7 の注意に読み取り不一致（humanReview 非空）が含まれる" \
-  '台帳の読み取り件数がスクリプトと食い違っている（`humanReview` に理由が1件でもある）'
+assert_skill_contains "Step 7 の注意に判定スクリプトの実行不能（humanReview 非空）が含まれる" \
+  '判定スクリプトを実行できなかった（`humanReview` に理由が1件でもある）'
+assert_skill_contains "Step 7 の注意に索引の結果を採用できない経路が含まれる" \
+  '索引整合の結果を採用できない'
 
 # 算出式ブロックの構造検査: 項は (a)〜(d) の4本で、(d) が humanReview を参照していること
 ac_block="$(awk '/^guaranteeCheck.allConsistent =$/ {inside=1} inside {print} inside && /^```$/ {exit}' "$REF_FILE")"
@@ -1098,6 +1228,144 @@ assert_eq "サブステップ見出しは参照ファイルにすべて存在す
 assert_eq "サブステップ見出しは SKILL.md 側に残っていない（二重管理の防止）" "" "$dup_violations"
 
 # ---------------------------------------------------------------------------
+echo ""
+echo "=== (B-11) 判定式の決定的スクリプトへの切り出し（Issue #168） ==="
+
+# 散文の論理式には型検査もテストも効かない（項の接続漏れ・空集合の空虚な真を検出できない）。
+# 判定式の正本を scripts/promotion-decision.sh へ移し、散文側には「いつ呼ぶか」と
+# 結果の解釈だけを残す。ここでは (1) 散文が実スクリプトを呼ぶ形になっていること、
+# (2) 自前評価へ戻る抜け道が無いこと、(3) 散文の対応表とスクリプトの項が一致すること、
+# の3点を固定する（真理値表そのものは test-promotion-decision.sh が担当）。
+
+assert_ref_contains "5.5-7 は allConsistent を自分で評価しない" \
+  '**`allConsistent` は自分で論理式を評価せず、決定的スクリプト `promotion-decision` に算出させる**'
+assert_ref_contains "5.5-7 は判定式の正本がスクリプト実装だと明示している" \
+  '**判定式の正本はスクリプトの実装**'
+assert_ref_contains "5.5-7 はランチャー経由で all-consistent モードを呼ぶ" \
+  'claude-harness-run promotion-decision all-consistent'
+assert_ref_contains "5.5-7 は未確定を null のまま渡す（空配列で埋めない）" \
+  '**`targets` / `guarantees` / `index` は、未確定・未検査なら `null` をそのまま渡す**'
+assert_ref_contains "5.5-7 はスクリプト実行不能を fail-closed にする" \
+  '`{ kind: "decision_unavailable", detail: "<stderr のメッセージ>" }`'
+assert_ref_contains "5.5-7 は自前評価で埋め合わせない" \
+  '**自分で論理式を評価して埋め合わせない**'
+
+assert_skill_contains "Step 7 は readyForPromotion を自分で評価しない" \
+  '**`readyForPromotion` は自分で論理式を評価せず、決定的スクリプト `promotion-decision` に算出させる**'
+assert_skill_contains "Step 7 はランチャー経由で ready-for-promotion モードを呼ぶ" \
+  'claude-harness-run promotion-decision ready-for-promotion'
+assert_skill_contains "Step 7 は受入基準0件を空配列で「問題なし」に見せない" \
+  '**受入基準が0件のときに空配列で「問題なし」に見せない**'
+assert_skill_contains "Step 7 はスクリプト実行不能なら readyForPromotion を false にする" \
+  '**スクリプトを実行できない／stdout が JSON としてパースできない／exit 2（必須キーの欠落等）の場合は `readyForPromotion` を `false` とし'
+assert_skill_contains "Step 7 も自前評価で埋め合わせない" \
+  '**自分で論理式を評価して埋め合わせない**'
+
+# 抜け道の否定検査: 「スクリプトが使えないときは散文の式で判定してよい」系の緩和が無いこと
+assert_ref_not_contains "5.5-7 に「代わりに自分で算出する」緩和が無い" \
+  '代わりに自分で算出'
+assert_skill_not_contains "Step 7 に「代わりに自分で算出する」緩和が無い" \
+  '代わりに自分で算出'
+
+# 散文の対応表とスクリプト spec の項が1対1で対応していること（写しのドリフト検出）
+ac_terms_in_spec="$(grep -cE '^\| \(.\) \| `(targetsCovered|indexPass|allVerdictsConsistent|noHumanReview)` \|' "$DECISION_SPEC")"
+assert_eq "spec の all-consistent の項の表は4行" "4" "$ac_terms_in_spec"
+rp_terms_in_spec="$(grep -cE '^\| [0-9] \| `(allMerged|criteriaConsistent|criteriaNoHumanReview|qualityOk|e2eOk|guaranteeOk)` \|' "$DECISION_SPEC")"
+assert_eq "spec の ready-for-promotion の項の表は6行" "6" "$rp_terms_in_spec"
+
+# 散文の対応表（(a)〜(d)）の本数と spec の項数が一致すること
+assert_eq "散文の対応表の項数と spec の項数が一致する（写しのドリフト検出）" \
+  "$ac_terms_in_spec" \
+  "$(awk '/^guaranteeCheck.allConsistent =$/ {inside=1} inside {print} inside && /^```$/ {exit}' "$REF_FILE" | grep -cE '^ +(AND )?\([a-d]\) ')"
+formula_and_lines="$(awk '/^readyForPromotion =$/ {inside=1} inside {print} inside && /^```$/ {exit}' "$SKILL_FILE" | grep -cE '^(     |  AND )')"
+assert_eq "Step 7 の対応表の項数と spec の項数が一致する（写しのドリフト検出）" \
+  "$rp_terms_in_spec" "$formula_and_lines"
+
+# 実スクリプトが対応表どおりに動くこと（散文とスクリプトの意味の一致を実行で確認する）
+assert_eq "実スクリプト: 4項すべて真なら allConsistent は true" \
+  "true" "$(eval_all_consistent 1 1 1 1)"
+assert_eq "実スクリプト: (d) だけ偽なら false（要人間判定が判定へ接続されている）" \
+  "false" "$(eval_all_consistent 1 1 1 0)"
+ready_true="$(printf '%s' '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}' | bash "$DECISION_SCRIPT" ready-for-promotion 2>/dev/null | jq -r '.readyForPromotion')"
+assert_eq "実スクリプト: 6項すべて真なら readyForPromotion は true" "true" "$ready_true"
+ready_gc_false="$(printf '%s' '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":false,"allConsistent":false}}' | bash "$DECISION_SCRIPT" ready-for-promotion 2>/dev/null | jq -r '.readyForPromotion')"
+assert_eq "実スクリプト: 保証整合が false なら readyForPromotion も false（合流している）" \
+  "false" "$ready_gc_false"
+ready_empty="$(printf '%s' '{"allMerged":true,"criteria":[],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}' | bash "$DECISION_SCRIPT" ready-for-promotion 2>/dev/null | jq -r '.readyForPromotion')"
+assert_eq "実スクリプト: 受入基準0件は空虚に真にならない" "false" "$ready_empty"
+
+echo ""
+echo "=== (B-12) 定型文の cross-file 逐語照合（正本1箇所・参照側は逐語コピー） ==="
+
+# 規則の正本は docs/ai-driven-development-strategy.md 5.3 に置き、実行時ファイルへ逐語コピーする。
+# 定型文が参照側に存在すること（＋旧記述が残っていないこと）を機械検出で固定する。
+CT_REF_FILE="${REPO_ROOT}/skills/create-ticket/references/guarantee-section.md"
+QC_SKILL_FILE="${REPO_ROOT}/skills/quality-check/SKILL.md"
+GA_DRIFT_FILE="${REPO_ROOT}/skills/guarantee-audit/references/drift-mode.md"
+
+# (1) 台帳パスの解決: 正本 + 4つの適用先
+path_canon='**台帳のパスはリポジトリルート基準で解決する（引数を省略しない）**: リポジトリルートを `git rev-parse --show-toplevel` で解決し（`detect-dev-phase` がサブディレクトリからでもリポジトリルートの `CLAUDE.md` を見つけるのと同じ考え方）、台帳の Read にも索引チェックの引数にも `<リポジトリルート>/docs/guarantees.md` を使う。'
+for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE" "$QC_SKILL_FILE" "$GA_DRIFT_FILE"; do
+  assert_file_has "台帳パスの解決の定型文が $(basename "$(dirname "$target_file")")/$(basename "$target_file") に逐語で存在する" \
+    "$target_file" "$path_canon"
+done
+
+# (2) 保証 ID のスコープ検証: 正本 + 2つの適用先
+id_canon='> **保証 ID のスコープ検証（宣言側・検証側に共通）**: 保証 ID が**完全な ID 文法 `G-<N>-<枝番>` に一致する**ことを確認する'
+for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE"; do
+  assert_file_has "保証 ID のスコープ検証の定型文が $(basename "$(dirname "$target_file")")/$(basename "$target_file") に逐語で存在する" \
+    "$target_file" "$id_canon"
+done
+for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE"; do
+  assert_file_has "接頭辞一致だけで通さない旨が $(basename "$target_file") にある" \
+    "$target_file" '**接頭辞 `G-<N>-` の一致だけで通さない**'
+done
+
+# (3) 親Issue本文のカテゴリ配下の全件走査: 正本 + 2つの適用先
+scan_canon='- **カテゴリ配下は全件走査する（部分成功≠完全成功）**: 対象カテゴリ配下の行を**1行残らず**確認し、次の**いずれか**を満たすときだけ受理する:'
+for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE"; do
+  assert_file_has "全件走査の定型文が $(basename "$(dirname "$target_file")")/$(basename "$target_file") に逐語で存在する" \
+    "$target_file" "$scan_canon"
+done
+for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE"; do
+  assert_file_has "「1件でも有効なら受理」を禁じる文が $(basename "$target_file") にある" \
+    "$target_file" '**「有効な ID が1件でもあれば受理」という判定にしないこと**'
+done
+
+# (4) 台帳の読み取りの正本: 正本 + promote-verify
+read_canon='> **台帳の読み取りの正本（散文で読み直さない）**: 台帳から保証 ID・約束文・テスト参照・宣言元を読み取る必要がある場合は、**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと。'
+for target_file in "$STRATEGY_FILE" "$REF_FILE"; do
+  assert_file_has "台帳の読み取りの正本の定型文が $(basename "$target_file") に逐語で存在する" \
+    "$target_file" "$read_canon"
+done
+
+# 正本側の適用先一覧が実態と一致していること（表の更新漏れ検出）
+assert_file_has "正本に定型文の適用先の表がある" "$STRATEGY_FILE" '#### 定型文の適用先（コピー済みの実行時ファイル）'
+for listed in 'skills/create-ticket/references/guarantee-section.md' \
+  'skills/promote-verify/references/guarantee-consistency.md' \
+  'skills/quality-check/SKILL.md' 'skills/guarantee-audit/references/drift-mode.md'; do
+  assert_file_has "適用先の表に ${listed} が載っている" "$STRATEGY_FILE" "$listed"
+done
+
+# 否定検査: cwd 相対で索引チェックを呼ぶ旧記述が消えていること
+for target_file in "$REF_FILE" "$QC_SKILL_FILE" "$GA_DRIFT_FILE"; do
+  bad_hits="$(grep -nE 'claude-harness-run guarantee-index-check( docs/guarantees\.md)?$' "$target_file")"
+  bad_exit=$?
+  if [ "$bad_exit" -ge 2 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("cwd 相対の索引チェック呼び出し検査の grep 実行に失敗: ${target_file}")
+    echo "  NG - grep 実行エラー（exit ${bad_exit}）のため判定不能: ${target_file}"
+  elif [ -n "$bad_hits" ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("cwd 相対の索引チェック呼び出しが残っている: ${target_file}")
+    echo "  NG - cwd 相対の索引チェック呼び出しが残っている: ${target_file}"
+    echo "       ${bad_hits}"
+  else
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - $(basename "$target_file") に cwd 相対の索引チェック呼び出しが残っていない"
+  fi
+done
+
 echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"

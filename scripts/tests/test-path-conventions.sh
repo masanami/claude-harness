@@ -403,6 +403,141 @@ ${prefixed_launcher_hits}"
 fi
 
 echo ""
+echo "=== (vii) ランチャー／フォールバックへ渡すパス引数の引用チェック ==="
+
+# docs/plugin-path-conventions.md (a): 「引数として渡す値（パス等）は従来どおり引用してよい」
+# 「空白を含みうる値（ファイルパス・worktree パス等）は**引用する**」。
+# 引用を落とすと、空白を含むリポジトリパスで引数が分割され、スクリプトが
+# 「引数が多すぎる」と誤認して異常終了する（Issue #171-4）。
+# 検出対象は「コマンド文字列の中の、引用符が付いていないパス様の引数」。
+# 先頭トークン（ランチャー／bash）と target（スクリプト名・スクリプトパス）は
+# 規約上引用符を付けないため対象外にする。
+
+# パス様のトークン: パス区切りと拡張子を持つもの、または名前がパス／ファイルを指す
+# プレースホルダ（`<...パス>` `<...file>` `{...path}` 等）。
+# 拡張子を要求することで、ブランチ名（`{type}/issue-{番号}-{説明}`）を誤検出しない。
+path_arg_pattern='(^|[^"'"'"'])[^[:space:]]*/[^[:space:]]*\.(md|json|sh|mjs|js|ts|txt|ya?ml|log)|^<[^>]*(パス|ファイル|path|Path|file|File)[^>]*>$|^\{[^}]*(パス|path|Path)[^}]*\}$'
+
+# コマンド文字列を受け取り、引用されていないパス様の引数を1行1件で返す。
+unquoted_path_args() {
+  local command_string="$1"
+  local -a tokens
+  local token skip=0 index=0
+  # shellcheck disable=SC2206 # 意図的にシェルのトークン分割で引数へ割る（引用符は文字として残る）
+  tokens=($command_string)
+
+  case "${tokens[0]:-}" in
+    claude-harness-run)
+      skip=1
+      # --env KEY=VALUE はランチャー自身のオプション（規約上 target より前に置く）
+      if [ "${tokens[1]:-}" = "--env" ]; then
+        skip=3
+      fi
+      skip=$((skip + 1)) # target
+      ;;
+    bash)
+      skip=2 # bash + スクリプトパス
+      ;;
+    *) return 0 ;;
+  esac
+
+  for token in "${tokens[@]}"; do
+    index=$((index + 1))
+    [ "$index" -le "$skip" ] && continue
+    # リダイレクト以降は引数ではない
+    case "$token" in
+      '>' | '>>' | '|' | '&&' | ';') return 0 ;;
+    esac
+    # 既に引用されているものは対象外
+    case "$token" in
+      '"'* | "'"*) continue ;;
+    esac
+    if printf '%s' "$token" | grep -qE "$path_arg_pattern"; then
+      printf '%s\n' "$token"
+    fi
+  done
+  return 0
+}
+
+# --- (vii-a) 検出パターン自体の自己検査 ---
+assert_arg_detection() {
+  local description="$1" expected="$2" command_string="$3"
+  local actual="no"
+  [ -n "$(unquoted_path_args "$command_string")" ] && actual="yes"
+  if [ "$actual" = "$expected" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("パス引数の引用検出の自己検査: ${description}")
+    echo "  NG - ${description}（expected=${expected} actual=${actual}）"
+    echo "       command: ${command_string}"
+  fi
+}
+
+assert_arg_detection '違反: 引用符なしの台帳パスを検出する' yes \
+  'claude-harness-run guarantee-index-check <リポジトリルート>/docs/guarantees.md'
+assert_arg_detection '違反: 引用符なしの cwd 相対パスを検出する' yes \
+  'claude-harness-run guarantee-index-check docs/guarantees.md'
+assert_arg_detection '違反: 引用符なしのパスプレースホルダを検出する' yes \
+  'claude-harness-run reply-and-resolve <PR番号> <items_json_file>'
+assert_arg_detection '違反: フォールバック形の引数側の引用漏れも検出する' yes \
+  'bash "<プラグインルート>/scripts/guarantee-index-check.sh" docs/guarantees.md'
+assert_arg_detection '正当: 引用符付きのパス引数は検出しない' no \
+  'claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"'
+assert_arg_detection '正当: target のスクリプトパス（引用符なしが規約）は検出しない' no \
+  'claude-harness-run skills/demo/scripts/run-walkthrough.mjs "/絶対パス/flow.mjs"'
+assert_arg_detection '正当: 番号・フラグ列は検出しない' no \
+  'claude-harness-run quality-check-runner <Step2で組み立てたCLIフラグ列>'
+assert_arg_detection '正当: ブランチ名（拡張子を持たない）は検出しない' no \
+  'claude-harness-run worktree-setup {issue番号} {type}/issue-{番号}-{説明} {base}'
+assert_arg_detection '正当: リダイレクト先は引数ではないので検出しない' no \
+  'claude-harness-run analyze-project . > /tmp/analyze-output.json'
+assert_arg_detection '正当: --env 付きの呼び出しでも target を誤検出しない' no \
+  "claude-harness-run --env FOO=bar demo-e2e-out 'CASE-101'"
+
+# --- (vii-b) 実ファイルの走査 ---
+# コマンド文字列の抽出: (1) バッククォートで囲まれた `claude-harness-run ...` /
+# `bash "<プラグインルート>/..." ...`、(2) コードブロック内の行頭 claude-harness-run。
+# shellcheck disable=SC2016
+launcher_spans="$(grep -rhoE '`(claude-harness-run|bash "<プラグインルート>/)[^`]*`' skills agents --include='*.md' | tr -d '`')"
+launcher_spans_exit=$?
+codeblock_spans="$(grep -rhE '^[[:space:]]*claude-harness-run ' skills agents --include='*.md')"
+codeblock_spans_exit=$?
+
+if [ "$launcher_spans_exit" -ge 2 ] || [ "$codeblock_spans_exit" -ge 2 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("パス引数の引用チェックの grep 実行に失敗")
+  echo "  NG - grep 実行エラー（exit ${launcher_spans_exit}/${codeblock_spans_exit}）のため判定不能"
+elif [ -z "$launcher_spans" ] && [ -z "$codeblock_spans" ]; then
+  # 抽出0件は「違反なし」ではなく「検出器が対象を拾えていない」（検査不能≠0件）
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("ランチャー呼び出しを1件も抽出できず判定不能")
+  echo "  NG - ランチャー呼び出しを1件も抽出できず判定不能（検出器が壊れている可能性）"
+else
+  unquoted_violations=""
+  while IFS= read -r span; do
+    [ -z "$span" ] && continue
+    hits="$(unquoted_path_args "$span")"
+    if [ -n "$hits" ]; then
+      unquoted_violations="${unquoted_violations}${span}  →  ${hits}
+"
+    fi
+  done <<<"${launcher_spans}
+${codeblock_spans}"
+
+  if [ -z "$unquoted_violations" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ランチャー／フォールバックへ渡すパス引数はすべて引用されている"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("引用符なしのパス引数を検出")
+    echo "  NG - 引用符なしのパス引数を検出（空白を含むパスで引数が分割される）"
+    print_indented "$unquoted_violations"
+  fi
+fi
+
+echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"
 

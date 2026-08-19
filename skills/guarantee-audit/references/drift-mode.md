@@ -13,10 +13,13 @@
 
 ### Step D2: 索引整合（決定的）
 
-> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトは必ず PATH 上のランチャー経由で `claude-harness-run guarantee-index-check docs/guarantees.md` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）で実行し、相対パス `scripts/guarantee-index-check.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/guarantee-index-check.sh" docs/guarantees.md`（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）にフォールバックし、ユーザーにランチャー導入を案内すること。
+**台帳のパスはリポジトリルート基準で解決する（引数を省略しない）**: リポジトリルートを `git rev-parse --show-toplevel` で解決し（`detect-dev-phase` がサブディレクトリからでもリポジトリルートの `CLAUDE.md` を見つけるのと同じ考え方）、台帳の Read にも索引チェックの引数にも `<リポジトリルート>/docs/guarantees.md` を使う。**cwd 相対で台帳を探さない・索引チェックを引数なしで呼ばない**: 索引チェックは引数を省略すると `docs/guarantees.md` を **cwd 相対**で解決するため、サブディレクトリから起動されると台帳を見つけられない。一方フェーズ判定はリポジトリルートの `CLAUDE.md` を見て `gdd` を返すので、**GDD期と正しく判定したうえで、台帳が実在するのに検査不能になる**という食い違いになる。`git rev-parse --show-toplevel` が解決できない場合（git リポジトリでない等）は cwd を基準にし、**その事実を報告に明記する**（黙って cwd 相対へ倒さない）。テスト参照の基準ディレクトリは台帳の位置から自動解決されるため `--base` は指定しない。
+<!-- 正本: docs/ai-driven-development-strategy.md 5.3「台帳パスの解決」 -->
+
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトは必ず PATH 上のランチャー経由で `claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"` の形式（先頭トークンと target には**パス・バージョン・引用符を付けない**。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる。**引数として渡すパスは引用符で囲む** — 空白を含むリポジトリパスで引数が分割され、`too many arguments` で exit 2 になるのを防ぐため。引数側の引用符は allowlist のマッチに影響しない）で実行し、相対パス `scripts/guarantee-index-check.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"`（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）にフォールバックし、ユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md / docs/script-launcher.md -->
 
-stdout の JSON（`{status, ledger, base, counts, broken}`）を `index` として保持する。フィールド定義・`reason` の語彙・exit code の意味の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（ここには複製しない）。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること。
+stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `index` として保持する。フィールド定義・`reason` の語彙・exit code の意味の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（ここには複製しない）。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること。
 
 - exit 0（`pass`）/ exit 1（`fail`）はいずれも正常な検査結果として続行する。この場合 `index.error` は `null` にする。
 - **exit 2（実行前提の欠落）・stdout が JSON としてパースできない場合は、「検査対象なし」＝ pass に読み替えない**。索引整合を `{status: "fail", error: "..."}` として扱い、以降のステップを続けたうえで報告に明示する（台帳の取り違え・節名の変更で全保証が未検査になった状態を素通りさせないため）。このとき Step D5 では次の2つを**必ず**行う:

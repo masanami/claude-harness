@@ -74,13 +74,18 @@ claude-harness-run quality-check-runner \
 
 ### 4. 保証索引ゲートの実行（GDD期のみ）
 
-手順2の判定が `gdd` の場合のみ実行する（`sdd` では本手順を実行せず、手順5の最終出力に `guarantee_index` フィールド自体を出力に含めない）。保証台帳（既定: `docs/guarantees.md`）のテスト対応索引の整合を決定的スクリプトで検査する:
+手順2の判定が `gdd` の場合のみ実行する（`sdd` では本手順を実行せず、手順5の最終出力に `guarantee_index` フィールド自体を出力に含めない）。保証台帳（`docs/guarantees.md`）のテスト対応索引の整合を決定的スクリプトで検査する。
+
+**台帳のパスはリポジトリルート基準で解決する（引数を省略しない）**: リポジトリルートを `git rev-parse --show-toplevel` で解決し（`detect-dev-phase` がサブディレクトリからでもリポジトリルートの `CLAUDE.md` を見つけるのと同じ考え方）、台帳の Read にも索引チェックの引数にも `<リポジトリルート>/docs/guarantees.md` を使う。**cwd 相対で台帳を探さない・索引チェックを引数なしで呼ばない**: 索引チェックは引数を省略すると `docs/guarantees.md` を **cwd 相対**で解決するため、サブディレクトリから起動されると台帳を見つけられない。一方フェーズ判定はリポジトリルートの `CLAUDE.md` を見て `gdd` を返すので、**GDD期と正しく判定したうえで、台帳が実在するのに検査不能になる**という食い違いになる。`git rev-parse --show-toplevel` が解決できない場合（git リポジトリでない等）は cwd を基準にし、**その事実を報告に明記する**（黙って cwd 相対へ倒さない）。テスト参照の基準ディレクトリは台帳の位置から自動解決されるため `--base` は指定しない。
+<!-- 正本: docs/ai-driven-development-strategy.md 5.3「台帳パスの解決」 -->
 
 ```bash
-claude-harness-run guarantee-index-check
+claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"
 ```
 
-出力 JSON（`{status, ledger, base, counts, broken}`）のフィールド定義の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決）。
+（**引数として渡すパスは引用符で囲む** — 空白を含むリポジトリパスで引数が分割され、`too many arguments` で exit 2 になるのを防ぐため。引数側の引用符は allowlist のマッチに影響しない。ランチャー未導入時のフォールバック形も同様に `bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"` とする）
+
+出力 JSON（`{status, ledger, base, counts, guarantees, broken}`）のフィールド定義の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決）。
 
 実行結果は次のとおり `guarantee_index` フィールド（手順5で最終出力に格納する値）へ変換する:
 
