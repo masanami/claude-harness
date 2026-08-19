@@ -318,7 +318,7 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 
 各 SKILL.md には規律の要点のみを書き、詳細は本章を参照する。
 
-> **段階導入中**: フェーズ宣言の判定（`detect-dev-phase.sh`）・本章の書式規約・**台帳の監査（`/guarantee-audit` の bootstrap / drift）**・**`/quality-check` の索引整合ゲート**・**`/promote-verify` の保証整合チェック（Step 5.5）**・**`/create-ticket` の保証節と裁可ラベル（5.7）**は導入済み。**残りのフロー統合**（`/para-impl` の裁可ゲート・`feature-implementer` の保証ブリーフ・`/define-feature` の GDD 挙動）は未導入で、順次入れる。現時点で GDD期を選んだ場合、**台帳の起こし方と点検・索引ドリフトの検出、および保証の宣言（Issue の保証節）と裁可待ちの表示は自動化されているが、裁可ゲートの強制（`guarantee:approved` が無ければ実装を始めない）と実装フロー中の台帳更新（新しい保証の追記・テスト改名時の索引修正）は人間とエージェントの手動運用**になる（`/para-impl` は裁可ラベルを見ないため、実装を始める前に人間が裁可を確認する必要がある。`/promote-verify` は昇格前に親Issueの保証節を参照するため、保証節が無い Issue は要人間判定として報告される）。導入計画の全体像は `docs/gdd-design-draft.md`。
+> **段階導入中**: フェーズ宣言の判定（`detect-dev-phase.sh`）・本章の書式規約・**台帳の監査（`/guarantee-audit` の bootstrap / drift）**・**`/quality-check` の索引整合ゲート**・**`/promote-verify` の保証整合チェック（Step 5.5）**・**`/create-ticket` の保証節と裁可ラベル（5.7）**・**`/para-impl` の裁可ゲートと `feature-implementer` の保証ブリーフ（保証整合確認・台帳更新の同一 PR 同梱）**は導入済み。**残りのフロー統合**（`/define-feature` の GDD 挙動）は未導入で、順次入れる。現時点で GDD期を選んだ場合、**台帳の起こし方と点検・索引ドリフトの検出、保証の宣言（Issue の保証節）と裁可待ちの表示、裁可ゲートの強制（`guarantee:approved` が無ければ実装を始めない）、実装フロー中の台帳更新（新しい保証の追記・索引ドリフトの検知）は自動化されている**（`/promote-verify` は昇格前に親Issueの保証節を参照するため、保証節が無い Issue は要人間判定として報告される）。導入計画の全体像は `docs/gdd-design-draft.md`。
 
 ### 5.1 2つのフェーズ
 
@@ -369,7 +369,7 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 
 `reason` は `sdd` の中でも「明示的に SDD期 と宣言されている（`declared_sdd`）」と「宣言が無い（`no_phase_section` / `no_claude_md`）」を区別する。宣言の有無自体を扱うスキル（`/init-project` の CLAUDE.md 生成・マージ等）はこの区別を使ってよい。
 
-適用先（順次導入。**この定型文以外の判定手段を新たに実装しない**）: `/init-project`（適用済み）・`/quality-check`（適用済み）・`/promote-verify`（適用済み）・`/create-ticket`（適用済み）・`/define-feature`・`/para-impl`（`feature-implementer` を含む）。
+適用先（順次導入。**この定型文以外の判定手段を新たに実装しない**）: `/init-project`（適用済み）・`/quality-check`（適用済み）・`/promote-verify`（適用済み）・`/create-ticket`（適用済み）・`/para-impl`（`feature-implementer` を含む。適用済み）・`/define-feature`。
 
 ### 5.3 保証台帳（`docs/guarantees.md`）の書式
 
@@ -504,7 +504,7 @@ ID の一意性は「書式」ではなく「**採番できる場所を1つに�
 - **保証 ID は裁可の時点で確定している**（`G-{宣言元Issue番号}-{枝番}`。5.3 の採番の単一経路）。`/create-ticket` は Issue 作成後に本文のプレースホルダを実番号へ置換し、全 ID が `G-<その Issue 番号>-` で始まることを検証する。検証に失敗した状態は「作成完了」とせず、**裁可しないよう明記して**要人間対応として報告する。
 - **保証節を確定できない場合は Issue を作成しない**。要件モードの中断条件は4つ（台帳が無い＝`ledger_missing` ／索引チェックを実行できず保証件数を取得できない＝`index_check_unavailable` ／台帳の読み取り件数が索引チェックの `counts.guarantees` と食い違う＝`ledger_read_mismatch` ／`guarantee:proposed` を付与できない＝`label_unavailable` ／転記した機能仕様が既にフェンス外の保証節を持ち、追記すると保証節が2つになる＝`duplicate_guarantee_section`）。実装分解モードは、親Issueに保証節が無い場合（`parent_guarantee_section_missing`）に実装チケットを1件も作らずに中断する。不確かな保証節を人間に裁可させないため。公開面か内部実装かの判定に迷ったものは、どちらへも倒さず Issue の「判定保留（要人間判定）」に残し、裁可前に人間が決める。
   - **この6つの中断理由コードの語彙は `skills/create-ticket/references/guarantee-section.md` 共通-1 の表が正本**であり、増減する場合は本項も同時に更新する（正本に無い中断条件は実装側で緩和されやすいため、規律としてここにも列挙する）。
-- **ゲートの強制**（`guarantee:approved` が無ければ実装を始めない）は `/para-impl` の責務である（**未導入**。本章冒頭の段階導入の注記を参照）。`/create-ticket` は裁可待ちの状態を正しく作るところまでを担い、裁可の有無で分解を止めることはしない。
+- **ゲートの強制**（`guarantee:approved` が無ければ実装を始めない）は `/para-impl` の責務である（導入済み。`/para-impl` は Phase 1 で対象 Issue——実装チケットなら親——のラベルを完全一致で確認し、無ければ実装を開始せず停止して人間の裁可を促す。手順の正本は `skills/para-impl/references/guarantee-gate.md`）。`/create-ticket` は裁可待ちの状態を正しく作るところまでを担い、裁可の有無で分解を止めることはしない。
 
 ---
 
