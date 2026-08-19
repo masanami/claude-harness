@@ -30,6 +30,22 @@ effort: xhigh
 - ドキュメントの配置ルール（`docs/` 配下の構造、ドキュメントマップ）
 - 設計規約・コーディング規約
 
+### 1.5 開発フェーズの判定（GDD期のみ追加挙動）
+
+プロジェクト理解の直後に、開発フェーズ（SDD期 / GDD期）を判定する。GDD期の機能仕様には「宣言予定の保証」節が加わり（Step 6）、完了報告に退役の案内が加わる（Step 7）ため、先に判定する。
+
+> **開発フェーズの判定（重要）**: フェーズは必ず `claude-harness-run detect-dev-phase` の出力だけで判定し、`CLAUDE.md` を自分で grep しないこと（判定規約の重複実装を防ぐため）。stdout に `{"phase":"sdd"|"gdd"|"invalid","reason":"...","source":"..."}` が1個返る。フェーズ依存の追加挙動は **`phase` が `gdd` のときだけ**行い、`sdd`（宣言なしを含む）では一切挙動を変えない。**`phase` が `invalid`（exit 1）、またはスクリプトを実行できない・stdout が JSON としてパースできない（exit 2 等）場合は、`sdd` とみなさない**。フェーズ依存の処理を停止し、`reason` と `source`（および stderr のメッセージ）を添えて「要人間判定」としてユーザーに報告すること（不正な宣言や実行失敗によって GDD のゲート群が暗黙に無効化される事故を防ぐため）。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/detect-dev-phase.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。
+<!-- 正本: docs/ai-driven-development-strategy.md 5.2 / docs/plugin-path-conventions.md -->
+
+**判定器への入力は手元 checkout（引数なしの実行）でよい（本スキル固有の判断）**: 本スキルは対話で仕様を作る最上流であり、`/para-impl` のような「実装が到達する base」がまだ存在しない（対象 Issue・base ブランチとも未確定）。成果物（機能仕様ドキュメント）は Step 1 でプロジェクト理解に使ったのと同じ手元 checkout に書き込まれるため、判定対象＝手元 checkout そのものであり、引数なしの実行（cwd → リポジトリルートの順で `CLAUDE.md` を解決する既定動作。仕様の正本はプラグイン配下の `scripts/specs/detect-dev-phase.md`。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/detect-dev-phase.md` として解決する）と一致する。
+<!-- /para-impl が判定入力を「実装が到達する base」に是正したのは、手元と base の宣言の食い違いで裁可ゲートが素通りするためだった。本スキルには到達先 base が存在せず、判定対象と成果物の書き込み先が同一の checkout のため、この乖離は構造的に起きない。 -->
+
+| 判定結果 | 動作 |
+|---|---|
+| `sdd`（exit 0。フェーズ宣言なしを含む） | 追加挙動なし。以降の手順は従来どおり行う（GDD の参照ファイルも Read しない） |
+| `gdd`（exit 0） | `${CLAUDE_PLUGIN_ROOT}/skills/define-feature/references/planned-guarantees.md` を Read し（「Base directory for this skill」を起点に `<base>/references/planned-guarantees.md` として解決する）、Step 6・Step 7 でその手順を上乗せする |
+| `invalid`（exit 1）・実行不能・パース不能 | 上記の定型文のとおり、機能仕様ドキュメントを作成せず停止し、要人間判定として報告する |
+
 ### 2. 要件ヒアリング
 
 `$ARGUMENTS` が指定されている場合はそれをテーマとして使用し、不足情報をユーザーに確認する。指定がない場合はユーザーに要件のテーマを質問する。
@@ -136,6 +152,8 @@ effort: xhigh
 - 該当しないセクションは**セクションごと削除**する（埋めるための水増しは禁止）
 - 機能要件・受入基準はチェックボックス形式で記述する
 
+> **GDD期のみ（Step 1.5 のフェーズ判定が `gdd` の場合）**: テンプレートの「## 宣言予定の保証」セクションを削除せずに残し、参照ファイル `references/planned-guarantees.md`（節-1）に従って作成する（受入基準のうち公開面に相当するものの約束文の列挙・保証 ID を書かない・0件なら `- なし` の明示・見出しを `## 保証` で始まる形に変えない）。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、当該セクションは「該当しないセクション」としてセクションごと削除する（従来どおりの成果物になる）。
+
 #### 軽量化ガイド（何を書き、何を書かないか）
 
 機能仕様ドキュメントは**リリースまでの作業文書**であり、恒久的な仕様書ではない。実装が進むほど記述は実態と乖離し、乖離した記述は後続エージェントの誤読とレビュー時の混乱を生む。**書く量が多いほど陳腐化コストが上がる**ため、次の線引きで絞り込む:
@@ -237,6 +255,8 @@ Task ツールで `claude-harness:spec-critic`（`subagent_type: 'claude-harness
 # 3. 実装チケットが揃ったら並列実装
 /para-impl <実装チケット番号...>
 ```
+
+> **GDD期のみ（Step 1.5 のフェーズ判定が `gdd` の場合）**: 上記の「次のステップ」の末尾に、リリース後にこの機能仕様の退役（台帳・ADR へ吸収して削除）が待っている旨の1行を加える（書式は参照ファイル `references/planned-guarantees.md`（節-2）が正本）。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、報告は上記のみとする。
 
 ---
 

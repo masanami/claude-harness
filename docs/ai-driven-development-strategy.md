@@ -318,7 +318,7 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 
 各 SKILL.md には規律の要点のみを書き、詳細は本章を参照する。
 
-> **段階導入中**: フェーズ宣言の判定（`detect-dev-phase.sh`）・本章の書式規約・**台帳の監査（`/guarantee-audit` の bootstrap / drift）**・**`/quality-check` の索引整合ゲート**・**`/promote-verify` の保証整合チェック（Step 5.5）**・**`/create-ticket` の保証節と裁可ラベル（5.7）**・**`/para-impl` の裁可ゲートと `feature-implementer` の保証ブリーフ（保証整合確認・台帳更新の同一 PR 同梱）**は導入済み。**残りのフロー統合**（`/define-feature` の GDD 挙動）は未導入で、順次入れる。現時点で GDD期を選んだ場合、**台帳の起こし方と点検・索引ドリフトの検出、保証の宣言（Issue の保証節）と裁可待ちの表示、裁可ゲートの強制（`guarantee:approved` が無ければ実装を始めない）、実装フロー中の台帳更新（新しい保証の追記・索引ドリフトの検知）は自動化されている**（`/promote-verify` は昇格前に親Issueの保証節を参照するため、保証節が無い Issue は要人間判定として報告される）。導入計画の全体像は `docs/gdd-design-draft.md`。
+> **段階導入中**: フェーズ宣言の判定（`detect-dev-phase.sh`）・本章の書式規約・**台帳の監査（`/guarantee-audit` の bootstrap / drift）**・**`/quality-check` の索引整合ゲート**・**`/promote-verify` の保証整合チェック（Step 5.5）**・**`/create-ticket` の保証節と裁可ラベル（5.7）**・**`/para-impl` の裁可ゲートと `feature-implementer` の保証ブリーフ（保証整合確認・台帳更新の同一 PR 同梱）**・**`/define-feature` の GDD 挙動（「宣言予定の保証」節・退役の案内）**は導入済みであり、フロー統合は一巡した。現時点で GDD期を選んだ場合、**台帳の起こし方と点検・索引ドリフトの検出、保証の宣言（Issue の保証節）と裁可待ちの表示、裁可ゲートの強制（`guarantee:approved` が無ければ実装を始めない）、実装フロー中の台帳更新（新しい保証の追記・索引ドリフトの検知）は自動化されている**（`/promote-verify` は昇格前に親Issueの保証節を参照するため、保証節が無い Issue は要人間判定として報告される）。導入計画の全体像は `docs/gdd-design-draft.md`。
 
 ### 5.1 2つのフェーズ
 
@@ -369,7 +369,7 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 
 `reason` は `sdd` の中でも「明示的に SDD期 と宣言されている（`declared_sdd`）」と「宣言が無い（`no_phase_section` / `no_claude_md`）」を区別する。宣言の有無自体を扱うスキル（`/init-project` の CLAUDE.md 生成・マージ等）はこの区別を使ってよい。
 
-適用先（順次導入。**この定型文以外の判定手段を新たに実装しない**）: `/init-project`（適用済み）・`/quality-check`（適用済み）・`/promote-verify`（適用済み）・`/create-ticket`（適用済み）・`/para-impl`（`feature-implementer` を含む。適用済み）・`/define-feature`。
+適用先（全先へ適用済み。**この定型文以外の判定手段を新たに実装しない**）: `/init-project`（適用済み）・`/quality-check`（適用済み）・`/promote-verify`（適用済み）・`/create-ticket`（適用済み）・`/para-impl`（`feature-implementer` を含む。適用済み）・`/define-feature`（適用済み）。
 
 ### 5.3 保証台帳（`docs/guarantees.md`）の書式
 
