@@ -166,7 +166,7 @@ expected_states='起動台帳が空（1つも起動していない）
 未合流 0件（起動したものはすべて合流済み）
 未合流 1件以上
 合流を試みても受領できない（結果取得の失敗・再試行上限到達）
-起動台帳と実状態を突き合わせられない（台帳の欠落・コンテキスト要約による消失等）'
+起動台帳と実状態を突き合わせられない（台帳の欠落・コンテキスト要約による消失・台帳に載っていない合流記録がある〔合流済み件数が起動台帳件数を上回る〕等）'
 assert_eq "(4) 決定表の状態が5件・期待の列挙と完全一致する（増減・改変で落ちる）" \
   "$expected_states" "$gate_states"
 
@@ -209,7 +209,13 @@ jg_gate() {
     return 0
   fi
   unjoined=$((ledger - joined))
-  if [ "$unjoined" -le 0 ]; then
+  if [ "$unjoined" -lt 0 ]; then
+    # 合流済み件数が起動台帳件数を上回る＝台帳に載っていない合流記録がある。
+    # 台帳と実状態が突き合っていないため、0件（正常）に丸めず中断報告へ倒す
+    printf 'abort_report'
+    return 0
+  fi
+  if [ "$unjoined" -eq 0 ]; then
     # 空集合（起動0件）も未合流0件も正常経路
     printf 'pass'
     return 0
@@ -232,6 +238,10 @@ assert_eq "(6) 台帳突き合わせ不能は起動0件でも pass にしない�
   "abort_report" "$(jg_gate 0 0 false false)"
 assert_eq "(6) 台帳突き合わせ不能は全数合流済みに見えても pass にしない" \
   "abort_report" "$(jg_gate 3 3 false true)"
+assert_eq "(6) 合流済みが台帳件数を上回る（台帳3・合流4）は pass にしない（台帳に無い合流記録＝突合不能）" \
+  "abort_report" "$(jg_gate 3 4 true false)"
+assert_eq "(6) 台帳が空なのに合流記録がある（台帳0・合流1）も空集合の正常経路に丸めない" \
+  "abort_report" "$(jg_gate 0 1 true true)"
 
 echo ""
 echo "=== (7) 中断報告の出力契約（異常系の出力契約が未定義でないこと） ==="
