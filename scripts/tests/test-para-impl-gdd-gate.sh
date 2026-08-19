@@ -349,6 +349,26 @@ for f in "$CSC_SCRIPT" "$CSC_SPEC" "$GATE_FILE"; do
 done
 assert_file_contains "(B-4c) 割当の入力は検証済みの分解（未検証の検索結果を使わない）" "$GATE_FILE" \
   '検証済みの分解が1チケットだけなら'
+
+echo ""
+echo "=== (B-4e) guarantee-gate.md: Parent: 不在は未分解の証明ではない（親方向の子照会） ==="
+
+assert_file_contains "(B-4e) ヘッダ行の不在は親であることしか証明しない（未分解の証明ではない）" "$GATE_FILE" \
+  '**「未分解である」ことは証明しない**'
+assert_file_contains "(B-4e) 分解なし単独親の分岐を取る前に対象自身の子を照会する" "$GATE_FILE" \
+  '`claude-harness-run check-subtask-completion {対象Issue番号}` で照会する'
+assert_file_contains "(B-4e) 親方向の照会にも取得結果の検証を同じ強度で適用する" "$GATE_FILE" \
+  '「取得結果の検証」（下記）を**同じ強度で適用する**——`fallback_truncated` は停止（`decomposition_unverifiable`）'
+assert_file_contains "(B-4e) 健全性条件（自分の包含）は親方向には適用しない（子0件は正規）" "$GATE_FILE" \
+  '**自分自身の包含という健全性条件は親方向の照会には適用しない**'
+assert_file_contains "(B-4e) 検証済みの子が1件以上なら分解済み親への直接起動として停止" "$GATE_FILE" \
+  '**分解済みの親への直接起動**として停止する（`parent_already_decomposed`）'
+assert_file_contains "(B-4e) 停止報告で子チケット経由の再実行を促す" "$GATE_FILE" \
+  '`/para-impl {子番号...}` での再実行を人間に促す'
+assert_file_contains "(B-4e) 検証済みの子0件のときだけ未分解の単独親として全量を含める" "$GATE_FILE" \
+  '**検証済みの子が0件**（`no_children_found`・文法再検証で全候補が落ちた場合を含む）→ 未分解の単独親として扱い'
+assert_file_not_contains "(B-4e) 「Parent: 不在＝未分解」の含意の残骸（未検証の割当不要分岐）が残っていない" "$GATE_FILE" \
+  '（実装チケットに分解されていない）の場合は割当不要'
 assert_file_contains "(B-4) 合流ゲート伝播条項の規定は維持し並記で追加する" "$GATE_FILE" \
   '**合流ゲート伝播条項の逐語転記の規定はそのまま維持し、本ブロックはそれと並記で追加する**'
 
@@ -514,23 +534,25 @@ assert_eq "(D-1) 判定表の状態はちょうど5行（増減時は語彙表�
 
 # 担当割当の経路の表（対象の構造 × 起動形態）はちょうど6行で、停止経路を含む
 route_rows="$(awk '/^\*\*経路の表（対象の構造/{f=1; next} /^###|^---/{f=0} f && /^\| [0-9]+ \| /{c++} END{print c+0}' "$GATE_FILE")"
-assert_eq "(D-1) 担当割当の経路の表はちょうど7行（受理5＋停止2。増減時は本文と同時更新）" "7" "$route_rows"
+assert_eq "(D-1) 担当割当の経路の表はちょうど8行（受理5＋停止3。増減時は本文と同時更新）" "8" "$route_rows"
 assert_file_contains "(D-1) 経路の表に分解全体像の検証不能の停止経路が明示されている" "$GATE_FILE" \
   '| 注入しない | **停止**（`decomposition_unverifiable`） |'
 assert_file_contains "(D-1) 経路の表に逐次実行（1チケットだけ起動）の受理経路が明示されている" "$GATE_FILE" \
   '| 4 | 親が複数チケットに分解 | 1チケットだけ起動（逐次実行） | 必須（分解の全体像で割当を解決してから） | 当該チケットの担当分のみ | 受理 |'
 assert_file_contains "(D-1) 経路の表に割当解決不能の停止経路が明示されている" "$GATE_FILE" \
   '| 注入しない | **停止**（`guarantee_assignment_unresolvable`） |'
+assert_file_contains "(D-1) 経路の表に分解済み親への直接起動の停止経路が明示されている" "$GATE_FILE" \
+  '| 注入しない | **停止**（`parent_already_decomposed`） |'
 
-# reason 語彙表はちょうど9コード
+# reason 語彙表はちょうど10コード
 reason_rows="$(grep -cE '^\| `[a-z_]+` \| Phase' "$GATE_FILE")"
-assert_eq "(D-1) reason 語彙表はちょうど9コード" "9" "$reason_rows"
+assert_eq "(D-1) reason 語彙表はちょうど10コード" "10" "$reason_rows"
 
 # 各コードは定義（語彙表）と使用（判定表・転記の規律・担当割当）の両方に現れる
 # （定義だけ・使用だけを作らない）
 for code in parent_mismatch labels_unavailable label_state_ambiguous approval_missing \
   guarantee_section_unreadable guarantee_scope_mismatch guarantee_assignment_unresolvable \
-  decomposition_unverifiable ledger_unreadable; do
+  decomposition_unverifiable ledger_unreadable parent_already_decomposed; do
   occurrences="$(grep -cF -- "\`${code}\`" "$GATE_FILE")"
   if [ "$occurrences" -ge 2 ]; then
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -806,6 +828,47 @@ assert_eq "(D-11) base=GDD: 手元の状態によらずゲート発動の入力�
 assert_eq "(D-11) base=SDD: 手元が GDD 宣言でも従来どおり不変の入力（sdd）" "sdd" "$(pi_phase_basis sdd)"
 assert_eq "(D-11) base に CLAUDE.md なし: 宣言なし＝sdd（no_claude_md と同義）" "sdd" "$(pi_phase_basis absent)"
 assert_eq "(D-11) base=invalid: sdd に読み替えない（fail-closed の入力を保存）" "invalid" "$(pi_phase_basis invalid)"
+
+echo ""
+echo "=== (D-12) 親方向の子照会の参照実装（Parent: 不在≠未分解） ==="
+
+# guarantee-gate.md「対象が要件チケット自体の場合」の規則:
+# 引数: $1=スクリプトの status（ok|no_children_found|fallback_truncated）
+#       $2=候補一覧（"番号:ヘッダ文法の再検証結果(ok|ng)" のカンマ区切り。空文字可）
+# 出力: ok:undecomposed（未分解の単独親＝全量注入可）または stop:<reason>
+pi_parent_children_gate() {
+  local status="$1" candidates="$2"
+  if [ "$status" = "fallback_truncated" ]; then
+    echo "stop:decomposition_unverifiable"
+    return
+  fi
+  local verified_count=0 entry verdict
+  if [ -n "$candidates" ]; then
+    local old_ifs="$IFS"
+    IFS=','
+    for entry in $candidates; do
+      verdict="${entry##*:}"
+      [ "$verdict" = "ok" ] && verified_count=$((verified_count + 1))
+    done
+    IFS="$old_ifs"
+  fi
+  if [ "$verified_count" -ge 1 ]; then
+    echo "stop:parent_already_decomposed"
+  else
+    echo "ok:undecomposed"
+  fi
+}
+
+assert_eq "(D-12) 検証済みの子あり: 分解済み親への直接起動として停止（第2実装を作らない）" \
+  "stop:parent_already_decomposed" "$(pi_parent_children_gate ok '101:ok,102:ok')"
+assert_eq "(D-12) 一部が引用のみでも検証済みの子が1件あれば停止" \
+  "stop:parent_already_decomposed" "$(pi_parent_children_gate ok '101:ok,99:ng')"
+assert_eq "(D-12) 引用マッチのみ（文法再検証で全滅）: 未分解の単独親として受理" \
+  "ok:undecomposed" "$(pi_parent_children_gate ok '99:ng')"
+assert_eq "(D-12) no_children_found: 未分解の単独親として受理（子0件は正規）" \
+  "ok:undecomposed" "$(pi_parent_children_gate no_children_found '')"
+assert_eq "(D-12) 子照会が打ち切り: 自分の包含に関係なく未分解を証明できず停止" \
+  "stop:decomposition_unverifiable" "$(pi_parent_children_gate fallback_truncated '101:ok')"
 
 echo ""
 echo "=== (D-10) 決定的割当の参照実装（同一入力→同一割当・順序不変・タイブレーク） ==="
