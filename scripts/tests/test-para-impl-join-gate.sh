@@ -164,8 +164,8 @@ gate_states="$(awk '/^### 手順（最終応答の直前）/{f=1; next} /^### /{
   | sed -E 's/^\|[[:space:]]*//; s/[[:space:]]*\|.*$//')"
 expected_states='起動台帳が空（1つも起動していない）
 未合流 0件（起動台帳が1件以上あり、すべて合流済み）
-未合流 1件以上（合流の再試行上限に達していない）
-未合流 1件以上のまま、合流の再試行上限に達した（受領の見込みがない）
+未合流 1件以上で、受領の見込みがある（稼働を確認できる、または結果取得の待機・タイムアウトが続いているだけ）
+未合流 1件以上のまま、受領の見込みがない（稼働確認も結果取得もできない状態が、確認の再試行上限まで続いた）
 起動台帳と実状態を突き合わせられない（台帳の欠落・コンテキスト要約による消失・台帳に載っていない合流記録がある〔合流済み件数が起動台帳件数を上回る〕等）'
 assert_eq "(4) 決定表の状態が5件・期待の列挙と完全一致する（増減・改変で落ちる）" \
   "$expected_states" "$gate_states"
@@ -177,18 +177,26 @@ assert_skill_contains "(4) 1〜4行目は突き合わせ成立が前提（最終
   '1〜4行目は台帳と実状態の突き合わせが成立していることが前提'
 assert_skill_contains "(4) 該当行を判定できない場合は中断報告へ倒す（fail-closed の既定）" \
   '**どの行に該当するか判定できない場合は、突き合わせ不能として最終行（中断報告）へ倒す**'
-assert_skill_contains "(4) 合流の再試行上限（目安3回・結果取得の失敗も数える）を定義している" \
-  '合流の再試行上限は**3回を目安**とし、結果取得の失敗も回数に数える'
+assert_skill_contains "(4) 受領の見込みは実状態の確認で判定する（回数・経過時間だけで判定しない）" \
+  '受領の見込みは**実状態の確認で判定し、待機・ポーリングの回数や経過時間だけを根拠に判定しない**'
+assert_skill_contains "(4) 取得タイムアウトを「結果がもう来ない」と同一視しない" \
+  '結果取得のタイムアウトは「結果がもう来ない」ことを意味しない'
+assert_skill_contains "(4) worker の長時間・多数回待機は正当な稼働であると明示している" \
+  'Phase 4〜9 を実行中の worker は長時間・多数回の待機にまたがって正当に稼働し続ける'
+assert_skill_contains "(4) 再試行上限は稼働確認も結果取得もできない場合の確認試行に限定する" \
+  '再試行上限（**3回を目安**）は、**稼働確認も結果取得もできない場合の確認試行にだけ**適用する'
+assert_file_not_contains "(4) 取得失敗を一律に回数へ数える旧規則が残っていない" "$SKILL_FILE" \
+  '結果取得の失敗も回数に数える'
 
 # 状態→動作の対応（行単位の逐語検査）
 assert_skill_contains "(4) 起動0件（空集合）はゲート通過の正常経路である" \
   '| 起動台帳が空（1つも起動していない） | ゲート通過。そのまま最終応答へ |'
 assert_skill_contains "(4) 未合流0件（台帳1件以上）はゲート通過の正常経路である（空台帳の行と重ねない）" \
   '| 未合流 0件（起動台帳が1件以上あり、すべて合流済み） | ゲート通過。そのまま最終応答へ |'
-assert_skill_contains "(4) 未合流1件以上・上限未到達は応答を確定せず合流を続け、合流後にゲートを再実行する" \
-  '| 未合流 1件以上（合流の再試行上限に達していない） | 最終応答を確定せず、ツール呼び出しで合流を続ける。合流できたら本ゲートを最初から再実行する |'
-assert_skill_contains "(4) 未合流1件以上のまま上限到達は中断報告へ倒す（合流継続の行と排他）" \
-  '| 未合流 1件以上のまま、合流の再試行上限に達した（受領の見込みがない） | 合流を断念し、完了報告ではなく**中断報告**（下記の出力契約）へ倒す |'
+assert_skill_contains "(4) 未合流1件以上・受領見込みありは応答を確定せず合流を続け、合流後にゲートを再実行する" \
+  '| 未合流 1件以上で、受領の見込みがある（稼働を確認できる、または結果取得の待機・タイムアウトが続いているだけ） | 最終応答を確定せず、ツール呼び出しで合流を続ける。合流できたら本ゲートを最初から再実行する |'
+assert_skill_contains "(4) 未合流1件以上のまま受領見込みなしは中断報告へ倒す（合流継続の行と排他）" \
+  '| 未合流 1件以上のまま、受領の見込みがない（稼働確認も結果取得もできない状態が、確認の再試行上限まで続いた） | 合流を断念し、完了報告ではなく**中断報告**（下記の出力契約）へ倒す |'
 assert_skill_contains "(4) 台帳突き合わせ不能を0件に丸めない（検査不能≠0件）" \
   '未合流 0件とみなさず、**中断報告**へ倒す（検査不能を0件に丸めない）'
 
@@ -208,10 +216,13 @@ echo ""
 echo "=== (6) 決定表の参照実装（真理値表・空集合ケース必須） ==="
 
 # 決定表の参照実装。引数: <起動台帳件数> <合流済み件数> <台帳突き合わせ可 true/false>
-#                     <合流試行の上限到達 true/false>
+#                     <受領見込みなし true/false>
+# 第4引数は「受領の見込みがない」ことが**実状態の確認**（稼働確認も結果取得も
+# できない状態が確認の再試行上限まで続いた）で確定したかを表す。待機・ポーリングの
+# 回数や経過時間だけでは true にならない（取得タイムアウトの継続は false のまま）。
 # 出力: pass（ゲート通過）/ continue_join（応答を確定せず合流継続）/ abort_report（中断報告）
 jg_gate() {
-  local ledger="$1" joined="$2" reconcilable="$3" exhausted="$4"
+  local ledger="$1" joined="$2" reconcilable="$3" no_prospect="$4"
   local unjoined
   if [ "$reconcilable" != "true" ]; then
     # 台帳と実状態を突き合わせられない場合は 0件とみなさない（検査不能≠0件）
@@ -230,7 +241,7 @@ jg_gate() {
     printf 'pass'
     return 0
   fi
-  if [ "$exhausted" = "true" ]; then
+  if [ "$no_prospect" = "true" ]; then
     printf 'abort_report'
   else
     printf 'continue_join'
@@ -238,12 +249,14 @@ jg_gate() {
 }
 
 assert_eq "(6) 起動0件・突き合わせ可はゲート通過（空集合＝正常経路）" "pass" "$(jg_gate 0 0 true false)"
-assert_eq "(6) 起動0件では合流試行の上限は無関係にゲート通過" "pass" "$(jg_gate 0 0 true true)"
+assert_eq "(6) 起動0件では受領見込みの判定は無関係にゲート通過" "pass" "$(jg_gate 0 0 true true)"
 assert_eq "(6) 全数合流済み（8/8）はゲート通過" "pass" "$(jg_gate 8 8 true false)"
-assert_eq "(6) 部分合流（5/6）はゲート通過にならず合流継続（部分成功≠完全成功）" \
+assert_eq "(6) 部分合流（5/6）・受領見込みありはゲート通過にならず合流継続（部分成功≠完全成功）" \
   "continue_join" "$(jg_gate 6 5 true false)"
-assert_eq "(6) 部分合流（5/6）で合流試行が尽きたら中断報告" "abort_report" "$(jg_gate 6 5 true true)"
-assert_eq "(6) 全数未合流（0/8）で合流試行が尽きたら中断報告" "abort_report" "$(jg_gate 8 0 true true)"
+assert_eq "(6) 稼働確認できる限り取得タイムアウトが何度続いても合流継続（回数で中断へ倒さない）" \
+  "continue_join" "$(jg_gate 6 5 true false)"
+assert_eq "(6) 部分合流（5/6）で受領見込みなしが確定したら中断報告" "abort_report" "$(jg_gate 6 5 true true)"
+assert_eq "(6) 全数未合流（0/8）で受領見込みなしが確定したら中断報告" "abort_report" "$(jg_gate 8 0 true true)"
 assert_eq "(6) 台帳突き合わせ不能は起動0件でも pass にしない（検査不能を0件に丸めない）" \
   "abort_report" "$(jg_gate 0 0 false false)"
 assert_eq "(6) 台帳突き合わせ不能は全数合流済みに見えても pass にしない" \
@@ -257,11 +270,13 @@ echo ""
 echo "=== (6b) 決定表の排他性（全状態で該当行がちょうど1行・動作の一貫性） ==="
 
 # 決定表の各行の状態条件の参照実装（SKILL.md の状態列を述語に写したもの）。
-# 引数: <行番号 1-5> <起動台帳件数> <合流済み件数> <突き合わせ可 true/false> <再試行上限到達 true/false>
+# 引数: <行番号 1-5> <起動台帳件数> <合流済み件数> <突き合わせ可 true/false> <受領見込みなし true/false>
+# 第5引数の意味は jg_gate と同じ（実状態の確認で「受領の見込みがない」と確定したか。
+# 待機・ポーリングの回数や経過時間だけでは true にならない）。
 # 行5 は「突き合わせ不能」であり、reconcilable=false と「台帳に無い合流記録
 # （合流済み件数が起動台帳件数を上回る）」の両方を含む。行1〜4 は突き合わせ成立が前提。
 jg_row_matches() {
-  local row="$1" ledger="$2" joined="$3" reconcilable="$4" exhausted="$5"
+  local row="$1" ledger="$2" joined="$3" reconcilable="$4" no_prospect="$5"
   local sane="true"
   if [ "$reconcilable" != "true" ] || [ "$joined" -gt "$ledger" ]; then
     sane="false"
@@ -269,8 +284,8 @@ jg_row_matches() {
   case "$row" in
     1) [ "$sane" = "true" ] && [ "$ledger" -eq 0 ] ;;
     2) [ "$sane" = "true" ] && [ "$ledger" -ge 1 ] && [ "$joined" -eq "$ledger" ] ;;
-    3) [ "$sane" = "true" ] && [ $((ledger - joined)) -ge 1 ] && [ "$exhausted" != "true" ] ;;
-    4) [ "$sane" = "true" ] && [ $((ledger - joined)) -ge 1 ] && [ "$exhausted" = "true" ] ;;
+    3) [ "$sane" = "true" ] && [ $((ledger - joined)) -ge 1 ] && [ "$no_prospect" != "true" ] ;;
+    4) [ "$sane" = "true" ] && [ $((ledger - joined)) -ge 1 ] && [ "$no_prospect" = "true" ] ;;
     5) [ "$sane" = "false" ] ;;
     *) false ;;
   esac
@@ -296,20 +311,20 @@ for ledger in 0 1 3; do
   for joined in 0 1 3 4; do
     [ "$joined" -le $((ledger + 1)) ] || continue
     for reconcilable in true false; do
-      for exhausted in true false; do
+      for no_prospect in true false; do
         state_count=$((state_count + 1))
         match_count=0
         matched_row=0
         for row in 1 2 3 4 5; do
-          if jg_row_matches "$row" "$ledger" "$joined" "$reconcilable" "$exhausted"; then
+          if jg_row_matches "$row" "$ledger" "$joined" "$reconcilable" "$no_prospect"; then
             match_count=$((match_count + 1))
             matched_row="$row"
           fi
         done
-        state="L=${ledger},J=${joined},R=${reconcilable},E=${exhausted}"
+        state="L=${ledger},J=${joined},R=${reconcilable},N=${no_prospect}"
         if [ "$match_count" -ne 1 ]; then
           exclusivity_violations="${exclusivity_violations}${state}=${match_count}行 "
-        elif [ "$(jg_row_action "$matched_row")" != "$(jg_gate "$ledger" "$joined" "$reconcilable" "$exhausted")" ]; then
+        elif [ "$(jg_row_action "$matched_row")" != "$(jg_gate "$ledger" "$joined" "$reconcilable" "$no_prospect")" ]; then
           action_mismatches="${action_mismatches}${state} "
         fi
       done
