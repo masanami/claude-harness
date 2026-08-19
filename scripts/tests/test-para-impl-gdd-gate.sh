@@ -255,6 +255,22 @@ assert_file_contains "(B-4b) 全数検証は今回実装しないチケットも
   '**分解の全チケット（今回実装しないものを含む）を通してちょうど1回**'
 assert_file_contains "(B-4b) SKILL.md 側でも割当の要否は起動形態でなく親の分解の構造で決める" "$SKILL_FILE" \
   '割当の要否は起動形態でなく親の分解の構造で決める'
+
+echo ""
+echo "=== (B-4c) guarantee-gate.md: 分解全体像の取得結果の検証（fail-closed） ==="
+
+assert_file_contains "(B-4c) 検索は候補列挙・確定は正本文法（検査不能を空集合に丸めない）" "$GATE_FILE" \
+  '**取得結果の検証（検索は候補列挙・確定は正本文法。検査不能を空集合に丸めない）**'
+assert_file_contains "(B-4c) フォールバック候補は本文を取得しヘッダ文法で再検証する" "$GATE_FILE" \
+  '**各候補 Issue の本文を取得し、1-a のヘッダ文法（コードフェンスの外・本文冒頭部の `Parent: #<番号>` 行）で再検証し、通過した Issue だけを兄弟として採用する**'
+assert_file_contains "(B-4c) 健全性条件: 自分自身を含まない兄弟集合は検査不能として停止" "$GATE_FILE" \
+  '**採用後の兄弟集合に対象 Issue 自身が含まれない場合——スクリプトが `no_children_found`（0件）を返した場合を含む——は、「分解なし」に読み替えず検査不能として停止する**'
+assert_file_contains "(B-4c) スクリプトの0件丸め（失敗も exit 0）を割当不要の根拠にしない" "$GATE_FILE" \
+  '**0件・自分不在の結果を割当不要（全量注入）の根拠にしない**'
+assert_file_contains "(B-4c) 台帳を読めない場合は未登録とみなさず停止（登録済み判定の素通り防止）" "$GATE_FILE" \
+  '**台帳を読めない場合は「未登録」とみなさず停止する**'
+assert_file_contains "(B-4c) 割当の入力は検証済みの分解（未検証の検索結果を使わない）" "$GATE_FILE" \
+  '検証済みの分解が1チケットだけなら'
 assert_file_contains "(B-4) 合流ゲート伝播条項の規定は維持し並記で追加する" "$GATE_FILE" \
   '**合流ゲート伝播条項の逐語転記の規定はそのまま維持し、本ブロックはそれと並記で追加する**'
 
@@ -311,6 +327,8 @@ assert_file_contains "(B-6) 維持ありの書式は現行台帳で解決した�
   '全{件数}件を現行台帳で解決し抵触なし'
 assert_file_not_contains "(B-6) 0件でもテスト配置・台帳追記を主張する無条件テンプレが残っていない" "$FI_FILE" \
   '維持 {ID一覧 | なし} — 全{件数}件に抵触なし ／ 新規 {ID一覧 | なし} — 対応テストをテストリスト先頭に配置し'
+assert_file_contains "(B-6) 台帳不在時は新設して追記せず fail-closed 停止（新設は人間の裁可事項）" "$FI_FILE" \
+  '台帳を新設して追記しない——台帳の新設・復旧は人間の裁可事項'
 assert_file_contains "(B-6) D-13: 新しい停止経路・返却形式を作らない" "$FI_FILE" \
   '保証逸脱のための新しい停止経路・新しい返却形式を作らない'
 assert_file_contains "(B-6) 保証逸脱の警告書式（既存の ⚠️ と同型）" "$FI_FILE" \
@@ -414,20 +432,23 @@ assert_eq "(D-1) 判定表の状態はちょうど5行（増減時は語彙表�
 
 # 担当割当の経路の表（対象の構造 × 起動形態）はちょうど6行で、停止経路を含む
 route_rows="$(awk '/^\*\*経路の表（対象の構造/{f=1; next} /^###|^---/{f=0} f && /^\| [0-9]+ \| /{c++} END{print c+0}' "$GATE_FILE")"
-assert_eq "(D-1) 担当割当の経路の表はちょうど6行（受理5＋停止1。増減時は本文と同時更新）" "6" "$route_rows"
+assert_eq "(D-1) 担当割当の経路の表はちょうど7行（受理5＋停止2。増減時は本文と同時更新）" "7" "$route_rows"
+assert_file_contains "(D-1) 経路の表に分解全体像の検証不能の停止経路が明示されている" "$GATE_FILE" \
+  '| 注入しない | **停止**（`decomposition_unverifiable`） |'
 assert_file_contains "(D-1) 経路の表に逐次実行（1チケットだけ起動）の受理経路が明示されている" "$GATE_FILE" \
   '| 4 | 親が複数チケットに分解 | 1チケットだけ起動（逐次実行） | 必須（分解の全体像で割当を解決してから） | 当該チケットの担当分のみ | 受理 |'
 assert_file_contains "(D-1) 経路の表に割当解決不能の停止経路が明示されている" "$GATE_FILE" \
   '| 注入しない | **停止**（`guarantee_assignment_unresolvable`） |'
 
-# reason 語彙表はちょうど7コード
+# reason 語彙表はちょうど9コード
 reason_rows="$(grep -cE '^\| `[a-z_]+` \| Phase' "$GATE_FILE")"
-assert_eq "(D-1) reason 語彙表はちょうど7コード" "7" "$reason_rows"
+assert_eq "(D-1) reason 語彙表はちょうど9コード" "9" "$reason_rows"
 
 # 各コードは定義（語彙表）と使用（判定表・転記の規律・担当割当）の両方に現れる
 # （定義だけ・使用だけを作らない）
 for code in parent_mismatch labels_unavailable label_state_ambiguous approval_missing \
-  guarantee_section_unreadable guarantee_scope_mismatch guarantee_assignment_unresolvable; do
+  guarantee_section_unreadable guarantee_scope_mismatch guarantee_assignment_unresolvable \
+  decomposition_unverifiable ledger_unreadable; do
   occurrences="$(grep -cF -- "\`${code}\`" "$GATE_FILE")"
   if [ "$occurrences" -ge 2 ]; then
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -639,6 +660,47 @@ assert_eq "(D-8) 経路3/4: 複数チケットに分解は割当必須・担当�
 # （関数が起動形態を入力に取らないこと自体が規則の写しであり、ここで固定する）
 assert_eq "(D-8) 分解済み親への1チケット逐次起動と複数同時起動で判定が変わらない" \
   "$(pi_assignment_required 3)" "$(pi_assignment_required 3)"
+
+echo ""
+echo "=== (D-9) 分解全体像の採用の参照実装（文法再検証＋健全性条件） ==="
+
+# guarantee-gate.md「取得結果の検証」と同じ規則:
+# 引数: $1=対象（実装チケット）自身の番号 $2=スクリプトの status（ok|no_children_found）
+#       $3=候補一覧（"番号:ヘッダ文法の再検証結果(ok|ng)" のカンマ区切り。空文字可）
+# 出力: ok:<採用した兄弟数> または stop:decomposition_unverifiable
+pi_adopt_siblings() {
+  local self="$1" status="$2" candidates="$3"
+  local adopted_count=0 self_adopted="no" entry num verdict
+  if [ "$status" = "ok" ] && [ -n "$candidates" ]; then
+    local old_ifs="$IFS"
+    IFS=','
+    for entry in $candidates; do
+      num="${entry%%:*}"
+      verdict="${entry##*:}"
+      if [ "$verdict" = "ok" ]; then
+        adopted_count=$((adopted_count + 1))
+        [ "$num" = "$self" ] && self_adopted="yes"
+      fi
+    done
+    IFS="$old_ifs"
+  fi
+  if [ "$self_adopted" = "yes" ]; then
+    echo "ok:${adopted_count}"
+  else
+    echo "stop:decomposition_unverifiable"
+  fi
+}
+
+assert_eq "(D-9) 自分＋兄弟が文法検証を通過: 採用（2件）" \
+  "ok:2" "$(pi_adopt_siblings 12 ok '12:ok,13:ok')"
+assert_eq "(D-9) 引用でマッチしただけの無関係 Issue は文法再検証で除外される" \
+  "ok:2" "$(pi_adopt_siblings 12 ok '12:ok,13:ok,99:ng')"
+assert_eq "(D-9) no_children_found（0件）: 分解なしに読み替えず停止" \
+  "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 no_children_found '')"
+assert_eq "(D-9) 検索が自分を返さない（一時的欠落）: 健全性条件で停止" \
+  "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 ok '13:ok')"
+assert_eq "(D-9) 候補全滅（全件が文法不適合）: 空集合を分解として採用しない" \
+  "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 ok '99:ng')"
 
 # ---------------------------------------------------------------------------
 echo ""
