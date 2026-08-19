@@ -236,9 +236,7 @@ assert_file_contains "(B-4b) 維持する保証は全チケットに共通で渡
 assert_file_contains "(B-4b) 注入の前に割当の全数検証を行う" "$GATE_FILE" \
   '**割当の全数検証（注入の前に行う）**'
 assert_file_contains "(B-4b) 割当不能な ID があれば停止する（黙って割当を歪めない）" "$GATE_FILE" \
-  'どのチケットにも割り当てられない・単独で検証可能にできない ID が1件でもあれば **停止**'
-assert_file_contains "(B-4b) 跨り保証は依存順で最後に完成するチケットへ割り当てる" "$GATE_FILE" \
-  '依存順で最後に完成するチケットへ割り当てる'
+  '上記の決定的規則で一意に導出できない ID が1件でもあれば **停止**'
 assert_file_contains "(B-4b) 注入ブロックの新規宣言は担当分だけ（行単位の抜粋・行内は逐語）" "$GATE_FILE" \
   '**新規宣言する保証は担当割当に従い、当該チケットの担当分の行だけを転記する**'
 assert_file_contains "(B-4b) 割当表を実行計画に出力し注入に接続する（記録だけにしない）" "$GATE_FILE" \
@@ -255,6 +253,54 @@ assert_file_contains "(B-4b) 全数検証は今回実装しないチケットも
   '**分解の全チケット（今回実装しないものを含む）を通してちょうど1回**'
 assert_file_contains "(B-4b) SKILL.md 側でも割当の要否は起動形態でなく親の分解の構造で決める" "$SKILL_FILE" \
   '割当の要否は起動形態でなく親の分解の構造で決める'
+
+echo ""
+echo "=== (B-4d) guarantee-gate.md: 割当は安定入力の決定的規則（実行間一貫） ==="
+
+assert_file_contains "(B-4d) 割当は安定入力だけから一意に導出する決定的規則で行う" "$GATE_FILE" \
+  '**割当は安定入力（親 Issue の保証節・検証済みチケット集合の本文・現行台帳）だけから一意に導出する決定的規則で行う**'
+assert_file_contains "(B-4d) 決定的規則だけが実行間一貫の担保（割当表は後続実行から参照不能）" "$GATE_FILE" \
+  '**どの実行回でも同じ入力から同じ割当が導出されることだけが、実行間一貫の担保**'
+assert_file_contains "(B-4d) 意味的な推測で候補を補わない（推測は実行回ごとに揺れる）" "$GATE_FILE" \
+  '**意味的な推測で候補を補わない**'
+assert_file_contains "(B-4d) AC 注記の欠落は停止（情報欠落の fail-closed）" "$GATE_FILE" \
+  '**注記が無い・AC 識別子を読めない保証は停止**'
+assert_file_contains "(B-4d) 候補特定は 対応する受入基準: ヘッダ行の完全一致（機械アンカー）" "$GATE_FILE" \
+  '`対応する受入基準:` ヘッダ行'
+assert_file_contains "(B-4d) AC 識別子は全体一致（AC-1 を AC-12 の一部に一致させない）" "$GATE_FILE" \
+  '`AC-1` を `AC-12` の一部に一致させない'
+assert_file_contains "(B-4d) アンカー行を持たないチケットが1つでもあれば停止（一意性の破れ）" "$GATE_FILE" \
+  '**このヘッダ行を持たないチケットが集合に1つでもある場合は停止**'
+assert_file_contains "(B-4d) 複数候補は依存下流（依存する他候補の数が最大）を選ぶ" "$GATE_FILE" \
+  '依存する他候補の数が最大のチケット'
+assert_file_contains "(B-4d) 同点はチケット番号最小（タイブレーク完全規定）" "$GATE_FILE" \
+  '同数なら**チケット番号が最小のチケット**'
+assert_file_contains "(B-4d) 実行計画への出力は説明であり引き継ぎ手段ではない（再現性の主張を訂正）" "$GATE_FILE" \
+  '実行計画への出力は当該実行の説明であり、後続実行への引き継ぎ手段ではない'
+assert_file_not_contains "(B-4d) 成立しない再現性の主張（根拠の記録が再現の材料）が残っていない" "$GATE_FILE" \
+  '同じ割当を再現するための材料になる'
+
+echo ""
+echo "=== (C-5) 割当アンカーの cross-file 一致（生成側テンプレ・分解手順・消費側ゲート） ==="
+
+TPL_FILE="${REPO_ROOT}/skills/create-ticket/templates/implementation-ticket.md"
+DEC_FILE="${REPO_ROOT}/skills/create-ticket/references/decompose-mode.md"
+for f in "$TPL_FILE" "$DEC_FILE"; do
+  if [ ! -r "$f" ]; then
+    echo "NG - 検査対象ファイルを読めません（検査不能を pass にはしない）: ${f}" >&2
+    exit 1
+  fi
+done
+assert_file_contains "(C-5) テンプレートにアンカー行（対応する受入基準:）が定義されている" "$TPL_FILE" \
+  '対応する受入基準: {AC-ID一覧（例: AC-1, AC-3） | なし}'
+assert_file_contains "(C-5) テンプレートはアンカー行をフェーズによらず常に残すと注記している" "$TPL_FILE" \
+  '開発フェーズによらず常に残す'
+assert_file_contains "(C-5) 分解手順が網羅検証済み割当の逐語転記を必須化している" "$DEC_FILE" \
+  '`対応する受入基準: {当該タスクの acceptance_criteria_covered の ID 一覧（例: AC-1, AC-3） | なし}`'
+assert_file_contains "(C-5) 分解手順はアンカー行を実行のたびに揺れる判断で書かないと明記" "$DEC_FILE" \
+  '実行のたびに揺れる判断で書かない'
+assert_file_contains "(C-5) 消費側ゲートが同じヘッダ行名を読む（生成と消費の行名一致）" "$GATE_FILE" \
+  '対応する受入基準:'
 
 echo ""
 echo "=== (B-4c) guarantee-gate.md: 分解全体像の取得結果の検証（fail-closed） ==="
@@ -315,8 +361,12 @@ assert_file_contains "(B-6) 維持対象なしに丸めて実装を進めない"
   '**「維持対象なし」に丸めて実装を進めない**'
 assert_file_contains "(B-6) 担当外の新規宣言のテスト・台帳追記を行わない（重複実装の防止）" "$FI_FILE" \
   '**担当外の新規宣言（ブロックに無い親の保証）のテスト作成・台帳追記を行わない**'
-assert_file_contains "(B-6) 直接呼び出し時は担当分を特定し根拠を明記（全量を黙って実装しない）" "$FI_FILE" \
+assert_file_contains "(B-6) 直接呼び出しでも全量を黙って実装しない" "$FI_FILE" \
   '親の新規宣言の全量を黙って実装しない'
+assert_file_contains "(B-6) 直接呼び出しでは担当を単独判断で特定しない（実行間で衝突する判断の禁止）" "$FI_FILE" \
+  '本エージェント単独の判断で特定してはならない'
+assert_file_contains "(B-6) 直接呼び出しの新規宣言は停止して正規経路（担当分注入）を促す" "$FI_FILE" \
+  '正規経路（`/para-impl` 経由の担当分注入）での実行を呼び出し元に促す'
 assert_file_contains "(B-6) ✅ テンプレは実施していない作業を「した」と報告しない" "$FI_FILE" \
   '**実施していない作業を「した」と報告しない**'
 assert_file_contains "(B-6) 新規0件（担当0件）専用の書式がある（テスト・台帳追記なしを真実に報告）" "$FI_FILE" \
@@ -701,6 +751,106 @@ assert_eq "(D-9) 検索が自分を返さない（一時的欠落）: 健全性�
   "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 ok '13:ok')"
 assert_eq "(D-9) 候補全滅（全件が文法不適合）: 空集合を分解として採用しない" \
   "stop:decomposition_unverifiable" "$(pi_adopt_siblings 12 ok '99:ng')"
+
+echo ""
+echo "=== (D-10) 決定的割当の参照実装（同一入力→同一割当・順序不変・タイブレーク） ==="
+
+# 依存の推移閉包で「依存する他候補の数」を数える。
+# 引数: $1=起点チケット番号 $2=依存マップ（"番号:依存番号群(+区切り、無ければ-)" の ; 区切り）
+#       $3=候補集合（空白区切り）
+pi_trans_count() {
+  local start="$1" deps_map="$2" cand_set="$3"
+  local frontier="$start" visited="" count=0
+  while [ -n "$frontier" ]; do
+    local next="" n dl entry d
+    for n in $frontier; do
+      dl=""
+      local old_ifs="$IFS"
+      IFS=';'
+      for entry in $deps_map; do
+        case "$entry" in "${n}:"*) dl="${entry#*:}" ;; esac
+      done
+      IFS="$old_ifs"
+      [ "$dl" = "-" ] && dl=""
+      dl="${dl//+/ }"
+      for d in $dl; do
+        case " ${visited} ${frontier} ${next} " in *" ${d} "*) ;; *) next="${next} ${d}" ;; esac
+      done
+    done
+    visited="${visited} ${frontier}"
+    frontier="${next# }"
+  done
+  local v
+  for v in $visited; do
+    [ "$v" = "$start" ] && continue
+    case " ${cand_set} " in *" ${v} "*) count=$((count + 1)) ;; esac
+  done
+  echo "$count"
+}
+
+# guarantee-gate.md「割当の決定的規則」の3段（対応 AC → 機械一致候補 → 依存下流＋番号最小）:
+# 引数: $1=対応AC注記（"AC-n"。注記なしは空文字）
+#       $2=チケット集合（"番号/対応AC群(+区切り。行欠落は missing)/依存番号群(+区切り、無ければ-)"
+#          のカンマ区切り）
+pi_assign_one() {
+  local ac="$1" tickets="$2"
+  if [ -z "$ac" ]; then echo "stop:guarantee_assignment_unresolvable"; return; fi
+  local entry num rest acs deps cand="" deps_map=""
+  local old_ifs="$IFS"
+  IFS=','
+  for entry in $tickets; do
+    num="${entry%%/*}"
+    rest="${entry#*/}"
+    acs="${rest%%/*}"
+    deps="${rest#*/}"
+    if [ "$acs" = "missing" ]; then
+      IFS="$old_ifs"
+      echo "stop:guarantee_assignment_unresolvable"
+      return
+    fi
+    deps_map="${deps_map}${deps_map:+;}${num}:${deps}"
+    case "+${acs}+" in *"+${ac}+"*) cand="${cand}${cand:+ }${num}" ;; esac
+  done
+  IFS="$old_ifs"
+  if [ -z "$cand" ]; then echo "stop:guarantee_assignment_unresolvable"; return; fi
+  local best="" best_count=-1 c cnt
+  for c in $cand; do
+    cnt="$(pi_trans_count "$c" "$deps_map" "$cand")"
+    if [ "$cnt" -gt "$best_count" ]; then
+      best="$c"
+      best_count="$cnt"
+    elif [ "$cnt" -eq "$best_count" ] && [ "$c" -lt "$best" ]; then
+      best="$c"
+    fi
+  done
+  echo "assign:${best}"
+}
+
+assert_eq "(D-10) AC 注記なし: 停止（情報欠落）" \
+  "stop:guarantee_assignment_unresolvable" "$(pi_assign_one '' '12/AC-1/-')"
+assert_eq "(D-10) アンカー行を持たないチケットが集合にある: 停止（一意性の破れ）" \
+  "stop:guarantee_assignment_unresolvable" "$(pi_assign_one AC-1 '12/AC-1/-,14/missing/-')"
+assert_eq "(D-10) 候補0件: 停止（意味推測で補わない）" \
+  "stop:guarantee_assignment_unresolvable" "$(pi_assign_one AC-9 '12/AC-1/-,14/AC-2/-')"
+assert_eq "(D-10) AC の一致は全体一致（AC-1 が AC-12 に一致しない）" \
+  "stop:guarantee_assignment_unresolvable" "$(pi_assign_one AC-1 '12/AC-12/-')"
+assert_eq "(D-10) 単独候補: そのチケットに割当" \
+  "assign:14" "$(pi_assign_one AC-2 '12/AC-1/-,14/AC-2/-')"
+assert_eq "(D-10) 複数候補・依存なし: チケット番号最小へ（タイブレーク）" \
+  "assign:12" "$(pi_assign_one AC-1 '14/AC-1/-,12/AC-1/-')"
+assert_eq "(D-10) 複数候補・依存あり: 依存下流（後に完成する側）へ" \
+  "assign:14" "$(pi_assign_one AC-1 '12/AC-1/-,14/AC-1/12')"
+assert_eq "(D-10) 3段チェーン: 推移依存で最下流へ" \
+  "assign:15" "$(pi_assign_one AC-1 '12/AC-1/-,14/AC-1/12,15/AC-1/14')"
+assert_eq "(D-10) 同一入力からの再実行が同一割当になる（決定性）" \
+  "$(pi_assign_one AC-1 '12/AC-1/-,14/AC-1/12,15/AC-1/14')" \
+  "$(pi_assign_one AC-1 '12/AC-1/-,14/AC-1/12,15/AC-1/14')"
+assert_eq "(D-10) チケットの列挙順を入れ替えても割当が変わらない（順序不変）" \
+  "$(pi_assign_one AC-1 '12/AC-1/-,14/AC-1/12,15/AC-1/14')" \
+  "$(pi_assign_one AC-1 '15/AC-1/14,12/AC-1/-,14/AC-1/12')"
+assert_eq "(D-10) タイブレークも列挙順に依存しない（番号最小は入れ替えに不変）" \
+  "$(pi_assign_one AC-1 '14/AC-1/-,12/AC-1/-')" \
+  "$(pi_assign_one AC-1 '12/AC-1/-,14/AC-1/-')"
 
 # ---------------------------------------------------------------------------
 echo ""
