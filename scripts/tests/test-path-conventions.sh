@@ -945,6 +945,114 @@ else
   echo "  ok - references/ templates/ を持つスキル（${owner_skills_checked} 件）はすべて読み出し注記を持つ"
 fi
 
+# --- (x-d) 注記が参照ファイルを1本に決め打ちしていないか ---
+# モード別スキル（`/create-adr` の記録／昇格判定、`/guarantee-audit` の bootstrap／drift、
+# `/create-ticket` の要件／実装分解）では、読み出す参照ファイルが選んだモードで変わる。
+# 注記が**最初のモードのファイルを固定的に名指し**していると、別モードを選んだ利用者は
+# 違う手順書を配送されるか、拒否される Read 経路へ落ちる。**注記と本文の表という2つの規則が
+# 同じものについて食い違う**状態であり、実際に3スキルでこの形になっていた。
+#
+# 判定: 注記が具体的なファイル名を挙げているのに、同じ SKILL.md が挙げている他の参照ファイルを
+# どの注記もカバーしていなければ違反。プレースホルダ（具体名を挙げない）にするか、
+# ファイルごとに注記を置けば通る。
+
+# stdin: SKILL.md の内容。stdout: 注記が名指ししているのにカバーしていない参照ファイル。
+# 注記が具体名を1つも挙げていない（プレースホルダ）場合は何も出さない。
+uncovered_note_targets() {
+  local line named="" cited="" tok
+  while IFS= read -r line; do
+    case "$line" in
+      *"$REF_NOTE_MARKER"*)
+        while IFS= read -r tok; do
+          [ -z "$tok" ] && continue
+          named="${named}${tok}
+"
+        done <<<"$(printf '%s' "$line" | grep -oE '(references|templates)/[A-Za-z0-9_.-]+')"
+        ;;
+      *)
+        while IFS= read -r tok; do
+          [ -z "$tok" ] && continue
+          cited="${cited}${tok}
+"
+        done <<<"$(printf '%s' "$line" | grep -oE '(references|templates)/[A-Za-z0-9_.-]+')"
+        ;;
+    esac
+  done
+  # 注記が具体名を挙げていなければ決め打ちしていない＝検査対象外
+  [ -z "$named" ] && return 0
+  printf '%s' "$cited" | sort -u | while IFS= read -r tok; do
+    [ -z "$tok" ] && continue
+    printf '%s' "$named" | grep -Fxq "$tok" || printf '%s\n' "$tok"
+  done
+}
+
+assert_uncovered() {
+  local description="$1" expected="$2" sample="$3"
+  local actual
+  actual="$(printf '%s\n' "$sample" | uncovered_note_targets | tr '\n' ',' | sed 's/,$//')"
+  if [ "$actual" = "$expected" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("注記の決め打ち検出器の自己検査: ${description}")
+    echo "  NG - ${description}（expected='${expected}' actual='${actual}'）"
+  fi
+}
+
+assert_uncovered '違反: 注記が第1モードのファイルを決め打ちしている' 'references/promote-mode.md' \
+'> 参照ファイルは導入先プロジェクトではなく…`references/record-mode.md`…
+| 記録モード | `skills/create-adr/references/record-mode.md` |
+| 昇格判定モード | `skills/create-adr/references/promote-mode.md` |'
+
+assert_uncovered '正当: 注記がプレースホルダなら決め打ちしていない' '' \
+'> 参照ファイルは導入先プロジェクトではなく…`<読む対象のプラグインルート相対パス>`…
+| 記録モード | `skills/create-adr/references/record-mode.md` |
+| 昇格判定モード | `skills/create-adr/references/promote-mode.md` |'
+
+assert_uncovered '正当: 参照ファイルが1本だけなら名指しでよい' '' \
+'> 参照ファイルは導入先プロジェクトではなく…`references/conflict-resolution.md`…
+手順は `skills/pr-merge/references/conflict-resolution.md` を読む。'
+
+assert_uncovered '正当: ファイルごとに注記があれば全部カバーされる' '' \
+'> 参照ファイルは導入先プロジェクトではなく…`templates/detection-report.md`…
+提示テンプレートは `templates/detection-report.md`。
+> 参照ファイルは導入先プロジェクトではなく…`templates/CLAUDE.md.template`…
+雛形は `templates/CLAUDE.md.template`。'
+
+assert_uncovered '違反: 複数の未カバーをすべて報告する' 'references/guarantee-gate.md,references/join-gate.md' \
+'> 参照ファイルは導入先プロジェクトではなく…`references/star-parallel.md`…
+`skills/para-impl/references/star-parallel.md` を読む。
+`skills/para-impl/references/guarantee-gate.md` を読む。
+`skills/para-impl/references/join-gate.md` を読む。'
+
+hardcoded_notes=""
+hardcoded_checked=0
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  grep -qF "$REF_NOTE_MARKER" "$f" || continue
+  hardcoded_checked=$((hardcoded_checked + 1))
+  while IFS= read -r tok; do
+    [ -z "$tok" ] && continue
+    hardcoded_notes="${hardcoded_notes}${f}: 注記が参照ファイルを決め打ちしており ${tok} がどの注記にも現れない
+"
+  done <<<"$(uncovered_note_targets <"$f")"
+done <<<"$(find skills -mindepth 2 -maxdepth 2 -name 'SKILL.md' | sort)"
+
+if [ "$hardcoded_checked" -eq 0 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("読み出し注記を持つ SKILL.md を1件も列挙できず判定不能")
+  echo "  NG - 読み出し注記を持つ SKILL.md を1件も列挙できず判定不能（検出器が壊れている可能性）"
+elif [ -n "$hardcoded_notes" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("注記が参照ファイルを1本に決め打ちしている")
+  echo "  NG - 注記が参照ファイルを1本に決め打ちしており、他の参照ファイルを取りこぼす"
+  print_indented "$hardcoded_notes"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 注記（${hardcoded_checked} スキル）は参照ファイルを決め打ちしていない"
+fi
+
 echo ""
 echo "=== (xi) references/ templates/ 参照の解決性チェック ==="
 
