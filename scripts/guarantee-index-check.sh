@@ -43,7 +43,8 @@ GIC_FENCE_RE='^[[:space:]]{0,3}(`{3,}|~{3,})[[:space:]]*(.*)$'
 GIC_H2_RE='^##[[:space:]]+(.+)$'
 GIC_H1_RE='^#[[:space:]]+(.+)$'
 GIC_H3_RE='^###[[:space:]]+(.+)$'
-GIC_GUARANTEE_ID_RE='^(G-[0-9]+-[0-9]+)[[:space:]]*(:|：)[[:space:]]*(.*)$'
+# 保証 ID の書式は lib/common.sh の GUARANTEE_ID_PATTERN が唯一の定義（同じ文法を2箇所で持たない）
+GIC_GUARANTEE_ID_RE="^(${GUARANTEE_ID_PATTERN})[[:space:]]*(:|：)[[:space:]]*(.*)\$"
 GIC_TEST_FIELD_RE='^[[:space:]]*[-*][[:space:]]+\*{0,2}テスト\*{0,2}[[:space:]]*(:|：)[[:space:]]*(.+)$'
 GIC_PROV_FIELD_RE='^[[:space:]]*[-*][[:space:]]+\*{0,2}宣言元\*{0,2}[[:space:]]*(:|：)[[:space:]]*(.*)$'
 GIC_PROV_ISSUE_RE='^#([0-9]+)$'

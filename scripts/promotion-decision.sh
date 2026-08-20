@@ -35,6 +35,12 @@ PROMOTION_DECISION_MODES="all-consistent ready-for-promotion"
 # 項を増減するときは scripts/specs/promotion-decision.md の項の表と
 # skills/promote-verify/references/guarantee-consistency.md の算出式も同時に更新すること。
 read -r -d '' PROMOTION_DECISION_JQ_ALL_CONSISTENT <<'JQPROG'
+# 識別子の妥当性。**「キーが在る」ことを「値が妥当」と読み替えない**:
+# `null` / 空文字 / 数値 / オブジェクトのような値は、targets と guarantees の両方に
+# 同じものが入っていれば集合比較が一致してしまい、**実在の保証を1件も特定していないのに
+# 全件カバー済みと判定される**。書式は $id_pattern（lib/common.sh の唯一の定義）で照合する。
+def valid_id: (type == "string") and (length > 0) and test("^\($id_pattern)$");
+
 . as $in
 | (["targets", "guarantees", "index", "humanReview"]) as $required
 | [ $required[] | . as $k | select(($in | has($k)) | not) ] as $missing
@@ -47,15 +53,17 @@ read -r -d '' PROMOTION_DECISION_JQ_ALL_CONSISTENT <<'JQPROG'
     | ($in.humanReview) as $hr
     | ( if $targets == null then ["targets_unknown"]
         elif ($targets | type) != "array" then ["targets_invalid"]
+        elif ([$targets[] | select(valid_id | not)] | length) > 0 then ["target_id_invalid"]
         elif ($targets | unique | length) != ($targets | length) then ["targets_duplicated"]
         elif $gs == null then ["guarantees_unknown"]
         elif ($gs | type) != "array" then ["guarantees_invalid"]
         elif ([$gs[] | select((type != "object") or (has("guarantee_id") | not))] | length) > 0 then ["guarantee_id_missing"]
+        elif ([$gs[] | select(.guarantee_id | valid_id | not)] | length) > 0 then ["guarantee_id_invalid"]
         elif ($targets | sort) != ($gs | map(.guarantee_id) | sort) then ["targets_not_covered"]
         else [] end ) as $a_blockers
     | ( if $index == null then ["index_missing"]
         elif ($index | type) != "object" then ["index_invalid"]
-        elif (($index.error) // null) != null then ["index_error"]
+        elif ($index | has("error")) and ($index.error != null) then ["index_error"]
         elif ($index.status) != "pass" then ["index_not_pass"]
         else [] end ) as $b_blockers
     | ( if $gs == null then ["guarantees_unknown"]
@@ -96,7 +104,9 @@ read -r -d '' PROMOTION_DECISION_JQ_READY <<'JQPROG'
     | ( if $criteria == null then ["criteria_unknown"]
         elif ($criteria | type) != "array" then ["criteria_invalid"]
         elif ($criteria | length) == 0 then ["criteria_empty"]
-        elif ([$criteria[] | select((type != "object") or (has("status") | not))] | length) > 0 then ["criteria_status_missing"]
+        elif ([$criteria[] | select((type != "object") or (has("id") | not))] | length) > 0 then ["criteria_id_missing"]
+        elif ([$criteria[] | select((.id | type) != "string" or (.id | length) == 0)] | length) > 0 then ["criteria_id_invalid"]
+        elif ([$criteria[] | select(has("status") | not)] | length) > 0 then ["criteria_status_missing"]
         elif ([$criteria[] | select(.status != "consistent")] | length) > 0 then ["criteria_not_consistent"]
         else [] end ) as $status_blockers
     | ( if $criteria == null then ["criteria_unknown"]
@@ -245,12 +255,45 @@ main() {
     exit "$PROMOTION_DECISION_EX_PREREQ"
   fi
 
-  local result
-  if ! result="$(printf '%s' "$input" | jq -c "$program" 2>/dev/null)"; then
-    echo "Error: 入力を JSON として解析できません（または期待するオブジェクトではありません）" >&2
+  # **入力がちょうど1つの JSON オブジェクトであること**を、判定式に掛ける前に確かめる。
+  # jq は入力ストリーム中の JSON 値ごとにプログラムを評価するため、値が2つ以上あると
+  # 出力も2つになり、「stdout に判定結果 JSON を1個」という契約が壊れる
+  # （後段の真偽比較が `true\ntrue` を見て false と誤報告する）。
+  local value_count
+  if ! value_count="$(printf '%s' "$input" | jq -s 'length' 2>/dev/null)"; then
+    echo "Error: 入力を JSON として解析できません" >&2
     printf '%s\n' '{"status":"error","error":"input is not valid JSON"}' >&2
     exit "$PROMOTION_DECISION_EX_PREREQ"
   fi
+  if [ "$value_count" != "1" ]; then
+    echo "Error: 入力はちょうど1つの JSON 値でなければなりません（${value_count} 個ありました）" >&2
+    printf '%s\n' "{\"status\":\"error\",\"error\":\"input must be exactly one JSON value\",\"count\":${value_count}}" >&2
+    exit "$PROMOTION_DECISION_EX_PREREQ"
+  fi
+  local input_type
+  input_type="$(printf '%s' "$input" | jq -r 'type' 2>/dev/null)"
+  if [ "$input_type" != "object" ]; then
+    echo "Error: 入力は JSON オブジェクトでなければなりません（${input_type} でした）" >&2
+    printf '%s\n' "{\"status\":\"error\",\"error\":\"input must be a JSON object\",\"type\":\"${input_type}\"}" >&2
+    exit "$PROMOTION_DECISION_EX_PREREQ"
+  fi
+
+  local result
+  if ! result="$(printf '%s' "$input" | jq -c --arg id_pattern "$GUARANTEE_ID_PATTERN" "$program" 2>/dev/null)"; then
+    echo "Error: 入力を判定式へ掛けられません（期待するオブジェクトではありません）" >&2
+    printf '%s\n' '{"status":"error","error":"input is not valid JSON"}' >&2
+    exit "$PROMOTION_DECISION_EX_PREREQ"
+  fi
+
+  # 二重防御: 判定結果もちょうど1個であること（jq -c は1値1行で出力する）。
+  # 将来プログラムが複数値を出すようになっても、契約違反のまま先へ進まない。
+  case "$result" in
+    *$'\n'*)
+      echo "Error: 判定結果が1個ではありません（内部エラー）" >&2
+      printf '%s\n' '{"status":"error","error":"decision produced multiple values"}' >&2
+      exit "$PROMOTION_DECISION_EX_PREREQ"
+      ;;
+  esac
 
   # 必須キーの欠落は「判定できなかった」であり、false（判定した結果の否）とは別状態。
   # 実行前提の欠落として exit 2 にし、stdout は空にする（未検査を判定結果に見せない）。

@@ -461,7 +461,7 @@ while IFS= read -r code; do
 done <<<"$impl_blockers"
 assert_eq "実装が返しうる blockers はすべて spec の語彙表に載っている（表の更新漏れ検出）" "" "$undocumented"
 assert_eq "実装が返しうる blockers の総数（語彙表と一致）" \
-  "36" "$(printf '%s\n' "$impl_blockers" | grep -c .)"
+  "40" "$(printf '%s\n' "$impl_blockers" | grep -c .)"
 
 spec_blocker_failures=""
 for code in targets_unknown targets_invalid targets_duplicated guarantees_unknown guarantees_invalid \
@@ -469,6 +469,7 @@ for code in targets_unknown targets_invalid targets_duplicated guarantees_unknow
   verdict_missing verdict_not_consistent human_review_invalid human_review_present \
   not_all_merged criteria_unknown criteria_invalid criteria_empty criteria_status_missing \
   criteria_not_consistent criteria_review_missing criteria_review_invalid criteria_needs_human_review \
+  criteria_id_missing criteria_id_invalid target_id_invalid guarantee_id_invalid \
   quality_check_missing quality_check_invalid \
   quality_result_missing quality_not_pass e2e_missing e2e_invalid e2e_result_missing e2e_not_passed \
   guarantee_check_missing guarantee_check_invalid guarantee_result_missing guarantee_not_consistent; do
@@ -476,6 +477,153 @@ for code in targets_unknown targets_invalid targets_duplicated guarantees_unknow
   grep -qF -- "\"${code}\"" "$TARGET_SCRIPT" || spec_blocker_failures="${spec_blocker_failures}${code}(impl) "
 done
 assert_eq "blockers の語彙が spec と実装の双方に存在する" "" "$spec_blocker_failures"
+
+echo ""
+echo "=== (9) 識別子の妥当性（「キーが在る」を「値が妥当」と読み替えない） ==="
+
+# targets と guarantees の両方に同じ不正値が入っていると、has() 検査も集合比較も通り、
+# 実在の保証を1件も特定していないのに全件カバー済みと判定されうる（codex P1）。
+ac_with_id() {
+  printf '{"targets":[%s],"guarantees":[{"guarantee_id":%s,"verdict":"consistent"}],"index":{"status":"pass","error":null},"humanReview":[]}' "$1" "$1"
+}
+invalid_id_failures=0
+for bad in 'null' '""' '123' 'true' '{}' '["G-1-1"]' '"foo"' '"G-1"' '"G-1-"' '"G-a-1"' '" G-1-1"'; do
+  verdict="$(decide all-consistent "$(ac_with_id "$bad")")"
+  if [ "$verdict" != "false" ]; then
+    invalid_id_failures=$((invalid_id_failures + 1))
+    echo "       identifier=${bad} で false にならない（allConsistent=${verdict}）"
+  fi
+done
+assert_eq "妥当でない識別子（11種）はすべて false（両側に同じ値でも素通りしない）" "0" "$invalid_id_failures"
+assert_eq "その blockers は target_id_invalid" \
+  "target_id_invalid" "$(blockers_of all-consistent "$(ac_with_id 'null')")"
+assert_eq "不正な識別子では targetsCovered を真にしない" \
+  "false" "$(term_of all-consistent "$(ac_with_id 'null')" targetsCovered)"
+
+# targets 側だけ妥当な場合は guarantees 側で捕まえる（片側だけの検証にしない）
+gs_only_bad='{"targets":["G-1-1"],"guarantees":[{"guarantee_id":123,"verdict":"consistent"}],"index":{"status":"pass","error":null},"humanReview":[]}'
+assert_eq "guarantees 側だけ不正な識別子でも false" "false" "$(decide all-consistent "$gs_only_bad")"
+assert_eq "その blockers は guarantee_id_invalid" \
+  "guarantee_id_invalid" "$(blockers_of all-consistent "$gs_only_bad")"
+
+# 受理方向: 妥当な保証 ID は従来どおり通る（過剰に落とさない）
+valid_id_failures=0
+for good in '"G-1-1"' '"G-158-10"' '"G-1580-1"' '"G-9999-999"'; do
+  if [ "$(decide all-consistent "$(ac_with_id "$good")")" != "true" ]; then
+    valid_id_failures=$((valid_id_failures + 1))
+    echo "       identifier=${good} が true にならない"
+  fi
+done
+assert_eq "妥当な保証 ID（4種）は従来どおり true（過剰に落とさない）" "0" "$valid_id_failures"
+
+# 保証 ID の書式は lib/common.sh の唯一の定義を使う（同じ文法を2箇所で持たない）
+COMMON_LIB="${REPO_ROOT}/scripts/lib/common.sh"
+GIC_SCRIPT_FILE="${REPO_ROOT}/scripts/guarantee-index-check.sh"
+# shellcheck disable=SC2016 # grep のパターンであり、シェル展開を意図していない
+assert_eq "保証 ID の書式が lib/common.sh に定義されている" "1" \
+  "$(grep -c "^GUARANTEE_ID_PATTERN='G-\[0-9\]+-\[0-9\]+'$" "$COMMON_LIB")"
+# shellcheck disable=SC2016
+assert_eq "guarantee-index-check は共有定義を参照している（リテラルを持たない）" "1" \
+  "$(grep -c '\${GUARANTEE_ID_PATTERN}' "$GIC_SCRIPT_FILE")"
+# shellcheck disable=SC2016
+assert_eq "promotion-decision は共有定義を jq へ渡している" "1" \
+  "$(grep -c -- '--arg id_pattern "\$GUARANTEE_ID_PATTERN"' "$TARGET_SCRIPT")"
+# shellcheck disable=SC2016
+assert_eq "ID 書式のリテラルが共有定義以外に無い（重複定義の検出）" "0" \
+  "$(grep -c 'G-\[0-9\]+-\[0-9\]+' "$GIC_SCRIPT_FILE" "$TARGET_SCRIPT" | grep -cv ':0$')"
+
+echo ""
+echo "=== (10) index.error は jq の // 演算子で判定しない（false が「エラー無し」に読まれる） ==="
+
+index_error_false='{"targets":["G-1-1"],"guarantees":[{"guarantee_id":"G-1-1","verdict":"consistent"}],"index":{"status":"pass","error":false},"humanReview":[]}'
+assert_eq "index.error が false でもエラー扱い（jq の // は false を空として扱うため使わない）" \
+  "false" "$(decide all-consistent "$index_error_false")"
+assert_eq "その blockers は index_error" "index_error" "$(blockers_of all-consistent "$index_error_false")"
+
+index_no_error_key='{"targets":["G-1-1"],"guarantees":[{"guarantee_id":"G-1-1","verdict":"consistent"},{"guarantee_id":"G-1-2","verdict":"consistent"}],"index":{"status":"pass","counts":{"broken":0}},"humanReview":[]}'
+index_no_error_key='{"targets":["G-1-1"],"guarantees":[{"guarantee_id":"G-1-1","verdict":"consistent"}],"index":{"status":"pass","counts":{"broken":0}},"humanReview":[]}'
+assert_eq "error キー自体が無い index（索引チェックの生出力）は正常扱い" \
+  "true" "$(decide all-consistent "$index_no_error_key")"
+
+echo ""
+echo "=== (11) criteria[].id の妥当性（契約フィールドを無検査で通さない） ==="
+
+rp_with_id() {
+  printf '{"allMerged":true,"criteria":[{"id":%s,"status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}' "$1"
+}
+criteria_id_no_key='{"allMerged":true,"criteria":[{"status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
+assert_eq "criteria[].id が無ければ false" "false" "$(decide ready-for-promotion "$criteria_id_no_key")"
+assert_eq "その blockers は criteria_id_missing" \
+  "criteria_id_missing" "$(blockers_of ready-for-promotion "$criteria_id_no_key")"
+bad_criteria_id_failures=0
+for bad in 'null' '""' '123' '{}'; do
+  if [ "$(decide ready-for-promotion "$(rp_with_id "$bad")")" != "false" ]; then
+    bad_criteria_id_failures=$((bad_criteria_id_failures + 1))
+    echo "       criteria id=${bad} で false にならない"
+  fi
+done
+assert_eq "criteria[].id が非空文字列でなければ false（4種）" "0" "$bad_criteria_id_failures"
+assert_eq "criteria[].id が非空文字列なら通る（過剰に落とさない）" \
+  "true" "$(decide ready-for-promotion "$(rp_with_id '"AC-1"')")"
+
+echo ""
+echo "=== (12) 同型の掃引: 存在検査だけで値を見ない箇所が無い ==="
+
+# 「不正な値が真として読まれる」経路が残っていないことを、全フィールドの不正値で固定する。
+# 等値比較で fail-closed になるフィールドも、将来の書き換えで真側へ倒れないようここで押さえる。
+sweep_failures=""
+sweep_check() {
+  local label="$1" mode="$2" body="$3"
+  if [ "$(decide "$mode" "$body")" != "false" ]; then
+    sweep_failures="${sweep_failures}${label} "
+  fi
+}
+AC_BASE_INDEX='{"status":"pass","error":null}'
+sweep_check "verdict=null"        all-consistent "{\"targets\":[\"G-1-1\"],\"guarantees\":[{\"guarantee_id\":\"G-1-1\",\"verdict\":null}],\"index\":${AC_BASE_INDEX},\"humanReview\":[]}"
+sweep_check "verdict=123"         all-consistent "{\"targets\":[\"G-1-1\"],\"guarantees\":[{\"guarantee_id\":\"G-1-1\",\"verdict\":123}],\"index\":${AC_BASE_INDEX},\"humanReview\":[]}"
+sweep_check "verdict=true"        all-consistent "{\"targets\":[\"G-1-1\"],\"guarantees\":[{\"guarantee_id\":\"G-1-1\",\"verdict\":true}],\"index\":${AC_BASE_INDEX},\"humanReview\":[]}"
+sweep_check "index.status=null"   all-consistent '{"targets":["G-1-1"],"guarantees":[{"guarantee_id":"G-1-1","verdict":"consistent"}],"index":{"status":null,"error":null},"humanReview":[]}'
+sweep_check "index.status=true"   all-consistent '{"targets":["G-1-1"],"guarantees":[{"guarantee_id":"G-1-1","verdict":"consistent"}],"index":{"status":true,"error":null},"humanReview":[]}'
+sweep_check "index.status 欠落"    all-consistent '{"targets":["G-1-1"],"guarantees":[{"guarantee_id":"G-1-1","verdict":"consistent"}],"index":{"error":null},"humanReview":[]}'
+sweep_check "humanReview=[null]"  all-consistent "{\"targets\":[\"G-1-1\"],\"guarantees\":[{\"guarantee_id\":\"G-1-1\",\"verdict\":\"consistent\"}],\"index\":${AC_BASE_INDEX},\"humanReview\":[null]}"
+
+RP_TAIL='"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}'
+sweep_check "allMerged=\"true\""   ready-for-promotion "{\"allMerged\":\"true\",\"criteria\":[{\"id\":\"AC-1\",\"status\":\"consistent\",\"needsHumanReview\":false}],${RP_TAIL}}"
+sweep_check "allMerged=1"          ready-for-promotion "{\"allMerged\":1,\"criteria\":[{\"id\":\"AC-1\",\"status\":\"consistent\",\"needsHumanReview\":false}],${RP_TAIL}}"
+sweep_check "allMerged=null"       ready-for-promotion "{\"allMerged\":null,\"criteria\":[{\"id\":\"AC-1\",\"status\":\"consistent\",\"needsHumanReview\":false}],${RP_TAIL}}"
+sweep_check "status=null"          ready-for-promotion "{\"allMerged\":true,\"criteria\":[{\"id\":\"AC-1\",\"status\":null,\"needsHumanReview\":false}],${RP_TAIL}}"
+sweep_check "status=123"           ready-for-promotion "{\"allMerged\":true,\"criteria\":[{\"id\":\"AC-1\",\"status\":123,\"needsHumanReview\":false}],${RP_TAIL}}"
+sweep_check "qc.skipped=\"true\""  ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":"true"},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
+sweep_check "qc.result=null"       ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":null},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
+sweep_check "e2e.passed=\"true\""  ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":false,"passed":"true"},"guaranteeCheck":{"skipped":true}}'
+sweep_check "e2e.passed=1"         ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":false,"passed":1},"guaranteeCheck":{"skipped":true}}'
+sweep_check "gc.allConsistent=\"true\"" ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":false,"allConsistent":"true"}}'
+sweep_check "gc.skipped=1"         ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":1}}'
+assert_eq "全フィールドの不正値が真として読まれない（掃引17ケース）" "" "$sweep_failures"
+
+echo ""
+echo "=== (13) 入力はちょうど1つの JSON オブジェクト（1入力1出力の契約） ==="
+
+RP_ONE='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
+multi_out="$(printf '%s %s' "$RP_ONE" "$RP_ONE" | bash "$TARGET_SCRIPT" ready-for-promotion 2>/dev/null)"
+multi_exit=$?
+assert_eq "JSON 値が2つある入力は exit 2（判定 false と誤報告しない）" "2" "$multi_exit"
+assert_eq "その場合の stdout は空（判定結果を2個出さない）" "" "$multi_out"
+
+multi_nl_exit="$(printf '%s\n%s\n' "$RP_ONE" "$RP_ONE" | bash "$TARGET_SCRIPT" ready-for-promotion >/dev/null 2>&1; printf '%s' "$?")"
+assert_eq "改行区切りで2つ並べた入力も exit 2" "2" "$multi_nl_exit"
+
+# 単一値は従来どおり（過剰に落とさない）。末尾改行・前後空白も受理する
+assert_eq "単一値は従来どおり true" "true" "$(decide ready-for-promotion "$RP_ONE")"
+trailing_nl_exit="$(printf '%s\n' "$RP_ONE" | bash "$TARGET_SCRIPT" ready-for-promotion >/dev/null 2>&1; printf '%s' "$?")"
+assert_eq "末尾に改行がある単一値は受理する" "0" "$trailing_nl_exit"
+
+for bad_type in '[1,2]' '"text"' '123' 'null' 'true'; do
+  bad_out="$(printf '%s' "$bad_type" | bash "$TARGET_SCRIPT" all-consistent 2>/dev/null)"
+  bad_exit=$?
+  assert_eq "オブジェクトでない入力（${bad_type}）は exit 2" "2" "$bad_exit"
+  assert_eq "オブジェクトでない入力（${bad_type}）の stdout は空" "" "$bad_out"
+done
 
 echo ""
 echo "=== summary ==="
