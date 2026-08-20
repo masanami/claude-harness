@@ -140,7 +140,7 @@ Base directory はスキル起動時に必ずコンテキストへ与えられ�
 各 SKILL.md で参照ファイルを初めて読む箇所には、以下の定型文を配置する（パスは該当箇所に合わせて置き換える）:
 
 ```text
-> **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路 `claude-harness-run read-plugin-doc "skills/<skill>/references/<name>.md"`（プラグインルート相対パス）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない** — `MORE` マーカーが出ていれば示された `--from-line` で続きを取得し、END も MORE も無ければ出力が切り詰められたとみなして同様に停止すること。`=== read-plugin-doc ... ===` の行と `read-plugin-doc:` で始まる行は配送の制御情報であり本文ではない（テンプレートを埋めて書き出す際に成果物へ含めない）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/references/<name>.md` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
+> **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路 `claude-harness-run read-plugin-doc "skills/<skill>/references/<name>.md"`（プラグインルート相対パス）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない** — `MORE` マーカーが出ていれば示された `--from-line` で続きを取得し、END も MORE も無ければ出力が切り詰められたとみなして同様に停止すること。**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。`=== read-plugin-doc ... ===` の行と `read-plugin-doc:` で始まる行は配送の制御情報であり本文ではない（テンプレートを埋めて書き出す際に成果物へ含めない）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/references/<name>.md` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
 <!-- 正本: docs/plugin-path-conventions.md -->
 ```
 
@@ -153,7 +153,9 @@ Base directory はスキル起動時に必ずコンテキストへ与えられ�
 - ファイルごとに使用箇所が分かれているなら、**使用箇所ごとに注記を置いて全ファイルを覆う**のでもよい（`/init-project` がこの形）
 - `scripts/tests/test-path-conventions.sh` (x-d) が、注記が具体名を挙げているのに他の参照ファイルを覆っていない状態を検出する
 
-> **本リポジトリ内の移行は未完了（2026-08-20 時点）**: 上の規約は「第一手は配送経路」だが、**各スキル本文中の個々の読み出し指示はまだ Read 直読みのまま残っている**。実測 25ファイル・63行（`grep -rnE '<[^>]*base[^>]*>/(\.\./)*([a-z0-9-]+/)*(references|templates|scripts)/|\$\{CLAUDE_PLUGIN_ROOT\}/(skills|scripts)/' skills/ agents/ --include='*.md' | grep -v read-plugin-doc`。独立レビューが `references/` `templates/` に限って数えた分は38箇所）。
+> **本リポジトリ内の移行は未完了（2026-08-20 時点）**: 上の規約は「第一手は配送経路」だが、**各スキル本文中の個々の読み出し指示はまだ Read 直読みのまま残っている**。実測 22ファイル・54行（`grep -rnE '<[^>]*base[^>]*>/(\.\./)*([a-z0-9-]+/)*(references|templates|scripts)/|\$\{CLAUDE_PLUGIN_ROOT\}/(skills|scripts)/' skills/ agents/ --include='*.md' | grep -v read-plugin-doc`。フォールバックとして残した `<base>/...` の行も該当するため、この数は「未移行の箇所数」ではなく上限）。
+>
+> **移行済み**: `/para-impl` のゲート参照3本（`references/guarantee-gate.md`・`references/join-gate.md`・`references/star-parallel.md`）。ゲートの手順書は読めなければゲートそのものが無効化されるため先に移した（`guarantee-gate.md` は 35KB 超で、Read が通っても出力上限の切り詰め域にある）。`scripts/tests/test-path-conventions.sh` (x-e) が差し戻しを検出する。
 >
 > つまり**注記（入口）は配送経路を指し、本文中の具体的な指示は Read を指す**という二重状態にある。文字通りに従うエージェントは、実行の直前に置かれた具体的な指示のほうを採りうるため、headless では拒否されて元の沈黙する失敗に戻る。
 >

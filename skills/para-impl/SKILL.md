@@ -57,9 +57,9 @@ fi
 | Issue数 | フロー |
 |---------|--------|
 | 1件 | **通常実装**: リードエージェントが「1チケットの実装フロー」を実行 |
-| 複数 | **star 型並列実装**: `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` を Read してから Phase 3 へ。リードがオーケストレーターとなり、各 `ticket-worker` が独立に「1チケットの実装フロー」を実行 |
+| 複数 | **star 型並列実装**: **`skills/para-impl/references/star-parallel.md` を後掲の配送経路で読み出し**てから Phase 3 へ（`claude-harness-run read-plugin-doc "skills/para-impl/references/star-parallel.md"`。Read 直読みは後掲の注記のとおりランチャー未導入時のフォールバックに限る）。リードがオーケストレーターとなり、各 `ticket-worker` が独立に「1チケットの実装フロー」を実行 |
 
-> **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路`claude-harness-run read-plugin-doc "<読む対象のプラグインルート相対パス>"`（**本スキルは参照ファイルを複数持つ。読む箇所で指定されたパスをそのまま渡すこと — 特定の1本に決め打ちしない**）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない** — `MORE` マーカーが出ていれば示された `--from-line` で続きを取得し、END も MORE も無ければ出力が切り詰められたとみなして同様に停止すること。`=== read-plugin-doc ... ===` の行と `read-plugin-doc:` で始まる行は配送の制御情報であり本文ではない（テンプレートを埋めて書き出す際に成果物へ含めない）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/<読む対象のスキル相対パス>` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
+> **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路`claude-harness-run read-plugin-doc "<読む対象のプラグインルート相対パス>"`（**本スキルは参照ファイルを複数持つ。読む箇所で指定されたパスをそのまま渡すこと — 特定の1本に決め打ちしない**）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない** — `MORE` マーカーが出ていれば示された `--from-line` で続きを取得し、END も MORE も無ければ出力が切り詰められたとみなして同様に停止すること。**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。`=== read-plugin-doc ... ===` の行と `read-plugin-doc:` で始まる行は配送の制御情報であり本文ではない（テンプレートを埋めて書き出す際に成果物へ含めない）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/<読む対象のスキル相対パス>` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 ---
@@ -92,7 +92,7 @@ fi
 
 **判定の基準を base に置く理由**: 裁可ゲートが守るのは実装が到達するコードベース（base ブランチ）の開発規律であり、手元 checkout の状態は偶然（別作業の残り・古い既定ブランチ）でありうる。**base が SDD なら手元が GDD 宣言でも従来どおり挙動を変えない**（SDD期不変＝default-OFF の原則は「対象（base）が SDD なら不変」を意味する）。Phase 3 以降の各層（feature-implementer・`/quality-check` の GDD ゲート）は checkout 済みの base 内容を読むため、この判定基準と整合する。
 
-`gdd` の場合のみ、`${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/guarantee-gate.md` を Read し（「Base directory for this skill」を起点に `<base>/references/guarantee-gate.md` として解決する）、その「Phase 1: 裁可ゲート」に従って対象 Issue（実装チケットなら親）に `guarantee:approved` が付いているかを確認する。無ければ **Phase 2 以降へ進まず処理を止めて人間の裁可を促す**（統合ブランチ存在チェックと同じ「前提未充足での停止」パターンを使う。新しい待ち合わせ機構は作らない。裁可対象の解決・判定表・停止時の報告の正本は同参照ファイル）。`invalid`・判定不能の場合は上記の定型文に従い中断する。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、以降の手順は従来どおり行う（参照ファイルも Read しない）。
+`gdd` の場合のみ、**`skills/para-impl/references/guarantee-gate.md` を前掲の配送経路で読み出し**（`claude-harness-run read-plugin-doc "skills/para-impl/references/guarantee-gate.md"`。Read 直読みは前掲の注記のとおりランチャー未導入時のフォールバックに限り、その場合は「Base directory for this skill」を起点に `<base>/references/guarantee-gate.md` として解決する）、その「Phase 1: 裁可ゲート」に従って対象 Issue（実装チケットなら親）に `guarantee:approved` が付いているかを確認する。無ければ **Phase 2 以降へ進まず処理を止めて人間の裁可を促す**（統合ブランチ存在チェックと同じ「前提未充足での停止」パターンを使う。新しい待ち合わせ機構は作らない。裁可対象の解決・判定表・停止時の報告の正本は同参照ファイル）。`invalid`・判定不能の場合は上記の定型文に従い中断する。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、以降の手順は従来どおり行う（参照ファイルも読み出さない）。
 
 ---
 
@@ -228,7 +228,7 @@ gh pr checks {PR番号} --watch
 
 **サブエージェント・バックグラウンド処理を1つでも起動した場合、最終応答（Phase 10 の完了報告・中断報告を含む、あらゆるテキスト応答の確定）の前に合流ゲートを必ず評価する。** 完了報告を出せるのはゲート通過に該当した場合だけであり、決定表が指示した中断報告はゲートの評価結果として「ゲート通過」を要件としない。
 
-**定義の正本は参照ファイル `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/join-gate.md`** であり、本 SKILL には要点だけを書く。用語（起動台帳・有限タスク／常駐サービス・終端返却・合流済み・未合流・ネスト未解消）・spawn 時手順・合流ゲート伝播条項（委譲プロンプトへ逐語転記する条項の正本）・決定表・中断報告の出力契約は、すべて参照ファイル側にある。**サブエージェント・バックグラウンド処理を起動する前に必ず Read すること**（Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/references/join-gate.md` として解決する）。
+**定義の正本は参照ファイル `skills/para-impl/references/join-gate.md`** であり、本 SKILL には要点だけを書く。用語（起動台帳・有限タスク／常駐サービス・終端返却・合流済み・未合流・ネスト未解消）・spawn 時手順・合流ゲート伝播条項（委譲プロンプトへ逐語転記する条項の正本）・決定表・中断報告の出力契約は、すべて参照ファイル側にある。**サブエージェント・バックグラウンド処理を起動する前に必ず前掲の配送経路で読み出すこと**（`claude-harness-run read-plugin-doc "skills/para-impl/references/join-gate.md"`。Read 直読みは前掲の注記のとおりランチャー未導入時のフォールバックに限り、その場合はスキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/references/join-gate.md` として解決する）。
 
 ---
 
