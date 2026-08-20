@@ -452,6 +452,98 @@ else
   assert_eq "正本の書式例から GAP を1件数える" "1" "$(jq -r '.counts.gaps' <<<"$CANON_OUT")"
 fi
 
+echo "=== test: 節未検出エラーの節見出しが書式仕様と食い違わない ==="
+
+# Issue #182: 保証節が見つからないエラーは「節が違う」ことしか伝えず、正しい節名を教えなかった。
+# 台帳の書式仕様はプラグイン配下にあり headless 委譲では到達できないため、そこが唯一の
+# 自己回復不能点になっていた。エラーへ期待する節見出しを載せて解消したが、**節名がスクリプトと
+# 書式仕様の2箇所に現れる**ため、片方だけ直っても誰も検出しない状態になりうる（散文の
+# 「一致させること」では守られない）。ここで4者の一致を固定する:
+#   1. 正本: docs/ai-driven-development-strategy.md 5.3 の書式例
+#   2. スクリプト仕様: scripts/specs/guarantee-index-check.md「パースの規約」の書式例
+#   3. 参照ファイル: skills/guarantee-audit/references/bootstrap-mode.md のドラフト書式
+#   4. 節未検出エラー（stderr）が提示する期待見出し
+# 節見出しはテストにも直書きせず**正本から抜き出して**突き合わせる（ここに literal を置くと
+# 5つ目のコピーになり、正本を変えてもテストだけが古い値で通り続ける）。
+# 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする。
+# scripts/README.md 既出）。抜き出しは grep、比較は文字列一致で行う。
+
+# フェンス内の書式例から、`## 保証` / `## Gaps` で始まる H2 行の**最初の1本**を取り出す。
+# 接頭辞一致は保証節の識別規則（正本 5.3）そのものであり、ここでの literal はその接頭辞だけ。
+heading_from() {
+  local file="$1" prefix="$2" found rc
+  found="$(grep -m1 -E "^${prefix}" "$file")"
+  rc=$?
+  if [ "$rc" -ge 2 ]; then
+    printf '%s' "grep-error(${rc})"
+    return 0
+  fi
+  printf '%s' "$found"
+}
+
+SPEC_FILE="${GIC_TEST_DIR}/../specs/guarantee-index-check.md"
+BOOTSTRAP_REF="${GIC_TEST_DIR}/../../skills/guarantee-audit/references/bootstrap-mode.md"
+
+for f in "$STRATEGY_FILE" "$SPEC_FILE" "$BOOTSTRAP_REF"; do
+  assert_eq "書式仕様を読める（読めない状態を pass にしない）: $(basename "$f")" \
+    "true" "$(if [ -r "$f" ]; then echo true; else echo false; fi)"
+done
+
+CANON_GUARANTEE_HEADING="$(heading_from "$STRATEGY_FILE" '## 保証')"
+CANON_GAPS_HEADING="$(heading_from "$STRATEGY_FILE" '## Gaps')"
+
+# 抜き出し自体が空振りしていないこと（空文字どうしの比較は何も検証しないため）
+assert_eq "正本から保証節の見出しを抜き出せる" "true" \
+  "$(if [ -n "$CANON_GUARANTEE_HEADING" ]; then echo true; else echo false; fi)"
+assert_eq "正本から Gaps 節の見出しを抜き出せる" "true" \
+  "$(if [ -n "$CANON_GAPS_HEADING" ]; then echo true; else echo false; fi)"
+
+# (1)=(2), (1)=(3): 書式仕様のコピーどうしが一致していること
+assert_eq "スクリプト仕様の保証節見出しが正本と一致" \
+  "$CANON_GUARANTEE_HEADING" "$(heading_from "$SPEC_FILE" '## 保証')"
+assert_eq "スクリプト仕様の Gaps 節見出しが正本と一致" \
+  "$CANON_GAPS_HEADING" "$(heading_from "$SPEC_FILE" '## Gaps')"
+assert_eq "参照ファイル（bootstrap-mode）の保証節見出しが正本と一致" \
+  "$CANON_GUARANTEE_HEADING" "$(heading_from "$BOOTSTRAP_REF" '## 保証')"
+assert_eq "参照ファイル（bootstrap-mode）の Gaps 節見出しが正本と一致" \
+  "$CANON_GAPS_HEADING" "$(heading_from "$BOOTSTRAP_REF" '## Gaps')"
+
+# (1)=(4): スクリプトが持つ定数が正本と一致していること（source 済みの変数を直接見る）
+assert_eq "スクリプトの GIC_GUARANTEE_HEADING が正本と一致" \
+  "$CANON_GUARANTEE_HEADING" "$GIC_GUARANTEE_HEADING"
+assert_eq "スクリプトの GIC_GAPS_HEADING が正本と一致" \
+  "$CANON_GAPS_HEADING" "$GIC_GAPS_HEADING"
+
+# (4): 実際の stderr に載ること（定数を持っていても出力に載せ忘れれば行き止まりのまま）
+NOSEC_ERR="$(cd "$FIXTURE_REPO" && bash "$TARGET_SCRIPT" docs/no-section.md 2>&1 >/dev/null)"
+NOSEC_ERR_EXIT=$?
+assert_eq "節未検出は exit 2 のまま（実行前提の欠落。意味を変えない）" "2" "$NOSEC_ERR_EXIT"
+assert_eq "stderr に期待する保証節の見出しが載る" "true" \
+  "$(if printf '%s' "$NOSEC_ERR" | grep -qF -- "$CANON_GUARANTEE_HEADING"; then echo true; else echo false; fi)"
+assert_eq "stderr に期待する Gaps 節の見出しが載る" "true" \
+  "$(if printf '%s' "$NOSEC_ERR" | grep -qF -- "$CANON_GAPS_HEADING"; then echo true; else echo false; fi)"
+assert_eq "stderr のエラー JSON の error 値は変えない（下流の分岐キー）" "true" \
+  "$(if printf '%s' "$NOSEC_ERR" | grep -qF -- '"error":"guarantee section not found"'; then echo true; else echo false; fi)"
+
+# 受理方向: 提示した見出しをそのまま使った台帳は節として認識される
+# （「エラーが教えた形」と「検証器が受理する形」の食い違いを残さない）。
+HINT_WS="${TMP_ROOT}/hint"
+mkdir -p "${HINT_WS}/docs" "${HINT_WS}/tests"
+printf 'it("x", () => {});\n' > "${HINT_WS}/tests/a.test.ts"
+{
+  printf '# 保証台帳\n\n'
+  printf '%s\n\n' "$CANON_GUARANTEE_HEADING"
+  printf '### G-1-1: 約束\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n\n'
+  printf '%s\n\n' "$CANON_GAPS_HEADING"
+  printf -- '- [ ] GAP-001: 未整備の公開面\n'
+} > "${HINT_WS}/docs/guarantees.md"
+HINT_OUT="$(cd "$HINT_WS" && bash "$TARGET_SCRIPT" docs/guarantees.md --base "$HINT_WS" 2>/dev/null)"
+HINT_EXIT=$?
+assert_eq "エラーが提示した見出しで書いた台帳は exit 0" "0" "$HINT_EXIT"
+assert_eq "エラーが提示した Gaps 見出しは Gaps 節として数えられる" "1" \
+  "$(jq -r '.counts.gaps' <<<"$HINT_OUT")"
+
+
 
 echo "=== test: 値にタブが含まれても列がずれない（出力契約の維持） ==="
 
