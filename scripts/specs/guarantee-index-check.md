@@ -119,6 +119,22 @@ exit code:
 | 1 | `status: "fail"`（stdout には JSON を出す。人間向けの要約は stderr） |
 | 2 | 実行前提の欠落（jq 不在・未知オプション・引数過多・台帳が読めない・`--base` が存在しない・**台帳に「保証」節が無い**）。**stdout は空**で、stderr にエラー JSON とメッセージを出す |
 
+**exit 2 の意味は上表から動かさない**（2＝実行前提の欠落）。節が無い場合のメッセージ改善（下記）は `status` / `error` / exit code のいずれも変えない。
+
+#### 節が見つからないときの stderr（自己回復のための唯一の手がかり）
+
+保証節が無い場合の stderr は、`{"status":"error","error":"guarantee section not found"}` に加えて**期待する節見出しを提示する**:
+
+- 保証節の見出し（生成側の完全一致形。後述「パースの規約」の書式例と同一の文字列）
+- Gaps 節を併記する場合の見出し（同上）
+- 読み取りは接頭辞一致（`## 保証` / `## Gaps`）で行うこと・フェンスの外に H2 として置くこと
+
+**理由**: 台帳の書式仕様はプラグイン配下（`docs/` と `skills/*/references/`）にあり、headless 委譲では到達できない（→ `scripts/specs/read-plugin-doc.md`「なぜこのスクリプトがあるか」）。他の失敗は `broken[].reason` の語彙が次の一手を示すため書き手が自力で収束できるのに対し、**節名だけはエラーが教えなければ総当たりするしかない**（Issue #182 の実測: 節名以外の書式は probe を含む4回の再実行で `pass` へ収束した）。
+
+**書式の全体（保証 ID・テスト参照・宣言元の書き方）を stderr へ雛形として出すことはしない。** 本スクリプトが書式仕様の第2の正本になり、`docs/ai-driven-development-strategy.md` 5.3 との二重管理点が生まれるため。節見出しは**本スクリプトが識別のために元から持っている知識**であり、新たな二重管理を作らない範囲に留める。
+
+節見出しの文字列が書式仕様側のコピー（`docs/ai-driven-development-strategy.md` 5.3 / 本仕様の書式例 / `skills/guarantee-audit/references/bootstrap-mode.md`）と食い違わないことは `scripts/tests/test-guarantee-index-check.sh` が固定する（散文で「一致させること」と書くだけにしない。ずれても誰も検出しない状態を残さないため）。
+
 呼び出し側の規律:
 
 - exit 2 を「検査対象なし」＝ pass に読み替えない。台帳の取り違え・節名の変更で全保証が未検査になった状態を pass として通すと、索引ゲートが素通りする。

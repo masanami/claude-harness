@@ -60,6 +60,16 @@ GIC_BACKTICK_RE='`([^`]+)`'
 # 裁可前のドラフトで宣言元の代わりに書かれる規約文字列（docs/ai-driven-development-strategy.md 5.3）
 GIC_PROV_PENDING_LITERAL="裁可待ち"
 
+# 節が見つからないときのエラーで提示する、**生成側の**節見出し（完全一致形）。
+# 読み取りの識別は接頭辞一致（`## 保証` / `## Gaps`）であり、この文字列で判定はしない
+# ——判定に使うと、これまで受理していた `## 保証ポリシー` のような見出しを落としてしまう。
+# ここに持つ理由: 台帳の書式仕様はプラグイン配下の参照ファイルにしかなく、headless 委譲では
+# 到達できない。節名を知らない書き手にとって、このエラーが唯一の手がかりになる（Issue #182）。
+# 書式仕様側のコピーとの一致は scripts/tests/test-guarantee-index-check.sh が固定する
+# （「一致させること」を散文の約束にしない。ずれても誰も検出しない状態を作らないため）。
+GIC_GUARANTEE_HEADING="## 保証（Guarantees）"
+GIC_GAPS_HEADING="## Gaps（テストのない公開面）"
+
 # 走査結果の受け皿。bash 3.2 では未代入の配列を `"${arr[@]}"` で展開すると set -u が
 # unbound variable として落とすため、トップレベルで空配列として宣言しておく。
 GIC_REFS=()
@@ -535,7 +545,10 @@ main() {
   gic_scan "$body"
 
   if [ "$GIC_HAS_GUARANTEE_SECTION" != "true" ]; then
-    echo "Error: 「## 保証」節が見つかりません: ${ledger}" >&2
+    echo "Error: 保証節が見つかりません: ${ledger}" >&2
+    echo "  期待する節見出し: ${GIC_GUARANTEE_HEADING}" >&2
+    echo "  Gaps（テストのない公開面）を併記する場合の節見出し: ${GIC_GAPS_HEADING}" >&2
+    echo "  いずれもコードフェンスの外に H2（\`## \`）として置くこと。読み取りは「## 保証」「## Gaps」で始まる接頭辞一致で行う。" >&2
     echo "  台帳の書式が壊れている可能性があります。pass としては扱いません（索引ゲートの素通りを防ぐため）。" >&2
     printf '%s\n' '{"status":"error","error":"guarantee section not found"}' >&2
     exit "$GUARANTEE_INDEX_CHECK_EX_PREREQ"

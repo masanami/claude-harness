@@ -20,6 +20,7 @@
 | promotion-decision.sh | `scripts/specs/promotion-decision.md` |
 | list-test-files.sh | `scripts/specs/list-test-files.md` |
 | read-plugin-doc.sh | `scripts/specs/read-plugin-doc.md` |
+| retirement-sweep.sh | `scripts/specs/retirement-sweep.md` |
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 
