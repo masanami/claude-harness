@@ -744,8 +744,10 @@ assert_ref_contains "保証節が2つ以上ある本文は解釈できないと�
   '**該当する見出しが2つ以上ある本文は「解釈できない」として扱う**'
 assert_ref_contains "保証節が2つ以上の本文を下流でも中断条件にしている" \
   '該当する H2 が2つ以上ある（どちらを正とするか決められない）'
-assert_ref_contains "親Issueへ台帳の文法を適用しない" \
-  '**親Issue本文に台帳の文法（`### G-...` の見出しを保証見出しとみなす読み方）を適用しないこと**'
+assert_ref_contains "親Issueへ台帳の読み取り手段（索引チェック）を向けない" \
+  '**親Issue本文に台帳の読み取り手段（索引チェック。`### G-...` の見出しを保証見出しとみなす読み方）を向けないこと**'
+assert_file_not_contains "旧: 撤去済みの名称「台帳の文法」を参照していない" "$REF_FILE" \
+  '親Issue本文に台帳の文法（'
 
 # 5.5-5 が index.guarantees の消費に置き換わっていること
 assert_ref_contains "5.5-5 の入力は index.guarantees だけ" \
@@ -1535,7 +1537,15 @@ assert_eq "(B-13) 適用しない範囲の表が5行ある（例外の列挙が�
 # --- 正本: base リビジョン経路の規約 ---
 assert_file_contains "(B-13) 正本が base リビジョンの台帳の読み方を定めている" "$STRATEGY_FILE" \
   '##### base リビジョンの台帳を読む場合（作業ツリー以外の台帳）'
-assert_file_contains "(B-13) base リビジョン経路では --base を明示すると定めている" "$STRATEGY_FILE" \
+assert_file_contains "(B-13) base リビジョン経路では --base を指定しないと定めている" "$STRATEGY_FILE" \
+  '**`--base` は指定しない**（「台帳パスの解決」の定型文と同じ）'
+assert_file_contains "(B-13) --base が消費結果に効かない根拠を示している" "$STRATEGY_FILE" \
+  '**`guarantees` は参照検査より前に確定する**ため消費結果は変わらない'
+assert_file_contains "(B-13) --base の指定が停止経路だけを増やすと明記している" "$STRATEGY_FILE" \
+  '**消費結果に影響しない指定が停止経路だけを増やす**'
+assert_file_contains "(B-13) base リビジョン経路でも ledger の同一性を確認する" "$STRATEGY_FILE" \
+  '**`ledger` が渡した一時ファイルのパスと一致することを確認する**'
+assert_file_not_contains "(B-13) 旧: --base 必須化の記述が正本に残っていない" "$STRATEGY_FILE" \
   '**`--base` にリポジトリルートを明示する**'
 assert_file_contains "(B-13) base リビジョン経路の status/broken を索引整合の判定に使わない" "$STRATEGY_FILE" \
   '**この呼び出しの `status` / `broken` / `counts.broken` を索引整合の判定に使わない**'
@@ -1567,12 +1577,28 @@ assert_file_contains "(B-13) drift-mode: D3 は index.guarantees をそのまま
   "$GA_DRIFT_FILE" '**Step D2 で取得した `index.guarantees`** をそのまま使う'
 assert_file_contains "(B-13) drift-mode: 自分で台帳を開いて代替しない" \
   "$GA_DRIFT_FILE" '**自分で台帳を開いて代替しない**（それが移譲前の二重規則そのものである）'
-assert_file_contains "(B-13) drift-mode: counts.guarantees との件数不一致は not_analyzed" \
-  "$GA_DRIFT_FILE" '**`index.counts.guarantees` と `index.guarantees` の件数が一致しない場合** → `not_analyzed`'
+assert_file_contains "(B-13) drift-mode: 参照集合の完全性は broken の区分 (I) で判定する" \
+  "$GA_DRIFT_FILE" '**判定は `index.broken` の区分 (I) で行う**'
+assert_file_contains "(B-13) drift-mode: 区分 (I) があれば D4 を実行しない" \
+  "$GA_DRIFT_FILE" '**区分 (I) が1件でもあれば、`reverse_check.status` を `not_analyzed` とし Step D4 を実行しない**'
+assert_file_contains "(B-13) drift-mode: 件数差分だけを完全性の根拠にしないと明記している" \
+  "$GA_DRIFT_FILE" '**件数差分だけを完全性の根拠にしないこと**'
+assert_file_contains "(B-13) drift-mode: 差分0が取りこぼしなしを意味しないと明記している" \
+  "$GA_DRIFT_FILE" '差分 0 は「取りこぼしなし」を意味しない'
 assert_file_contains "(B-13) drift-mode: 不完全な参照集合が D4 の誤検出を生むと明記している" \
   "$GA_DRIFT_FILE" '**台帳に書かれているテストを「未登録」＝ GAP 候補として誤報する**'
-assert_file_contains "(B-13) drift-mode: counts.refs との突き合わせは空虚に真だと明記している" \
-  "$GA_DRIFT_FILE" '**空虚に真になる突き合わせを完全性の根拠にしない**'
+assert_file_contains "(B-13) drift-mode: counts.refs との突き合わせは空虚に真なので行わない" \
+  "$GA_DRIFT_FILE" '**`index.counts.refs` と `index.guarantees[].tests` の総数の突き合わせは行わない**'
+assert_file_contains "(B-13) drift-mode: 件数差分は不変条件の相互検査に使う（食い違えば index_error）" \
+  "$GA_DRIFT_FILE" '**この2つが食い違った場合はスクリプトの出力そのものが信用できない**'
+assert_file_contains "(B-13) drift-mode: テスト参照0件の保証は不完全ではないと明記している" \
+  "$GA_DRIFT_FILE" '**この保証は `index.guarantees` に入り、件数差分は 0 のまま**'
+assert_file_contains "(B-13) drift-mode: 区分 (I) があっても D3 の fan-out は行い partial とする" \
+  "$GA_DRIFT_FILE" '`semantic.status` を **`partial`** とする（`analyzed` にしない）'
+assert_file_contains "(B-13) drift-mode: D3 の partial を D4 実行の根拠にしないと明記している" \
+  "$GA_DRIFT_FILE" '**`semantic.status` が `partial` であることを「D4 は走ってよい」の根拠にしないこと**'
+assert_file_contains "(B-13) drift-mode: index.ledger の同一性を確認する" \
+  "$GA_DRIFT_FILE" '**`index.ledger` が自分の渡したパスと一致することを確認する**'
 assert_file_contains "(B-13) drift-mode: exit 2 では D3・D4 とも not_analyzed になると明記している" \
   "$GA_DRIFT_FILE" '**exit 2（`index.guarantees` を取得できない）の場合、下流（Step D3・D4）はいずれも `not_analyzed` になる**'
 assert_file_contains "(B-13) drift-mode: 読み直す経路を復活させないと明記している" \

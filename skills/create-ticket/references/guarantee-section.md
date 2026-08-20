@@ -22,8 +22,9 @@ GDD期の Issue は保証節が確定していて初めて裁可（人間のレ�
 
 | 前提 | 確認方法 | 満たさない場合（`reason` コード） |
 |---|---|---|
-| 保証台帳が存在し読める | 後述の索引チェックを実行し、stderr のエラー JSON が `ledger not readable` **でない**ことを確認する（**台帳を自分で開いて確かめない**。共通-2 (b)） | **中断**（`ledger_missing`）。台帳の新設・正本化は人間の裁可事項（`/guarantee-audit bootstrap` → 裁可 PR）であり、本スキルは台帳を作らない |
-| 台帳の保証一覧を機械的に取得できる | 後述の索引チェックを実行し `guarantees`（登録済みの保証の一覧）を得る | **中断**（`index_check_unavailable`）。一覧を取得できない状態を「保証0件」「維持なし」に読み替えない（検査不能≠0件） |
+| 保証台帳が存在する | リポジトリルートを解決し `<リポジトリルート>/docs/guarantees.md` の**存在だけ**を確認する（**内容は読まない**。存在確認は読み取りの規律の対象外＝正本 5.3「この規律を適用しない範囲」）。**リポジトリルートを解決できず cwd を基準にした場合は、この確認を行わない**（存在を断定する材料が無い） | **中断**（`ledger_missing`）。台帳の新設・正本化は人間の裁可事項（`/guarantee-audit bootstrap` → 裁可 PR）であり、本スキルは台帳を作らない |
+| 台帳の保証一覧を機械的に取得できる | 後述の索引チェックを実行し `guarantees`（登録済みの保証の一覧）を得る。**`ledger` が自分の渡したパスと一致すること**もあわせて確認する | **中断**（`index_check_unavailable`）。一覧を取得できない状態を「保証0件」「維持なし」に読み替えない（検査不能≠0件） |
+| 台帳の保証節を一意に解釈できる | `broken` に**区分 (I)** の `duplicate_guarantee_section` / `guarantee_outside_section` が無いことを確認する（区分はプラグイン配下の `scripts/specs/guarantee-index-check.md`「`reason` の分類」が正本。Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決する） | **中断**（`ledger_uninterpretable`）。併合された節・節の外の保証を「登録済みの完全な一覧」として維持の判定に使わない |
 | `guarantee:proposed` ラベルを付与できる | 要件-3 の手順で存在を確認・無ければ作成 | **中断**（`label_unavailable`）。保証節を持つ Issue が裁可待ちの表示なしで存在する状態を作らない |
 
 **中断理由コードの語彙（この表が正本）**:
@@ -32,9 +33,12 @@ GDD期の Issue は保証節が確定していて初めて裁可（人間のレ�
 |---|---|---|
 | `ledger_missing` | 要件モード | 保証台帳（`docs/guarantees.md`）が存在しない・読めない |
 | `index_check_unavailable` | 要件モード | 索引チェックが exit 2・stdout がパース不能・実行不能で `guarantees` を取得できない（`ledger_missing` と判別できない場合を含む） |
+| `ledger_uninterpretable` | 要件モード | `broken` に区分 (I) の `duplicate_guarantee_section` / `guarantee_outside_section` があり、`guarantees` を完全で一意な一覧として扱えない |
 | `label_unavailable` | 要件モード | `guarantee:proposed` ラベルを付与できない（存在せず、作成もできない） |
 | `duplicate_guarantee_section` | 要件モード | 転記した本文に既にフェンス外の `## 保証（Guarantees）` 見出しがあり、追記すると保証節が2つになる（要件-1） |
 | `parent_guarantee_section_missing` | 実装分解モード | 親Issue本文に「## 保証（Guarantees）」節が無い／共通-2 (c) の文法で解釈できない（分解-1） |
+
+> **同名の識別子に注意**: 中断理由コードの `duplicate_guarantee_section` は**転記した Issue 本文**に保証節が2つできる状態（要件-1）を指す。索引チェックの `broken[].reason` にも同名の `duplicate_guarantee_section` があるが、そちらは**台帳**に保証節が2つある状態であり、本スキルでは `ledger_uninterpretable` へ写像する（共通-1 の前提表）。**`broken` の reason をそのまま中断理由コードとして報告しないこと**——別の名前空間である。
 
 **コードを増減するときは、この表と下記の中断報告テンプレートの `中断理由` を必ず同時に更新する**（1箇所だけ増えると、定義されているのに報告されないコード／報告できるのに定義が無いコードが生まれる）。
 <!-- 規律の正本側の列挙（docs/ai-driven-development-strategy.md 5.7 の中断条件）と回帰テストの期待値も同時に更新する。一致は scripts/tests/test-create-ticket-gdd-gate.sh が検査する -->
@@ -44,8 +48,8 @@ GDD期の Issue は保証節が確定していて初めて裁可（人間のレ�
 ```text
 ## 保証節を確定できないため Issue を作成していません（GDD期）
 
-- 中断理由: {ledger_missing | index_check_unavailable | label_unavailable | duplicate_guarantee_section | parent_guarantee_section_missing}
-- 詳細: {何を確認して何が満たされなかったか。件数の食い違いなら両方の数値を書く}
+- 中断理由: {ledger_missing | index_check_unavailable | ledger_uninterpretable | label_unavailable | duplicate_guarantee_section | parent_guarantee_section_missing}
+- 詳細: {何を確認して何が満たされなかったか。索引チェックを実行した場合は exit code・stderr のエラー・`ledger`（読まれた台帳のパス）・該当した `broken` の reason を転記する}
 - 作成した Issue: なし
 - 人間に依頼する対処: {台帳の整備 / 台帳の修正 / ランチャーの導入 / ラベル作成権限 / 機能仕様側の保証節の調整 / 親Issueの保証節の整備 など}
 ```
@@ -55,18 +59,25 @@ GDD期の Issue は保証節が確定していて初めて裁可（人間のレ�
 
 **本ファイルの手順に適用されるのは、この定型文のうち「索引チェックへ渡す引数の解決」だけ**である。**本スキルの手順は台帳を Read しない**（読み取りは共通-2 (b) で索引チェックへ移譲済み）。定型文が「台帳の Read にも」と書いているのは、台帳へ**書き込む**手順（`feature-implementer` の台帳追記・`/guarantee-audit` bootstrap のドラフト生成）と共通の文面だからであり、**本スキルで台帳を Read する根拠にはならない**。
 
-本スキルではこの食い違いが「**台帳が実在するのに `index_check_unavailable` で中断する**」という形で現れる。cwd を基準にした場合は、その事実を完了報告・中断報告に明記すること。
+本スキルではこの食い違いが「**台帳が実在するのに検査不能で中断する**」という形で現れる。**この経路を `ledger_missing` にしないこと**——索引チェックの stderr は「台帳が存在しない」と「渡したパスが違う」を**同じ `ledger not readable` として返す**ため、パス解決の誤りを台帳の不在と取り違えると、実在する台帳に対して人間へ「台帳を新設せよ」（bootstrap → 裁可 PR）という誤った対処を促すことになる。判別規則は後述の出力の扱いに従う。cwd を基準にした場合は、その事実を完了報告・中断報告に明記すること。
 
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"` の形式（先頭トークンと target には**パス・バージョン・引用符を付けない**。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる。**引数として渡すパスは引用符で囲む** — 空白を含むリポジトリパスで引数が分割され、`too many arguments` で exit 2 になるのを防ぐため。引数側の引用符は allowlist のマッチに影響しない）を用い、相対パス `scripts/guarantee-index-check.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 索引チェックの出力（`{status, ledger, base, counts, guarantees, broken}`）の扱い:
 
-- **exit 0 または 1 で stdout が妥当な JSON** → `guarantees`（台帳に登録済みの保証の一覧）を維持する保証の判定に使う。**`status` が `"fail"`（既存の索引ドリフト）であってもチケット作成の可否には使わない**（壊れたテスト参照の是正は `/quality-check` と `/promote-verify` の担当であり、本スキルが読むのは登録済みの保証の集合だけ）。ただし `status` と `broken` の件数は完了報告に転記し、既存ドリフトの存在を黙らせない
-- **exit 2 で stderr のエラー JSON が `ledger not readable`** → `ledger_missing` として**中断**する（台帳そのものが無い・読めない）
+- **読んだ台帳の同一性を最初に確認する**: `ledger` が自分の渡したパスと一致することを確認し、一致しなければ `index_check_unavailable` として**中断**する。引数を省略すると `ledger` は相対パス `docs/guarantees.md` になるため、この確認は**引数省略の検出も兼ねる**。**移譲前は件数の突き合わせが「エージェントとスクリプトが別のファイルを読んでいた」場合の backstop も兼ねていた**——読み手が1つになった以上、渡したパスと読まれた台帳の同一性はここで明示的に確認する（サブパッケージ配下にも `docs/guarantees.md` があるリポジトリで、別プロジェクトの保証を「登録済み」として消費しないため）
+- **exit 0 または 1 で stdout が妥当な JSON** → `guarantees`（台帳に登録済みの保証の一覧）を維持する保証の判定に使う。ただし `broken` の**区分**によって扱いを分ける（下記2項）。区分の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`「`reason` の分類」（Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決する）
+- **`broken` に区分 (I) の `duplicate_guarantee_section` / `guarantee_outside_section` がある** → `ledger_uninterpretable` として**中断**する。**どちらも件数差分に現れない**:
+  - `duplicate_guarantee_section`: 索引チェックは2つ以上の保証節を**黙って併合**する。共通-2 (a) の保証節の識別規則は「該当する見出しが2つ以上ある本文は解釈できないとして扱う」と定めており、併合された一覧から維持する保証を転記すると、**退役済み・移行前の節のエントリを現行の約束として Issue に載せる**
+  - `guarantee_outside_section`: 節の外の `### G-...` は `guarantees` にも `counts.guarantees` にも入らない。**台帳に書かれている約束が維持の候補から静かに落ちる**（黙って検証対象から消える経路）
+- **参照整合系（区分 (II)。`test_file_not_found` / `test_name_not_found` / `malformed_test_ref` / `missing_test_ref` / 宣言元・GAP 系）はチケット作成の可否に使わない**。`status` が `"fail"` でもこれらだけなら続行する（壊れたテスト参照の是正は `/quality-check` と `/promote-verify` の担当であり、本スキルが読むのは登録済みの保証の集合だけ）。ただし `status` と `broken` の件数は完了報告に転記し、既存ドリフトの存在を黙らせない
+- **exit 2 で stderr のエラー JSON が `ledger not readable`** → **原則 `ledger_missing`。ただし次のいずれかに該当するときは `index_check_unavailable` にする**（索引チェックは「台帳が存在しない」と「渡したパスが違う」を**同じエラーで返す**ため、区別はこちら側の情報で行う）:
+  - 前提の確認で `<リポジトリルート>/docs/guarantees.md` の**存在を確認できていた**（台帳は実在し、誤っているのは索引チェックへ渡したパスの側）
+  - **リポジトリルートを解決できず cwd を基準にした**（存在を断定する材料が無い）
 - **上記以外の exit 2（「保証」節が無い・jq 不在・引数不正）／stdout が空またはパース不能／スクリプト実行不能／stderr のエラーを判別できない** → `index_check_unavailable` として**中断**する。`guarantees` を空配列とみなさない・「検査対象なし」に読み替えない。**判別できない場合を `ledger_missing` へ倒さない**（台帳の不在を断定すると、人間へ「台帳を新設せよ」という誤った対処を促す）
 - **`guarantees` が空で、かつ `counts.guarantees` も 0**（台帳はあるが保証が1件も登録されていない）→ これは**検査した結果の0件**であり中断しない。維持する保証は `なし` になる（後述の要件-1 で `- なし` と明記する）
-- **`guarantees` の件数が `counts.guarantees` より少ない** → 差分は **ID 書式を満たさない保証見出し**であり（`broken` に `malformed_guarantee_id` として現れる）、その見出しは維持の候補に挙げられない。**この差分を「該当なし」に丸めず、完了報告に差分件数を明記する**（既存ドリフトの是正は本スキルの担当外だが、黙って落とさない）
+- **`guarantees` の件数が `counts.guarantees` より少ない** → 差分は **ID 書式を満たさない保証見出し**であり（`broken` に `malformed_guarantee_id` として現れる）、その見出しは維持の候補に挙げられない。**この差分を「該当なし」に丸めず、完了報告に差分件数を明記する**（既存ドリフトの是正は本スキルの担当外だが、黙って落とさない）。**差分 0 を「取りこぼしなし」の根拠にしないこと**——区分 (I) の大半は差分に現れないため、上記の区分 (I) の確認と併せて初めて完全性を主張できる
 
 ### 共通-2. 読み取り規則（台帳の読み取りと親Issue本文の文法は別物）
 
@@ -74,11 +85,13 @@ GDD期の Issue は保証節が確定していて初めて裁可（人間のレ�
 
 適用範囲は次のとおり:
 
-| 規則 | 台帳（`docs/guarantees.md`） | 親Issue本文 |
-|---|---|---|
-| (a) 文法に依存しない共通部分 | 適用する | 適用する |
-| (b) 台帳の読み取り（索引チェックへの移譲） | 適用する | **適用しない** |
-| (c) 親Issue本文の文法 | 適用しない | 適用する |
+| 規則 | 台帳（`docs/guarantees.md`） | 適用する主体 | 親Issue本文 | 適用する主体 |
+|---|---|---|---|---|
+| (a) 文法に依存しない共通部分 | 適用する | **索引チェック（機械）**。破れは `broken` の区分 (I) として現れ、共通-1 が `ledger_uninterpretable` で中断へ接続する | 適用する | あなた |
+| (b) 台帳の読み取り（索引チェックへの移譲） | 適用する | 索引チェック（機械） | **適用しない** | — |
+| (c) 親Issue本文の文法 | 適用しない | — | 適用する | あなた |
+
+**(a) を台帳へ適用する主体は索引チェックであり、あなたではない**（移譲後にあなたが台帳の見出しを見ると (b) の違反になる）。とくに (a) の「**`## 保証` で始まる H2 が2つ以上ある本文は解釈できないとして扱う**」は、索引チェックが2節を**黙って併合したうえで** `broken` に `duplicate_guarantee_section` を出す形で実装されている。**この reason を中断へ接続しない限り (a) は台帳に対して効いていない**——共通-1 の `ledger_uninterpretable` がその接続である。
 
 #### (a) 文法に依存しない共通部分（台帳・親Issue本文の両方に適用する）
 

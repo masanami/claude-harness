@@ -21,7 +21,7 @@
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトは必ず PATH 上のランチャー経由で `claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"` の形式（先頭トークンと target には**パス・バージョン・引用符を付けない**。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる。**引数として渡すパスは引用符で囲む** — 空白を含むリポジトリパスで引数が分割され、`too many arguments` で exit 2 になるのを防ぐため。引数側の引用符は allowlist のマッチに影響しない）で実行し、相対パス `scripts/guarantee-index-check.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"`（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）にフォールバックし、ユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md / docs/script-launcher.md -->
 
-stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `index` として保持する。**`guarantees`（索引チェックが読み取った台帳の一覧）は Step D3 が消費する**（台帳の読み取りは索引チェックへ一本化されており、D3 は台帳を自分で読まない）。フィールド定義・`reason` の語彙・exit code の意味の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（ここには複製しない）。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること。
+stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `index` として保持する。**`index.ledger` が自分の渡したパスと一致することを確認する**（一致しなければ別の台帳を読んでいる。引数を省略すると相対パス `docs/guarantees.md` になるため、この確認は引数省略の検出も兼ねる）。一致しない場合は索引整合を `{status: "fail", error: "..."}` として扱い、**D3・D4 とも `not_analyzed`** にする。**`guarantees`（索引チェックが読み取った台帳の一覧）は Step D3 が消費する**（台帳の読み取りは索引チェックへ一本化されており、D3 は台帳を自分で読まない）。フィールド定義・`reason` の語彙・exit code の意味の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（ここには複製しない）。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること。
 
 - exit 0（`pass`）/ exit 1（`fail`）はいずれも正常な検査結果として続行する。この場合 `index.error` は `null` にする。
 - **exit 2（実行前提の欠落）・stdout が JSON としてパースできない場合は、「検査対象なし」＝ pass に読み替えない**。索引整合を `{status: "fail", error: "..."}` として扱い、以降のステップへ進んだうえで報告に明示する（台帳の取り違え・節名の変更で全保証が未検査になった状態を素通りさせないため）。**この場合の Step D3・D4 は下記の分岐表に従い `not_analyzed` になる**——「以降のステップへ進む」は D5 の報告まで到達して未解析の事実を出すことであり、解析を続行できるという意味ではない。このとき Step D5 では次の2つを**必ず**行う:
@@ -55,19 +55,38 @@ stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `in
 | `statement` | 約束文（`guarantee-auditor` へ渡す判定対象） |
 | `tests` | テスト参照。**全保証の和集合が Step D4 の参照集合** |
 
-**一覧を完全に取得できたことを検証する**（SKILL.md「共通規約」の**部分成功の扱い**を適用する。参照集合の不完全さは Step D4 で**誤検出**を生むため、部分的な取得は `partial` ではなく `not_analyzed` として扱う）:
+**「一覧を取得できたか」と「参照集合が完全・一意か」は別の問いであり、分けて判定する**（SKILL.md「共通規約」の**部分成功の扱い**を適用する）。前者は D3 自身の実行可否を、後者は **Step D4 の実行可否**を決める:
 
-- **`index.guarantees` を取得できていない場合**（Step D2 が exit 2・stdout がパース不能）→ `not_analyzed`。**自分で台帳を開いて代替しない**（それが移譲前の二重規則そのものである）。
-- **`index.counts.guarantees` と `index.guarantees` の件数が一致しない場合** → `not_analyzed`。差分は **ID 書式を満たさない保証見出し**（`index.broken` の `malformed_guarantee_id`）であり、**その見出し配下の `- テスト:` 行は `index.guarantees[].tests` に現れない**。この不完全な参照集合を Step D4 へ渡すと、**台帳に書かれているテストを「未登録」＝ GAP 候補として誤報する**。`detail` には差分件数と `broken` の該当見出しを書く。
-- **空虚に真になる突き合わせを完全性の根拠にしない**: `index.counts.refs` と `index.guarantees[].tests` の総数は**索引チェックの実装上つねに一致する**（ID 書式違反の見出し配下のテスト参照は、どちらにも数えられないため）。この2つの突き合わせは**常に成立する検査**であり、参照集合の完全性を何も保証しない。根拠になるのは上記の `counts.guarantees` との突き合わせだけである。
-- 「登録はされているが**テスト参照を持たない**保証」（`tests` が空配列）は取得失敗ではない（台帳側の欠陥であり Step D2 が `missing_test_ref` として検出する）。参照集合に寄与しないだけで、`analyzed` を維持する。
+**(1) 一覧を取得できたか（D3 の実行可否）**
 
-**取得の成否で扱いを分ける**（「取得できなかった」を「0件だった」と同一視しない）:
+- **`index.guarantees` を取得できていない場合**（Step D2 が exit 2・stdout がパース不能・`index.ledger` が渡したパスと不一致）→ `semantic.status: "not_analyzed"`。**fan-out を行わない**。`checked` は `null` とし、**`checked: 0`（＝0件を検証した）と書かない**。`human_review_required` に `kind: "ledger_unreadable"` / `step: "D3"` を積む。**自分で台帳を開いて代替しない**（それが移譲前の二重規則そのものである）。
+- **台帳の書式は正しく、保証が0件だった場合**（`index.guarantees` が空で、かつ `index.counts.guarantees` も 0 で、下記 (2) の区分 (I) も無い）: `semantic.status: "analyzed"` / `checked: 0` とする（「台帳に保証が1件も登録されていない」ことを**検査した結果**として報告する。未解析と区別する）。
 
-- **取得に失敗した場合**（上記2つのいずれか）: 意味整合を `semantic.status: "not_analyzed"` として報告し、**fan-out を行わない**。`checked` は `null` とし、**`checked: 0`（＝0件を検証した）と書かない**。`human_review_required` に `kind: "ledger_unreadable"` / `step: "D3"` を積み、**何を取得できなかったか**を `detail` に書く。この場合 **Step D4 も `not_analyzed`** になる（Step D2 の分岐表）。
-  - 「1件も取得できなかった場合」ではなく「**全件を取得できた場合以外**」が `not_analyzed` である。
-- **台帳の書式は正しく、保証が0件だった場合**（`index.guarantees` が空で、かつ `index.counts.guarantees` も 0）: `semantic.status: "analyzed"` / `checked: 0` とする（「台帳に保証が1件も登録されていない」ことを**検査した結果**として報告する。未解析と区別する）。
-- **全件を取得できた場合**: 以下の fan-out に進む。
+**(2) 参照集合が完全・一意か（Step D4 の実行可否）**
+
+**判定は `index.broken` の区分 (I) で行う**（区分の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`「`reason` の分類」（Read する場合は「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決する））。区分 (I) の `malformed_guarantee_id` / `guarantee_outside_section` / `duplicate_guarantee_section` / `duplicate_guarantee_id` / `malformed_test_ref` が**1件でもあれば参照集合は不完全または非一意**である:
+
+| `reason` | 参照集合に起きること | 件数差分に現れるか |
+|---|---|---|
+| `malformed_guarantee_id` | 見出しと配下の `- テスト:` 行が丸ごと落ちる | **現れる** |
+| `guarantee_outside_section` | 同上（節の外の保証。`counts.guarantees` にも数えない） | **現れない** |
+| `duplicate_guarantee_section` | 2つ以上の節を黙って併合した一覧になる（どちらが正か決められない） | **現れない** |
+| `duplicate_guarantee_id` | 同一 ID が複数並び、完全性 join のキーが一意にならない | **現れない** |
+| `malformed_test_ref` | `<パス>::<テスト名>` として突き合わせられない文字列が `tests` に入る（実質的な参照の欠落） | **現れない** |
+
+- **区分 (I) が1件でもあれば、`reverse_check.status` を `not_analyzed` とし Step D4 を実行しない**（`gap_candidates` は空のまま。`human_review_required` に `kind: "not_analyzed"` / `step: "D4"` と該当 reason を積む）。不完全な参照集合との突き合わせは、**台帳に書かれているテストを「未登録」＝ GAP 候補として誤報する**——D3 が防ごうとしている当の事象である。
+- **件数差分だけを完全性の根拠にしないこと**: 上表のとおり区分 (I) の5つのうち4つは `counts.guarantees` と `index.guarantees` の**件数差分に現れない**。差分 0 は「取りこぼしなし」を意味しない。
+- **件数差分は不変条件の相互検査に使う**: 索引チェックの契約では「差分 ＝ `malformed_guarantee_id` の件数」が恒等的に成立する（正本の `guarantees[]` の定義）。**この2つが食い違った場合はスクリプトの出力そのものが信用できない**ため、D3・D4 とも `not_analyzed` とし `kind: "index_error"` を積む（差分と reason 件数の両方を `detail` に書く）。
+- **`index.counts.refs` と `index.guarantees[].tests` の総数の突き合わせは行わない**: この2つは**索引チェックの実装上つねに一致する**（ID 書式違反の見出し配下のテスト参照はどちらにも数えられないため）。**常に成立する＝空虚に真**であり、参照集合の完全性を何も保証しない。
+- 「登録はされているが**テスト参照を持たない**保証」（`tests` が空配列）は**取得失敗でも不完全でもない**（区分 (II) の `missing_test_ref`。台帳側の欠陥であり Step D2 が検出する）。**この保証は `index.guarantees` に入り、件数差分は 0 のまま**である。参照集合に寄与しないだけで、`analyzed` を妨げない。
+
+**(3) D3 自身の網羅性（区分 (I) があっても fan-out は行う）**
+
+区分 (I) があっても、**`index.guarantees` に入っている保証の意味整合は独立に検証できる**（保証ごとに独立した判定であり、他の保証の欠落に影響されない）。したがって:
+
+- **区分 (I) がある場合**: 下記の fan-out を `index.guarantees` に対して実行したうえで、`semantic.status` を **`partial`** とする（`analyzed` にしない）。`human_review_required` に `kind: "ledger_unreadable"` / `step: "D3"` と該当 reason・落ちた見出しを積み、**意味整合の結果を網羅的な検査結果として提示しない**（共通規約の `partial` の扱い）。**Step D4 は上記 (2) のとおり実行しない**。
+- **区分 (I) が無い場合**: 参照集合は完全であり、fan-out の結果に応じて `analyzed` / `partial` を決める（下記「集約の扱い」）。
+- **この非対称は意図的である**: 参照集合の不完全さは D4 で**誤検出**（実在しない GAP）になるため結果を出さないが、D3 の意味整合は**検出漏れに留まる**ため、検証できる分は検証して未検証分を明示する。不完全さが誤検出を生むか検出漏れに留まるかで扱いを分ける、という共通規約の適用結果である（Step D4 手順2の bootstrap との非対称と同じ考え方）。
 
 取得できた保証を**10件ずつ**のチャンクに分けて `subagent_type: 'claude-harness:guarantee-auditor'` を並列 spawn する（チャンク分割・データブロックの分離・完全性 join の規約は SKILL.md の「共通規約」に従う）。
 
@@ -104,7 +123,7 @@ stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `in
 
 **突き合わせはテスト参照（`<パス>::<テスト名>`）単位で行う。ファイル単位で絞り込まないこと。**
 
-0. **上流の状態を確認する**: Step D3 が `not_analyzed`（台帳から参照集合を得られていない）の場合、**本ステップは実行せず** `reverse_check.status: "not_analyzed"` とし、`gap_candidates` は空のままにする。`human_review_required` に `kind: "not_analyzed"` / `step: "D4"` を積む（理由は Step D2 の分岐表。不完全な参照集合との突き合わせは実在しない GAP を作る）。
+0. **上流の状態を確認する**: **Step D3 が `not_analyzed` の場合**、または **Step D3 (2) で参照集合が不完全・非一意と判定された場合（`index.broken` に区分 (I) がある。D3 自身が `partial` で fan-out を行っていても同じ）**、**本ステップは実行せず** `reverse_check.status: "not_analyzed"` とし、`gap_candidates` は空のままにする。`human_review_required` に `kind: "not_analyzed"` / `step: "D4"` と該当 reason を積む（不完全な参照集合との突き合わせは実在しない GAP を作る）。**`semantic.status` が `partial` であることを「D4 は走ってよい」の根拠にしないこと**——D3 の網羅性と参照集合の完全性は別の判定である。
 1. 対象テストファイルを決める。**外部コマンドはいずれも終了コードを確認し、空出力を「対象なし」と決めつけない**:
    - `--scope <base>..<head>` 指定時: `git diff --name-only <base>..<head>` を実行し、**終了コードを確認する**。不正な revision の場合、git は **exit 128 と空の stdout** を返すため、空出力を「差分なし」と解釈すると**検査していないのに「0件」と報告してしまう**。非0終了なら本ステップを `reverse_check.status: "not_analyzed"` とし、`human_review_required` に `kind: "scope_error"` / `step: "D4"` と git のエラーメッセージを積んで、**GAP 候補を生成せずに終える**。**exit 0 の場合のみ**、その結果と `claude-harness-run list-test-files` の列挙結果の**積集合**を対象にする（diff にはテスト以外のファイルも含まれるため、テスト判定は列挙側の規則に委ねる）。
    - 無指定時: 列挙結果の全件を対象にする。
@@ -173,8 +192,8 @@ stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `in
 | フィールド | `analyzed`（全件成功） | `partial`（一部だけ成功・**検出漏れ**） | `not_analyzed`（結果を出さない・**誤検出**を防ぐ） |
 |---|---|---|---|
 | `index.error`（非 null が未解析） | 索引検査が完了（`pass` / `fail`） | — | 索引検査を実行できない（Step D2）。`kind: "index_error"` |
-| `semantic.status` | 全保証の判定が返った（`checked == total`） | 一部の保証で判定が返らなかった（`failed` が非空） | `index.guarantees` を取得できない・**件数が `index.counts.guarantees` と一致しない**（Step D3）。`checked` は `null`（`0` にしない）。`kind: "ledger_unreadable"` |
-| `reverse_check.status` | 全対象ファイルが `analyzed`（`files_checked == files_total`） | `extraction_failed` が非空、または列挙の `skipped` が非0 | 上流が未解析／`--scope` の git エラー／列挙エラー（Step D4）。`gap_candidates` は空のまま。`kind` は `not_analyzed` / `scope_error` / `enumeration_error` |
+| `semantic.status` | 全保証の判定が返った（`checked == total`）**かつ `index.broken` に区分 (I) が無い** | 一部の保証で判定が返らなかった（`failed` が非空）、**または `index.broken` に区分 (I) がある**（一覧から落ちた保証がある） | `index.guarantees` を取得できない・`index.ledger` が不一致・**件数差分と `malformed_guarantee_id` 件数が食い違う**（Step D3）。`checked` は `null`（`0` にしない）。`kind: "ledger_unreadable"` / `"index_error"` |
+| `reverse_check.status` | 全対象ファイルが `analyzed`（`files_checked == files_total`） | `extraction_failed` が非空、または列挙の `skipped` が非0 | 上流が未解析／**参照集合が不完全・非一意（区分 (I)）**／`--scope` の git エラー／列挙エラー（Step D4）。`gap_candidates` は空のまま。`kind` は `not_analyzed` / `scope_error` / `enumeration_error` |
 
 - **`partial` の集約値は「下限」であり、網羅的な検査結果ではない**。件数・一覧をそのまま「検査した結果」として提示せず、未処理分が残っている旨を必ず添える。
 - `semantic` は `checked + failed の件数 = total`、`reverse_check` は `files_checked + extraction_failed の件数 = files_total` が成り立つこと（成り立たない場合は突き合わせに漏れがある）。

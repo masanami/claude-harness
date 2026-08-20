@@ -359,11 +359,23 @@ assert_file_contains "(B-4c) 登録済み判定は base リビジョンの台帳
 # --- 登録済み判定の台帳読み取りも索引チェックへ移譲されている（散文で読まない） ---
 assert_file_contains "(B-4c) 台帳の読み取りの正本の定型文を持つ（散文で読み直さない）" "$GATE_FILE" \
   '**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと'
+# 行全体で固定する（部分一致だと `--base ...` を後ろへ足す変異を検出できない）
 assert_file_contains "(B-4c) base リビジョンの台帳は一時ファイル経由で索引チェックへ渡す" "$GATE_FILE" \
-  'claude-harness-run guarantee-index-check "<一時ファイル>" --base "<リポジトリルート>"'
+  'claude-harness-run guarantee-index-check "<一時ファイル>"
+```'
+assert_file_not_contains "(B-4c) 呼び出しに --base が付いていない" "$GATE_FILE" \
+  'guarantee-index-check "<一時ファイル>" --base'
 assert_file_contains "(B-4c) git show の終了コードを確認する（空出力を空の台帳に読み替えない）" "$GATE_FILE" \
   '**空出力を「保証0件の台帳」に読み替えない**'
-assert_file_contains "(B-4c) 一時ファイル経路では --base を明示する（cwd へ倒れるのを防ぐ）" "$GATE_FILE" \
+assert_file_contains "(B-4c) --base は指定しない（消費結果に効かず停止経路だけを増やす）" "$GATE_FILE" \
+  '**`--base` は指定しない**'
+assert_file_contains "(B-4c) guarantees が参照検査より前に確定することを根拠にしている" "$GATE_FILE" \
+  '**`guarantees` は参照検査より前に確定する**'
+assert_file_contains "(B-4c) --base のディレクトリ不在が exit 2 で全体停止になると明記している" "$GATE_FILE" \
+  '**消費結果に影響しない指定で停止経路だけを増やさない**'
+assert_file_contains "(B-4c) index.ledger の同一性を確認する（別台帳を読んでいない）" "$GATE_FILE" \
+  '**`index.ledger` が渡した一時ファイルのパスと一致すること**'
+assert_file_not_contains "(B-4c) 旧: --base 必須化の記述が残っていない" "$GATE_FILE" \
   '**`--base` にはリポジトリルート（`git rev-parse --show-toplevel`）を明示する**'
 assert_file_contains "(B-4c) 消費してよいのは guarantees[].guarantee_id だけ" "$GATE_FILE" \
   '**消費してよいのは `guarantees[].guarantee_id`（登録済み ID の集合）だけ**'
@@ -462,6 +474,12 @@ assert_file_contains "(B-6) 索引チェックをランチャー経由で呼ぶ�
   '`claude-harness-run guarantee-index-check "<台帳の絶対パス>"`'
 assert_file_contains "(B-6) 台帳パスは対象の作業ツリー基準で解決し引数を省略しない" "$FI_FILE" \
   '**台帳のパスは対象の作業ツリー基準で解決し、引数を省略しない**'
+assert_file_contains "(B-6) ledger の同一性を確認する（別の作業ツリーの台帳を読まない）" "$FI_FILE" \
+  '**`ledger` が自分の渡したパスと一致すること**'
+assert_file_contains "(B-6) 区分 (I) の broken も fail-closed の停止に倒す" "$FI_FILE" \
+  '**`broken` に区分 (I) の `duplicate_guarantee_section` / `guarantee_outside_section` / `duplicate_guarantee_id` がある場合も、下記1の fail-closed の停止に倒す**'
+assert_file_contains "(B-6) 差分0を一覧完全の根拠にしないと明記している" "$FI_FILE" \
+  '差分 0 を「一覧は完全」の根拠にしない'
 assert_file_contains "(B-6) fail-closed: 索引チェックを実行できず guarantees を取得できない場合も停止" "$FI_FILE" \
   '**索引チェックを実行できず `guarantees` を取得できない**'
 assert_file_contains "(B-6) 検査不能を「維持対象なし」「台帳に無い」のどちらにも読み替えない" "$FI_FILE" \

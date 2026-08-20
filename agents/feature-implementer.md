@@ -156,6 +156,8 @@ E2E対象機能（認証フロー、権限制御、クリティカルパスな�
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 - **台帳のパスは対象の作業ツリー基準で解決し、引数を省略しない**: `git -C "<対象の作業ツリー>" rev-parse --show-toplevel` で解決したルート配下の `docs/guarantees.md` を渡す（worktree パスが渡されている場合はその配下。**引数を省略すると cwd 相対になり、別の作業ツリーの台帳を読みうる**）。テスト参照の基準ディレクトリは台帳の位置から自動解決されるため `--base` は指定しない。
+- **`ledger` が自分の渡したパスと一致すること**を確認する（別の作業ツリーの台帳を読んでいないことの機械的な確認。引数を省略すると `ledger` は相対パス `docs/guarantees.md` になるため、この確認は引数省略の検出も兼ねる）。一致しない場合は下記1の fail-closed の停止に倒す。
+- **`broken` に区分 (I) の `duplicate_guarantee_section` / `guarantee_outside_section` / `duplicate_guarantee_id` がある場合も、下記1の fail-closed の停止に倒す**（区分の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`「`reason` の分類」。Read する場合は `tdd-impl` の Base directory を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決する）。併合された節・節の外の保証・重複 ID のいずれも、**維持 ID の存在確認と約束文の一意な解決を成立させない**（`counts.guarantees` との件数差分には現れないため、差分 0 を「一覧は完全」の根拠にしない）。
 - 本セクションが使うのは **`guarantees[].guarantee_id`**（維持 ID の存在確認）と **`guarantees[].statement`**（抵触判定の根拠となる約束文）だけである。**`status` が `"fail"`（既存の索引ドリフト）でも本確認は続行する**（壊れたテスト参照の是正は `/quality-check` と `/promote-verify` の担当）。ただし `status` と `broken` の件数は返却に転記し、既存ドリフトを黙らせない。
 
 **確認の内容**（保証節の全項目を対象にする。**一部だけ確認して「整合」としない**）:

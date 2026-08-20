@@ -127,13 +127,14 @@ Phase 1 で取得済みの各 Issue 本文の冒頭ヘッダ行（テンプレ�
 
 ```bash
 git show "origin/{base}:docs/guarantees.md" > "<一時ファイル>"
-claude-harness-run guarantee-index-check "<一時ファイル>" --base "<リポジトリルート>"
+claude-harness-run guarantee-index-check "<一時ファイル>"
 ```
 
 - **一時ファイルは `mktemp` で作り、判定後に削除する**（作業ツリーへ書き出さない——実装の差分に混ざる）。
 - **`git show` の終了コードを確認する**。非0（base に台帳が無い・revision を解決できない）は「未登録」ではなく**検査不能**であり `ledger_unreadable` で停止する（**空出力を「保証0件の台帳」に読み替えない**。リダイレクトは git の成否によらず先に空ファイルを作るため、ファイルの存在を成功の根拠にしない）。
 - **スクリプトの実行形とランチャー不能時のフォールバック**は `references/star-parallel.md`「スクリプトの実行形」と同じ規約に従う（先頭トークンと target にパス・バージョン・引用符を付けず、**引数として渡すパスは引用符で囲む**）。
-- **`--base` にはリポジトリルート（`git rev-parse --show-toplevel`）を明示する**。「台帳パスの解決」の定型文にある「`--base` は指定しない」は**作業ツリーの台帳を読む場合の規約**であり、一時ファイルからはリポジトリルートを解決できず基準が cwd へ倒れるため、この経路では明示が必要になる。
+- **`--base` は指定しない**。`--base` はテスト参照の解決基準＝`status` / `broken` にしか効かず、**`guarantees` は参照検査より前に確定する**ため、本手順が消費する `guarantees[].guarantee_id` は `--base` の指定有無・値によらず同一である。一方 `--base` に渡したディレクトリが存在しないと索引チェックは **exit 2** を返し、`ledger_unreadable` で `/para-impl` 全体が停止する。**消費結果に影響しない指定で停止経路だけを増やさない**（この呼び出しの `status` / `broken` を使わないことは次項のとおり）。
+- **`index.ledger` が渡した一時ファイルのパスと一致すること**を確認する（別の台帳を読んでいないことの機械的な確認。不一致なら `ledger_unreadable` で停止する）。
 - **消費してよいのは `guarantees[].guarantee_id`（登録済み ID の集合）だけ**である。この呼び出しの `status` / `broken` / `counts.broken` は「**base リビジョンの台帳 × 作業ツリーのテストファイル**」という**どちらのリビジョンでもない組み合わせ**の検査結果であり、**索引整合の判定に使わない**（索引整合は作業ツリーを見る `/quality-check` の索引ゲートが担う）。したがって **`status` が `"fail"` であることを理由に停止しない**——登録済み判定に必要な `guarantees` は exit 0 / exit 1 のどちらでも stdout に出力される。
 - **exit 2（台帳を読めない・`## 保証` 節が無い・`jq` 不在・引数不正）／stdout が空またはパース不能／スクリプト実行不能** → `ledger_unreadable` で停止する。**`guarantees` を空集合に丸めて重複割当の検査を素通りさせない**。
 - **`guarantees` に現れない見出しを「登録済み」とみなさない**（ID 書式違反＝`broken` の `malformed_guarantee_id`・「保証」節の外＝`guarantee_outside_section`）。登録済みでない ID は割当対象に残るのが安全側であり、ここで「登録済み」に倒すとその保証を誰も実装しない。

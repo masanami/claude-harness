@@ -616,6 +616,15 @@ REV_LEDGER="${TMP_ROOT}/base-ledger.md"
 (cd "$REV_REPO" && git show "HEAD:docs/guarantees.md") > "$REV_LEDGER" 2>/dev/null
 assert_eq "git show で base リビジョンの台帳を取り出せる" "0" "$?"
 
+# /para-impl の登録済み判定は **--base を指定しない**（消費する guarantees は参照検査より前に
+# 確定するため --base に影響されず、指定は exit 2 の停止経路を増やすだけ）。まずその経路を検査する。
+REV_NOBASE_OUT="$(cd "${REV_REPO}/sub" && bash "$TARGET_SCRIPT" "$REV_LEDGER" 2>/dev/null)"
+REV_NOBASE_CODE=$?
+assert_eq "--base 無しでも base リビジョンの台帳を検査できる（exit 0/1 のいずれか）" "true" \
+  "$(if [ "$REV_NOBASE_CODE" -le 1 ]; then echo true; else echo false; fi)"
+assert_eq "--base 無しでも guarantees[].guarantee_id が取れる" "G-1-1 G-2-1" \
+  "$(printf '%s' "$REV_NOBASE_OUT" | jq -r '[.guarantees[].guarantee_id] | join(" ")')"
+
 # **サブディレクトリから実行する**: cwd をリポジトリルートにすると、--base が無視されても
 # gic_resolve_base のフォールバック（cwd）が同じ値を返してしまい、--base が効いていることを
 # 検査できない（--base の削除で落ちないテストになる）。
@@ -639,11 +648,23 @@ assert_eq "作業ツリー側は改訂後の約束文を返す" "beta promise v2
   "$(printf '%s' "$WT_OUT" | jq -r '.guarantees[] | select(.guarantee_id == "G-2-1") | .statement')"
 
 # --base 未指定で repo 外の一時ファイルを渡すと、台帳の位置からリポジトリルートを解決できず
-# 基準が **cwd** へ倒れる。サブディレクトリから呼べばリポジトリルートにならない。
-# base リビジョン経路で --base の明示が要る、という規約の根拠を固定する。
-NOBASE_OUT="$(cd "${REV_REPO}/sub" && bash "$TARGET_SCRIPT" "$REV_LEDGER" 2>/dev/null)"
-assert_eq "--base 未指定・repo 外の台帳は基準が cwd へ倒れる（明示が要る根拠）" "${REV_REPO}/sub" \
-  "$(printf '%s' "$NOBASE_OUT" | jq -r '.base')"
+# 基準が **cwd** へ倒れる。base の値は変わるが **guarantees は変わらない** — これが
+# 「/para-impl は --base を指定しない」という規約の根拠である。
+assert_eq "--base 未指定・repo 外の台帳は基準が cwd へ倒れる（base の値は変わる）" "${REV_REPO}/sub" \
+  "$(printf '%s' "$REV_NOBASE_OUT" | jq -r '.base')"
+assert_eq "guarantees は --base の指定有無で同一（--base を必須にしない根拠）" "true" \
+  "$(if [ "$(printf '%s' "$REV_NOBASE_OUT" | jq -c '[.guarantees[].guarantee_id]')" \
+        = "$(printf '%s' "$REV_OUT" | jq -c '[.guarantees[].guarantee_id]')" ]; then echo true; else echo false; fi)"
+assert_eq "guarantees[].statement も --base の指定有無で同一" "true" \
+  "$(if [ "$(printf '%s' "$REV_NOBASE_OUT" | jq -c '[.guarantees[].statement]')" \
+        = "$(printf '%s' "$REV_OUT" | jq -c '[.guarantees[].statement]')" ]; then echo true; else echo false; fi)"
+
+# 一方で --base の解決失敗は exit 2 で stdout ごと失われる（消費結果に効かない指定が
+# 停止経路だけを増やす、という判断の根拠）。
+BADBASE_REV_OUT="$(cd "${REV_REPO}/sub" && bash "$TARGET_SCRIPT" "$REV_LEDGER" --base "${REV_REPO}/does-not-exist" 2>/dev/null)"
+BADBASE_REV_CODE=$?
+assert_eq "--base のディレクトリ不在は exit 2（guarantees ごと失われる）" "2" "$BADBASE_REV_CODE"
+assert_eq "その場合 stdout は空（登録済み判定の入力が消える）" "" "$BADBASE_REV_OUT"
 
 # status が fail（exit 1）でも guarantees は stdout に出る。登録済み判定は exit 1 でも成立する。
 FAILSTATE_LEDGER="${TMP_ROOT}/failstate-ledger.md"
@@ -702,6 +723,257 @@ assert_eq "counts.refs も書式違反の見出し配下の参照を数えない
   "$(printf '%s' "$MF_OUT" | jq -r '(.counts.refs == ([.guarantees[].tests | length] | add))')"
 assert_eq "正常な台帳でも counts.refs == guarantees[].tests の総数（常に一致する）" "true" \
   "$(printf '%s' "$COMPAT_OUT" | jq -r '(.counts.refs == ([.guarantees[].tests | length] | add))')"
+
+echo ""
+echo "=== 消費側4箇所が依存する不変条件（broken の区分と件数差分の関係） ==="
+
+# 仕様の正本は scripts/specs/guarantee-index-check.md「`reason` の分類」。
+# **件数差分（counts.guarantees - len(guarantees)）に現れない不完全さがある**ことを
+# 実挙動で固定する。ここが崩れると: drift D3 が正常な台帳を not_analyzed にする／
+# create-ticket が維持候補を落として差分を「ID 書式違反」と誤報する／
+# feature-implementer が「退役・改番」で停止する／para-impl が重複割当を起こす。
+INV_WS="${TMP_ROOT}/invariants"
+mkdir -p "${INV_WS}/tests"
+printf 'test_alpha\ntest_outside\n' > "${INV_WS}/tests/a.py"
+
+# 差分と broken の関係を1行で取り出す
+inv_probe() {
+  bash "$TARGET_SCRIPT" "$1" --base "$INV_WS" 2>/dev/null \
+    | jq -r --arg r "$2" '[(.counts.guarantees - (.guarantees|length)),
+                           ([.broken[] | select(.reason == $r)] | length),
+                           (.guarantees|length),
+                           ([.guarantees[].tests[]] | length)] | @tsv'
+}
+
+# (1) **テスト参照を持たない保証も guarantees に含まれ、件数差分は 0 のまま**。
+#     4つの移譲先すべてがこの不変条件に依存する（区分 (II) の missing_test_ref）。
+cat > "${INV_WS}/noref.md" <<'INVEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha
+
+- テスト: `tests/a.py::test_alpha`
+- 宣言元: #1
+
+### G-2-1: beta（テストが未整備）
+
+- 種別: API契約
+- 宣言元: #2
+INVEOF
+assert_eq "テスト参照0件の保証も guarantees に含まれる（落とさない）" "2" \
+  "$(bash "$TARGET_SCRIPT" "${INV_WS}/noref.md" --base "$INV_WS" 2>/dev/null | jq -r '.guarantees | length')"
+assert_eq "テスト参照0件の保証の tests は空配列（null でも欠落でもない）" "0" \
+  "$(bash "$TARGET_SCRIPT" "${INV_WS}/noref.md" --base "$INV_WS" 2>/dev/null | jq -r '.guarantees[] | select(.guarantee_id == "G-2-1") | .tests | length')"
+assert_eq "テスト参照0件の保証があっても件数差分は 0 のまま（不完全ではない）" "0	1	2	1" \
+  "$(inv_probe "${INV_WS}/noref.md" missing_test_ref)"
+
+# (2) 区分 (I) のうち **件数差分に現れる**のは malformed_guarantee_id だけである
+cat > "${INV_WS}/malformed.md" <<'INVEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha
+
+- テスト: `tests/a.py::test_alpha`
+- 宣言元: #1
+
+### G-2-x: 枝番が数値でない
+
+- テスト: `tests/a.py::test_outside`
+- 宣言元: #2
+INVEOF
+assert_eq "malformed_guarantee_id は件数差分に現れる（差分1 / reason1）" "1	1	1	1" \
+  "$(inv_probe "${INV_WS}/malformed.md" malformed_guarantee_id)"
+assert_eq "件数差分は malformed_guarantee_id の件数と一致する（相互検査の不変条件）" "true" \
+  "$(bash "$TARGET_SCRIPT" "${INV_WS}/malformed.md" --base "$INV_WS" 2>/dev/null \
+     | jq -r '(.counts.guarantees - (.guarantees|length)) == ([.broken[] | select(.reason == "malformed_guarantee_id")] | length)')"
+
+# (3) 区分 (I) の残り4つは **件数差分 0** のまま参照集合を壊す（差分だけでは検出できない）
+cat > "${INV_WS}/outside.md" <<'INVEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha
+
+- テスト: `tests/a.py::test_alpha`
+- 宣言元: #1
+
+## 廃止候補
+
+### G-200-1: 節の外に置かれた保証
+
+- テスト: `tests/a.py::test_outside`
+- 宣言元: #200
+INVEOF
+assert_eq "guarantee_outside_section は件数差分 0（差分では検出できない）" "0	1	1	1" \
+  "$(inv_probe "${INV_WS}/outside.md" guarantee_outside_section)"
+assert_eq "節の外の保証のテスト参照は参照集合に現れない（D4 が誤検出する根拠）" "0" \
+  "$(bash "$TARGET_SCRIPT" "${INV_WS}/outside.md" --base "$INV_WS" 2>/dev/null \
+     | jq -r '[.guarantees[].tests[] | select(. == "tests/a.py::test_outside")] | length')"
+
+cat > "${INV_WS}/dupsection.md" <<'INVEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha
+
+- テスト: `tests/a.py::test_alpha`
+- 宣言元: #1
+
+## 保証（旧・移行前）
+
+### G-2-1: 退役予定の節のエントリ
+
+- テスト: `tests/a.py::test_outside`
+- 宣言元: #2
+INVEOF
+assert_eq "duplicate_guarantee_section は件数差分 0（差分では検出できない）" "0	1	2	2" \
+  "$(inv_probe "${INV_WS}/dupsection.md" duplicate_guarantee_section)"
+assert_eq "2つの節は黙って併合され、両節のエントリが guarantees に並ぶ" "G-1-1 G-2-1" \
+  "$(bash "$TARGET_SCRIPT" "${INV_WS}/dupsection.md" --base "$INV_WS" 2>/dev/null \
+     | jq -r '[.guarantees[].guarantee_id] | join(" ")')"
+
+cat > "${INV_WS}/dupid.md" <<'INVEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha
+
+- テスト: `tests/a.py::test_alpha`
+- 宣言元: #1
+
+### G-1-1: 同じ ID の2件目
+
+- テスト: `tests/a.py::test_outside`
+- 宣言元: #1
+INVEOF
+assert_eq "duplicate_guarantee_id は件数差分 0（差分では検出できない）" "0	1	2	2" \
+  "$(inv_probe "${INV_WS}/dupid.md" duplicate_guarantee_id)"
+assert_eq "同一 ID が2件並ぶ（ID をキーにした join が一意にならない）" "2" \
+  "$(bash "$TARGET_SCRIPT" "${INV_WS}/dupid.md" --base "$INV_WS" 2>/dev/null \
+     | jq -r '[.guarantees[] | select(.guarantee_id == "G-1-1")] | length')"
+
+cat > "${INV_WS}/malref.md" <<'INVEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha
+
+- テスト: `tests/a.py`
+- 宣言元: #1
+INVEOF
+assert_eq "malformed_test_ref は件数差分 0（差分では検出できない）" "0	1	1	1" \
+  "$(inv_probe "${INV_WS}/malref.md" malformed_test_ref)"
+assert_eq "書式違反の参照は tests にそのまま入る（<パス>::<テスト名> として突き合わせられない）" "tests/a.py" \
+  "$(bash "$TARGET_SCRIPT" "${INV_WS}/malref.md" --base "$INV_WS" 2>/dev/null | jq -r '.guarantees[0].tests[0]')"
+
+# (4) 区分 (II) の参照整合系は guarantees の完全性を損なわない
+cat > "${INV_WS}/notfound.md" <<'INVEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha
+
+- テスト: `tests/does-not-exist.py::test_alpha`
+- 宣言元: #1
+INVEOF
+assert_eq "test_file_not_found は件数差分 0・参照は tests に正しく入る" "0	1	1	1" \
+  "$(inv_probe "${INV_WS}/notfound.md" test_file_not_found)"
+
+echo ""
+echo "=== ledger の同一性（消費側が「別の台帳を読んでいない」ことを確認する契約） ==="
+
+# 件数の突き合わせを撤去した後、渡したパスと読まれた台帳の同一性を確認する唯一の手段。
+assert_eq "ledger は渡した引数をそのまま返す（絶対パス）" "${INV_WS}/noref.md" \
+  "$(bash "$TARGET_SCRIPT" "${INV_WS}/noref.md" --base "$INV_WS" 2>/dev/null | jq -r '.ledger')"
+mkdir -p "${INV_WS}/pkg/docs"
+cp "${INV_WS}/noref.md" "${INV_WS}/pkg/docs/guarantees.md"
+assert_eq "引数を省略すると ledger は相対パスの既定値になる（引数省略を検出できる）" "docs/guarantees.md" \
+  "$(cd "${INV_WS}/pkg" && bash "$TARGET_SCRIPT" 2>/dev/null | jq -r '.ledger')"
+assert_eq "相対パスで渡すと ledger も相対パスのまま（正規化しない）" "docs/guarantees.md" \
+  "$(cd "${INV_WS}/pkg" && bash "$TARGET_SCRIPT" docs/guarantees.md 2>/dev/null | jq -r '.ledger')"
+
+echo ""
+echo "=== 仕様の reason 分類が語彙と実挙動に整合している（消費側2箇所がこの分類に依存する） ==="
+
+# `/create-ticket` の ledger_uninterpretable と `/guarantee-audit drift` の D4 実行可否は、
+# どちらも仕様書の「`reason` の分類」を正本にしている。分類を1行いじると両方の判定が
+# 静かに変わるため、**分類表を語彙表と実挙動の両方に突き合わせて**固定する。
+SPEC_FILE="${GIC_TEST_DIR}/../specs/guarantee-index-check.md"
+assert_eq "仕様書を読める" "true" "$(if [ -r "$SPEC_FILE" ]; then echo true; else echo false; fi)"
+
+# ledger の同一性は、件数の突き合わせを撤去した後に消費側3箇所が使う唯一の確認手段。
+# 仕様側の記述と実挙動の両方を固定する（片方だけだと規約と実装がずれても落ちない）。
+assert_eq "仕様が ledger は引数をそのまま返すと定めている" "1" \
+  "$(grep -cF -- '**渡した引数をそのまま返す**' "$SPEC_FILE")"
+assert_eq "仕様が ledger で別の台帳を読んでいないことを確認できると定めている" "1" \
+  "$(grep -cF -- '**`ledger` が自分の渡したパスと一致することを確認できる**' "$SPEC_FILE")"
+
+# 語彙表（`broken[].reason` の語彙）の reason 一覧
+spec_vocab_reasons="$(awk '
+  /^`broken\[\]\.reason` の語彙:/ { intable = 1; next }
+  intable && /^\|/ { print; next }
+  intable && /^$/ { next }
+  intable && !/^\|/ { exit }
+' "$SPEC_FILE" | grep -oE '^\| `[a-z_]+`' | tr -d '|` ' | sort -u)"
+
+# 分類表の reason 一覧（区分列を伴う行）
+spec_class_rows="$(awk '
+  /^#### `reason` の分類/ { intable = 1; next }
+  intable && /^\|/ { print; next }
+  intable && /^####/ { exit }
+' "$SPEC_FILE" | grep -E '^\|.*\| ?\(?I?I?\)?')"
+
+# 「reason<TAB>区分」を取り出す（1つのセルに `a` / `b` と2つ並ぶ行は展開する）
+spec_class_pairs="$(printf '%s\n' "$spec_class_rows" | awk -F'|' '
+  {
+    cls = $2; gsub(/[^IIIIII]/, "", cls)
+    n = split($3, cells, "/")
+    for (i = 1; i <= n; i++) {
+      if (match(cells[i], /`[a-z_]+`/)) {
+        r = substr(cells[i], RSTART + 1, RLENGTH - 2)
+        print r "\t" cls
+      }
+    }
+  }' | sort -u)"
+
+spec_class_reasons="$(printf '%s\n' "$spec_class_pairs" | cut -f1 | sort -u | grep -c .)"
+assert_eq "分類表が語彙表の reason をすべて覆っている（未分類の reason を残さない）" \
+  "$(printf '%s\n' "$spec_vocab_reasons" | grep -c .)" "$spec_class_reasons"
+assert_eq "分類表に語彙表に無い reason が混ざっていない" "" \
+  "$(comm -13 <(printf '%s\n' "$spec_vocab_reasons") <(printf '%s\n' "$spec_class_pairs" | cut -f1 | sort -u) | tr '\n' ' ' | sed 's/ *$//')"
+
+# 区分の割り当てを reason ごとに固定する（1件でも動かすと落ちる）
+spec_class_of() {
+  printf '%s\n' "$spec_class_pairs" | awk -F'\t' -v r="$1" '$1 == r { print $2; exit }'
+}
+for r in malformed_guarantee_id guarantee_outside_section duplicate_guarantee_section duplicate_guarantee_id malformed_test_ref; do
+  assert_eq "区分 (I): ${r}（guarantees の完全性・一意性を壊す）" "I" "$(spec_class_of "$r")"
+done
+for r in test_file_not_found test_name_not_found missing_test_ref missing_provenance malformed_provenance duplicate_provenance duplicate_gap_id malformed_gap_id; do
+  assert_eq "区分 (II): ${r}（guarantees の完全性を損なわない）" "II" "$(spec_class_of "$r")"
+done
+
+# 分類が実挙動と一致していること: 区分 (I) の5つのうち、件数差分に現れるのは
+# malformed_guarantee_id だけである（上の不変条件節で実測済みの値と突き合わせる）
+assert_eq "実挙動: 区分 (I) で件数差分に現れるのは malformed_guarantee_id だけ" "1 0 0 0 0" \
+  "$(for f in malformed outside dupsection dupid malref; do
+       bash "$TARGET_SCRIPT" "${INV_WS}/${f}.md" --base "$INV_WS" 2>/dev/null \
+         | jq -r '(.counts.guarantees - (.guarantees|length)) | if . > 0 then 1 else 0 end'
+     done | tr '\n' ' ' | sed 's/ *$//')"
+assert_eq "実挙動: 区分 (II) の missing_test_ref / test_file_not_found は差分 0" "0 0" \
+  "$(for f in noref notfound; do
+       bash "$TARGET_SCRIPT" "${INV_WS}/${f}.md" --base "$INV_WS" 2>/dev/null \
+         | jq -r '(.counts.guarantees - (.guarantees|length)) | if . > 0 then 1 else 0 end'
+     done | tr '\n' ' ' | sed 's/ *$//')"
 
 echo ""
 echo "=== summary ==="

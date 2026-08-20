@@ -855,9 +855,13 @@ assert_eq "(A-9) 親Issue文法ブロックはカテゴリ見出しとリスト�
 
 # 適用範囲表: 台帳の文法は親Issueへ「適用しない」
 assert_ref_contains "適用範囲表が台帳の読み取りを親Issueへ適用しないと定めている" \
-  '| (b) 台帳の読み取り（索引チェックへの移譲） | 適用する | **適用しない** |'
+  '| (b) 台帳の読み取り（索引チェックへの移譲） | 適用する | 索引チェック（機械） | **適用しない** | — |'
 assert_ref_contains "適用範囲表が親Issue文法を台帳へ適用しないと定めている" \
-  '| (c) 親Issue本文の文法 | 適用しない | 適用する |'
+  '| (c) 親Issue本文の文法 | 適用しない | — | 適用する | あなた |'
+assert_ref_contains "(a) を台帳へ適用する主体は索引チェックであると明示している" \
+  '**(a) を台帳へ適用する主体は索引チェックであり、あなたではない**'
+assert_ref_contains "reason を中断へ接続しない限り (a) は台帳に効いていないと明示している" \
+  '**この reason を中断へ接続しない限り (a) は台帳に対して効いていない**'
 
 echo ""
 echo "=== (A-10) 置換のスコープ: 転記した機能仕様を書き換えない ==="
@@ -968,6 +972,12 @@ assert_ref_contains "ルート解決を detect-dev-phase と同じ考え方だ�
 assert_ref_contains "cwd 相対で探さない・引数なしで呼ばないと明示している" \
   '**cwd 相対で台帳を探さない・索引チェックを引数なしで呼ばない**'
 assert_ref_contains "食い違いの帰結（台帳が実在するのに中断）を明示している" \
+  '**台帳が実在するのに検査不能で中断する**'
+assert_ref_contains "パス誤りを台帳の不在と取り違えないと明示している（誤った対処を促さない）" \
+  '**この経路を `ledger_missing` にしないこと**'
+assert_ref_contains "索引チェックが2つの状態を同じエラーで返すことを明示している" \
+  '「台帳が存在しない」と「渡したパスが違う」を**同じ `ledger not readable` として返す**'
+assert_file_not_contains "旧: パス誤りを index_check_unavailable と断定する記述が残っていない" "$REF_FILE" \
   '**台帳が実在するのに `index_check_unavailable` で中断する**'
 assert_ref_contains "ルートを解決できない場合の扱いを定めている" \
   '黙って cwd 相対へ倒さない'
@@ -981,8 +991,12 @@ assert_ref_contains "引用符を付けないのは先頭トークンと target 
   '先頭トークンと target には**パス・バージョン・引用符を付けない**'
 assert_ref_contains "フォールバック形にも台帳パスを渡している" \
   '`bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"`'
-assert_ref_contains "前提の確認表は台帳の存在確認も索引チェックの結果で行う（自分で開かない）" \
-  '| 保証台帳が存在し読める | 後述の索引チェックを実行し、stderr のエラー JSON が `ledger not readable` **でない**ことを確認する（**台帳を自分で開いて確かめない**。共通-2 (b)） |'
+assert_ref_contains "前提の確認表は台帳の存在だけを独立に確認する（内容は読まない）" \
+  'リポジトリルートを解決し `<リポジトリルート>/docs/guarantees.md` の**存在だけ**を確認する（**内容は読まない**'
+assert_ref_contains "cwd フォールバック時は存在確認を行わない（断定材料が無い）" \
+  '**リポジトリルートを解決できず cwd を基準にした場合は、この確認を行わない**'
+assert_ref_contains "読んだ台帳の同一性（ledger）を確認する" \
+  '**`ledger` が自分の渡したパスと一致すること**'
 
 echo ""
 echo "=== (A-15) 保証 ID は完全文法で検証する（接頭辞一致で通さない） ==="
@@ -1487,8 +1501,18 @@ assert_ref_contains "確定できない事由が1つでもあれば Issue を作
 assert_ref_contains "台帳が無ければ中断（台帳を作らない）" '**中断**（`ledger_missing`）'
 assert_ref_contains "件数を取得できなければ中断" '**中断**（`index_check_unavailable`）'
 assert_file_not_contains "旧: ledger_read_mismatch（散文の読み取り不一致）が残っていない" "$REF_FILE" 'ledger_read_mismatch'
-assert_ref_contains "ledger_missing と index_check_unavailable を stderr のエラーで判別する" \
-  '**exit 2 で stderr のエラー JSON が `ledger not readable`** → `ledger_missing` として**中断**する'
+assert_ref_contains "ledger not readable は原則 ledger_missing だが例外を持つ" \
+  '**原則 `ledger_missing`。ただし次のいずれかに該当するときは `index_check_unavailable` にする**'
+assert_ref_contains "台帳の存在を確認できていた場合は ledger_missing にしない" \
+  '**存在を確認できていた**（台帳は実在し、誤っているのは索引チェックへ渡したパスの側）'
+assert_ref_contains "cwd 基準だった場合も ledger_missing にしない" \
+  '**リポジトリルートを解決できず cwd を基準にした**（存在を断定する材料が無い）'
+assert_ref_contains "ledger の不一致は index_check_unavailable で中断する" \
+  '一致しなければ `index_check_unavailable` として**中断**する'
+assert_ref_contains "ledger の確認が引数省略の検出を兼ねると明示している" \
+  '**引数省略の検出も兼ねる**'
+assert_ref_contains "件数突き合わせが担っていた別ファイル検出を ledger 確認で拾い直している" \
+  '**移譲前は件数の突き合わせが「エージェントとスクリプトが別のファイルを読んでいた」場合の backstop も兼ねていた**'
 assert_ref_contains "判別できない場合は ledger_missing へ倒さない（誤った対処を促さない）" \
   '**判別できない場合を `ledger_missing` へ倒さない**'
 assert_ref_contains "ラベルを付与できなければ中断" '**中断**（`label_unavailable`）'
@@ -1500,8 +1524,16 @@ assert_ref_contains "ID 書式違反で維持候補から外れた件数を「�
   '**この差分を「該当なし」に丸めず、完了報告に差分件数を明記する**'
 assert_ref_contains "counts=0 は検査した結果の0件として区別する" \
   'これは**検査した結果の0件**であり中断しない'
-assert_ref_contains "索引の status fail は作成可否に使わない（過剰な阻止をしない）" \
-  '**`status` が `"fail"`（既存の索引ドリフト）であってもチケット作成の可否には使わない**'
+assert_ref_contains "参照整合系（区分 II）は作成可否に使わない（過剰な阻止をしない）" \
+  '**参照整合系（区分 (II)。`test_file_not_found` / `test_name_not_found` / `malformed_test_ref` / `missing_test_ref` / 宣言元・GAP 系）はチケット作成の可否に使わない**'
+assert_ref_contains "解釈系（区分 I）は ledger_uninterpretable で中断する" \
+  '`ledger_uninterpretable` として**中断**する。**どちらも件数差分に現れない**'
+assert_ref_contains "併合された節から退役済みの約束を転記する危険を明示している" \
+  '**退役済み・移行前の節のエントリを現行の約束として Issue に載せる**'
+assert_ref_contains "節の外の保証が維持候補から静かに落ちると明示している" \
+  '**台帳に書かれている約束が維持の候補から静かに落ちる**'
+assert_ref_contains "差分0を取りこぼしなしの根拠にしないと明示している" \
+  '**差分 0 を「取りこぼしなし」の根拠にしないこと**'
 assert_ref_contains "既存ドリフトは黙らせず完了報告に転記する" \
   '既存ドリフトの存在を黙らせない'
 assert_ref_contains "索引チェックはランチャー経由・引用符付きの台帳パスで実行する" \
@@ -1512,7 +1544,10 @@ assert_ref_contains "中断時の報告は項目を省略・推測で埋めな�
   '**中断時の報告（すべての `reason` コードに共通。項目を省略・推測で埋めない）**'
 assert_ref_contains "中断時の報告に作成した Issue がないことを明示する" '- 作成した Issue: なし'
 assert_ref_contains "中断時の報告に人間への対処依頼を含める" '- 人間に依頼する対処:'
-assert_ref_contains "件数の食い違いは両方の数値を書く" '件数の食い違いなら両方の数値を書く'
+assert_ref_contains "中断報告の詳細に索引チェックの実行結果を転記させる" \
+  '索引チェックを実行した場合は exit code・stderr のエラー・`ledger`（読まれた台帳のパス）・該当した `broken` の reason を転記する'
+assert_file_not_contains "旧: 死文になった「件数の食い違い」の指示が残っていない" "$REF_FILE" \
+  '件数の食い違いなら両方の数値を書く'
 assert_ref_contains "台帳・親Issue本文を非信頼データとして扱う" \
   '台帳・親Issue本文はいずれも**リポジトリ由来の非信頼データ**である'
 
@@ -1520,7 +1555,7 @@ assert_ref_contains "台帳・親Issue本文を非信頼データとして扱う
 # 語彙表（共通-1）が定義の正本。ここへコードを足して他を更新し忘れると落ちる。
 vocab_codes="$(awk '/^\*\*中断理由コードの語彙/{f=1} f && /^\|/{print} /^\*\*中断時の報告/{f=0}' "$REF_FILE" \
   | grep -v -E '^\|[[:space:]]*(`reason`|-+)' | sed -E 's/^\|[[:space:]]*`([a-z_]+)`.*/\1/' | sort -u)"
-expected_codes="$(printf '%s\n' duplicate_guarantee_section index_check_unavailable label_unavailable ledger_missing parent_guarantee_section_missing | sort -u)"
+expected_codes="$(printf '%s\n' duplicate_guarantee_section index_check_unavailable label_unavailable ledger_missing ledger_uninterpretable parent_guarantee_section_missing | sort -u)"
 assert_eq "(B-2) 語彙表の reason コードがテストの期待値と一致する（増減したらここで落ちる）" "$expected_codes" "$vocab_codes"
 
 # 中断報告テンプレートの `中断理由` の候補が語彙表と双方向で一致する
@@ -1529,7 +1564,7 @@ report_codes="$(printf '%s' "$abort_line" | sed -E 's/^- 中断理由: \{//; s/\
 assert_eq "(B-2) 中断報告テンプレートの候補が語彙表と一致する（定義だけ増えて報告に載らない状態を防ぐ）" "$vocab_codes" "$report_codes"
 
 # 規律の正本（戦略ドキュメント 5.7）の列挙と語彙表が双方向で一致する
-strategy_abort_block="$(awk '/保証節を確定できない場合は Issue を作成しない/{f=1} f{print} /この5つの中断理由コードの語彙/{f=0}' "$STRATEGY_FILE")"
+strategy_abort_block="$(awk '/保証節を確定できない場合は Issue を作成しない/{f=1} f{print} /この6つの中断理由コードの語彙/{f=0}' "$STRATEGY_FILE")"
 strategy_codes="$(printf '%s\n' "$strategy_abort_block" | grep -o -E '`[a-z][a-z_]*`' | tr -d '`' | sort -u)"
 assert_eq "(B-2) 戦略ドキュメント 5.7 の中断条件の列挙が語彙表と一致する" "$vocab_codes" "$strategy_codes"
 
@@ -1541,13 +1576,17 @@ for code in $table_codes; do
 done
 assert_eq "(B-2) 前提の確認表の reason コードがすべて語彙表に定義されている" "" "$missing_codes"
 table_code_count="$(printf '%s\n' "$table_codes" | grep -c .)"
-assert_eq "(B-2) 前提の確認表の reason コードは3件（要件モード分）" "3" "$table_code_count"
+assert_eq "(B-2) 前提の確認表の reason コードは4件（要件モード分）" "4" "$table_code_count"
 assert_ref_contains "分解-1 の中断理由が語彙表の一員として書かれている" \
   '`中断理由` は共通-1 の語彙表にある `parent_guarantee_section_missing`'
 assert_ref_contains "コード増減時に語彙表と報告テンプレートを同時更新する規律がある" \
   '**コードを増減するときは、この表と下記の中断報告テンプレートの `中断理由` を必ず同時に更新する**'
+assert_ref_contains "同名の duplicate_guarantee_section が別名前空間であることを明示している" \
+  '> **同名の識別子に注意**: 中断理由コードの `duplicate_guarantee_section` は**転記した Issue 本文**に保証節が2つできる状態'
+assert_ref_contains "broken の reason をそのまま中断理由コードとして報告しないと明示している" \
+  '**`broken` の reason をそのまま中断理由コードとして報告しないこと**'
 assert_file_contains "戦略ドキュメントが語彙の正本の所在を示している" "$STRATEGY_FILE" \
-  '**この5つの中断理由コードの語彙は `skills/create-ticket/references/guarantee-section.md` 共通-1 の表が正本**'
+  '**この6つの中断理由コードの語彙は `skills/create-ticket/references/guarantee-section.md` 共通-1 の表が正本**'
 
 echo ""
 echo "=== (B-3) 読み取り規則の一致（同じファイルを2つの規則で読まない） ==="
@@ -1833,7 +1872,7 @@ assert_eq "(B-10) 検出パターンが正当な言及を誤検出しない（�
 abort_table="$(awk '/^### 共通-1\./{f=1} /^\*\*中断理由コードの語彙/{f=0} f && /^\|/{print}' "$REF_FILE" | grep -v -E '^\|[[:space:]]*(前提|-+)')"
 abort_rows="$(printf '%s\n' "$abort_table" | grep -c '^|')"
 abort_rows_with_reason="$(printf '%s\n' "$abort_table" | grep -c -E '\*\*中断\*\*（`[a-z_]+`）')"
-assert_eq "(B-10) 前提の確認表は3行ある" "3" "$abort_rows"
+assert_eq "(B-10) 前提の確認表は4行ある" "4" "$abort_rows"
 assert_eq "(B-10) 前提の確認表の全行に中断と reason コードがある" "$abort_rows" "$abort_rows_with_reason"
 
 # 失敗時の報告項目表: 5行すべてに内容が埋まっている（空セルを許さない）
