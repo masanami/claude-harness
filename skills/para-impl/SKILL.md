@@ -61,7 +61,6 @@ fi
 
 > **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路`claude-harness-run read-plugin-doc "skills/para-impl/references/star-parallel.md"`（プラグインルート相対パス）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/references/star-parallel.md` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
 <!-- 正本: docs/plugin-path-conventions.md -->
-<!-- 正本: docs/plugin-path-conventions.md -->
 
 ---
 

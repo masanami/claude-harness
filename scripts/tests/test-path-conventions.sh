@@ -29,6 +29,8 @@
 # (x) 「参照ファイルの読み出し（重要）」定型注記に、配送経路（read-plugin-doc）と
 #     失敗時の停止規則の節が揃っていること。Read 直読みは headless で沈黙して失敗するため。
 # (xi) references/ templates/ 参照の解決性（dangling / orphan / 解決不能表記）。
+# (xii) 定型注記末尾の正本コメント `<!-- 正本: ... -->` の隣接重複。注記本体だけを
+#       差し替える一括置換が、既存のコメント行を残したまま2行にしてしまう事故の再発防止。
 # を検出する。規約の正本は docs/plugin-path-conventions.md（(ix)(x)(xi) は同 (b)(c)、
 # 棚卸しの記録は docs/skill-note-inventory.md）。
 #
@@ -964,6 +966,123 @@ elif [ -n "$ref_orphans" ]; then
 else
   PASS_COUNT=$((PASS_COUNT + 1))
   echo "  ok - references/ templates/ のファイル（${ref_files_checked} 件）はすべてどこかから参照されている"
+fi
+
+echo ""
+echo "=== (xii) 正本コメントの隣接重複チェック ==="
+
+# 定型注記の末尾に置く開発者向けの出典コメント（`<!-- 正本: ... -->`）が、
+# **直前の行と同一のまま2行並んでいないこと**。
+# 同一ファイル内に複数の正本コメントが在ること自体は正常（注記ブロックごとに1つ）で、
+# 違反は「隣り合って同じ行が並ぶ」場合だけ。
+#
+# なぜ要るか: 注記本体だけを差し替える一括置換は、置換テンプレート側にも正本コメントを
+# 含めていると**既存のコメント行を残したまま**もう1行足してしまう。実際に本 PR の移行で
+# 10箇所中9箇所に重複を作った（注記本体1行を「新しい注記＋新しいコメント」の2行へ
+# 置換した結果、直後にあった既存のコメント行が残った）。
+# 見た目の些細な崩れだが、同じ掃引が同じ重複を再び作れる状態を残さないために機械で止める。
+#
+# 比較は bash の文字列比較（バイト厳密）で行う。macOS 標準 awk の `==` は非 ASCII 文字列で
+# 誤判定しうるため使わない（scripts/README.md「テスト」節）。正本コメントは「正本」という
+# 非 ASCII を含むので、この点は本検査に直接効く。
+
+# stdin: ファイルの内容。stdout: 隣接重複を「<前の行番号>-<行番号>」の形で1行1件。
+# 空行は読み飛ばす（間に空行が挟まっていても同一コメントの重複であることに変わりはない）。
+find_adjacent_dup_source_comments() {
+  local line prev="" lineno=0 prev_lineno=0
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    [ -z "$line" ] && continue
+    case "$line" in
+      '<!-- 正本: '*' -->')
+        if [ "$line" = "$prev" ]; then
+          printf '%s-%s\n' "$prev_lineno" "$lineno"
+        fi
+        ;;
+    esac
+    prev="$line"
+    prev_lineno="$lineno"
+  done
+}
+
+# --- (xii-a) 検出器自体の自己検査 ---
+# 検出できることだけでなく、**正常形を違反と誤検出しないこと**（同一ファイル内の
+# 非連続な正本コメントは正常）も確認する。誤検出する検出器は、正しい記述を壊す方向の
+# 是正を誘発するため、見逃しと同じくらい危険。
+assert_dup_detection() {
+  local description="$1" expected="$2" sample="$3"
+  local actual
+  actual="$(printf '%s\n' "$sample" | find_adjacent_dup_source_comments | tr '\n' ',' | sed 's/,$//')"
+  if [ "$actual" = "$expected" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("正本コメント重複検出器の自己検査: ${description}")
+    echo "  NG - ${description}（expected='${expected}' actual='${actual}'）"
+  fi
+}
+
+assert_dup_detection '違反: 同一の正本コメントが連続している' '2-3' \
+'> **注記**: 本文
+<!-- 正本: docs/plugin-path-conventions.md -->
+<!-- 正本: docs/plugin-path-conventions.md -->'
+
+assert_dup_detection '違反: 空行を挟んだ同一の正本コメントも検出する' '2-4' \
+'> **注記**: 本文
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+<!-- 正本: docs/plugin-path-conventions.md -->'
+
+assert_dup_detection '正当: 同一ファイル内の非連続な正本コメントは検出しない' '' \
+'> **注記1**: 本文
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+## 別の見出し
+
+> **注記2**: 本文
+<!-- 正本: docs/plugin-path-conventions.md -->'
+
+assert_dup_detection '正当: 正本が異なるコメントの連続は検出しない' '' \
+'<!-- 正本: docs/plugin-path-conventions.md -->
+<!-- 正本: docs/script-launcher.md -->'
+
+assert_dup_detection '正当: 正本コメント以外の同一行の連続は対象外' '' \
+'同じ本文行
+同じ本文行'
+
+assert_dup_detection '正当: 正本コメントが1つだけなら検出しない' '' \
+'> **注記**: 本文
+<!-- 正本: docs/plugin-path-conventions.md -->'
+
+# --- (xii-b) 実ファイルの走査 ---
+dup_source_violations=""
+dup_files_checked=0
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  dup_files_checked=$((dup_files_checked + 1))
+  dups="$(find_adjacent_dup_source_comments <"$f")"
+  if [ -n "$dups" ]; then
+    while IFS= read -r range; do
+      [ -z "$range" ] && continue
+      dup_source_violations="${dup_source_violations}${f}:${range}: 正本コメントが隣接重複している
+"
+    done <<<"$dups"
+  fi
+done <<<"$(find skills agents -name '*.md' | sort)"
+
+if [ "$dup_files_checked" -eq 0 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("正本コメント重複チェックの対象ファイルを1件も列挙できず判定不能")
+  echo "  NG - 対象ファイルを1件も列挙できず判定不能（検出器が壊れている可能性）"
+elif [ -n "$dup_source_violations" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("正本コメントが隣接重複している")
+  echo "  NG - 正本コメントが隣接重複している"
+  print_indented "$dup_source_violations"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 正本コメントの隣接重複は無い（${dup_files_checked} ファイル走査）"
 fi
 
 echo ""
