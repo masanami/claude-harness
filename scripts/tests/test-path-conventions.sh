@@ -35,6 +35,9 @@
 #     沈黙して失敗し、出力上限による部分配送も exit 0 のまま沈黙するため。
 #     さらに references/ templates/ を持つスキルに注記が在ることを**全称条件**で確かめる
 #     （「注記が在るなら中身を見る」だけでは、注記を置いていない新規スキルが素通りする）。
+#     加えて (x-e) が、para-impl のゲート参照3本（guarantee-gate / join-gate / star-parallel）
+#     については**本文中の個々の読み出し指示まで**配送経路が第一手であることを見る
+#     （注記は配送経路・本文は Read という二重規則の再発防止）。検出器の自己検査つき。
 # (xi) references/ templates/ 参照の解決性（dangling / orphan / 解決不能表記）。
 # (xii) 定型注記末尾の正本コメント `<!-- 正本: ... -->` の隣接重複。注記本体だけを
 #       差し替える一括置換が、既存のコメント行を残したまま2行にしてしまう事故の再発防止。
@@ -1051,6 +1054,164 @@ elif [ -n "$hardcoded_notes" ]; then
 else
   PASS_COUNT=$((PASS_COUNT + 1))
   echo "  ok - 注記（${hardcoded_checked} スキル）は参照ファイルを決め打ちしていない"
+fi
+
+# --- (x-e) para-impl のゲート参照が配送経路を第一手にしているか ---
+# 注記（(x-b)〜(x-d)）が配送経路を規定していても、**本文中の個々の読み出し指示が
+# `Read し` のままだと注記と本文で規則が二重化し、実際に届くのは Read 経路になる**
+# （PR #184 で codex が指摘した形）。para-impl の3つの参照ファイルは
+# **ゲートの手順書**であり、読めなければゲートそのものが無効化される:
+#   - references/guarantee-gate.md … GDD の裁可ゲート（`guarantee:approved` 未付与なら実装しない）
+#   - references/join-gate.md      … 合流ゲート（サブエージェント起動前に必読と指定されている）
+#   - references/star-parallel.md  … star 型並列実装の手順
+# しかも guarantee-gate.md は 35KB 超で、Read が通っても出力上限の切り詰め域にある
+# （配送経路なら `--from-line` で分割配送される）。
+# 検査対象を para-impl の3本に限定するのは、他スキルの残存が別種の性質（表の中のパス表記・
+# 条件付き参照・スクリプト実行の記述）を持ち、一律の判定に載せると PR #176 型の
+# 「掃引の横展開が範囲外を壊す」回帰を作るため。移行が進んだ分だけここへ足す。
+
+PARA_IMPL_GATE_REFS=(
+  references/guarantee-gate.md
+  references/join-gate.md
+  references/star-parallel.md
+)
+
+# stdin: SKILL.md の内容。$1: 検査対象の参照ファイルトークン（例 references/join-gate.md）。
+# stdout: 違反を1行1件で返す。違反が無ければ何も出さない。
+# 判定は2つ:
+#   (1) その参照ファイルを配送経路（read-plugin-doc + プラグインルート相対の実パス）で
+#       読み出す指示が最低1つ在ること。
+#   (2) その参照ファイルに言及しつつ Read を命じる行は、フォールバックである旨を
+#       同じ行に明示していること（第一手の Read 直読みを禁じる）。
+# 単なる相互参照（`… の「ネストへの伝播」に定義` 等、Read を命じない行）は (2) の対象外。
+# 定型注記そのものはプレースホルダで書かれるため走査から外す（(x-b)〜(x-d) の担当）。
+gate_delivery_violations() {
+  local token="$1" line lineno=0 seen=0 delivered=0
+  local delivery="read-plugin-doc \"skills/para-impl/${token}\""
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    case "$line" in
+      *"$REF_NOTE_MARKER"*) continue ;;
+      *"$token"*) ;;
+      *) continue ;;
+    esac
+    seen=$((seen + 1))
+    case "$line" in *"$delivery"*) delivered=1 ;; esac
+    case "$line" in
+      *Read*)
+        case "$line" in
+          *フォールバック*) ;;
+          *) printf '%s\n' "${lineno}: ${token} を Read 直読みで命じている（配送経路が第一手になっていない）" ;;
+        esac
+        ;;
+    esac
+  done
+  if [ "$seen" -eq 0 ]; then
+    printf '%s\n' "0: ${token} への言及が1件も無い（検査対象が消えた可能性）"
+  elif [ "$delivered" -eq 0 ]; then
+    printf '%s\n' "0: ${token} を配送経路 ${delivery} で読み出す指示が無い"
+  fi
+}
+
+assert_gate_delivery() {
+  local description="$1" token="$2" expected="$3" sample="$4"
+  local actual
+  actual="$(printf '%s\n' "$sample" | gate_delivery_violations "$token" | tr '\n' ',' | sed 's/,$//')"
+  if [ "$actual" = "$expected" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("ゲート参照の配送経路検出器の自己検査: ${description}")
+    echo "  NG - ${description}（expected='${expected}' actual='${actual}'）"
+  fi
+}
+
+# shellcheck disable=SC2016
+run_gate_delivery_selfcheck() {
+  assert_gate_delivery '正当: 配送経路が第一手でフォールバックを明示している' \
+    'references/join-gate.md' '' \
+'**起動する前に必ず前掲の配送経路で読み出すこと**（`claude-harness-run read-plugin-doc "skills/para-impl/references/join-gate.md"`。Read 直読みは前掲の注記のとおりランチャー未導入時のフォールバックに限る）。'
+
+  assert_gate_delivery '違反: Read 直読みを第一手として命じている（移行前の形）' \
+    'references/join-gate.md' \
+    '1: references/join-gate.md を Read 直読みで命じている（配送経路が第一手になっていない）,0: references/join-gate.md を配送経路 read-plugin-doc "skills/para-impl/references/join-gate.md" で読み出す指示が無い' \
+'**起動する前に必ず `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/join-gate.md` を Read すること**（`<base>/references/join-gate.md` として解決する）。'
+
+  assert_gate_delivery '違反: 配送経路の行はあるが別の行が Read 直読みを命じている' \
+    'references/join-gate.md' \
+    '2: references/join-gate.md を Read 直読みで命じている（配送経路が第一手になっていない）' \
+'`claude-harness-run read-plugin-doc "skills/para-impl/references/join-gate.md"` で読み出す。
+なお `<base>/references/join-gate.md` を Read しても良い。'
+
+  assert_gate_delivery '違反: 配送経路の指示が無い（言及だけ）' \
+    'references/join-gate.md' \
+    '0: references/join-gate.md を配送経路 read-plugin-doc "skills/para-impl/references/join-gate.md" で読み出す指示が無い' \
+'合流ゲートの定義は `references/join-gate.md` にある。'
+
+  assert_gate_delivery '正当: Read を命じない相互参照は違反にしない' \
+    'references/join-gate.md' '' \
+'`claude-harness-run read-plugin-doc "skills/para-impl/references/join-gate.md"` で読み出す。
+委譲プロンプトには合流ゲート伝播条項（`references/join-gate.md` の「ネストへの伝播」に定義）を含める。'
+
+  assert_gate_delivery '違反: 配送経路のパスが別スキルを指していて実質未配送' \
+    'references/join-gate.md' \
+    '0: references/join-gate.md を配送経路 read-plugin-doc "skills/para-impl/references/join-gate.md" で読み出す指示が無い' \
+'`claude-harness-run read-plugin-doc "skills/promote-verify/references/join-gate.md"` で読み出す。'
+
+  assert_gate_delivery '違反: 参照そのものが消えた場合も判定不能として報告する' \
+    'references/join-gate.md' \
+    '0: references/join-gate.md への言及が1件も無い（検査対象が消えた可能性）' \
+'ここには合流ゲートの参照が無い。'
+
+  # 定型注記はプレースホルダで書かれ、走査から外れることを確認する
+  # （注記の中身は (x-b)〜(x-d) の担当。ここで二重に見ると規則が二重化する）。
+  assert_gate_delivery '正当: 定型注記の行は走査対象から外れる' \
+    'references/join-gate.md' '' \
+"> **参照ファイルの読み出し（重要）**: ${REF_NOTE_MARKER}**プラグイン配下**にある。Read ツールでの読み出しは拒否される。references/join-gate.md
+\`claude-harness-run read-plugin-doc \"skills/para-impl/references/join-gate.md\"\` で読み出す。"
+}
+run_gate_delivery_selfcheck
+
+# --- (x-e-2) 実ファイルの走査 ---
+gate_delivery_report=""
+gate_refs_checked=0
+PARA_IMPL_SKILL="skills/para-impl/SKILL.md"
+if [ ! -f "$PARA_IMPL_SKILL" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("${PARA_IMPL_SKILL} が無く判定不能")
+  echo "  NG - ${PARA_IMPL_SKILL} が無く判定不能"
+else
+  for token in "${PARA_IMPL_GATE_REFS[@]}"; do
+    # 参照ファイルの実体が在ることも同時に確かめる（(xi) と重複するが、
+    # ここは「ゲートが届くか」の検査なので実体消失も判定不能として扱う）
+    if [ ! -f "skills/para-impl/${token}" ]; then
+      gate_delivery_report="${gate_delivery_report}skills/para-impl/${token}: 参照ファイルの実体が無い
+"
+      continue
+    fi
+    gate_refs_checked=$((gate_refs_checked + 1))
+    while IFS= read -r problem; do
+      [ -z "$problem" ] && continue
+      gate_delivery_report="${gate_delivery_report}${PARA_IMPL_SKILL}:${problem}
+"
+    done <<<"$(gate_delivery_violations "$token" <"$PARA_IMPL_SKILL")"
+  done
+
+  if [ "$gate_refs_checked" -ne "${#PARA_IMPL_GATE_REFS[@]}" ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("para-impl のゲート参照を全数走査できず判定不能")
+    echo "  NG - para-impl のゲート参照を全数走査できず判定不能（${gate_refs_checked}/${#PARA_IMPL_GATE_REFS[@]} 件）"
+    print_indented "$gate_delivery_report"
+  elif [ -n "$gate_delivery_report" ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("para-impl のゲート参照が配送経路で読み出されていない")
+    echo "  NG - para-impl のゲート参照が配送経路で読み出されていない（読めなければゲートが無効化される）"
+    print_indented "$gate_delivery_report"
+  else
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - para-impl のゲート参照（${gate_refs_checked} 本）は配送経路を第一手にしており、Read はフォールバック明示に限る"
+  fi
 fi
 
 echo ""

@@ -161,8 +161,8 @@ assert_file_contains "(B-1) 対象は実装チケットなら親（裁可の単�
   '対象 Issue（実装チケットなら親）に `guarantee:approved` が付いているかを確認する'
 assert_file_contains "(B-1) 裁可が無ければ Phase 2 以降へ進まない" "$SKILL_FILE" \
   '**Phase 2 以降へ進まず処理を止めて人間の裁可を促す**'
-assert_file_contains "(B-1) SDD期は本項を実行せず従来どおり（参照ファイルも Read しない）" "$SKILL_FILE" \
-  '`sdd`（フェーズ宣言なしを含む）では本項を実行せず、以降の手順は従来どおり行う（参照ファイルも Read しない）'
+assert_file_contains "(B-1) SDD期は本項を実行せず従来どおり（参照ファイルも読み出さない）" "$SKILL_FILE" \
+  '`sdd`（フェーズ宣言なしを含む）では本項を実行せず、以降の手順は従来どおり行う（参照ファイルも読み出さない）'
 assert_file_contains "(B-1) 禁止事項に裁可ゲートの迂回と自己裁可を明記" "$SKILL_FILE" \
   '裁可ゲートの迂回'
 

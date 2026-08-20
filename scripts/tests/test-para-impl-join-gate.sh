@@ -121,9 +121,11 @@ assert_file_not_contains "(1) star-parallel.md はゲートの決定表手順を
 assert_join_contains "(1) join-gate.md が定義の正本であることを明示している" \
   '本ゲートの定義の正本は本ファイル（`references/join-gate.md`）である'
 assert_skill_contains "(1) SKILL.md が正本の所在（参照ファイル）を明示している" \
-  '**定義の正本は参照ファイル `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/join-gate.md`**'
-assert_skill_contains "(1) SKILL.md が起動前の Read を必須にしている" \
-  '**サブエージェント・バックグラウンド処理を起動する前に必ず Read すること**'
+  '**定義の正本は参照ファイル `skills/para-impl/references/join-gate.md`**'
+# 読み出しは配送経路（read-plugin-doc）が第一手。Read 直読みは headless で拒否され、
+# 拒否されたままゲートの定義を知らずに完走できてしまう（経路の検査は test-path-conventions.sh (x-e)）。
+assert_skill_contains "(1) SKILL.md が起動前の読み出しを必須にしている" \
+  '**サブエージェント・バックグラウンド処理を起動する前に必ず前掲の配送経路で読み出すこと**'
 if [ "$star_title_count" -lt 1 ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
   FAILED_TESTS+=("(1) star-parallel.md がゲートを正式名称で参照している")
