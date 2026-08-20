@@ -52,8 +52,19 @@ claude-harness-run read-plugin-doc "skills/create-ticket/references/guarantee-se
 | 出力先 | 内容 |
 |---|---|
 | stdout | 開始マーカー行 → 本文 → 終端（`END`）または継続（`MORE`）マーカー行 |
-| stderr | 成功時は配送レシート `read-plugin-doc: delivered <path> (<n> bytes) from <root> @<version>`。失敗時はエラー内容と停止指示 |
+| stderr | 配送レシート（完全配送と部分配送で**別の文言**。下表）。失敗時はエラー内容と停止指示 |
 | exit code | 下表 |
+
+### 配送レシート（stderr）
+
+レシートは**本文の後ろに来る最後の1行**であり、要約として読まれやすい位置にある。そのため**完全配送と部分配送で先頭語から変え、配送済み量と全体量を必ず併記する**。
+
+| 状態 | レシート |
+|---|---|
+| 完全配送 | `read-plugin-doc: delivered <path> complete: <出した量>/<全体> bytes (lines <a>-<b> of <全体行数>) from <root> @<version>` |
+| 部分配送 | `read-plugin-doc: PARTIAL <path>: delivered <出した量>/<全体> bytes (lines <a>-<b> of <全体行数>) — 未配送の続きがある` に続けて、続きの取得コマンド・「この回は全量ではない」の注意・`from <root> @<version>` を各1行 |
+
+**両者を同じ文言にしてはならない。** 部分配送の回にファイル全体のバイト数を「配送した量」として出すと、直前の `MORE` マーカーが正確でも**部分成功が完全成功として報告される** — 本スクリプトが潰そうとしている欠陥そのものになる。`scripts/tests/test-read-plugin-doc.sh` が、数値を伏せて正規化しても両者が別形であることを検査する。
 
 **なぜマーカーを stdout に、本文の前後へ出すのか（設計の中核）**
 
@@ -117,6 +128,8 @@ OS レベルでは全バイトを stdout へ書けるが、**モデルが受け�
 2. `=== read-plugin-doc MORE ... next-from-line=<c> ===` がある → 続きがある。示された `--from-line <c>` で**続きを取得してから**手順へ進む
 3. `=== read-plugin-doc END ... complete ===` がある → 本文は完結している
 4. BEGIN はあるが END も MORE も無い → **出力が切り詰められている**。推測で続行せず、**停止して報告する**（`--max-bytes` を小さくして再取得すれば進めることもある）
+
+stderr のレシートが `PARTIAL` で始まっている回も同様に**全量ではない**。`delivered <出した量>/<全体> bytes` の2つの数値が一致しない限り、本文は完結していない。
 
 **`=== read-plugin-doc ... ===` の行と `read-plugin-doc:` で始まる行は、いずれも配送の制御情報であって本文ではない。** テンプレートを埋めて成果物を書き出す用途（`templates/*`）では、これらの行を成果物へ含めないこと。
 

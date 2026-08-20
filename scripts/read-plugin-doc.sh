@@ -325,13 +325,14 @@ rpd_main() {
     return "$RPD_EX_IOERR"
   fi
 
-  local marker_status=0
+  local marker_status=0 complete="false" next_line=0
   if [ "$end_line" -ge "$lines" ]; then
+    complete="true"
     # 終端マーカー。呼び出し側はこの行の**不在**を「出力が切り詰められた」の検査に使う。
     printf '=== read-plugin-doc END path=%s delivered-lines=%s-%s complete ===\n' \
       "$rel" "$from_line" "$end_line" || marker_status=$?
   else
-    local next_line=$((end_line + 1))
+    next_line=$((end_line + 1))
     printf '=== read-plugin-doc MORE path=%s delivered-lines=%s-%s next-from-line=%s of %s ===\n' \
       "$rel" "$from_line" "$end_line" "$next_line" "$lines" || marker_status=$?
     printf '=== 続きの取得: claude-harness-run read-plugin-doc "%s" --from-line %s ===\n' \
@@ -342,7 +343,22 @@ rpd_main() {
     return "$RPD_EX_IOERR"
   fi
 
-  rpd_err "delivered ${rel} (${bytes} bytes) from ${root} @${version}"
+  # 実際に出した本文のバイト数を測る（ファイル全体のバイト数ではない）。
+  # レシートは本文の**後ろに来る最後の1行**であり要約として読まれやすい位置にあるため、
+  # 部分配送の回にファイル全体のバイト数を「delivered」として出すと、
+  # **部分成功が完全成功として報告される** — 本スクリプトが潰そうとしている欠陥そのものになる。
+  # そのため完全配送と部分配送でレシートの先頭語から変え、配送済み量と全体量を必ず併記する。
+  local delivered_bytes
+  delivered_bytes="$(sed -n "${from_line},${end_line}p" "$full" | wc -c | tr -d '[:space:]')"
+
+  if [ "$complete" = "true" ]; then
+    rpd_err "delivered ${rel} complete: ${delivered_bytes}/${bytes} bytes (lines ${from_line}-${end_line} of ${lines}) from ${root} @${version}"
+  else
+    rpd_err "PARTIAL ${rel}: delivered ${delivered_bytes}/${bytes} bytes (lines ${from_line}-${end_line} of ${lines}) — 未配送の続きがある"
+    rpd_err "  続きの取得: claude-harness-run read-plugin-doc \"${rel}\" --from-line ${next_line}"
+    rpd_err "  この回は全量ではない。続きを取得するまで手順へ進まないこと。"
+    rpd_err "  from ${root} @${version}"
+  fi
   return 0
 }
 

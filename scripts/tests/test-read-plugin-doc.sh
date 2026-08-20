@@ -425,6 +425,70 @@ fi
 # 最終チャンクは END(complete) で閉じること（終端マーカーの不在＝切り詰めの検査が成立する前提）
 assert_contains "最終チャンクは END(complete) で閉じる" "complete ===" "$(tail -1 "$OUT_FILE")"
 
+# --- 部分配送のレシートが「全量を配送した」と読めないこと ---
+# レシートは本文の**後ろに来る最後の1行**であり、要約として読まれやすい位置にある。
+# ここで完全配送と同じ文言・同じバイト数を出すと、直前の MORE マーカーが正確でも
+# **部分成功が完全成功として報告される**（本スクリプトが潰そうとしている欠陥そのもの）。
+# 区別が機械的にも人間にも付くことを固定する。
+
+run_rpd "$REPO_ROOT" "$BIG_REL"
+partial_receipt="$(cat "$ERR_FILE")"
+run_rpd "$REPO_ROOT" "$SAMPLE_REL"
+complete_receipt="$(cat "$ERR_FILE")"
+
+assert_contains "部分配送のレシートは PARTIAL で始まる" \
+  "read-plugin-doc: PARTIAL ${BIG_REL}" "$partial_receipt"
+assert_contains "部分配送のレシートは配送済み量と全体量を併記する" \
+  "/${BIG_BYTES} bytes" "$partial_receipt"
+assert_contains "部分配送のレシートは続きの取得コマンドを示す" \
+  "--from-line" "$partial_receipt"
+assert_contains "完全配送のレシートは complete と明示する" "complete:" "$complete_receipt"
+
+# 部分配送の回に、ファイル全体のバイト数を「配送した量」として出していないこと。
+# （旧実装は `delivered <path> (53017 bytes)` と出しており、53,017 バイトは配送されていなかった）
+case "$partial_receipt" in
+  *"delivered ${BIG_BYTES}/"*)
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("部分配送で全体量を配送済みとして出さない")
+    echo "  NG - 部分配送で全体量を配送済みとして出している"
+    ;;
+  *)
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - 部分配送で全体量を配送済みとして出さない"
+    ;;
+esac
+
+# 部分配送の回に完全配送の目印（complete）を出さないこと
+case "$partial_receipt" in
+  *"complete:"*)
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("部分配送のレシートに complete を出さない")
+    echo "  NG - 部分配送のレシートに complete を出している"
+    ;;
+  *)
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - 部分配送のレシートに complete を出さない"
+    ;;
+esac
+
+# 両者を「パスと数値を伏せた形」まで正規化しても一致しないこと。
+# 文言そのものが違うことを要求する（数値だけの違いだと、要約として読んだときに区別が付かない）。
+printf '%s\n' "$partial_receipt" | sed 's/[0-9][0-9]*/N/g; s#[A-Za-z0-9_./-]*\.md#PATH#g' > "${WORK_DIR}/p.norm"
+printf '%s\n' "$complete_receipt" | sed 's/[0-9][0-9]*/N/g; s#[A-Za-z0-9_./-]*\.md#PATH#g' > "${WORK_DIR}/c.norm"
+if cmp -s "${WORK_DIR}/p.norm" "${WORK_DIR}/c.norm"; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("部分配送と完全配送のレシートが同一形にならない")
+  echo "  NG - 部分配送と完全配送のレシートが（数値を伏せると）同一形になっている"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 部分配送と完全配送のレシートは正規化しても別形である"
+fi
+
+# 完全配送では配送済み量と全体量が一致すること（併記が飾りでないことの確認）
+sample_bytes="$(wc -c <"${REPO_ROOT}/${SAMPLE_REL}" | tr -d '[:space:]')"
+assert_contains "完全配送では配送済み量＝全体量" \
+  "${sample_bytes}/${sample_bytes} bytes" "$complete_receipt"
+
 # --max-bytes で分割幅を変えられること（既定に依存せず検証できるようにする）
 run_rpd "$REPO_ROOT" "$SAMPLE_REL" --max-bytes 1024
 assert_eq "--max-bytes で小さく刻んでも exit 0" "0" "$LAST_STATUS"
