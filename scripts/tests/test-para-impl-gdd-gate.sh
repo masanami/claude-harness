@@ -234,7 +234,7 @@ echo "=== (B-4) guarantee-gate.md: 保証ブリーフ（Phase 4-5）の規律 ==
 assert_file_contains "(B-4) 読み取り文法の正本は create-ticket の guarantee-section.md 共通-2" "$GATE_FILE" \
   '`<base>/../create-ticket/references/guarantee-section.md` の「共通-2. 読み取り規則」'
 assert_file_contains "(B-4) 台帳の文法を親Issue本文へ適用しない" "$GATE_FILE" \
-  '(b) 台帳の文法を親Issue本文へ適用しない'
+  '(b) 台帳の読み取り＝索引チェックを親Issue本文へ向けない'
 assert_file_contains "(B-4) 本ファイルには文法を複製しない（3つ目の独自解釈を作らない）" "$GATE_FILE" \
   '**本ファイルには文法を複製しない**'
 assert_file_contains "(B-4) 転記は新規宣言・維持の2カテゴリだけ" "$GATE_FILE" \
@@ -351,9 +351,29 @@ assert_file_contains "(B-4c) 健全性条件: 自分自身を含まない兄弟�
   '**採用後の兄弟集合に対象 Issue 自身が含まれない場合——スクリプトが `no_children_found`（0件）を返した場合を含む——は、「分解なし」に読み替えず検査不能として停止する**'
 assert_file_contains "(B-4c) スクリプトの0件丸め（失敗も exit 0）を割当不要の根拠にしない" "$GATE_FILE" \
   '**0件・自分不在の結果を割当不要（全量注入）の根拠にしない**'
-assert_file_contains "(B-4c) 台帳を読めない場合は未登録とみなさず停止（登録済み判定の素通り防止）" "$GATE_FILE" \
-  '**台帳を読めない場合は「未登録」とみなさず停止する**'
-assert_file_contains "(B-4c) 登録済み判定は base の台帳内容で行う（手元 checkout を読まない）" "$GATE_FILE" \
+assert_file_contains "(B-4c) 台帳の一覧を取得できない場合は未登録とみなさず停止（登録済み判定の素通り防止）" "$GATE_FILE" \
+  '取得できない場合は「未登録」とみなさず停止する（`ledger_unreadable`）'
+assert_file_contains "(B-4c) 登録済み判定は base リビジョンの台帳内容で行う（手元 checkout を読まない）" "$GATE_FILE" \
+  '**実装が到達する base リビジョンの内容**である（リードの手元 checkout の台帳を読まない'
+
+# --- 登録済み判定の台帳読み取りも索引チェックへ移譲されている（散文で読まない） ---
+assert_file_contains "(B-4c) 台帳の読み取りの正本の定型文を持つ（散文で読み直さない）" "$GATE_FILE" \
+  '**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと'
+assert_file_contains "(B-4c) base リビジョンの台帳は一時ファイル経由で索引チェックへ渡す" "$GATE_FILE" \
+  'claude-harness-run guarantee-index-check "<一時ファイル>" --base "<リポジトリルート>"'
+assert_file_contains "(B-4c) git show の終了コードを確認する（空出力を空の台帳に読み替えない）" "$GATE_FILE" \
+  '**空出力を「保証0件の台帳」に読み替えない**'
+assert_file_contains "(B-4c) 一時ファイル経路では --base を明示する（cwd へ倒れるのを防ぐ）" "$GATE_FILE" \
+  '**`--base` にはリポジトリルート（`git rev-parse --show-toplevel`）を明示する**'
+assert_file_contains "(B-4c) 消費してよいのは guarantees[].guarantee_id だけ" "$GATE_FILE" \
+  '**消費してよいのは `guarantees[].guarantee_id`（登録済み ID の集合）だけ**'
+assert_file_contains "(B-4c) この呼び出しの status/broken は索引整合の判定に使わない" "$GATE_FILE" \
+  '**索引整合の判定に使わない**'
+assert_file_contains "(B-4c) status=fail を理由に停止しない（guarantees は exit 1 でも出る）" "$GATE_FILE" \
+  '**`status` が `"fail"` であることを理由に停止しない**'
+assert_file_contains "(B-4c) exit 2・パース不能は ledger_unreadable で停止（空集合に丸めない）" "$GATE_FILE" \
+  '**`guarantees` を空集合に丸めて重複割当の検査を素通りさせない**'
+assert_file_not_contains "(B-4c) 旧: 台帳を散文で読む git show 単体の指示が残っていない" "$GATE_FILE" \
   '**登録済み判定は、実装が到達する base の台帳内容（`git show "origin/{base}:docs/guarantees.md"`）で行う**'
 assert_file_contains "(B-4c) 打ち切り（fallback_truncated）は自分が含まれていても停止（完全性の反証）" "$GATE_FILE" \
   '**自分自身が含まれていても停止する**'
@@ -433,17 +453,31 @@ assert_file_contains "(B-6) 2-3 と対になる位置づけ（クリティカル
 assert_file_contains "(B-6) D-13: 維持保証への抵触は既存の逸脱検知パスに合流して停止" "$FI_FILE" \
   '既存の「⚠️ クリティカル設計の逸脱検知」パス（2-3）にそのまま合流させて停止する'
 assert_file_contains "(B-6) 維持の判定根拠は現行台帳（転記文面を正本にしない）" "$FI_FILE" \
-  '台帳の約束文を判定根拠にする'
+  '`guarantees[].statement` を判定根拠にする'
 assert_file_contains "(B-6) 注入ブロック・親 Issue の転記文面を判定根拠にしない" "$FI_FILE" \
   '**注入ブロック・親 Issue の転記文面を判定根拠にしない**'
-assert_file_contains "(B-6) 台帳の読み取りは台帳の文法の正本（共通-2 (b)）に従う" "$FI_FILE" \
-  '`guarantee-section.md` 共通-2 (b)'
+assert_file_contains "(B-6) 台帳の読み取りは索引チェックの guarantees へ移譲されている" "$FI_FILE" \
+  '**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと'
+assert_file_contains "(B-6) 索引チェックをランチャー経由で呼ぶ実行形を示している" "$FI_FILE" \
+  '`claude-harness-run guarantee-index-check "<台帳の絶対パス>"`'
+assert_file_contains "(B-6) 台帳パスは対象の作業ツリー基準で解決し引数を省略しない" "$FI_FILE" \
+  '**台帳のパスは対象の作業ツリー基準で解決し、引数を省略しない**'
+assert_file_contains "(B-6) fail-closed: 索引チェックを実行できず guarantees を取得できない場合も停止" "$FI_FILE" \
+  '**索引チェックを実行できず `guarantees` を取得できない**'
+assert_file_contains "(B-6) 検査不能を「維持対象なし」「台帳に無い」のどちらにも読み替えない" "$FI_FILE" \
+  '**検査不能を「維持対象なし」「台帳に無い」のどちらにも読み替えない**'
+assert_file_contains "(B-6) guarantees に現れない見出しを存在の根拠にしない" "$FI_FILE" \
+  '**を「存在する」の根拠にしない**'
+assert_file_not_contains "(B-6) 旧: 台帳の文法（共通-2 (b)）を正本とする記述が残っていない" "$FI_FILE" \
+  '正本: `guarantee-section.md` 共通-2 (b)'
+assert_file_not_contains "(B-6) 旧: 台帳読み取りの移譲が残件だという記述が残っていない" "$FI_FILE" \
+  '**この読み取りを索引チェックの出力へ移譲することは残件**'
 assert_file_contains "(B-6) fail-closed: 台帳が無い・読めない場合は停止" "$FI_FILE" \
   '**台帳（`docs/guarantees.md`）自体が無い・読めない**'
-assert_file_contains "(B-6) fail-closed: ID が現行台帳に存在しなければ停止" "$FI_FILE" \
-  '**ID が現行台帳に存在しない**'
+assert_file_contains "(B-6) fail-closed: ID が guarantees に存在しなければ停止" "$FI_FILE" \
+  '**ID が `guarantees[].guarantee_id` に存在しない**'
 assert_file_contains "(B-6) fail-closed: 転記と台帳の文面ドリフトは停止（黙って台帳側を採用しない）" "$FI_FILE" \
-  '**転記の約束文と台帳の約束文が一致しない（文面ドリフト）**'
+  '**転記の約束文と `guarantees[].statement` が一致しない（文面ドリフト）**'
 assert_file_contains "(B-6) 維持対象なしに丸めて実装を進めない" "$FI_FILE" \
   '**「維持対象なし」に丸めて実装を進めない**'
 assert_file_contains "(B-6) 担当外の新規宣言のテスト・台帳追記を行わない（重複実装の防止）" "$FI_FILE" \

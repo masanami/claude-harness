@@ -16,48 +16,60 @@
 **台帳のパスはリポジトリルート基準で解決する（引数を省略しない）**: リポジトリルートを `git rev-parse --show-toplevel` で解決し（`detect-dev-phase` がサブディレクトリからでもリポジトリルートの `CLAUDE.md` を見つけるのと同じ考え方）、台帳の Read にも索引チェックの引数にも `<リポジトリルート>/docs/guarantees.md` を使う。**cwd 相対で台帳を探さない・索引チェックを引数なしで呼ばない**: 索引チェックは引数を省略すると `docs/guarantees.md` を **cwd 相対**で解決するため、サブディレクトリから起動されると台帳を見つけられない。一方フェーズ判定はリポジトリルートの `CLAUDE.md` を見て `gdd` を返すので、**GDD期と正しく判定したうえで、台帳が実在するのに検査不能になる**という食い違いになる。`git rev-parse --show-toplevel` が解決できない場合（git リポジトリでない等）は cwd を基準にし、**その事実を報告に明記する**（黙って cwd 相対へ倒さない）。テスト参照の基準ディレクトリは台帳の位置から自動解決されるため `--base` は指定しない。
 <!-- 正本: docs/ai-driven-development-strategy.md 5.3「台帳パスの解決」 -->
 
+**本ファイルの手順に適用されるのは、この定型文のうち「索引チェックへ渡す引数の解決」だけ**である。**drift モードの手順は台帳を Read しない**（読み取りは Step D2 の索引チェックへ一本化済み。Step D3 の「台帳の読み取りの正本」）。定型文が「台帳の Read にも」と書いているのは、台帳へ**書き込む**手順（bootstrap モードのドラフト生成・`feature-implementer` の台帳追記）と共通の文面だからであり、**本ファイルの手順で台帳を Read する根拠にはならない**。
+
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトは必ず PATH 上のランチャー経由で `claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"` の形式（先頭トークンと target には**パス・バージョン・引用符を付けない**。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる。**引数として渡すパスは引用符で囲む** — 空白を含むリポジトリパスで引数が分割され、`too many arguments` で exit 2 になるのを防ぐため。引数側の引用符は allowlist のマッチに影響しない）で実行し、相対パス `scripts/guarantee-index-check.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"`（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）にフォールバックし、ユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md / docs/script-launcher.md -->
 
-stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `index` として保持する。**`guarantees`（索引チェックが読み取った台帳の一覧）は本スキルでは消費しない**（D3 が台帳を自分で読む。移譲は残件）。フィールド定義・`reason` の語彙・exit code の意味の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（ここには複製しない）。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること。
+stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `index` として保持する。**`guarantees`（索引チェックが読み取った台帳の一覧）は Step D3 が消費する**（台帳の読み取りは索引チェックへ一本化されており、D3 は台帳を自分で読まない）。フィールド定義・`reason` の語彙・exit code の意味の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（ここには複製しない）。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること。
 
 - exit 0（`pass`）/ exit 1（`fail`）はいずれも正常な検査結果として続行する。この場合 `index.error` は `null` にする。
-- **exit 2（実行前提の欠落）・stdout が JSON としてパースできない場合は、「検査対象なし」＝ pass に読み替えない**。索引整合を `{status: "fail", error: "..."}` として扱い、以降のステップを続けたうえで報告に明示する（台帳の取り違え・節名の変更で全保証が未検査になった状態を素通りさせないため）。このとき Step D5 では次の2つを**必ず**行う:
+- **exit 2（実行前提の欠落）・stdout が JSON としてパースできない場合は、「検査対象なし」＝ pass に読み替えない**。索引整合を `{status: "fail", error: "..."}` として扱い、以降のステップへ進んだうえで報告に明示する（台帳の取り違え・節名の変更で全保証が未検査になった状態を素通りさせないため）。**この場合の Step D3・D4 は下記の分岐表に従い `not_analyzed` になる**——「以降のステップへ進む」は D5 の報告まで到達して未解析の事実を出すことであり、解析を続行できるという意味ではない。このとき Step D5 では次の2つを**必ず**行う:
   - `index.error` に stderr のメッセージ（または JSON をパースできなかった旨）を入れる。**`broken` が空であることをもって「壊れた参照が無い」と読ませない**（実際には検査自体が走っていない）。
   - `human_review_required` に `kind: "index_error"` の項目を積む。
 - **「台帳に実際の破損がある（`fail` かつ `broken` が非空）」と「検査を実行できなかった（`fail` かつ `error` が非 null）」は、機械可読結果の上で区別できなければならない**。前者は台帳・テストの修正、後者は実行環境や台帳パスの調査、と対処が全く異なるため。
 
-**失敗の種別によって下流（Step D3・D4）の扱いが変わる**。exit 2 の場合は次のとおり分岐する:
+**exit 2（`index.guarantees` を取得できない）の場合、下流（Step D3・D4）はいずれも `not_analyzed` になる**。台帳の読み取りが索引チェックへ一本化されているため、**索引チェックを実行できないことは「台帳の内容を誰も読めていない」ことと同義**である（移譲前は「索引検査だけが実行できない」場合に D3 が自分で台帳を読んで続行していたが、その経路は二重規則の解消とともに撤去した。**代替として読み直す経路を復活させないこと**）。失敗の種別は下流の扱いを変えないが、**人間の対処が異なるため報告では区別する**:
 
-| 失敗の種別 | 判定の根拠 | 下流の扱い |
-|---|---|---|
-| **台帳そのものが使えない**（台帳を読めない／`## 保証` 節が無く保証の一覧を取り出せない） | stderr のエラー JSON が `ledger not readable` / `guarantee section not found`、または **Step D3 で自分が台帳を読んでも保証の一覧を取り出せない** | **D3・D4 とも `not_analyzed`**。とくに **D4 は GAP 候補を生成しない** |
-| **索引検査だけが実行できない**（`jq` 不在・ランチャー不在など。台帳自体は読める） | 上記以外の exit 2 で、かつ Step D3 で台帳を読めている | **D3・D4 は通常どおり実行する**。未解析なのは索引整合だけ |
+| 失敗の種別 | 判定の根拠 | 下流の扱い | 報告で促す対処 |
+|---|---|---|---|
+| **台帳そのものが使えない**（台帳を読めない／`## 保証` 節が無い） | stderr のエラー JSON が `ledger not readable` / `guarantee section not found` | **D3・D4 とも `not_analyzed`**。とくに **D4 は GAP 候補を生成しない** | 台帳の整備・書式の修正（`/guarantee-audit bootstrap` → 人間の裁可 PR） |
+| **索引検査を実行できない**（`jq` 不在・ランチャー不在・引数不正など） | 上記以外の exit 2／stdout が空またはパース不能／スクリプト実行不能 | **同上**（台帳の内容は誰も読んでいない） | 実行環境の整備（`jq`・ランチャーの導入）・台帳パスの確認 |
+| **どちらか判別できない** | stderr を解釈できない | **同上** | **両方**を確認する（「台帳が無い」と断定しない） |
 
-- **台帳が使えない場合に D4 を走らせてはならない理由**: 参照集合が空または不完全なまま突き合わせると、**実際には台帳に登録されているテストまで「未登録」と判定され、実在しない GAP を人間に追わせる**ことになる。検出漏れより誤検出のほうが害が大きい場面であり、ここは「結果を出さない」を選ぶ。
-- **どちらの種別か判別できない場合は「台帳そのものが使えない」側に倒す**（安全側）。
+- **`index.guarantees` を取得できない場合に D4 を走らせてはならない理由**: 参照集合が空または不完全なまま突き合わせると、**実際には台帳に登録されているテストまで「未登録」と判定され、実在しない GAP を人間に追わせる**ことになる。検出漏れより誤検出のほうが害が大きい場面であり、ここは「結果を出さない」を選ぶ。
+- **この一本化の代償は明示しておく**: `jq` やランチャーが無い環境では意味整合（D3）と逆方向チェック（D4）も走らなくなる。**これは「0件」ではなく `not_analyzed`** として報告されるため、検査していないことが人間に伝わる（黙って pass にはならない）。
 
 ### Step D3: 意味整合（guarantee-auditor fan-out）
 
-まず台帳を読み、保証の一覧（`guarantee_id` / 約束文 / テスト参照）を取り出す。
+保証の一覧（`guarantee_id` / 約束文 / テスト参照）は **Step D2 で取得した `index.guarantees`** をそのまま使う。ここで得られるテスト参照の集合（`index.guarantees[].tests` の和集合）が、Step D4 の突き合わせの基準にもなる。
 
-> **移譲の残件（規律の適用範囲）**: 索引チェックの出力 `index.guarantees` は同じ一覧を機械的に持つが、**本ステップはまだそちらへ移譲していない**（D4 の逆方向チェックが本ステップの参照集合を基準にしており、移譲は D3/D4 の入出力契約の変更を伴う）。したがって**本ステップでは下記の件数の突き合わせが必須**である。ここで得られるテスト参照の集合が、Step D4 の突き合わせの基準にもなる。
+> **台帳の読み取りの正本（この定型文を持つ手順は散文で読み直さない）**: **この定型文が置かれている手順**で台帳から保証 ID・約束文・テスト参照・宣言元を読み取る必要がある場合は、**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと。**自分で台帳ファイルを開いて数え直さない・Grep のヒットを「登録済み」の根拠にしない**（Grep はコードフェンスも節の範囲も見ないため、台帳が引用している書式の記入例や節の外の言及にマッチする）。散文が独自の規則で同じ台帳を読み直すと、**同じ台帳を2つの規則で読む**状態になり、規則がずれた分だけ欠陥になる（索引チェックはフェンス内を見ないため `status` は `pass` のままで、この食い違いは表に出ない）。フィールド定義の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること）。
+<!-- 正本: docs/ai-driven-development-strategy.md 5.3「台帳の読み取りの正本」 -->
 
-**台帳を最後まで読み切り、全エントリを解析できたことを検証する**（SKILL.md「共通規約」の**部分成功の扱い**を適用する。参照集合の不完全さは Step D4 で**誤検出**を生むため、部分的な読み取りは `partial` ではなく `not_analyzed` として扱う）:
+`index.guarantees[]` のフィールドと本ステップでの用途:
 
-- ファイルを**末尾まで**読む（オフセット・行数制限で途中までしか読んでいない状態のまま先へ進まない）。
-- 保証節内の `###` 見出しを**1件残らず**解析し、それぞれから `{guarantee_id, 約束文, テスト参照}` を取り出す。
-- **`index.counts` を取得できている場合は突き合わせる**: 自分が取り出した保証の件数が `index.counts.guarantees` と、テスト参照の件数が `index.counts.refs` と一致することを確認する。**一致しなければ自分の解析が不完全**であり `not_analyzed` とする（同じ台帳を独立した2経路で数え、食い違いを検出する）。`index.counts` が `null`（Step D2 が失敗）の場合は、上2つの自己検証だけで判断する。
-- 「解析はできたが**テスト参照を持たない**保証」は解析失敗ではない（台帳側の欠陥であり Step D2 が `missing_test_ref` として検出する）。参照集合に寄与しないだけで、`analyzed` を維持する。
+| フィールド | 用途 |
+|---|---|
+| `guarantee_id` | fan-out の入力 ID・完全性 join のキー |
+| `statement` | 約束文（`guarantee-auditor` へ渡す判定対象） |
+| `tests` | テスト参照。**全保証の和集合が Step D4 の参照集合** |
 
-**読み取りの成否で扱いを分ける**（「読めなかった」を「0件だった」と同一視しない）:
+**一覧を完全に取得できたことを検証する**（SKILL.md「共通規約」の**部分成功の扱い**を適用する。参照集合の不完全さは Step D4 で**誤検出**を生むため、部分的な取得は `partial` ではなく `not_analyzed` として扱う）:
 
-- **読み取りに失敗した場合**（ファイルを読めない・`## 保証` 節が無い・**1件でも解析できないエントリがある**・上記の件数突き合わせが一致しない）: 意味整合を `semantic.status: "not_analyzed"` として報告し、**fan-out を行わない**。`checked` は `null` とし、**`checked: 0`（＝0件を検証した）と書かない**。`human_review_required` に `kind: "ledger_unreadable"` / `step: "D3"` を積み、**どのエントリで解析が止まったか**を `detail` に書く。この場合 **Step D4 も `not_analyzed`** になる（Step D2 の分岐表）。
-  - **台帳の先頭だけ読めて後半で解析に失敗した場合も、ここに該当する**。部分的な参照集合を Step D4 へ渡すと、**台帳に登録済みのテストを「未登録」＝ GAP 候補として誤報する**（登録されているのに参照集合から漏れているだけ）。「1件も取り出せなかった場合」ではなく「**全件を取り出せた場合以外**」が `not_analyzed` である。
-- **台帳の書式は正しく、保証が0件だった場合**: `semantic.status: "analyzed"` / `checked: 0` とする（「台帳に保証が1件も登録されていない」ことを**検査した結果**として報告する。未解析と区別する）。
-- **全件を取り出せた場合**: 以下の fan-out に進む。
+- **`index.guarantees` を取得できていない場合**（Step D2 が exit 2・stdout がパース不能）→ `not_analyzed`。**自分で台帳を開いて代替しない**（それが移譲前の二重規則そのものである）。
+- **`index.counts.guarantees` と `index.guarantees` の件数が一致しない場合** → `not_analyzed`。差分は **ID 書式を満たさない保証見出し**（`index.broken` の `malformed_guarantee_id`）であり、**その見出し配下の `- テスト:` 行は `index.guarantees[].tests` に現れない**。この不完全な参照集合を Step D4 へ渡すと、**台帳に書かれているテストを「未登録」＝ GAP 候補として誤報する**。`detail` には差分件数と `broken` の該当見出しを書く。
+- **空虚に真になる突き合わせを完全性の根拠にしない**: `index.counts.refs` と `index.guarantees[].tests` の総数は**索引チェックの実装上つねに一致する**（ID 書式違反の見出し配下のテスト参照は、どちらにも数えられないため）。この2つの突き合わせは**常に成立する検査**であり、参照集合の完全性を何も保証しない。根拠になるのは上記の `counts.guarantees` との突き合わせだけである。
+- 「登録はされているが**テスト参照を持たない**保証」（`tests` が空配列）は取得失敗ではない（台帳側の欠陥であり Step D2 が `missing_test_ref` として検出する）。参照集合に寄与しないだけで、`analyzed` を維持する。
 
-取り出せた保証を**10件ずつ**のチャンクに分けて `subagent_type: 'claude-harness:guarantee-auditor'` を並列 spawn する（チャンク分割・データブロックの分離・完全性 join の規約は SKILL.md の「共通規約」に従う）。
+**取得の成否で扱いを分ける**（「取得できなかった」を「0件だった」と同一視しない）:
+
+- **取得に失敗した場合**（上記2つのいずれか）: 意味整合を `semantic.status: "not_analyzed"` として報告し、**fan-out を行わない**。`checked` は `null` とし、**`checked: 0`（＝0件を検証した）と書かない**。`human_review_required` に `kind: "ledger_unreadable"` / `step: "D3"` を積み、**何を取得できなかったか**を `detail` に書く。この場合 **Step D4 も `not_analyzed`** になる（Step D2 の分岐表）。
+  - 「1件も取得できなかった場合」ではなく「**全件を取得できた場合以外**」が `not_analyzed` である。
+- **台帳の書式は正しく、保証が0件だった場合**（`index.guarantees` が空で、かつ `index.counts.guarantees` も 0）: `semantic.status: "analyzed"` / `checked: 0` とする（「台帳に保証が1件も登録されていない」ことを**検査した結果**として報告する。未解析と区別する）。
+- **全件を取得できた場合**: 以下の fan-out に進む。
+
+取得できた保証を**10件ずつ**のチャンクに分けて `subagent_type: 'claude-harness:guarantee-auditor'` を並列 spawn する（チャンク分割・データブロックの分離・完全性 join の規約は SKILL.md の「共通規約」に従う）。
 
 プロンプトに含めるもの:
 
@@ -110,7 +122,7 @@ stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `in
    - **`extraction_failed` が1件でもあれば `reverse_check.status` は `partial`**（見つかった GAP 候補は有効だが、網羅ではない）。全件 `analyzed` のときだけ `analyzed` とする。
    - **ここで `not_analyzed`（結果を出さない）まで倒さない理由**（bootstrap の Step B4 と扱いが逆になるので注意。**この非対称は意図的であり、揃えてはならない**）: 本ステップは**テスト側から列挙して「台帳に載っているか」を問う**ため、抽出できなかったファイルは**単に問われなかった**だけで、誤った GAP 候補にはならない（＝検出漏れに留まる）。一方 bootstrap の Step B4 は**公開面側から列挙して「対応する振る舞いが無いか」を問う否定の判定**であり、抽出の欠落がそのまま「テストが無い」という**誤検出**になる。不完全さが誤検出を生むか検出漏れに留まるかで扱いを分ける、という共通規約の適用結果である。
    - 全件抽出になるため fan-out のコストは対象ファイル数に比例する。範囲を絞りたい場合は `--scope` を使う（drift は定期実行・昇格前を想定した低頻度の監査であり、取りこぼしの回避をコストより優先する）。
-3. Step D3 で台帳から読み取ったテスト参照の全件を参照集合とし、手順2で得た `test_ref` を**1件ずつ**突き合わせる。参照集合に無い `test_ref` を「**未登録テスト**」とし、`surface` で仕分ける:
+3. Step D3 の参照集合（`index.guarantees[].tests` の和集合）の全件を参照集合とし、手順2で得た `test_ref` を**1件ずつ**突き合わせる。参照集合に無い `test_ref` を「**未登録テスト**」とし、`surface` で仕分ける:
    - `public` → **GAP 候補**として報告する
    - `internal` → 件数のみ報告する
    - `uncertain` → 要人間判定へ回す
@@ -161,7 +173,7 @@ stdout の JSON（`{status, ledger, base, counts, guarantees, broken}`）を `in
 | フィールド | `analyzed`（全件成功） | `partial`（一部だけ成功・**検出漏れ**） | `not_analyzed`（結果を出さない・**誤検出**を防ぐ） |
 |---|---|---|---|
 | `index.error`（非 null が未解析） | 索引検査が完了（`pass` / `fail`） | — | 索引検査を実行できない（Step D2）。`kind: "index_error"` |
-| `semantic.status` | 全保証の判定が返った（`checked == total`） | 一部の保証で判定が返らなかった（`failed` が非空） | 台帳を読めない・**全件を取り出せない**（Step D3）。`checked` は `null`（`0` にしない）。`kind: "ledger_unreadable"` |
+| `semantic.status` | 全保証の判定が返った（`checked == total`） | 一部の保証で判定が返らなかった（`failed` が非空） | `index.guarantees` を取得できない・**件数が `index.counts.guarantees` と一致しない**（Step D3）。`checked` は `null`（`0` にしない）。`kind: "ledger_unreadable"` |
 | `reverse_check.status` | 全対象ファイルが `analyzed`（`files_checked == files_total`） | `extraction_failed` が非空、または列挙の `skipped` が非0 | 上流が未解析／`--scope` の git エラー／列挙エラー（Step D4）。`gap_candidates` は空のまま。`kind` は `not_analyzed` / `scope_error` / `enumeration_error` |
 
 - **`partial` の集約値は「下限」であり、網羅的な検査結果ではない**。件数・一覧をそのまま「検査した結果」として提示せず、未処理分が残っている旨を必ず添える。

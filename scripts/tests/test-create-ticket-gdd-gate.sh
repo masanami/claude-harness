@@ -129,7 +129,6 @@ CT_FENCE_RE='^[[:space:]]{0,3}(`{3,}|~{3,})[[:space:]]*(.*)$'
 CT_H12_RE='^#{1,2}[[:space:]]'
 CT_SECTION_RE='^##[[:space:]]+保証'
 CT_H3_RE='^###[[:space:]]+(.+)$'
-CT_GUARANTEE_HEADING_RE='^###[[:space:]]+(G-[0-9]+-[0-9]+)[[:space:]]*(:|：)'
 CT_NEW_ITEM_RE='^[[:space:]]*[-*][[:space:]]+\[[[:space:]xX]\][[:space:]]+(G-[0-9]+-[0-9]+)[[:space:]]*(:|：)'
 CT_KEEP_ITEM_RE='^[[:space:]]*[-*][[:space:]]+(\[[[:space:]xX]\][[:space:]]+)?(G-[0-9]+-[0-9]+)'
 CT_NONE_ITEM_RE='^[[:space:]]*[-*][[:space:]]+なし[[:space:]]*$'
@@ -206,93 +205,6 @@ ct_extract_guarantee_section() {
   if [ "$saw_section" = "false" ]; then
     echo "NO_SECTION"
   fi
-}
-
-# 台帳の保証見出し（`## 保証` 節内・フェンス外の `### G-...`）を数える参照実装。
-# guarantee-index-check.sh の counts.guarantees と一致しなければならない（共通-2 の突き合わせ）。
-ct_count_ledger_headings() {
-  local body="$1"
-  local line marker_run marker fence_info
-  local fence_marker="" fence_len=0
-  local in_section="false"
-  local count=0
-
-  body="${body//$'\r'/}"
-
-  while IFS= read -r line; do
-    if [[ "$line" =~ $CT_FENCE_RE ]]; then
-      marker_run="${BASH_REMATCH[1]}"
-      fence_info="${BASH_REMATCH[2]}"
-      marker="${marker_run:0:1}"
-      if [ -z "$fence_marker" ]; then
-        fence_marker="$marker"
-        fence_len="${#marker_run}"
-      elif [ "$fence_marker" = "$marker" ] && [ "${#marker_run}" -ge "$fence_len" ] && [ -z "$fence_info" ]; then
-        fence_marker=""
-        fence_len=0
-      fi
-      continue
-    fi
-    [ -n "$fence_marker" ] && continue
-
-    if [[ "$line" =~ $CT_SECTION_RE ]]; then
-      in_section="true"
-      continue
-    fi
-    if [[ "$line" =~ $CT_H12_RE ]]; then
-      in_section="false"
-      continue
-    fi
-    [ "$in_section" = "true" ] || continue
-    # スクリプト（gic_scan）は「保証」節内の `###` 見出しを ID 書式によらず 1 件として数える。
-    # 散文側の突き合わせも同じ規則にする（共通-2）。
-    if [[ "$line" =~ $CT_H3_RE ]]; then
-      count=$((count + 1))
-    fi
-  done <<<"$body"
-
-  printf '%s' "$count"
-}
-
-# 台帳の保証見出しのうち、ID 書式（G-<数字>-<枝番>）を満たすものだけを列挙する参照実装。
-# 「維持する保証」に転記してよいのはこの集合だけ（共通-2）。
-ct_list_guarantee_ids() {
-  local body="$1"
-  local line marker_run marker fence_info
-  local fence_marker="" fence_len=0
-  local in_section="false"
-
-  body="${body//$'\r'/}"
-
-  while IFS= read -r line; do
-    if [[ "$line" =~ $CT_FENCE_RE ]]; then
-      marker_run="${BASH_REMATCH[1]}"
-      fence_info="${BASH_REMATCH[2]}"
-      marker="${marker_run:0:1}"
-      if [ -z "$fence_marker" ]; then
-        fence_marker="$marker"
-        fence_len="${#marker_run}"
-      elif [ "$fence_marker" = "$marker" ] && [ "${#marker_run}" -ge "$fence_len" ] && [ -z "$fence_info" ]; then
-        fence_marker=""
-        fence_len=0
-      fi
-      continue
-    fi
-    [ -n "$fence_marker" ] && continue
-
-    if [[ "$line" =~ $CT_SECTION_RE ]]; then
-      in_section="true"
-      continue
-    fi
-    if [[ "$line" =~ $CT_H12_RE ]]; then
-      in_section="false"
-      continue
-    fi
-    [ "$in_section" = "true" ] || continue
-    if [[ "$line" =~ $CT_GUARANTEE_HEADING_RE ]]; then
-      echo "${BASH_REMATCH[1]}"
-    fi
-  done <<<"$body"
 }
 
 # 文字列に部分一致するかを返す（case を command substitution へ直接書かない）。
@@ -737,17 +649,15 @@ assert_eq "(A-3) 許容値以外は phase=invalid" "invalid" "$(printf '%s' "$ou
 assert_eq "(A-3) invalid の exit code は 1（sdd の 0 と区別できる）" "1" "$code"
 
 echo ""
-echo "=== (A-4) 台帳の読み取り規則: 散文の規則とスクリプトの counts.guarantees が一致する ==="
+echo "=== (A-4) 台帳の読み取りは索引チェックの guarantees が唯一の経路 ==="
 
 gic_out="$(cd "$WS" && bash "$GIC_SCRIPT" docs/guarantees.md 2>/dev/null)"
 gic_code=$?
 script_count="$(printf '%s' "$gic_out" | jq -r '.counts.guarantees')"
-ref_count="$(ct_count_ledger_headings "$(cat "${WS}/docs/guarantees.md")")"
 assert_eq "(A-4) スクリプトはフェンス内の記入例・節外の見出しを数えない（2件）" "2" "$script_count"
-assert_eq "(A-4) 散文の読み取り規則の参照実装もスクリプトと同じ件数になる" "$script_count" "$ref_count"
 
 naive_count="$(grep -c '^### G-' "${WS}/docs/guarantees.md")"
-assert_eq "(A-4) 素の grep は 4 件と数える（規則を揃えないと食い違う）" "4" "$naive_count"
+assert_eq "(A-4) 素の grep は 4 件と数える（散文で読み直すと必ず食い違う）" "4" "$naive_count"
 
 assert_eq "(A-4) 節外の見出しは broken に guarantee_outside_section として現れる" "guarantee_outside_section" \
   "$(printf '%s' "$gic_out" | jq -r '.broken[0].reason')"
@@ -755,24 +665,31 @@ assert_eq "(A-4) 節外の見出しがあると status は fail（既存ドリ�
   "$(printf '%s' "$gic_out" | jq -r '.status')"
 assert_eq "(A-4) status=fail でも exit code は 1（件数は取得できている）" "1" "$gic_code"
 
-assert_eq "(A-4) 台帳の維持候補は ID 書式を満たす見出しだけ（節外・フェンス内は除く）" "G-101-2
-G-115-1" "$(ct_list_guarantee_ids "$(cat "${WS}/docs/guarantees.md")")"
+assert_eq "(A-4) 維持候補は guarantees[].guarantee_id（節外・フェンス内は入らない）" "G-101-2
+G-115-1" "$(printf '%s' "$gic_out" | jq -r '.guarantees[].guarantee_id')"
+assert_eq "(A-4) 節外の見出しは guarantees に入らない（broken 側にだけ現れる）" "0" \
+  "$(printf '%s' "$gic_out" | jq -r '[.guarantees[] | select(.guarantee_id == "G-999-1")] | length')"
+assert_eq "(A-4) 維持の転記に使う約束文も guarantees[].statement から取れる" "2" \
+  "$(printf '%s' "$gic_out" | jq -r '[.guarantees[] | select(.statement != "" and .statement != null)] | length')"
 
-# ID 書式を満たさない見出し: 件数には入る（スクリプトと同じ）が、維持候補には入らない
+# ID 書式を満たさない見出し: counts には入る（見出し数）が guarantees には入らない。
+# この差分が「維持候補から外れた見出し」であり、完了報告に明記する対象になる。
 mal_out="$(cd "$WS" && bash "$GIC_SCRIPT" docs/guarantees-malformed.md 2>/dev/null)"
 assert_eq "(A-4) ID 書式違反の見出しもスクリプトは 1 件として数える" "2" \
   "$(printf '%s' "$mal_out" | jq -r '.counts.guarantees')"
-assert_eq "(A-4) 散文の件数規則も同じ 2 件になる（ここで食い違うと ledger_read_mismatch で中断する）" "2" \
-  "$(ct_count_ledger_headings "$(cat "${WS}/docs/guarantees-malformed.md")")"
-assert_eq "(A-4) ID 書式違反の見出しは維持候補に入らない" "G-101-2" \
-  "$(ct_list_guarantee_ids "$(cat "${WS}/docs/guarantees-malformed.md")")"
+assert_eq "(A-4) ID 書式違反の見出しは guarantees に入らない（維持候補から外れる）" "G-101-2" \
+  "$(printf '%s' "$mal_out" | jq -r '.guarantees[].guarantee_id')"
+assert_eq "(A-4) counts.guarantees と guarantees の件数の差分が維持候補から外れた件数になる" "1" \
+  "$(printf '%s' "$mal_out" | jq -r '.counts.guarantees - (.guarantees | length)')"
 assert_eq "(A-4) ID 書式違反は broken に malformed_guarantee_id として報告される" "malformed_guarantee_id" \
   "$(printf '%s' "$mal_out" | jq -r '[.broken[].reason] | unique | join(",")')"
 
-# 保証0件の台帳: 「検査した結果の0件」として counts.guarantees=0 が取れる
+# 保証0件の台帳: 「検査した結果の0件」として counts.guarantees=0 / guarantees=[] が取れる
 empty_out="$(cd "$WS" && bash "$GIC_SCRIPT" docs/guarantees-empty.md 2>/dev/null)"
 assert_eq "(A-4) 保証0件の台帳は counts.guarantees=0（未検査と区別できる）" "0" \
   "$(printf '%s' "$empty_out" | jq -r '.counts.guarantees')"
+assert_eq "(A-4) 保証0件の台帳は guarantees も空（検査した結果の0件）" "0" \
+  "$(printf '%s' "$empty_out" | jq -r '.guarantees | length')"
 assert_eq "(A-4) 保証0件の台帳でも status は pass" "pass" \
   "$(printf '%s' "$empty_out" | jq -r '.status')"
 
@@ -894,11 +811,16 @@ parent_body="$(printf '%s\n' \
 assert_eq "(A-8) 親Issue文法では新規宣言・維持が抽出できる（分解-1 がパース可能と判定する）" "NEW G-158-1
 KEEP G-101-2" "$(ct_extract_guarantee_section "$parent_body")"
 
-# 台帳文法を親Issueへ当てるとどうなるか（誤適用の再発検出）
-assert_eq "(A-8) 台帳文法を親Issueへ当てると保証 ID を1件も拾えない（誤適用の証跡）" "" \
-  "$(ct_list_guarantee_ids "$parent_body")"
-assert_eq "(A-8) 台帳文法の件数規則ではカテゴリ見出し3件を保証と数えてしまう" "3" \
-  "$(ct_count_ledger_headings "$parent_body")"
+# 台帳の読み取り手段（索引チェック）を親Issueへ当てるとどうなるか（誤適用の再発検出）。
+# 参照実装ではなく**実スクリプト**を親Issue本文へ向けて、実際の出力で示す。
+printf '%s\n' "$parent_body" > "${WS}/parent-body.md"
+parent_gic="$(cd "$WS" && bash "$GIC_SCRIPT" parent-body.md --base "$WS" 2>/dev/null)"
+assert_eq "(A-8) 索引チェックを親Issueへ当てると保証 ID を1件も拾えない（誤適用の証跡）" "0" \
+  "$(printf '%s' "$parent_gic" | jq -r '.guarantees | length')"
+assert_eq "(A-8) 索引チェックはカテゴリ見出し3件を保証見出しとして数えてしまう" "3" \
+  "$(printf '%s' "$parent_gic" | jq -r '.counts.guarantees')"
+assert_eq "(A-8) カテゴリ見出しは全件 malformed_guarantee_id になる" "3" \
+  "$(printf '%s' "$parent_gic" | jq -r '[.broken[] | select(.reason == "malformed_guarantee_id")] | length')"
 
 # 台帳側は逆に親Issue文法では読めない（両文法が別物であることの対称な確認）
 assert_eq "(A-8) 台帳に親Issue文法を当てても新規宣言・維持は抽出されない" "" \
@@ -932,8 +854,8 @@ assert_eq "(A-9) 親Issue文法ブロックはカテゴリ見出しとリスト�
   "$(printf '%s\n' "$parent_grammar_block" | grep -c '保証 ID は見出し行ではなく、カテゴリ配下のリスト行にある')"
 
 # 適用範囲表: 台帳の文法は親Issueへ「適用しない」
-assert_ref_contains "適用範囲表が台帳の文法を親Issueへ適用しないと定めている" \
-  '| (b) 台帳の文法 | 適用する | **適用しない** |'
+assert_ref_contains "適用範囲表が台帳の読み取りを親Issueへ適用しないと定めている" \
+  '| (b) 台帳の読み取り（索引チェックへの移譲） | 適用する | **適用しない** |'
 assert_ref_contains "適用範囲表が親Issue文法を台帳へ適用しないと定めている" \
   '| (c) 親Issue本文の文法 | 適用しない | 適用する |'
 
@@ -1059,8 +981,8 @@ assert_ref_contains "引用符を付けないのは先頭トークンと target 
   '先頭トークンと target には**パス・バージョン・引用符を付けない**'
 assert_ref_contains "フォールバック形にも台帳パスを渡している" \
   '`bash "<プラグインルート>/scripts/guarantee-index-check.sh" "<リポジトリルート>/docs/guarantees.md"`'
-assert_ref_contains "前提の確認表もルート基準のパスを指している" \
-  '| 保証台帳が存在し読める | リポジトリルートを解決し `<リポジトリルート>/docs/guarantees.md` を Read する（下記） |'
+assert_ref_contains "前提の確認表は台帳の存在確認も索引チェックの結果で行う（自分で開かない）" \
+  '| 保証台帳が存在し読める | 後述の索引チェックを実行し、stderr のエラー JSON が `ledger not readable` **でない**ことを確認する（**台帳を自分で開いて確かめない**。共通-2 (b)） |'
 
 echo ""
 echo "=== (A-15) 保証 ID は完全文法で検証する（接頭辞一致で通さない） ==="
@@ -1564,12 +1486,18 @@ assert_ref_contains "確定できない事由が1つでもあれば Issue を作
   '**保証節を確定できない事由が1つでもある場合は、Issue を作成せずに中断し、要人間対応として報告する**'
 assert_ref_contains "台帳が無ければ中断（台帳を作らない）" '**中断**（`ledger_missing`）'
 assert_ref_contains "件数を取得できなければ中断" '**中断**（`index_check_unavailable`）'
-assert_ref_contains "読み取り件数が食い違えば中断" '**中断**（`ledger_read_mismatch`）'
+assert_file_not_contains "旧: ledger_read_mismatch（散文の読み取り不一致）が残っていない" "$REF_FILE" 'ledger_read_mismatch'
+assert_ref_contains "ledger_missing と index_check_unavailable を stderr のエラーで判別する" \
+  '**exit 2 で stderr のエラー JSON が `ledger not readable`** → `ledger_missing` として**中断**する'
+assert_ref_contains "判別できない場合は ledger_missing へ倒さない（誤った対処を促さない）" \
+  '**判別できない場合を `ledger_missing` へ倒さない**'
 assert_ref_contains "ラベルを付与できなければ中断" '**中断**（`label_unavailable`）'
-assert_ref_contains "件数を取得できない状態を0件に読み替えない" \
-  '件数を取得できない状態を「保証0件」「維持なし」に読み替えない（検査不能≠0件）'
+assert_ref_contains "一覧を取得できない状態を0件に読み替えない" \
+  '一覧を取得できない状態を「保証0件」「維持なし」に読み替えない（検査不能≠0件）'
 assert_ref_contains "exit 2・パース不能・実行不能は中断（検査対象なしに読み替えない）" \
-  '`counts.guarantees` を 0 とみなさない・「検査対象なし」に読み替えない'
+  '`guarantees` を空配列とみなさない・「検査対象なし」に読み替えない'
+assert_ref_contains "ID 書式違反で維持候補から外れた件数を「該当なし」に丸めない" \
+  '**この差分を「該当なし」に丸めず、完了報告に差分件数を明記する**'
 assert_ref_contains "counts=0 は検査した結果の0件として区別する" \
   'これは**検査した結果の0件**であり中断しない'
 assert_ref_contains "索引の status fail は作成可否に使わない（過剰な阻止をしない）" \
@@ -1592,7 +1520,7 @@ assert_ref_contains "台帳・親Issue本文を非信頼データとして扱う
 # 語彙表（共通-1）が定義の正本。ここへコードを足して他を更新し忘れると落ちる。
 vocab_codes="$(awk '/^\*\*中断理由コードの語彙/{f=1} f && /^\|/{print} /^\*\*中断時の報告/{f=0}' "$REF_FILE" \
   | grep -v -E '^\|[[:space:]]*(`reason`|-+)' | sed -E 's/^\|[[:space:]]*`([a-z_]+)`.*/\1/' | sort -u)"
-expected_codes="$(printf '%s\n' duplicate_guarantee_section index_check_unavailable label_unavailable ledger_missing ledger_read_mismatch parent_guarantee_section_missing | sort -u)"
+expected_codes="$(printf '%s\n' duplicate_guarantee_section index_check_unavailable label_unavailable ledger_missing parent_guarantee_section_missing | sort -u)"
 assert_eq "(B-2) 語彙表の reason コードがテストの期待値と一致する（増減したらここで落ちる）" "$expected_codes" "$vocab_codes"
 
 # 中断報告テンプレートの `中断理由` の候補が語彙表と双方向で一致する
@@ -1613,25 +1541,27 @@ for code in $table_codes; do
 done
 assert_eq "(B-2) 前提の確認表の reason コードがすべて語彙表に定義されている" "" "$missing_codes"
 table_code_count="$(printf '%s\n' "$table_codes" | grep -c .)"
-assert_eq "(B-2) 前提の確認表の reason コードは4件（要件モード分）" "4" "$table_code_count"
+assert_eq "(B-2) 前提の確認表の reason コードは3件（要件モード分）" "3" "$table_code_count"
 assert_ref_contains "分解-1 の中断理由が語彙表の一員として書かれている" \
   '`中断理由` は共通-1 の語彙表にある `parent_guarantee_section_missing`'
 assert_ref_contains "コード増減時に語彙表と報告テンプレートを同時更新する規律がある" \
   '**コードを増減するときは、この表と下記の中断報告テンプレートの `中断理由` を必ず同時に更新する**'
 assert_file_contains "戦略ドキュメントが語彙の正本の所在を示している" "$STRATEGY_FILE" \
-  '**この6つの中断理由コードの語彙は `skills/create-ticket/references/guarantee-section.md` 共通-1 の表が正本**'
+  '**この5つの中断理由コードの語彙は `skills/create-ticket/references/guarantee-section.md` 共通-1 の表が正本**'
 
 echo ""
 echo "=== (B-3) 読み取り規則の一致（同じファイルを2つの規則で読まない） ==="
 
-assert_ref_contains "台帳をスクリプトと同じ規則で読むと明示している" \
-  '台帳は索引チェック（`guarantee-index-check`）と**同じ規則で読む**こと'
-assert_ref_contains "台帳の文法を親Issue本文へ適用しないと明示している" \
-  '**台帳の文法（後述の (b)）を親Issue本文に適用しないこと**'
+assert_ref_contains "台帳の読み取りを索引チェックの guarantees へ移譲していると明示している" \
+  '**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと'
+assert_ref_contains "台帳を自分で開いて数え直さないと明示している" \
+  '**自分で台帳ファイルを開いて数え直さない・Grep のヒットを「登録済み」の根拠にしない**'
+assert_ref_contains "索引チェックを親Issue本文へ向けないと明示している" \
+  '**台帳の読み取り手段（索引チェック）を親Issue本文へ向けないこと**'
 assert_ref_contains "誤適用すると正常な親Issueが全件はじかれると明示している" \
-  '**正しく作られた親Issueが「書式を解釈できない」「件数不一致」と誤判定され、分解-1 が実装チケットの作成を全件止めてしまう**'
-assert_ref_contains "件数の突き合わせは台帳にだけ行うと明示している" \
-  '**親Issue本文に対してこの突き合わせを行わない**'
+  '**正しく作られた親Issueで分解-1 が実装チケットの作成を全件止めてしまう**'
+assert_ref_contains "移譲後は件数の突き合わせを行わないと明示している" \
+  '**本スキルでは台帳について件数の突き合わせ（独立2経路の食い違い検出）を行わない**'
 assert_ref_contains "親Issueの ### 見出しはカテゴリ見出しであると明示している" \
   '**「保証」節内の `### ` 見出しはカテゴリ見出し**'
 assert_ref_contains "親Issueの保証 ID はリスト行にあると明示している" \
@@ -1649,23 +1579,23 @@ assert_ref_contains "判定保留を理由に不当と判定すると分解が�
 assert_ref_contains "親Issue文法が promote-verify 5.5-3 と同一だと明示している" \
   '下流の `/promote-verify`（Step 5.5-3）が親Issueを読む規則と同一'
 assert_file_contains "分解-1 が台帳の文法を適用しないと明示している" "$REF_FILE" \
-  '**(b) 台帳の文法は適用しない**'
+  '**(b) 台帳の読み取り（索引チェック）は適用しない**'
 assert_file_contains "promote-verify 側も親Issueへの適用範囲を限定している" "$CONSUMER_FILE" \
   '**親Issueへ適用してよいのはフェンス・節の範囲・チェックリスト行の扱いだけ**'
 assert_ref_contains "2つの規則で読む状態が危険であると明示している" \
-  '**同じファイルを2つの規則で読む**状態になる'
+  '**同じ台帳を2つの規則で読む**状態になり'
 assert_ref_contains "フェンス内は判定対象外" \
   '**コードフェンス（``` / ~~~。行頭スペース3個まで）の内側は、台帳・Issue 本文とも一切の判定対象にしない**'
 assert_ref_contains "保証は「保証」節の中だけを見る" '**保証は「保証」節の中だけを見る**'
-assert_ref_contains "節外の見出しは登録済みとみなさない" '**節の外にある `### G-...` は登録済みとみなさない**'
-assert_ref_contains "件数の突き合わせは節内の ### 見出しの総数で行う" \
-  '**件数の突き合わせに使うのは「保証」節内の `### ` 見出しの総数**である'
-assert_ref_contains "維持に挙げてよいのは ID 書式を満たす見出しだけ" \
-  '**維持する保証に挙げてよいのは ID 書式を満たす見出しだけ**'
+assert_ref_contains "節外の見出しは登録済みとみなさない" '**節の外にある `### G-...` も登録済みとみなさない**'
+assert_ref_contains "guarantees に無い見出しを登録済みとみなさない" \
+  '**`guarantees` に現れない見出しを「登録済み」とみなさない**'
+assert_ref_contains "書式違反の見出しを ID として転記しない" \
+  '**書式違反の見出しを ID として転記しない**'
 assert_ref_contains "チェック状態で対象を絞らない" \
   'チェック状態を対象の絞り込みにも判定にも使わない'
-assert_ref_contains "食い違ったらどちらかを採用して進めない" \
-  '**多い方・少ない方のどちらかを採用して先に進めない**'
+assert_ref_contains "索引チェックを親Issueへ向けた場合の実挙動を明記している" \
+  '**全件が `malformed_guarantee_id` になり、保証 ID を1件も取り出せない**'
 assert_ref_contains "パース規約の正本を spec で示している" \
   '`scripts/specs/guarantee-index-check.md`'
 
@@ -1680,8 +1610,8 @@ assert_ref_contains "新規宣言は受入基準 AC-n に対応付ける" '受�
 assert_ref_contains "宣言できるのは自 Issue スコープの ID だけ" \
   '**この Issue が宣言できるのは `G-<この Issue の番号>-` で始まる ID だけ**'
 assert_ref_contains "他 Issue の番号の ID を書かない" '他 Issue の番号を使った ID をここに書かない'
-assert_ref_contains "維持の突き合わせは台帳の全件を対象にする" \
-  '**突き合わせは台帳の全件を対象にする**'
+assert_ref_contains "維持の突き合わせは guarantees の全件を対象にする" \
+  '**突き合わせは `guarantees` の全件を対象にする**'
 assert_ref_contains "一部だけ見て「なし」と書かない（部分成功≠完全成功）" \
   '一部だけ見て「なし」と書かない'
 assert_ref_contains "迷ったら維持側に入れる（安全側）" '影響しうるか判断に迷うものは**維持側に入れる**'
@@ -1903,7 +1833,7 @@ assert_eq "(B-10) 検出パターンが正当な言及を誤検出しない（�
 abort_table="$(awk '/^### 共通-1\./{f=1} /^\*\*中断理由コードの語彙/{f=0} f && /^\|/{print}' "$REF_FILE" | grep -v -E '^\|[[:space:]]*(前提|-+)')"
 abort_rows="$(printf '%s\n' "$abort_table" | grep -c '^|')"
 abort_rows_with_reason="$(printf '%s\n' "$abort_table" | grep -c -E '\*\*中断\*\*（`[a-z_]+`）')"
-assert_eq "(B-10) 前提の確認表は4行ある" "4" "$abort_rows"
+assert_eq "(B-10) 前提の確認表は3行ある" "3" "$abort_rows"
 assert_eq "(B-10) 前提の確認表の全行に中断と reason コードがある" "$abort_rows" "$abort_rows_with_reason"
 
 # 失敗時の報告項目表: 5行すべてに内容が埋まっている（空セルを許さない）

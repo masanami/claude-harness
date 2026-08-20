@@ -554,6 +554,156 @@ assert_eq "裁可待ちが無ければ警告を出さない" "0" "$(grep -c '裁
 
 
 echo ""
+echo "=== base リビジョンの台帳の読み取り（/para-impl の登録済み判定が依存する契約） ==="
+
+# 台帳のパスは引数で受けるため、`git show <ref>:docs/guarantees.md` を一時ファイルへ書き出せば
+# 作業ツリー以外のリビジョンの台帳も同じ規則で読める（スクリプト側の変更なしで成立する）。
+# ここではその契約と、既存呼び出し元（台帳パス1引数のみ）の後方互換を固定する。
+REV_REPO="${TMP_ROOT}/revrepo"
+mkdir -p "${REV_REPO}/docs" "${REV_REPO}/tests"
+printf 'alpha\n' > "${REV_REPO}/tests/a.test.ts"
+printf 'beta\n' > "${REV_REPO}/tests/b.test.ts"
+cat > "${REV_REPO}/docs/guarantees.md" <<'REVEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha promise
+
+- 種別: API契約
+- テスト: `tests/a.test.ts::alpha`
+- 宣言元: #1
+
+### G-2-1: beta promise
+
+- 種別: API契約
+- テスト: `tests/b.test.ts::beta`
+- 宣言元: #2
+
+## Gaps（テストのない公開面）
+
+- [ ] GAP-001: nothing
+REVEOF
+(
+  cd "$REV_REPO" || exit 1
+  git init -q .
+  git add -A
+  git -c user.email=t@example.com -c user.name=t commit -qm init
+) >/dev/null 2>&1
+# macOS の /var は /private/var へのシンボリックリンクであり、スクリプトは `cd ... && pwd` で
+# 解決した実パスを返す。比較側も実パスに揃える（別物どうしを不一致と誤判定しないため）。
+REV_REPO_REAL="$(cd "$REV_REPO" && pwd -P)"
+mkdir -p "${REV_REPO}/sub"
+
+# 後方互換: 台帳パス1引数だけの呼び出し（quality-check / guarantee-audit / promote-verify の形）は
+# 従来どおり台帳のあるリポジトリのルートを base に解決する。
+COMPAT_OUT="$(cd "$REV_REPO" && bash "$TARGET_SCRIPT" docs/guarantees.md 2>/dev/null)"
+COMPAT_CODE=$?
+assert_eq "後方互換: 台帳パスのみの呼び出しは exit 0（pass）" "0" "$COMPAT_CODE"
+assert_eq "後方互換: base は台帳のあるリポジトリのルートへ自動解決される" "$REV_REPO_REAL" \
+  "$(printf '%s' "$COMPAT_OUT" | jq -r '.base')"
+# サブディレクトリから呼んでも、台帳のパスが repo 内なら base はリポジトリルートのままになる
+COMPAT_SUB_OUT="$(cd "${REV_REPO}/sub" && bash "$TARGET_SCRIPT" "${REV_REPO}/docs/guarantees.md" 2>/dev/null)"
+assert_eq "後方互換: サブディレクトリから呼んでも base はリポジトリルート" "$REV_REPO_REAL" \
+  "$(printf '%s' "$COMPAT_SUB_OUT" | jq -r '.base')"
+assert_eq "後方互換: guarantees が2件返る" "2" \
+  "$(printf '%s' "$COMPAT_OUT" | jq -r '.guarantees | length')"
+
+# 作業ツリー側の台帳だけを書き換える（コミットしない）
+perl -pi -e 's/beta promise/beta promise v2/' "${REV_REPO}/docs/guarantees.md"
+
+REV_LEDGER="${TMP_ROOT}/base-ledger.md"
+(cd "$REV_REPO" && git show "HEAD:docs/guarantees.md") > "$REV_LEDGER" 2>/dev/null
+assert_eq "git show で base リビジョンの台帳を取り出せる" "0" "$?"
+
+# **サブディレクトリから実行する**: cwd をリポジトリルートにすると、--base が無視されても
+# gic_resolve_base のフォールバック（cwd）が同じ値を返してしまい、--base が効いていることを
+# 検査できない（--base の削除で落ちないテストになる）。
+REV_OUT="$(cd "${REV_REPO}/sub" && bash "$TARGET_SCRIPT" "$REV_LEDGER" --base "$REV_REPO" 2>/dev/null)"
+REV_CODE=$?
+assert_eq "リポジトリ外の一時ファイルを台帳として検査できる（exit 0）" "0" "$REV_CODE"
+assert_eq "一時ファイル経路でも guarantees[].guarantee_id が取れる" "G-1-1 G-2-1" \
+  "$(printf '%s' "$REV_OUT" | jq -r '[.guarantees[].guarantee_id] | join(" ")')"
+assert_eq "読み取れるのは base リビジョンの約束文（作業ツリーの変更が混ざらない）" "beta promise" \
+  "$(printf '%s' "$REV_OUT" | jq -r '.guarantees[] | select(.guarantee_id == "G-2-1") | .statement')"
+# --base を明示した場合は渡した値をそのまま正規化する（git 由来の実パス化は行わない）。
+# cwd はサブディレクトリなので、この値になるのは --base が効いている場合だけである。
+assert_eq "--base の明示が cwd フォールバックより優先される（サブディレクトリから実行）" "$REV_REPO" \
+  "$(printf '%s' "$REV_OUT" | jq -r '.base')"
+assert_eq "--base が効いているのでテスト参照が解決でき status は pass" "pass" \
+  "$(printf '%s' "$REV_OUT" | jq -r '.status')"
+
+# 作業ツリー側は別の内容を返す（2つのリビジョンが混ざっていないことの対称な確認）
+WT_OUT="$(cd "$REV_REPO" && bash "$TARGET_SCRIPT" docs/guarantees.md 2>/dev/null)"
+assert_eq "作業ツリー側は改訂後の約束文を返す" "beta promise v2" \
+  "$(printf '%s' "$WT_OUT" | jq -r '.guarantees[] | select(.guarantee_id == "G-2-1") | .statement')"
+
+# --base 未指定で repo 外の一時ファイルを渡すと、台帳の位置からリポジトリルートを解決できず
+# 基準が **cwd** へ倒れる。サブディレクトリから呼べばリポジトリルートにならない。
+# base リビジョン経路で --base の明示が要る、という規約の根拠を固定する。
+NOBASE_OUT="$(cd "${REV_REPO}/sub" && bash "$TARGET_SCRIPT" "$REV_LEDGER" 2>/dev/null)"
+assert_eq "--base 未指定・repo 外の台帳は基準が cwd へ倒れる（明示が要る根拠）" "${REV_REPO}/sub" \
+  "$(printf '%s' "$NOBASE_OUT" | jq -r '.base')"
+
+# status が fail（exit 1）でも guarantees は stdout に出る。登録済み判定は exit 1 でも成立する。
+FAILSTATE_LEDGER="${TMP_ROOT}/failstate-ledger.md"
+cat > "$FAILSTATE_LEDGER" <<'FSEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha promise
+
+- 種別: API契約
+- テスト: `tests/does-not-exist.test.ts::alpha`
+- 宣言元: #1
+FSEOF
+FAILSTATE_OUT="$(bash "$TARGET_SCRIPT" "$FAILSTATE_LEDGER" --base "$REV_REPO" 2>/dev/null)"
+FAILSTATE_CODE=$?
+assert_eq "参照が壊れていれば exit 1（status=fail）" "1" "$FAILSTATE_CODE"
+assert_eq "exit 1（status=fail）でも guarantees は stdout に出る" "G-1-1" \
+  "$(printf '%s' "$FAILSTATE_OUT" | jq -r '[.guarantees[].guarantee_id] | join(" ")')"
+
+echo ""
+echo "=== guarantees と counts の関係（下流の完全性判定が依存する不変条件） ==="
+
+# (1) counts.refs と guarantees[].tests の総数は**常に一致する**（実装上、ID 書式違反の見出し
+#     配下のテスト参照はどちらにも数えられない）。この突き合わせは空虚に真であり、
+#     参照集合の完全性の根拠にならない——drift モード D3 がこれを根拠にしない理由。
+# (2) 完全性の根拠になるのは counts.guarantees と guarantees の件数の差分だけである。
+MALFORMED_LEDGER="${TMP_ROOT}/malformed-ledger.md"
+cat > "$MALFORMED_LEDGER" <<'MFEOF'
+# 保証台帳
+
+## 保証（Guarantees）
+
+### G-1-1: alpha promise
+
+- 種別: API契約
+- テスト: `tests/a.test.ts::alpha`
+- 宣言元: #1
+
+### G-2-x: malformed id
+
+- 種別: API契約
+- テスト: `tests/b.test.ts::beta`
+- 宣言元: #2
+MFEOF
+MF_OUT="$(bash "$TARGET_SCRIPT" "$MALFORMED_LEDGER" --base "$REV_REPO" 2>/dev/null)"
+assert_eq "ID 書式違反の見出しも counts.guarantees には数える" "2" \
+  "$(printf '%s' "$MF_OUT" | jq -r '.counts.guarantees')"
+assert_eq "ID 書式違反の見出しは guarantees には入らない" "1" \
+  "$(printf '%s' "$MF_OUT" | jq -r '.guarantees | length')"
+assert_eq "差分（counts.guarantees - guarantees の件数）が取りこぼし件数になる" "1" \
+  "$(printf '%s' "$MF_OUT" | jq -r '.counts.guarantees - (.guarantees | length)')"
+assert_eq "書式違反の見出し配下のテスト参照は参照集合に現れない（D4 が誤検出する根拠）" "0" \
+  "$(printf '%s' "$MF_OUT" | jq -r '[.guarantees[].tests[] | select(. == "tests/b.test.ts::beta")] | length')"
+assert_eq "counts.refs も書式違反の見出し配下の参照を数えない（突き合わせが空虚に真になる）" "true" \
+  "$(printf '%s' "$MF_OUT" | jq -r '(.counts.refs == ([.guarantees[].tests | length] | add))')"
+assert_eq "正常な台帳でも counts.refs == guarantees[].tests の総数（常に一致する）" "true" \
+  "$(printf '%s' "$COMPAT_OUT" | jq -r '(.counts.refs == ([.guarantees[].tests | length] | add))')"
+
+echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"
 

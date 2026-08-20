@@ -116,6 +116,36 @@ assert_ref_contains() {
   fi
 }
 
+# 任意のファイルに正準文が逐語で存在することを検査する（適用先が複数ある規律の照合用）。
+assert_file_contains() {
+  local description="$1" file="$2" phrase="$3"
+  if grep -qF -- "$phrase" "$file"; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       file:   ${file}"
+    echo "       phrase: ${phrase}"
+  fi
+}
+
+# 任意のファイルに「あってはならない文言」が無いことを検査する（移譲後の読み直しの再発防止）。
+assert_file_not_contains() {
+  local description="$1" file="$2" phrase="$3"
+  if grep -qF -- "$phrase" "$file"; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       file:   ${file}"
+    echo "       phrase: ${phrase}"
+  else
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  fi
+}
+
 # 参照ファイルに「あってはならない文言」が無いことを検査する（緩和の再発防止）。
 # SKILL.md に「あってはならない文言」が無いことを検査する（緩和の再発防止）。
 assert_skill_not_contains() {
@@ -1448,6 +1478,131 @@ for target_file in "$REF_FILE" "$QC_SKILL_FILE" "$GA_DRIFT_FILE"; do
     echo "  ok - $(basename "$target_file") に cwd 相対の索引チェック呼び出しが残っていない"
   fi
 done
+
+echo ""
+echo "=== (B-13) 台帳の読み取りの移譲（全5箇所の適用と、散文の読み取りの撤去） ==="
+
+CT_GUARANTEE_FILE="${REPO_ROOT}/skills/create-ticket/references/guarantee-section.md"
+PARA_GATE_FILE="${REPO_ROOT}/skills/para-impl/references/guarantee-gate.md"
+FI_AGENT_FILE="${REPO_ROOT}/agents/feature-implementer.md"
+
+# --- 適用先の表が5箇所すべてを挙げている（1箇所でも落ちると (B-12) の照合対象から外れる） ---
+canon_read_row="$(awk -F'|' '/^\| 台帳の読み取りの正本 \|/ { print $3 }' "$STRATEGY_FILE")"
+for expected_target in \
+  'skills/create-ticket/references/guarantee-section.md' \
+  'skills/promote-verify/references/guarantee-consistency.md' \
+  'skills/guarantee-audit/references/drift-mode.md' \
+  'skills/para-impl/references/guarantee-gate.md' \
+  'agents/feature-implementer.md'; do
+  if printf '%s' "$canon_read_row" | grep -qF -- "$expected_target"; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - (B-13) 適用先の表が ${expected_target} を挙げている"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("(B-13) 適用先の表に ${expected_target} が無い")
+    echo "  NG - (B-13) 適用先の表に ${expected_target} が無い"
+  fi
+done
+
+# --- 正本: 残件表は消え、適用しない範囲（例外）の表がある ---
+assert_file_not_contains "(B-13) 正本から「台帳の読み取りの移譲・残件」の表が消えている" "$STRATEGY_FILE" \
+  '##### 台帳の読み取りの移譲・残件'
+assert_file_not_contains "(B-13) 正本に「他に4箇所あり、いずれも未移譲」が残っていない" "$STRATEGY_FILE" \
+  '散文で台帳を読む手順は本文書の時点で他に4箇所あり、いずれも未移譲である'
+assert_file_not_contains "(B-13) 正本に「未移譲の箇所へこの定型文をコピーしない」が残っていない" "$STRATEGY_FILE" \
+  '**未移譲の箇所へこの定型文をコピーしないこと**'
+assert_file_contains "(B-13) 正本が「適用しない範囲」を先に確定させている（横展開の例外）" "$STRATEGY_FILE" \
+  '##### この規律を適用しない範囲（横展開の前に例外を確定する）'
+assert_file_contains "(B-13) 適用外に親Issue本文が挙がっている（台帳の文法を持ち込まない）" "$STRATEGY_FILE" \
+  '索引チェックは**台帳しか検査しない**'
+assert_file_contains "(B-13) 適用外に存在確認だけの手順が挙がっている" "$STRATEGY_FILE" \
+  '台帳の**存在確認だけ**を行う手順'
+assert_file_contains "(B-13) 適用外に台帳へ書き込む手順が挙がっている" "$STRATEGY_FILE" \
+  '台帳へ**書き込む**手順'
+assert_file_contains "(B-13) 適用外の表に無い読み取りは移譲する（対象外に足さない）と明記" "$STRATEGY_FILE" \
+  'この表に無い「台帳を散文で読む手順」を見つけた場合は、対象外に足すのではなく移譲する'
+
+# 適用しない範囲の表は5行以上ある（例外の列挙が空になっていない）
+exception_rows="$(awk '
+  /^##### この規律を適用しない範囲/ { intable = 1; next }
+  intable && /^\| 適用しない対象 \| 理由 \|/ { next }
+  intable && /^\|---/ { next }
+  intable && /^\|/ { print; next }
+  intable && /^#####/ { exit }
+' "$STRATEGY_FILE" | grep -c .)"
+assert_eq "(B-13) 適用しない範囲の表が5行ある（例外の列挙が空でない）" "5" "$exception_rows"
+
+# --- 正本: base リビジョン経路の規約 ---
+assert_file_contains "(B-13) 正本が base リビジョンの台帳の読み方を定めている" "$STRATEGY_FILE" \
+  '##### base リビジョンの台帳を読む場合（作業ツリー以外の台帳）'
+assert_file_contains "(B-13) base リビジョン経路では --base を明示すると定めている" "$STRATEGY_FILE" \
+  '**`--base` にリポジトリルートを明示する**'
+assert_file_contains "(B-13) base リビジョン経路の status/broken を索引整合の判定に使わない" "$STRATEGY_FILE" \
+  '**この呼び出しの `status` / `broken` / `counts.broken` を索引整合の判定に使わない**'
+assert_file_contains "(B-13) どちらのリビジョンでもない組み合わせであることを明記している" "$STRATEGY_FILE" \
+  '**どちらのリビジョンでもない組み合わせ**の検査結果になる'
+
+# --- 箇所ごとの否定検査: 散文で台帳を読む記述が残っていない ---
+assert_file_not_contains "(B-13) create-ticket: 旧「台帳の文法」節が残っていない" \
+  "$CT_GUARANTEE_FILE" '#### (b) 台帳の文法（**台帳にだけ適用する**）'
+assert_file_not_contains "(B-13) create-ticket: 旧「同じ規則で読む」の散文指示が残っていない" \
+  "$CT_GUARANTEE_FILE" '台帳は索引チェック（`guarantee-index-check`）と**同じ規則で読む**こと'
+assert_file_not_contains "(B-13) create-ticket: 旧「件数の突き合わせ」が残っていない" \
+  "$CT_GUARANTEE_FILE" '**件数の突き合わせ（独立2経路の検出。台帳にだけ行う）**'
+assert_file_not_contains "(B-13) create-ticket: 移譲の残件の但し書きが残っていない" \
+  "$CT_GUARANTEE_FILE" '**移譲の残件（規律の適用範囲）**'
+assert_file_not_contains "(B-13) drift-mode: 旧「まず台帳を読み」が残っていない" \
+  "$GA_DRIFT_FILE" 'まず台帳を読み、保証の一覧'
+assert_file_not_contains "(B-13) drift-mode: 移譲の残件の但し書きが残っていない" \
+  "$GA_DRIFT_FILE" '**移譲の残件（規律の適用範囲）**'
+assert_file_not_contains "(B-13) drift-mode: 旧「guarantees は本スキルでは消費しない」が残っていない" \
+  "$GA_DRIFT_FILE" '本スキルでは消費しない'
+assert_file_not_contains "(B-13) feature-implementer: 移譲が残件だという記述が残っていない" \
+  "$FI_AGENT_FILE" '**この読み取りを索引チェックの出力へ移譲することは残件**'
+assert_file_not_contains "(B-13) para-impl: 台帳を散文で読む git show 単体の指示が残っていない" \
+  "$PARA_GATE_FILE" '**登録済み判定は、実装が到達する base の台帳内容（`git show "origin/{base}:docs/guarantees.md"`）で行う**'
+
+# --- drift-mode: D3 が index.guarantees を消費する（読み直さない） ---
+assert_file_contains "(B-13) drift-mode: D3 は index.guarantees をそのまま使う" \
+  "$GA_DRIFT_FILE" '**Step D2 で取得した `index.guarantees`** をそのまま使う'
+assert_file_contains "(B-13) drift-mode: 自分で台帳を開いて代替しない" \
+  "$GA_DRIFT_FILE" '**自分で台帳を開いて代替しない**（それが移譲前の二重規則そのものである）'
+assert_file_contains "(B-13) drift-mode: counts.guarantees との件数不一致は not_analyzed" \
+  "$GA_DRIFT_FILE" '**`index.counts.guarantees` と `index.guarantees` の件数が一致しない場合** → `not_analyzed`'
+assert_file_contains "(B-13) drift-mode: 不完全な参照集合が D4 の誤検出を生むと明記している" \
+  "$GA_DRIFT_FILE" '**台帳に書かれているテストを「未登録」＝ GAP 候補として誤報する**'
+assert_file_contains "(B-13) drift-mode: counts.refs との突き合わせは空虚に真だと明記している" \
+  "$GA_DRIFT_FILE" '**空虚に真になる突き合わせを完全性の根拠にしない**'
+assert_file_contains "(B-13) drift-mode: exit 2 では D3・D4 とも not_analyzed になると明記している" \
+  "$GA_DRIFT_FILE" '**exit 2（`index.guarantees` を取得できない）の場合、下流（Step D3・D4）はいずれも `not_analyzed` になる**'
+assert_file_contains "(B-13) drift-mode: 読み直す経路を復活させないと明記している" \
+  "$GA_DRIFT_FILE" '**代替として読み直す経路を復活させないこと**'
+assert_file_contains "(B-13) drift-mode: 一本化の代償（jq 不在時に D3・D4 も走らない）を明記している" \
+  "$GA_DRIFT_FILE" '**この一本化の代償は明示しておく**'
+assert_file_contains "(B-13) drift-mode: 代償は0件ではなく not_analyzed として出ると明記している" \
+  "$GA_DRIFT_FILE" '**これは「0件」ではなく `not_analyzed`**'
+
+# --- 台帳パスの解決の定型文の適用範囲（移譲済みの手順は台帳を Read しない） ---
+for delegated_file in "$REF_FILE" "$GA_DRIFT_FILE" "$CT_GUARANTEE_FILE"; do
+  if grep -qF -- '台帳を Read しない' "$delegated_file"; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - (B-13) $(basename "$delegated_file") が「台帳を Read しない」の適用範囲注記を持つ"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("(B-13) $(basename "$delegated_file") に台帳パス定型文の適用範囲注記が無い")
+    echo "  NG - (B-13) $(basename "$delegated_file") に台帳パス定型文の適用範囲注記が無い"
+  fi
+done
+
+# --- 否定検査: ledger_read_mismatch が運用ファイルから1件も残っていない ---
+# scripts/tests は除く（否定アサーションの文字列としての出現は正当であり、ここで数えると
+# 「消したことを検査するテスト」自身が違反として現れる）。
+stale_code_hits="$(find "${REPO_ROOT}/docs" "${REPO_ROOT}/skills" "${REPO_ROOT}/agents" \
+  "${REPO_ROOT}/scripts/specs" "${REPO_ROOT}/scripts/lib" -type f -print0 2>/dev/null \
+  | xargs -0 grep -lF -- 'ledger_read_mismatch' 2>/dev/null || true)"
+stale_top_hits="$(grep -lF -- 'ledger_read_mismatch' "${REPO_ROOT}"/scripts/*.sh 2>/dev/null || true)"
+assert_eq "(B-13) ledger_read_mismatch が運用ファイルから消えている" "" \
+  "$(printf '%s%s' "$stale_code_hits" "$stale_top_hits")"
 
 echo ""
 echo "=== summary ==="
