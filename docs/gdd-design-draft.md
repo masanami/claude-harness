@@ -268,6 +268,8 @@ Issue #152 の4つの検討事項に対する設計判断。いずれも本ド�
   - `drifted` / `uncertain` / 検証失敗（構造化応答なし）/ 結果の欠落は `allConsistent: false` とし、**`skipped` へ変換しない**（`readyForPromotion` は `false` になり、該当保証は `needsHumanReview` として表に出す）。
   - フェーズ判定が `invalid`、または **GDD期なのに `docs/guarantees.md` が存在しない**場合は、運用前提の破れとして `skipped` にせず `allConsistent: false` ＋要人間判定で報告する（§2.1 D-16 と同じ規律）。
 
+  > **その後の変更（Issue #168 / #169、実装済み）**: `readyForPromotion`（6項）と `guaranteeCheck.allConsistent`（4項）の**評価は散文ではなく決定的スクリプト `promotion-decision.sh` が行う**（入出力仕様の正本は `scripts/specs/promotion-decision.md`）。散文には「いつ呼ぶか」と結果の解釈だけが残り、SKILL.md 側の論理式ブロックはスクリプトの項の写し（対応表）である。あわせて**台帳の読み取りは `guarantee-index-check.sh` の `guarantees` 出力に一本化**され、Step 5.5 の散文は台帳を読み直さない（同じ台帳を散文とスクリプトの2つの規則で読む状態の解消）。上記の (a)(b)(c) に加えて **(d) `humanReview` が空である**が項として存在する。
+
 ### 5.7 戦略ドキュメント
 
 - `docs/ai-driven-development-strategy.md` に「開発フェーズとドキュメントライフサイクル」の章を追加し、フェーズ定義（§2.1）・台帳仕様（§2.2）・切り替え判断の目安（§3.1）・退役手順（§3.3）の正本とする。各 SKILL.md には規律の要点のみ書き、詳細はこの章を参照させる（既存のレイヤリング方針を踏襲）。

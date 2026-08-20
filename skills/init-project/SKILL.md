@@ -147,14 +147,14 @@ CLAUDE.md に出力する「開発フェーズ」（`SDD期` / `GDD期` の2値�
 ```bash
 claude-harness-run analyze-project . > /tmp/analyze-output.json
 claude-harness-run skills/init-project/scripts/generate-settings.sh \
-  --input /tmp/analyze-output.json --target .claude/settings.json
+  --input "/tmp/analyze-output.json" --target ".claude/settings.json"
 ```
 
 個別の検出結果を明示的に渡すことも可能（`--test` / `--infra` は複数回指定可）:
 
 ```bash
 claude-harness-run skills/init-project/scripts/generate-settings.sh \
-  --pm npm --test playwright --infra docker --target .claude/settings.json
+  --pm npm --test playwright --infra docker --target ".claude/settings.json"
 ```
 
 **引数**:

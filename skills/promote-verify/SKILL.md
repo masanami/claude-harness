@@ -203,7 +203,33 @@ Step 2 で E2E コマンドを特定できなかった場合は、`e2e = { skipp
 
 `criteriaTable` を、Step 4/5 の結果から `{id, text, status, evidence, recommendation, adversarial, needsHumanReview}` の一覧として組み立てる。
 
-`readyForPromotion` は以下の**純粋な論理式**として算出する（この境界条件を含む論理式が正本。恣意的な判断を挟まない）:
+**`readyForPromotion` は自分で論理式を評価せず、決定的スクリプト `promotion-decision` に算出させる**（散文の論理式には型検査もテストも効かず、項の接続漏れ・空集合の空虚な真を検出できないため。**判定式の正本はスクリプトの実装**であり、下記の対応表はスクリプトが評価する項を人間が追えるようにするための写しである。恣意的な判断を挟まない）。
+
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run promotion-decision ready-for-promotion` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、判定の材料を **stdin の JSON** で渡す。相対パス `scripts/promotion-decision.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/promotion-decision.sh" ready-for-promotion` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+stdin へ渡す材料（5キーすべて必須。入出力仕様の正本はプラグイン配下の `scripts/specs/promotion-decision.md`。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/promotion-decision.md` として解決する）:
+
+```json
+{ "allMerged": true, "criteria": [{ "id": "AC-1", "status": "consistent", "needsHumanReview": false }], "qualityCheck": { "skipped": false, "result": "pass" }, "e2e": { "skipped": true }, "guaranteeCheck": { "skipped": true } }
+```
+
+- `criteria` は `criteriaTable` の各行から `{id, status, needsHumanReview}` を渡す。**受入基準が0件のときに空配列で「問題なし」に見せない**（Step 3-1 で既に中断しているが、スクリプト側でも空配列を真にしない二重防御になっている）
+- 返却 JSON の `readyForPromotion` をそのまま採用する。`terms` と `blockers` は Step 9 の報告で「どの項で落ちたか」を書くのに使う
+- **スクリプトを実行できない／stdout が JSON としてパースできない／exit 2（必須キーの欠落等）の場合は `readyForPromotion` を `false` とし、その事実（stderr のメッセージ）を Step 9 の総合判定に明記する**。**自分で論理式を評価して埋め合わせない**（判定できなかったものを判定結果に見せない）
+
+**材料の渡し方（ランチャーの allowlist に載る形を使う）**: 判定の材料はヒアドキュメントで stdin へ渡す（**先頭トークンがランチャーのままになるため `Bash(claude-harness-run:*)` の1行で許可できる**）:
+
+```bash
+claude-harness-run promotion-decision ready-for-promotion <<'PROMOTION_DECISION_INPUT'
+{判定の材料の JSON}
+PROMOTION_DECISION_INPUT
+```
+
+- **パイプ（`printf ... | claude-harness-run ...`）は使わない**: 複合コマンドは部分ごとに permission が判定されるため、先頭が `printf` になると `Bash(claude-harness-run:*)` だけでは許可されない。
+- 材料が大きい場合は、Write で一時ファイルへ書き出して `claude-harness-run promotion-decision ready-for-promotion --input "<一時ファイルのパス>"` を使ってもよい（この場合は使用後に `rm -f` で後始末する）。ランチャーが stdin と引数をそのまま対象スクリプトへ透過することは `scripts/tests/test-claude-harness-run.sh` が固定している。
+
+スクリプトが評価する項（**対応表。正本は上記 spec の項の表とスクリプト実装**）:
 
 ```text
 readyForPromotion =
@@ -217,7 +243,7 @@ readyForPromotion =
 
 （`allMerged` は Step 3-3 の結果。「スキップはOK扱い」という意味論も含め、この式の意味は変更しないこと）
 
-**最終項（`guaranteeCheck`）の注意**: この項で「スキップはOK扱い」を適用してよいのは、**Step 5.5-1 のフェーズ判定が `sdd` として確定した場合だけ**である（`guaranteeCheck.skipped === true` になる条件は Step 5.5-1 の1箇所しかない）。フェーズが `invalid`・判定不能、GDD期なのに台帳や親Issueの保証節が無い、意味検証が `drifted` / `uncertain` / `verification_failed` / `not_registered`、対象の一部しか検証できていない、台帳の読み取り件数がスクリプトと食い違っている（`humanReview` に理由が1件でもある） — これらはすべて `allConsistent: false` であり、**`skipped` へ倒して昇格可能に見せる経路を作らないこと**。
+**最終項（`guaranteeCheck`）の注意**: この項で「スキップはOK扱い」を適用してよいのは、**Step 5.5-1 のフェーズ判定が `sdd` として確定した場合だけ**である（`guaranteeCheck.skipped === true` になる条件は Step 5.5-1 の1箇所しかない）。フェーズが `invalid`・判定不能、GDD期なのに台帳や親Issueの保証節が無い、索引整合の結果を採用できない、意味検証が `drifted` / `uncertain` / `verification_failed` / `not_registered`、対象の一部しか検証できていない、判定スクリプトを実行できなかった（`humanReview` に理由が1件でもある） — これらはすべて `allConsistent: false` であり、**`skipped` へ倒して昇格可能に見せる経路を作らないこと**。
 
 ### Step 8: 後始末（一時ファイルのクリーンアップ）
 
@@ -261,7 +287,8 @@ Step 3-2 で取得した `diff_file` があれば、`rm -f "<diff_fileの絶対�
 
 ### 総合判定
 
-readyForPromotion: {readyForPromotion ? "✅ 昇格可能な状態が揃っています" : "❌ 未充足の項目があります（上記表を参照）"}
+readyForPromotion: {readyForPromotion ? "✅ 昇格可能な状態が揃っています" : `❌ 未充足の項目があります（未充足の項: ${blockers.join(", ")}。詳細は上記表を参照）`}
+（判定スクリプトを実行できなかった場合は `❌ 判定できませんでした（<stderr のメッセージ>）` と書き、`✅` にしない）
 
 ---
 
