@@ -31,8 +31,11 @@
 #      走査対象には正本テンプレート（docs/plugin-path-conventions.md）も含める
 #      ——正本だけ緩められる状態を残さないため。
 # (x) 「参照ファイルの読み出し（重要）」定型注記に、配送経路（read-plugin-doc）・失敗時の
-#     停止規則・終端マーカーによる切り詰め検査の節が揃っていること。Read 直読みは headless で
-#     沈黙して失敗し、出力上限による部分配送も exit 0 のまま沈黙するため。
+#     停止規則・終端マーカーによる切り詰め検査・**配送元の同一性（root 照合）** の節が
+#     揃っていること。Read 直読みは headless で沈黙して失敗し、出力上限による部分配送も
+#     exit 0 のまま沈黙し、さらにランチャーは同居する最大バージョンを選ぶため
+#     **完結しているが別バージョンの本文**も沈黙して通る（`scripts/specs/read-plugin-doc.md`
+#     「配送元の同一性」が停止を要求している義務を、呼び出し側の注記へ接続する）。
 #     さらに references/ templates/ を持つスキルに注記が在ることを**全称条件**で確かめる
 #     （「注記が在るなら中身を見る」だけでは、注記を置いていない新規スキルが素通りする）。
 #     加えて (x-e) が、para-impl のゲート参照3本（guarantee-gate / join-gate / star-parallel）
@@ -693,6 +696,11 @@ REF_NOTE_REQUIRED=(
   'read-plugin-doc'
   '**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること'
   'read-plugin-doc END'
+  # 配送元の同一性。ランチャーは同居する**最大バージョン**を選ぶため、実行中の SKILL.md と
+  # 別バージョンの参照ファイルが組み合わさりうる（`scripts/specs/read-plugin-doc.md`
+  # 「配送元の同一性」が停止を要求している）。完了マーカーの検査だけでは、
+  # **完結しているが別バージョンの本文**を通してしまう。可変部を含まない一文まるごとで照合する。
+  '**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。'
   'command not found'
   'Base directory'
 )
@@ -851,7 +859,7 @@ echo "=== (x) 参照ファイル読み出し注記の配送経路チェック ==
 
 # shellcheck disable=SC2016
 run_ref_note_selfcheck() {
-  local complete='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない**。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
+  local complete='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない**。**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
 
   assert_note '完全な読み出し注記では問題を報告しない' '' ref "$complete"
 
@@ -860,15 +868,22 @@ run_ref_note_selfcheck() {
 
   # 停止規則の節だけを落とした形。`**` はパラメータ展開のパターンではグロブとして
   # 解釈されるため、置換ではなくリテラルを別に書く。
-  local no_halt_rule='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない**。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
+  local no_halt_rule='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない**。**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
   assert_note '失敗時の停止規則が欠けた注記を検出する' \
     '欠落節 **非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること' \
     ref "$no_halt_rule"
 
   # 終端マーカーの節だけを落とした形（切り詰めの検査手段が無くなる）。
-  local no_end_marker='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
+  local no_end_marker='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること。**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
   assert_note '終端マーカーによる切り詰め検査が欠けた注記を検出する' \
     '欠落節 read-plugin-doc END' ref "$no_end_marker"
+
+  # 配送元の同一性（root 照合）の節だけを落とした形。完了マーカーの検査は残るため、
+  # **完結しているが別バージョン**の本文が黙って通る（codex が PR #190 で挙げた P1 の形）。
+  local no_root_check='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない**。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
+  assert_note '配送元の同一性（root 照合）の停止条件が欠けた注記を検出する' \
+    '欠落節 **BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。' \
+    ref "$no_root_check"
 
   # **意味の反転**: 必須節をすべて残したまま「停止は不要・続行してよい」を足した形。
   # 断片の部分一致だけを見る検査ではこれが通ってしまうため、否定側と対で見る。
@@ -906,7 +921,7 @@ elif [ -n "$ref_note_violations" ]; then
   print_indented "$ref_note_violations"
 else
   PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  ok - 参照ファイル読み出し注記（${ref_note_checked} 箇所・正本テンプレート含む）は配送経路・停止規則・切り詰め検査を備える"
+  echo "  ok - 参照ファイル読み出し注記（${ref_note_checked} 箇所・正本テンプレート含む）は配送経路・停止規則・切り詰め検査・配送元の同一性を備える"
 fi
 
 # --- (x-c) 注記の存在は「全称条件」で見る ---
