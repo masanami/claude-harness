@@ -19,6 +19,7 @@
 | guarantee-index-check.sh | `scripts/specs/guarantee-index-check.md` |
 | promotion-decision.sh | `scripts/specs/promotion-decision.md` |
 | list-test-files.sh | `scripts/specs/list-test-files.md` |
+| read-plugin-doc.sh | `scripts/specs/read-plugin-doc.md` |
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 
@@ -36,6 +37,7 @@
 - **stdout には JSON を1個だけ出力する**。人間向けメッセージ（進捗・エラー詳細）は stderr に出す
 - 成否は **exit code** で表現する。加えて JSON 側にも機械可読なステータスフィールドを含め、呼び出し元が exit code とJSONの両方から判定できるようにする
 - 「特定できなかった」「対象外だった」は暗黙の空配列・空文字ではなく、**明示的なステータスフィールド**で返す（例: `parse_status: "no_checklist_found"`）。呼び出し側の LLM がこれを見てフォールバック挙動（別手段での抽出など）を判断できるようにするため
+- **例外**: 成果物が機械可読なステータスではなく**モデルが読む本文そのもの**であるスクリプト（`read-plugin-doc.sh`）は、stdout へ本文をそのまま出す。JSON 文字列としてエスケープすると読み手にとって著しく劣化するため。この場合も成否は exit code と stderr で表し、機械可読ステータスと内容を分離するという趣旨自体は満たす（`scripts/specs/read-plugin-doc.md`）
 
 ## quality-check との整合
 
