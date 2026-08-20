@@ -429,10 +429,12 @@ unquoted_path_args() {
   case "${tokens[0]:-}" in
     claude-harness-run)
       skip=1
-      # --env KEY=VALUE はランチャー自身のオプション（規約上 target より前に置く）
-      if [ "${tokens[1]:-}" = "--env" ]; then
-        skip=3
-      fi
+      # --env KEY=VALUE はランチャー自身のオプション（規約上 target より前に置く）。
+      # **複数回指定できる**ため、先頭から続く限り読み飛ばす（1組だけ飛ばすと
+      # target を引数と誤認し、規約どおり引用符を付けない target を違反として報告する）。
+      while [ "${tokens[$skip]:-}" = "--env" ]; do
+        skip=$((skip + 2))
+      done
       skip=$((skip + 1)) # target
       ;;
     bash)
@@ -495,20 +497,54 @@ assert_arg_detection '正当: リダイレクト先は引数ではないので�
   'claude-harness-run analyze-project . > /tmp/analyze-output.json'
 assert_arg_detection '正当: --env 付きの呼び出しでも target を誤検出しない' no \
   "claude-harness-run --env FOO=bar demo-e2e-out 'CASE-101'"
+assert_arg_detection '正当: --env を複数回指定しても target を誤検出しない' no \
+  'claude-harness-run --env A=1 --env B=2 skills/demo/scripts/run-walkthrough.mjs "/絶対パス/flow.mjs"'
+assert_arg_detection '違反: --env が複数あっても引数側の引用漏れは検出する' yes \
+  'claude-harness-run --env A=1 --env B=2 skills/demo/scripts/run-walkthrough.mjs /絶対パス/flow.mjs'
+assert_arg_detection '違反: 継続行を結合した形の引数も検出する' yes \
+  'claude-harness-run skills/init-project/scripts/generate-settings.sh --input /tmp/analyze-output.json'
+assert_arg_detection '正当: 継続行を結合した形でも引用済みなら検出しない' no \
+  'claude-harness-run skills/init-project/scripts/generate-settings.sh --input "/tmp/analyze-output.json"'
 
 # --- (vii-b) 実ファイルの走査 ---
 # コマンド文字列の抽出: (1) バッククォートで囲まれた `claude-harness-run ...` /
 # `bash "<プラグインルート>/..." ...`、(2) コードブロック内の行頭 claude-harness-run。
+#
+# **grep の終了コードは、パイプへ通す前に取ること**: `x="$(grep ... | tr ...)"` と書くと
+# `$?` はパイプ最後尾（tr）のものになり、**grep の exit 2（実行エラー＝検査不能）が 0 に化ける**。
+# 抽出と整形を段に分けて、grep 自身の終了コードを保存する。
 # shellcheck disable=SC2016
-launcher_spans="$(grep -rhoE '`(claude-harness-run|bash "<プラグインルート>/)[^`]*`' skills agents --include='*.md' | tr -d '`')"
+launcher_spans_raw="$(grep -rhoE '`(claude-harness-run|bash "<プラグインルート>/)[^`]*`' skills agents --include='*.md')"
 launcher_spans_exit=$?
-codeblock_spans="$(grep -rhE '^[[:space:]]*claude-harness-run ' skills agents --include='*.md')"
+launcher_spans="$(printf '%s' "$launcher_spans_raw" | tr -d '`')"
+
+# **継続行（行末 `\`）を結合してから走査する**: 物理行だけを見ると、
+# `claude-harness-run xxx \` の次行に置かれた引数が検査対象から外れる。
+codeblock_files="$(find skills agents -name '*.md' -type f)"
+codeblock_files_exit=$?
+codeblock_spans=""
+if [ -n "$codeblock_files" ]; then
+  # shellcheck disable=SC2016 # awk プログラム本体であり、シェル展開を意図していない
+  codeblock_spans="$(printf '%s\n' "$codeblock_files" | tr '\n' '\0' | xargs -0 awk '
+    {
+      if (pending != "") { cur = pending " " $0 } else { cur = $0 }
+      pending = ""
+      if (cur ~ /\\[[:space:]]*$/) {
+        sub(/[[:space:]]*\\[[:space:]]*$/, "", cur)
+        pending = cur
+        next
+      }
+      if (cur ~ /^[[:space:]]*claude-harness-run /) { print cur }
+    }
+    END { if (pending ~ /^[[:space:]]*claude-harness-run /) { print pending } }
+  ')"
+fi
 codeblock_spans_exit=$?
 
-if [ "$launcher_spans_exit" -ge 2 ] || [ "$codeblock_spans_exit" -ge 2 ]; then
+if [ "$launcher_spans_exit" -ge 2 ] || [ "$codeblock_spans_exit" -ge 2 ] || [ "$codeblock_files_exit" -ne 0 ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("パス引数の引用チェックの grep 実行に失敗")
-  echo "  NG - grep 実行エラー（exit ${launcher_spans_exit}/${codeblock_spans_exit}）のため判定不能"
+  FAILED_TESTS+=("パス引数の引用チェックの抽出に失敗")
+  echo "  NG - 抽出エラー（grep=${launcher_spans_exit} / awk=${codeblock_spans_exit} / find=${codeblock_files_exit}）のため判定不能"
 elif [ -z "$launcher_spans" ] && [ -z "$codeblock_spans" ]; then
   # 抽出0件は「違反なし」ではなく「検出器が対象を拾えていない」（検査不能≠0件）
   FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -535,6 +571,53 @@ ${codeblock_spans}"
     echo "  NG - 引用符なしのパス引数を検出（空白を含むパスで引数が分割される）"
     print_indented "$unquoted_violations"
   fi
+fi
+
+echo ""
+echo "=== (viii) 非信頼値をダブルクォートで埋め込ませていないか ==="
+
+# 「シェルクォート安全埋め込み」の規律を持つスキルは、**その値をダブルクォートで
+# 埋め込む実行形テンプレートを同時に載せてはならない**（テンプレートと規則が矛盾し、
+# テンプレートに従うとコマンドインジェクションの余地が残る）。
+# 対象値は規律の本文で名指しされているプレースホルダ（例: `<file>`）。
+untrusted_violations=""
+untrusted_checked=0
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  # 規律が名指ししている値（`<name>` の形）を規律の行から取り出す
+  rule_line="$(grep -F 'シェルクォート安全埋め込み' "$f")"
+  # shellcheck disable=SC2016 # grep のパターン（バッククォート囲みのプレースホルダ）
+  values="$(printf '%s' "$rule_line" | grep -oE '`<[A-Za-z_][A-Za-z0-9_]*>`' | tr -d '`' | sort -u)"
+  [ -z "$values" ] && continue
+  while IFS= read -r value; do
+    [ -z "$value" ] && continue
+    untrusted_checked=$((untrusted_checked + 1))
+    # ランチャー／フォールバックのコマンド文字列の中で "値" の形になっていないか
+    hits="$(grep -nE "(claude-harness-run|scripts/[A-Za-z0-9_-]+\.sh)\"?[^\`]*\"${value}\"" "$f")"
+    hits_exit=$?
+    if [ "$hits_exit" -ge 2 ]; then
+      untrusted_violations="${untrusted_violations}${f}: grep 実行エラー（exit ${hits_exit}）
+"
+    elif [ -n "$hits" ]; then
+      untrusted_violations="${untrusted_violations}${f}: ${value} がダブルクォートで埋め込まれている
+${hits}
+"
+    fi
+  done <<<"$values"
+done <<<"$(grep -rl 'シェルクォート安全埋め込み' skills agents --include='*.md')"
+
+if [ "$untrusted_checked" -eq 0 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("非信頼値の検査対象を1件も抽出できず判定不能")
+  echo "  NG - 非信頼値の検査対象を1件も抽出できず判定不能（検出器が壊れている可能性）"
+elif [ -n "$untrusted_violations" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("非信頼値がダブルクォートで埋め込まれている")
+  echo "  NG - 非信頼値がダブルクォートで埋め込まれている（規律とテンプレートの自己矛盾）"
+  print_indented "$untrusted_violations"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 「シェルクォート安全埋め込み」の対象値（${untrusted_checked} 件）はダブルクォートで埋め込まれていない"
 fi
 
 echo ""

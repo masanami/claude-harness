@@ -530,6 +530,23 @@ assert_eq "裁可待ちは stderr で警告する（黙って通さない）" "1
 assert_eq "警告に該当 ID を含める" "1" "$(grep -c 'G-1-1' "${PEND_WS}/stderr.txt")"
 assert_eq "裁可待ちでない保証は警告に出さない" "0" "$(grep -c 'G-1-2' "${PEND_WS}/stderr.txt")"
 
+# 列位置を見ない部分一致だと、**約束文が pending の保証**にも誤って一致する
+# （`*<TAB>pending<TAB>*` は約束文の列にも当たる）。宣言元 kind の列で厳密比較する。
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: pending\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n' > "${PEND_WS}/docs/statement-pending.md"
+STMT_OUT="$(cd "$PEND_WS" && bash "$TARGET_SCRIPT" docs/statement-pending.md --base "$PEND_WS" 2>"${PEND_WS}/stderr3.txt")"
+assert_eq "約束文が pending でも provenance.kind は issue" \
+  "issue" "$(jq -r '.guarantees[0].provenance.kind' <<<"$STMT_OUT")"
+assert_eq "約束文が pending でも「裁可待ち」警告を出さない（列位置を見ない一致で誤検知しない）" \
+  "0" "$(grep -c '裁可待ち」のままの保証' "${PEND_WS}/stderr3.txt")"
+
+# テスト参照に pending を含む場合も同様（別の列への誤一致）
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: 約束\n\n- テスト: `tests/a.test.ts::pending`\n- 宣言元: #1\n' > "${PEND_WS}/docs/ref-pending.md"
+printf 'it("pending", () => {});\n' > "${PEND_WS}/tests/a.test.ts"
+(cd "$PEND_WS" && bash "$TARGET_SCRIPT" docs/ref-pending.md --base "$PEND_WS" >/dev/null 2>"${PEND_WS}/stderr4.txt")
+assert_eq "テスト参照に pending を含んでも「裁可待ち」警告を出さない" \
+  "0" "$(grep -c '裁可待ち」のままの保証' "${PEND_WS}/stderr4.txt")"
+printf 'it("x", () => {});\n' > "${PEND_WS}/tests/a.test.ts"
+
 # 裁可待ちが1件も無ければ警告を出さない（常時警告で意味を失わせない）
 printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: A\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n' > "${PEND_WS}/docs/no-pending.md"
 (cd "$PEND_WS" && bash "$TARGET_SCRIPT" docs/no-pending.md --base "$PEND_WS" >/dev/null 2>"${PEND_WS}/stderr2.txt")

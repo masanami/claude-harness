@@ -434,13 +434,16 @@ gic_warn_pending_provenance() {
     return 0
   fi
 
+  # 列位置を見ずに `*<TAB>pending<TAB>*` で部分一致させると、**約束文が `pending` の保証**
+  # （`### G-1-1: pending`）にも一致し、正当な台帳に誤った警告が出る。宣言元 kind の列
+  # （4列目）だけを取り出して完全一致で比較する。
+  local prov_kind
   for entry in "${GIC_GUARANTEES[@]}"; do
-    case "$entry" in
-      *$'\t'pending$'\t'*)
-        pending_count=$((pending_count + 1))
-        pending_ids="${pending_ids}$(printf '%s' "$entry" | cut -f2) "
-        ;;
-    esac
+    prov_kind="$(printf '%s' "$entry" | cut -f4)"
+    if [ "$prov_kind" = "pending" ]; then
+      pending_count=$((pending_count + 1))
+      pending_ids="${pending_ids}$(printf '%s' "$entry" | cut -f2) "
+    fi
   done
 
   if [ "$pending_count" -gt 0 ]; then

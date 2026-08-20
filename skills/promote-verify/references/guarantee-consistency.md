@@ -174,6 +174,17 @@ stdin へ渡す材料（4キーすべて必須。入出力仕様の正本はプ�
 - 返却 JSON の `allConsistent` を `guaranteeCheck.allConsistent` にそのまま採用する。`terms` と `blockers` は Step 9 の報告で「どの項で落ちたか」を書くのに使う
 - **スクリプトを実行できない／stdout が JSON としてパースできない／exit 2（必須キーの欠落等）の場合は、`allConsistent: false` とし、`humanReview` に `{ kind: "decision_unavailable", detail: "<stderr のメッセージ>" }` を積む**。**自分で論理式を評価して埋め合わせない**（散文評価へ戻す経路を作らない。判定できなかったものを判定結果に見せない）
 
+**材料の渡し方（ランチャーの allowlist に載る形を使う）**: 判定の材料はヒアドキュメントで stdin へ渡す（**先頭トークンがランチャーのままになるため `Bash(claude-harness-run:*)` の1行で許可できる**）:
+
+```bash
+claude-harness-run promotion-decision all-consistent <<'PROMOTION_DECISION_INPUT'
+{判定の材料の JSON}
+PROMOTION_DECISION_INPUT
+```
+
+- **パイプ（`printf ... | claude-harness-run ...`）は使わない**: 複合コマンドは部分ごとに permission が判定されるため、先頭が `printf` になると `Bash(claude-harness-run:*)` だけでは許可されない。
+- 材料が大きい場合は、Write で一時ファイルへ書き出して `claude-harness-run promotion-decision all-consistent --input "<一時ファイルのパス>"` を使ってもよい（この場合は使用後に `rm -f` で後始末する）。ランチャーが stdin と引数をそのまま対象スクリプトへ透過することは `scripts/tests/test-claude-harness-run.sh` が固定している。
+
 スクリプトが評価する項（**対応表。正本は上記 spec の項の表とスクリプト実装**）:
 
 ```text

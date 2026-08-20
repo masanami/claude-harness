@@ -922,8 +922,15 @@ fi
 # guaranteeCheck リテラルであり、いずれも `index: null, guarantees: null` を持たねばならない
 # （持たないと Step 9 のテンプレートが未定義値を読み、実行主体が値を捏造することになる）。
 if [ -n "$step55" ]; then
-  early_lines="$(printf '%s\n' "$step55" | grep -F 'allConsistent: false' | grep -F 'humanReview:')"
+  # 2段パイプにすると `$?` は最後尾の grep のものになり、**先頭 grep の exit 2
+  # （実行エラー＝検査不能）が「マッチなし」に化ける**。段に分けて両方の終了コードを見る。
+  early_first="$(printf '%s\n' "$step55" | grep -F 'allConsistent: false')"
+  early_first_exit=$?
+  early_lines="$(printf '%s\n' "$early_first" | grep -F 'humanReview:')"
   early_grep_exit=$?
+  if [ "$early_first_exit" -ge 2 ]; then
+    early_grep_exit="$early_first_exit"
+  fi
   if [ "$early_grep_exit" -ge 2 ]; then
     FAIL_COUNT=$((FAIL_COUNT + 1))
     FAILED_TESTS+=("早期失敗オブジェクトの初期化検査の grep 実行に失敗")
