@@ -426,18 +426,27 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 
 台帳（`docs/guarantees.md`）を散文で読み直すと、スクリプトが無視する記述（フェンス内の記入例・節の外の見出し）を「登録済み」と解釈する食い違いが起き、**同じ台帳を2つの規則で読む**状態になる。索引チェックの出力で代替できる手順は、この定型文をコピーして読み直しを禁じる。
 
-**この規律の適用範囲は「この定型文を置いた手順」に限る**（下表の適用先）。**散文で台帳を読む手順は本文書の時点で他に4箇所あり、いずれも未移譲である**（下記「台帳の読み取りの移譲・残件」）。**未移譲の手順が従うのは `skills/create-ticket/references/guarantee-section.md` 共通-2 (b)「台帳の文法」**であり、そちらでは索引チェックとの**件数の突き合わせ（独立2経路の食い違い検出）が必須**である。**移譲済みの手順では逆に、散文側の読み取りが存在しないため件数の突き合わせを行わない**（突き合わせるには読み直しを再導入することになり、移譲の目的と矛盾する）。この2つは同じ規律の適用前後であり、対立ではない。
+**この規律の適用範囲は「この定型文を置いた手順」に限る**（下表の適用先）。**台帳を散文で読む手順はすべて移譲済みであり、台帳の読み取り規則を持つ散文はリポジトリ内に残っていない**（`counts.guarantees` との件数突き合わせで独立2経路の食い違いを検出する規約も、読み直しが消えたためすべて撤去した。突き合わせを残すには読み直しの再導入が必要で、移譲の目的と矛盾する）。**台帳の読み取り規則を新たに散文で書き起こさないこと**——必要なフィールドが `guarantees` に無い場合は、散文で読み直す前に索引チェック側へ出力を足す。
 
-##### 台帳の読み取りの移譲・残件
+##### この規律を適用しない範囲（横展開の前に例外を確定する）
 
-| 箇所 | 現状 | 移譲していない理由 |
-|---|---|---|
-| `skills/create-ticket/references/guarantee-section.md` 共通-2 (b) | 台帳の文法で読み、`counts.guarantees` と件数を突き合わせる | 中断理由コード `ledger_read_mismatch` を含む中断規約と状態空間表が (b) の読み取りを前提に組まれており、移譲は同スキルの再設計を伴う |
-| `skills/guarantee-audit/references/drift-mode.md` Step D3 | 台帳を読み、保証一覧とテスト参照集合を取り出す | D4 の逆方向チェックが D3 の参照集合を基準にしており、移譲は D3/D4 の入出力契約の変更を伴う |
-| `agents/feature-implementer.md`（維持する保証への抵触確認） | 台帳の文法で読み、約束文を判定根拠にする | 上記 create-ticket 共通-2 (b) を正本として参照しているため、移譲は create-ticket 側の移譲とセットになる |
-| `skills/para-impl/references/guarantee-gate.md`（登録済み判定） | `git show "origin/{base}:docs/guarantees.md"` で**base リビジョン**の台帳を読む | **索引チェックは作業ツリーのファイルしか検査できない**（テスト参照の解決基準も台帳の位置から決まる）ため、base リビジョンの台帳をそのまま渡す手段が現時点で無い |
+**「台帳に触れる手順にはすべてこの定型文を置く」ではない**。次は適用対象外であり、**定型文をコピーしない**（索引チェックが代替にならない、または読み取りですらないため）。この表に無い「台帳を散文で読む手順」を見つけた場合は、対象外に足すのではなく移譲する:
 
-**未移譲の箇所へこの定型文をコピーしないこと**（読み直しを禁じておきながら代替手段が無い状態になる）。移譲の可否と手順は別途 Issue で追跡する。
+| 適用しない対象 | 理由 |
+|---|---|
+| **親Issue本文**の保証節を読む手順（`/create-ticket` 共通-2 (c)・`/promote-verify` 5.5-3・`/para-impl` の注入・`feature-implementer` 2-5 の発動判定） | 索引チェックは**台帳しか検査しない**。Issue 本文には相当する機械的な読み取り手段が無く、代替が存在しない。**台帳の文法を Issue 本文へ持ち込むと正常な親Issueを全件はじく**（`guarantee-section.md` 共通-2 の適用範囲表が正本） |
+| 台帳の**存在確認だけ**を行う手順（`/guarantee-audit` Step D1・同 SKILL.md のフェーズ別扱い・`/init-project` の検出） | ファイルの有無しか見ておらず**内容を解釈していない**。同じ台帳を2つの規則で読む状態にならない |
+| 台帳へ**書き込む**手順（`feature-implementer` 2-5 の 3〔台帳追記〕・`/guarantee-audit` bootstrap のドラフト生成） | 本定型文は**読み取り**の規律。書き込みの書式規約は本節の書式規約が正本であり、追記結果の索引整合は `/quality-check` の索引ゲートが機械検証する |
+| 索引チェック自身（`scripts/guarantee-index-check.sh`）とその仕様（`scripts/specs/guarantee-index-check.md`） | 規則の**実装側**。ここまで移譲すると台帳を読む主体が居なくなる |
+| 台帳の書式を**説明・引用**している文書（本節の書式例・テンプレート・報告の書式例） | 実行手順ではない |
+
+##### base リビジョンの台帳を読む場合（作業ツリー以外の台帳）
+
+索引チェックは**台帳のパスを引数で受ける**ため、`git show "<ref>:docs/guarantees.md"` を一時ファイルへ書き出して渡せば、作業ツリー以外のリビジョンの台帳も**同じ1つの規則**で読める（`/para-impl` の登録済み判定がこの経路。スクリプト側に追加の機能は要らない）。この経路には次の2点を必ず添える:
+
+- **この呼び出しの `status` / `broken` / `counts.broken` を索引整合の判定に使わない**。テスト参照は**作業ツリーのファイル**に対して解決されるため、「base リビジョンの台帳 × 作業ツリーのテスト」という**どちらのリビジョンでもない組み合わせ**の検査結果になる。消費してよいのは**台帳の内容だけから決まるフィールド**（`guarantees` / `counts.guarantees` / `counts.refs` / `counts.gaps`）に限り、索引整合の判定は作業ツリーを見る `/quality-check` の索引ゲートが担う。
+- **`--base` は指定しない**（「台帳パスの解決」の定型文と同じ）。`--base` はテスト参照の解決基準＝`status` / `broken` にしか効かず、**`guarantees` は参照検査より前に確定する**ため消費結果は変わらない。一方 `--base` のディレクトリが存在しないと索引チェックは **exit 2** を返すため、**消費結果に影響しない指定が停止経路だけを増やす**ことになる。この経路で `base` の値に意味が無いことは、上の「`status` / `broken` を使わない」と同じ理由から従う。
+- **`ledger` が渡した一時ファイルのパスと一致することを確認する**（別の台帳を読んでいないことの機械的な確認）。
 
 以下をそのままコピーする（上の定型文と同一）:
 
@@ -487,7 +496,7 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 | 定型文 | 適用先 |
 |---|---|
 | 保証節の識別規則 | `skills/create-ticket/references/guarantee-section.md` / `skills/promote-verify/references/guarantee-consistency.md` |
-| 台帳の読み取りの正本 | `skills/promote-verify/references/guarantee-consistency.md` |
+| 台帳の読み取りの正本 | `skills/create-ticket/references/guarantee-section.md` / `skills/promote-verify/references/guarantee-consistency.md` / `skills/guarantee-audit/references/drift-mode.md` / `skills/para-impl/references/guarantee-gate.md` / `agents/feature-implementer.md` |
 | 台帳パスの解決 | `skills/create-ticket/references/guarantee-section.md` / `skills/promote-verify/references/guarantee-consistency.md` / `skills/quality-check/SKILL.md` / `skills/guarantee-audit/references/drift-mode.md` |
 | 保証 ID のスコープ検証 | `skills/create-ticket/references/guarantee-section.md` / `skills/promote-verify/references/guarantee-consistency.md` |
 | 親Issue本文のカテゴリ配下の全件走査 | `skills/create-ticket/references/guarantee-section.md` / `skills/promote-verify/references/guarantee-consistency.md` |
@@ -574,7 +583,7 @@ ID の一意性は「書式」ではなく「**採番できる場所を1つに�
 - **エージェントは `guarantee:approved` を付けない**。自分が書いた保証節を自分で承認する経路を作らないため。`/create-ticket` はラベル定義を用意するところまでを行い、付与は人間の操作に限る。
 - **裁可の単位は親要件 Issue**。実装チケット（子）にはラベルを付けず、親の保証節への参照（`保証: 親#N の保証節参照`）だけを持たせる。子にも裁可ラベルを付けると、子が未裁可なのに親は裁可済み、という食い違いが起こりうる。
 - **保証 ID は裁可の時点で確定している**（`G-{宣言元Issue番号}-{枝番}`。5.3 の採番の単一経路）。`/create-ticket` は Issue 作成後に本文のプレースホルダを実番号へ置換し、全 ID が `G-<その Issue 番号>-` で始まることを検証する。検証に失敗した状態は「作成完了」とせず、**裁可しないよう明記して**要人間対応として報告する。
-- **保証節を確定できない場合は Issue を作成しない**。要件モードの中断条件は4つ（台帳が無い＝`ledger_missing` ／索引チェックを実行できず保証件数を取得できない＝`index_check_unavailable` ／台帳の読み取り件数が索引チェックの `counts.guarantees` と食い違う＝`ledger_read_mismatch` ／`guarantee:proposed` を付与できない＝`label_unavailable` ／転記した機能仕様が既にフェンス外の保証節を持ち、追記すると保証節が2つになる＝`duplicate_guarantee_section`）。実装分解モードは、親Issueに保証節が無い場合（`parent_guarantee_section_missing`）に実装チケットを1件も作らずに中断する。不確かな保証節を人間に裁可させないため。公開面か内部実装かの判定に迷ったものは、どちらへも倒さず Issue の「判定保留（要人間判定）」に残し、裁可前に人間が決める。
+- **保証節を確定できない場合は Issue を作成しない**。要件モードの中断条件は5つ（台帳が無い＝`ledger_missing` ／索引チェックを実行できず台帳の保証一覧を取得できない＝`index_check_unavailable` ／台帳の保証節を一意に解釈できない＝`ledger_uninterpretable` ／`guarantee:proposed` を付与できない＝`label_unavailable` ／転記した機能仕様が既にフェンス外の保証節を持ち、追記すると保証節が2つになる＝`duplicate_guarantee_section`）。実装分解モードは、親Issueに保証節が無い場合（`parent_guarantee_section_missing`）に実装チケットを1件も作らずに中断する。不確かな保証節を人間に裁可させないため。公開面か内部実装かの判定に迷ったものは、どちらへも倒さず Issue の「判定保留（要人間判定）」に残し、裁可前に人間が決める。
   - **この6つの中断理由コードの語彙は `skills/create-ticket/references/guarantee-section.md` 共通-1 の表が正本**であり、増減する場合は本項も同時に更新する（正本に無い中断条件は実装側で緩和されやすいため、規律としてここにも列挙する）。
 - **ゲートの強制**（`guarantee:approved` が無ければ実装を始めない）は `/para-impl` の責務である（導入済み。`/para-impl` は Phase 1 で対象 Issue——実装チケットなら親——のラベルを完全一致で確認し、無ければ実装を開始せず停止して人間の裁可を促す。手順の正本は `skills/para-impl/references/guarantee-gate.md`）。`/create-ticket` は裁可待ちの状態を正しく作るところまでを担い、裁可の有無で分解を止めることはしない。
 

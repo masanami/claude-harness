@@ -86,6 +86,31 @@ stdout JSON:
 | `guarantee_outside_section` | `### G-...` 見出しが「保証」節の外にある（節の外の保証は索引検査の対象外になるため、黙って見逃さず報告する） |
 | `duplicate_guarantee_section` | 「保証」節（`## 保証` で始まる H2）が2つ以上ある。`guarantee_id` には2つ目以降の見出しテキストが入る。**どちらの節を正とするか決められない状態を、黙って併合して pass にしない**（保証節の識別規則が「該当する見出しが2つ以上ある本文は解釈できないとして扱う」と定めており、台帳側でこれを実装するのが本スクリプトである） |
 
+#### `reason` の分類（消費側が扱いを分けるための区分）
+
+`guarantees` を消費する側は、**`status` の pass / fail だけで扱いを決めない**。`broken` の reason は次の2区分に分かれ、**区分 (I) は `guarantees` の完全性・一意性そのものを壊す**（しかもその大半は `counts.guarantees` と `guarantees` の**件数差分に現れない**）:
+
+| 区分 | `reason` | `guarantees` への影響 | 件数差分に現れるか |
+|---|---|---|---|
+| **(I) 解釈・完全性を壊す** | `malformed_guarantee_id` | 当該見出しと**その配下のテスト参照**が `guarantees` に入らない | **現れる** |
+| (I) | `guarantee_outside_section` | 同上（見出しも配下のテスト参照も入らない）。ただし `counts.guarantees` にも数えないため | **現れない** |
+| (I) | `duplicate_guarantee_section` | 2つ以上の節を**黙って併合**した一覧になる（どちらを正とするか決められない） | **現れない** |
+| (I) | `duplicate_guarantee_id` | 同一 ID の要素が複数並び、ID をキーにした突き合わせ・完全性 join が一意にならない | **現れない** |
+| (I) | `malformed_test_ref` | `tests` に書式違反の文字列が入る。`<パス>::<テスト名>` として突き合わせる用途では**実質的に参照が欠落**する | **現れない** |
+| **(II) 既存の索引ドリフト** | `test_file_not_found` / `test_name_not_found` | 参照は `tests` に正しく入っている（参照先の実体が無い／名前が一致しない） | 現れない（影響なし） |
+| (II) | `missing_test_ref` | **その保証は `guarantees` に入る**（`tests` は空配列）。台帳側の欠陥であり一覧の欠落ではない | 現れない（影響なし） |
+| (II) | `missing_provenance` / `malformed_provenance` / `duplicate_provenance` | `provenance` の読み取り結果に現れる（一覧の欠落ではない） | 現れない（影響なし） |
+| (II) | `duplicate_gap_id` / `malformed_gap_id` | Gaps 節のみ。`guarantees` に影響しない | 現れない（影響なし） |
+
+- **区分 (I) が1件でもあるとき、`guarantees` を「台帳に登録された保証の完全で一意な一覧」として扱わない**。消費側は用途に応じて中断するか、網羅性を主張しない形で扱う。
+- **区分 (II) は `guarantees` の完全性を損なわない**。消費側は続行してよい（是正は台帳・テスト側の作業）。
+- **件数差分（`counts.guarantees - (guarantees | length)`）だけを完全性の根拠にしないこと**。上表のとおり区分 (I) の大半は差分に現れず、差分 0 のまま一覧が不完全・非一意になる。
+- この分類は**消費側が扱いを分けるための区分**であり、`status` の算出には影響しない（`broken` が非空なら区分によらず `fail`）。
+
+#### 読んだ台帳の同一性（`ledger`）
+
+`ledger` は**渡した引数をそのまま返す**（正規化・絶対パス化をしない。引数を省略した場合は既定値 `docs/guarantees.md` がそのまま入る）。消費側は **`ledger` が自分の渡したパスと一致することを確認できる**——複数の `docs/guarantees.md` を持つリポジトリで、引数の省略や cwd 違いによって**別の台帳を読んだ結果**を消費していないことの機械的な確認になる。
+
 exit code:
 
 | code | 意味 |
