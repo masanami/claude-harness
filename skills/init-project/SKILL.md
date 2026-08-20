@@ -84,7 +84,8 @@ effort: medium
 
 検出結果をまとめてユーザーに提示し、以下を確認・補完する。提示テンプレートは `templates/detection-report.md` を Read し、プレースホルダー（`{detected_name}` 等）を検出結果・分析結果で埋めてユーザーに提示する。
 
-> 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/templates/detection-report.md`）。
+> **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路`claude-harness-run read-plugin-doc "skills/init-project/templates/detection-report.md"`（プラグインルート相対パス）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/templates/detection-report.md` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
+<!-- 正本: docs/plugin-path-conventions.md -->
 
 > **ポイント**: 自動判定した軸（DB中心性・API外部公開度・テスト戦略の複雑度）はそのまま提示し、ユーザーは判定不能な軸（規模・複雑度、ドメイン、コード規約、データ、運用、規制）と修正点だけを答えればよい形にする。全項目の逐一確認は避ける。固定リストにない**プロジェクト固有のドキュメント**（例: SLO定義、データフロー図、リリース手順）もここで追加できる。
 
@@ -104,7 +105,8 @@ CLAUDE.md に出力する「開発フェーズ」（`SDD期` / `GDD期` の2値�
 
 ### 4. テンプレート読み込み & CLAUDE.md 生成
 
-> **参照ファイルの所在（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。Read する際は、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に絶対パスを解決する（例: `<base>/templates/CLAUDE.md.template`）。
+> **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路`claude-harness-run read-plugin-doc "skills/init-project/templates/CLAUDE.md.template"`（プラグインルート相対パス）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/templates/CLAUDE.md.template` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
+<!-- 正本: docs/plugin-path-conventions.md -->
 <!-- 正本: docs/plugin-path-conventions.md -->
 
 本スキルの `templates/CLAUDE.md.template`（上記の解決手順で絶対パスに変換して）を読み込み、検出結果とユーザー入力でプレースホルダーを埋めて `CLAUDE.md` を生成する。生成先の `CLAUDE.md` は**導入先プロジェクトのルート**に書き出す（テンプレートの所在と生成先を混同しないこと）。
