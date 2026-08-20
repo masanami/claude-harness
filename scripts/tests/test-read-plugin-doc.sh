@@ -1,12 +1,18 @@
 #!/bin/bash
 # test-read-plugin-doc.sh
 # scripts/read-plugin-doc.sh の契約を検証する。
-# - 実ファイルをバイト同一で stdout へ配送する／レシートは stderr へ出す
-# - cwd 非依存（プラグイン外のどこから呼んでも同じ結果になる）
+# - 開始／終端マーカーで本文を挟み、マーカーを除いた本文が原本とバイト同一であること
+# - 大きいファイルの分割配送（MORE マーカー・--from-line での続き取得・再結合のバイト一致）
 # - 失敗が必ず非0 終了で伝わる（沈黙しない）。失敗時 stdout は空
+# - cwd 非依存（プラグイン外のどこから呼んでも同じ結果になる）
 # - 配送対象サブツリーの fail-closed な allowlist（判定関数の自己検査を含む）
 # - 絶対パス・'..'・シンボリックリンク・ルート外へ抜けるパスの拒否
 # - プラグインルート解決不能（インストール破損）の検出
+# - 0 バイト・パイプ早期終了・範囲外 --from-line が「配送成功」に化けないこと
+#
+# **stdout / stderr の分離そのものは不変条件にしない**: Bash ツールは両者を1つのテキストに
+# まとめてモデルへ渡すため、OS の fd 上での分離は配送境界で消える。モデルから見て本文と
+# 制御情報を区別できる根拠は**マーカーによる framing** であり、そちらを固定する。
 #
 # 実機の ~/.claude には一切触れず、実ファイル検証はこのリポジトリ自身を、
 # 異常系は mktemp -d 配下に作った偽のプラグインツリーを対象に行う。
@@ -84,25 +90,48 @@ SAMPLE_REL="skills/pr-merge/references/conflict-resolution.md"
 run_rpd "$REPO_ROOT" "$SAMPLE_REL"
 assert_eq "配送に成功する (exit 0)" "0" "$LAST_STATUS"
 
-if cmp -s "$OUT_FILE" "${REPO_ROOT}/${SAMPLE_REL}"; then
+# 開始マーカーは**本文より前**に出ていること。出力上限による切り詰めは先頭側を残すため、
+# 前に置いたものだけが確実に読み手へ届く（後ろに置いた情報は大きいファイルで消える）。
+assert_contains "1行目が BEGIN マーカーである" \
+  "=== read-plugin-doc BEGIN path=${SAMPLE_REL}" "$(head -1 "$OUT_FILE")"
+assert_contains "BEGIN マーカーに全体バイト数が入る" "bytes=2544" "$(head -1 "$OUT_FILE")"
+assert_contains "BEGIN マーカーに配送元 root が入る" "root=${REPO_ROOT}" "$(head -1 "$OUT_FILE")"
+assert_contains "BEGIN マーカーに version が入る" "version=" "$(head -1 "$OUT_FILE")"
+
+# 終端マーカーは本文の後ろ。呼び出し側はこの**不在**を切り詰めの検査に使う。
+assert_contains "最終行が END マーカー（complete）である" \
+  "=== read-plugin-doc END path=${SAMPLE_REL} delivered-lines=1-41 complete ===" "$(tail -1 "$OUT_FILE")"
+
+# マーカー行を除いた本文が原本とバイト同一であること
+sed '1d;$d' "$OUT_FILE" > "${WORK_DIR}/body.txt"
+if cmp -s "${WORK_DIR}/body.txt" "${REPO_ROOT}/${SAMPLE_REL}"; then
   PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  ok - stdout が対象ファイルとバイト同一である"
+  echo "  ok - マーカーを除いた本文が対象ファイルとバイト同一である"
 else
   FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("stdout が対象ファイルとバイト同一である")
-  echo "  NG - stdout が対象ファイルとバイト同一である"
+  FAILED_TESTS+=("マーカーを除いた本文が対象ファイルとバイト同一である")
+  echo "  NG - マーカーを除いた本文が対象ファイルとバイト同一である"
 fi
 
+# レシートには配送元 root と version が入ること。ランチャーはインストール済みの
+# 最大バージョンを選ぶため、起動中スキルと配送元が自動では一致しない。
+# 一致を呼び出し側が確かめられる材料をレシートが持っていることを固定する。
 assert_contains "レシートが stderr に出る" "delivered ${SAMPLE_REL}" "$(cat "$ERR_FILE")"
+assert_contains "レシートに配送元 root が入る" "from ${REPO_ROOT}" "$(cat "$ERR_FILE")"
+assert_contains "レシートに version が入る" "@" "$(cat "$ERR_FILE")"
 
-# レシートが stdout を汚していないこと（汚すと本文の一部として読まれる）
-if grep -Fq "read-plugin-doc: delivered" "$OUT_FILE"; then
+# **本文（マーカー行の内側）に制御情報が混入していないこと**を固定する。
+# 旧テストは「リダイレクトした stdout ファイルにレシートが混ざらないこと」を検証していたが、
+# それは OS の fd 分離を見ているだけで、Bash ツールが stdout と stderr を1つのテキストへ
+# まとめる配送境界では消える不変条件だった。モデルから見て意味があるのは
+# 「マーカーで囲まれた内側が本文そのものであること」なので、そちらを検査する。
+if grep -Fq "read-plugin-doc" "${WORK_DIR}/body.txt"; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("レシートが stdout を汚していない")
-  echo "  NG - レシートが stdout を汚していない"
+  FAILED_TESTS+=("マーカーの内側に制御情報が混入していない")
+  echo "  NG - マーカーの内側に制御情報が混入していない"
 else
   PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  ok - レシートが stdout を汚していない"
+  echo "  ok - マーカーの内側に制御情報が混入していない"
 fi
 
 # ---------------------------------------------------------------------------
@@ -115,7 +144,8 @@ echo "=== (2) cwd 非依存 ==="
 # cwd がプラグイン外でも同じ結果にならなければ意味がない。
 run_rpd "$WORK_DIR" "$SAMPLE_REL"
 assert_eq "プラグイン外の cwd から呼んでも成功する" "0" "$LAST_STATUS"
-if cmp -s "$OUT_FILE" "${REPO_ROOT}/${SAMPLE_REL}"; then
+sed '1d;$d' "$OUT_FILE" > "${WORK_DIR}/body.txt"
+if cmp -s "${WORK_DIR}/body.txt" "${REPO_ROOT}/${SAMPLE_REL}"; then
   PASS_COUNT=$((PASS_COUNT + 1))
   echo "  ok - プラグイン外の cwd でも本文が同一である"
 else
@@ -232,6 +262,17 @@ run_rpd "$REPO_ROOT" --help
 assert_eq "--help は exit 0" "0" "$LAST_STATUS"
 assert_contains "--help は配送対象を案内する" "skills/<skill>/references/" "$(cat "$ERR_FILE")"
 
+# --help も exit 0 を返すため、exit code だけでは「本文が届いたか」を判定できない。
+# 判定基準を BEGIN マーカーの有無に寄せてあるので、--help では stdout が空であることを固定する。
+if [ -s "$OUT_FILE" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("--help の stdout は空である")
+  echo "  NG - --help の stdout は空である"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - --help の stdout は空である（exit 0 でも BEGIN マーカーが無い＝未配送）"
+fi
+
 # ---------------------------------------------------------------------------
 # 7. 偽プラグインツリーでの境界検証
 # ---------------------------------------------------------------------------
@@ -291,6 +332,173 @@ run_rpd "$WORK_DIR" "skills/demo/references/plain.md"
 assert_eq "プラグインルート不在は exit 69" "69" "$LAST_STATUS"
 
 unset RPD_SCRIPT_UNDER_TEST
+
+# ---------------------------------------------------------------------------
+# 7b. 分割配送（出力上限による沈黙する部分成功の封じ込め）
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== (7b) 分割配送 ==="
+
+# 本 PR の目的は「沈黙する失敗を潰す」ことだが、モデルが受け取るのは Bash ツールの出力で
+# あり、そこには上限がある。上限超過時に exit 0 のまま本文が途中で切れると、
+# 潰したはずの「9割正しい成果物」がそのまま再現する。自分で分割して MORE マーカーと
+# 続きの取得コマンドを出すことで、切り詰めに到達させない／到達しても検知できるようにする。
+
+BIG_REL="skills/create-ticket/references/guarantee-section.md"
+BIG_BYTES="$(wc -c <"${REPO_ROOT}/${BIG_REL}" | tr -d '[:space:]')"
+
+run_rpd "$REPO_ROOT" "$BIG_REL"
+assert_eq "大きいファイルでも exit 0 で返る" "0" "$LAST_STATUS"
+
+chunk_bytes="$(wc -c <"$OUT_FILE" | tr -d '[:space:]')"
+if [ "$chunk_bytes" -lt "$BIG_BYTES" ] && [ "$chunk_bytes" -lt 20000 ]; then
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 1回の出力が上限より十分小さく抑えられている（${chunk_bytes} / 全体 ${BIG_BYTES} バイト）"
+else
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("1回の出力が上限より十分小さく抑えられている")
+  echo "  NG - 1回の出力が抑えられていない（${chunk_bytes} バイト）"
+fi
+
+assert_contains "続きがある場合は MORE マーカーが出る" \
+  "=== read-plugin-doc MORE path=${BIG_REL}" "$(tail -2 "$OUT_FILE" | head -1)"
+assert_contains "続きの取得コマンドをそのまま提示する" \
+  "claude-harness-run read-plugin-doc \"${BIG_REL}\" --from-line" "$(tail -1 "$OUT_FILE")"
+
+# 続きがある回では END（complete）を出さない。END を出してしまうと
+# 「本文は完結している」という誤った判定材料を渡すことになる。
+if grep -Fq "complete ===" "$OUT_FILE"; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("続きがある回に END(complete) を出さない")
+  echo "  NG - 続きがある回に END(complete) を出さない"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 続きがある回に END(complete) を出さない"
+fi
+
+# 全チャンクを順に取得して再結合し、原本とバイト一致することを確認する。
+# 分割は行境界で行っているので、UTF-8 の文字境界を割らない。
+: > "${WORK_DIR}/reassembled.txt"
+chunk_from=1
+chunk_count=0
+reassemble_status="ok"
+while [ "$chunk_count" -lt 30 ]; do
+  run_rpd "$REPO_ROOT" "$BIG_REL" --from-line "$chunk_from"
+  if [ "$LAST_STATUS" -ne 0 ]; then reassemble_status="exit ${LAST_STATUS}"; break; fi
+  chunk_count=$((chunk_count + 1))
+  last_line="$(tail -1 "$OUT_FILE")"
+  case "$last_line" in
+    *"complete ==="*)
+      sed '1d;$d' "$OUT_FILE" >> "${WORK_DIR}/reassembled.txt"
+      break
+      ;;
+    *"続きの取得"*)
+      # BEGIN(1行) と MORE + 続きの取得(末尾2行) を除いた範囲が本文
+      sed '1d;$d' "$OUT_FILE" | sed '$d' >> "${WORK_DIR}/reassembled.txt"
+      chunk_from="$(tail -2 "$OUT_FILE" | head -1 | sed -n 's/.*next-from-line=\([0-9]*\) .*/\1/p')"
+      if [ -z "$chunk_from" ]; then reassemble_status="next-from-line を読み取れない"; break; fi
+      ;;
+    *)
+      reassemble_status="想定外の最終行: ${last_line}"
+      break
+      ;;
+  esac
+done
+
+if [ "$reassemble_status" != "ok" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("全チャンクを取得できる")
+  echo "  NG - 全チャンクを取得できる（${reassemble_status}）"
+elif [ "$chunk_count" -lt 2 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("大きいファイルが実際に複数チャンクへ分かれる")
+  echo "  NG - 大きいファイルが実際に複数チャンクへ分かれる（chunk=${chunk_count}）"
+elif cmp -s "${WORK_DIR}/reassembled.txt" "${REPO_ROOT}/${BIG_REL}"; then
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 全チャンク（${chunk_count} 個）の再結合が原本とバイト一致する"
+else
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("全チャンクの再結合が原本とバイト一致する")
+  echo "  NG - 全チャンクの再結合が原本とバイト一致する"
+fi
+
+# 最終チャンクは END(complete) で閉じること（終端マーカーの不在＝切り詰めの検査が成立する前提）
+assert_contains "最終チャンクは END(complete) で閉じる" "complete ===" "$(tail -1 "$OUT_FILE")"
+
+# --max-bytes で分割幅を変えられること（既定に依存せず検証できるようにする）
+run_rpd "$REPO_ROOT" "$SAMPLE_REL" --max-bytes 1024
+assert_eq "--max-bytes で小さく刻んでも exit 0" "0" "$LAST_STATUS"
+assert_contains "--max-bytes を小さくすると分割される" "MORE path=" "$(tail -2 "$OUT_FILE" | head -1)"
+
+run_rpd "$REPO_ROOT" "$SAMPLE_REL" --max-bytes 100
+assert_eq "--max-bytes が下限未満なら exit 64" "64" "$LAST_STATUS"
+
+run_rpd "$REPO_ROOT" "$SAMPLE_REL" --from-line 99999
+assert_eq "--from-line が行数を超えたら exit 64" "64" "$LAST_STATUS"
+if [ -s "$OUT_FILE" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("範囲外 --from-line の stdout は空である")
+  echo "  NG - 範囲外 --from-line の stdout は空である"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 範囲外 --from-line の stdout は空である"
+fi
+
+run_rpd "$REPO_ROOT" "$SAMPLE_REL" --from-line abc
+assert_eq "--from-line が非数値なら exit 64" "64" "$LAST_STATUS"
+run_rpd "$REPO_ROOT" "$SAMPLE_REL" --bogus
+assert_eq "未知のフラグは exit 64" "64" "$LAST_STATUS"
+
+# ---------------------------------------------------------------------------
+# 7c. 0 バイト・パイプ早期終了
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== (7c) 0 バイト・パイプ早期終了 ==="
+
+: > "${FAKE_ROOT}/skills/demo/references/empty.md"
+RPD_SCRIPT_UNDER_TEST="${FAKE_ROOT}/scripts/read-plugin-doc.sh"
+
+# 0 バイトを exit 0 で返すと、呼び出し側の唯一の停止条件（非0 終了）をすり抜けて
+# 「読めた」と判断される。チェックアウト破損・書き込み失敗で現実に起こりうる形。
+run_rpd "$WORK_DIR" "skills/demo/references/empty.md"
+assert_eq "0 バイトの参照ファイルは exit 66" "66" "$LAST_STATUS"
+assert_contains "0 バイトでも停止指示を伴う" "停止して" "$(cat "$ERR_FILE")"
+if [ -s "$OUT_FILE" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("0 バイト時の stdout は空である")
+  echo "  NG - 0 バイト時の stdout は空である"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 0 バイト時の stdout は空である（BEGIN マーカーも出さない）"
+fi
+unset RPD_SCRIPT_UNDER_TEST
+
+# パイプの早期終了は「対象が無い」ではない。本文を分割して読もうとして `| head -N` するのは
+# 自然な行動であり、それを「ファイルが存在しない」と診断すると原因の切り分けを誤らせる。
+(cd "$REPO_ROOT" && bash "$TARGET_SCRIPT" "$BIG_REL" 2>"${WORK_DIR}/pipe.err" | head -1 >/dev/null)
+pipe_err="$(cat "${WORK_DIR}/pipe.err")"
+case "$pipe_err" in
+  *"SIGPIPE"*)
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - パイプ早期終了を SIGPIPE として診断する（「対象なし」と誤診しない）"
+    ;;
+  *)
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("パイプ早期終了を SIGPIPE として診断する")
+    echo "  NG - パイプ早期終了を SIGPIPE として診断する（actual: ${pipe_err}）"
+    ;;
+esac
+case "$pipe_err" in
+  *"document not found"*)
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("パイプ早期終了を「対象なし」と報告しない")
+    echo "  NG - パイプ早期終了を「対象なし」と報告している"
+    ;;
+  *)
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - パイプ早期終了を「対象なし」と報告しない"
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # 8. 配送対象 allowlist の自己検査

@@ -25,9 +25,16 @@
 #        その非信頼値を "<value>" の形で示していないこと（規律とテンプレートの自己矛盾）。
 #        PR #176 が持ち込んだコマンドインジェクションの回帰と同型。
 # (ix) 「スクリプトの実行形（重要）」定型注記の**不変コアの節**が各コピーに揃っていること。
-#      正本とのバイト一致は要求しない（呼び出し箇所ごとに正当に異なる部分を潰すと回帰を作る）。
-# (x) 「参照ファイルの読み出し（重要）」定型注記に、配送経路（read-plugin-doc）と
-#     失敗時の停止規則の節が揃っていること。Read 直読みは headless で沈黙して失敗するため。
+#      注記**全文**のバイト一致は要求しない（呼び出し箇所ごとに正当に異なる部分を潰すと
+#      回帰を作る）が、意味を反転させても部分一致は通ってしまう節（停止規則・禁止形）だけは
+#      可変部を含まない**一文まるごと**で照合し、あわせて反転語彙の不在も見る。
+#      走査対象には正本テンプレート（docs/plugin-path-conventions.md）も含める
+#      ——正本だけ緩められる状態を残さないため。
+# (x) 「参照ファイルの読み出し（重要）」定型注記に、配送経路（read-plugin-doc）・失敗時の
+#     停止規則・終端マーカーによる切り詰め検査の節が揃っていること。Read 直読みは headless で
+#     沈黙して失敗し、出力上限による部分配送も exit 0 のまま沈黙するため。
+#     さらに references/ templates/ を持つスキルに注記が在ることを**全称条件**で確かめる
+#     （「注記が在るなら中身を見る」だけでは、注記を置いていない新規スキルが素通りする）。
 # (xi) references/ templates/ 参照の解決性（dangling / orphan / 解決不能表記）。
 # (xii) 定型注記末尾の正本コメント `<!-- 正本: ... -->` の隣接重複。注記本体だけを
 #       差し替える一括置換が、既存のコメント行を残したまま2行にしてしまう事故の再発防止。
@@ -61,12 +68,14 @@ cd "$REPO_ROOT" || exit 1
 BARE_SCRIPT_ALLOWLIST="
 "
 
-# (ii) docs/ 設計文書参照の許容リスト。
-# init-project/SKILL.md:137 は「生成先ドキュメントの標準パス例」であり、本規約が対象とする
-# 自己参照（このプラグイン自身の設計文書を実行時に読みに行く）には当たらない。
-# （本行番号は本Issue #80 のパス規約修正でファイル冒頭側に4行追加されたことに伴うシフト後の値）
+# (ii) docs/ 設計文書参照の許容リスト。現時点では既知の例外は無い。
+#
+# **行番号でピン止めしたエントリは置かない。** かつて init-project/SKILL.md:137 を
+# 「生成先ドキュメントの標準パス例」として許容していたが、その後の編集で行がずれ、
+# ピンは当該記述とは無関係な行を指したまま残っていた（＝将来その行に来た違反を黙って許す）。
+# (ii) 側に「プラグイン内に実在する docs/*.md か」で絞る判定が入ったため、この種の
+# 例外指定はそもそも不要になっている。例外が要る場合は行番号ではなく判定条件で表現すること。
 DOCS_REF_ALLOWLIST="
-skills/init-project/SKILL.md:137
 "
 
 # (iii) echo "$CLAUDE_PLUGIN_ROOT" 解決手順の許容リスト。現時点では既知の例外は無い。
@@ -655,14 +664,23 @@ echo "=== (ix) 定型注記の不変コア節チェック（スクリプトの�
 #   - プレースホルダ          : ${CLAUDE_PLUGIN_ROOT} を環境変数と誤解させない歯止め
 #   - ランチャー導入          : 恒久解（欠けると毎回フォールバックし続ける）
 
+# 走査対象には**正本テンプレートを含む** `docs/plugin-path-conventions.md` も入れる。
+# コピー側だけを検査して正本を検査しないと、正本を緩めてから一括コピーする経路で
+# テストが緑のまま規約が骨抜きになる（正本とコピーが別々の規則で管理される状態）。
+NOTE_SCAN_PATHS=(skills agents docs/plugin-path-conventions.md)
+
+# 必須節のうち、**意味を反転させても部分一致は通ってしまう**もの（停止規則・禁止形）は
+# 短い断片ではなく**可変部を含まない一文まるごと**で照合する。`grep -F` はバイト厳密なので、
+# 「非0 終了でも停止は不要」のような反転はここで落ちる。
+# 呼び出し箇所ごとに正当に異なる部分（スクリプト名・引数・--env の要否）は依然として自由。
 EXEC_NOTE_MARKER='**スクリプトの実行形（重要）**'
 EXEC_NOTE_REQUIRED=(
-  'プラグイン配下'
-  'Bash(claude-harness-run:*)'
-  '相対パス'
+  'ユーザーのプロジェクトroot ではなく、プラグイン配下'
+  'この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる'
+  'では呼び出さないこと'
   'command not found'
   'Base directory'
-  'プレースホルダ'
+  '`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない'
   'ランチャー導入'
 )
 
@@ -670,10 +688,23 @@ REF_NOTE_MARKER='参照ファイルは導入先プロジェクトではなく'
 REF_NOTE_REQUIRED=(
   'プラグイン配下'
   'read-plugin-doc'
-  '非0'
-  '停止'
+  '**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること'
+  'read-plugin-doc END'
   'command not found'
   'Base directory'
+)
+
+# 反転・骨抜きの語彙。必須節が在っても、これらが同じ行に在れば違反とする。
+# 一文まるごとの照合と二重にしてあるのは、正本側の文を書き換えたうえで全コピーへ
+# 展開する経路（正本もコピーも「一致」しているので一文照合だけでは通る）を塞ぐため。
+NOTE_FORBIDDEN=(
+  '続行してよい'
+  '補完してよい'
+  '停止は不要'
+  '停止しなくてよい'
+  '無視してよい'
+  '読まなくてよい'
+  '呼び出してよい'
 )
 
 # 1行の注記テキストと必須節の配列名を受け取り、欠けている節を1行1件で返す。
@@ -688,48 +719,86 @@ missing_clauses() {
   done
 }
 
+# 1行の注記テキストから、含まれてはならない語彙を1行1件で返す。
+# 「必須節が在る」だけでは意味の反転を検出できない（`非0` と `停止` の断片は、
+# 「非0 終了でも停止は不要」という反転文にも含まれてしまう）ため、否定側と対で見る。
+forbidden_clauses() {
+  local text="$1"
+  shift
+  local clause
+  for clause in "$@"; do
+    printf '%s' "$text" | grep -qF "$clause" && printf '%s\n' "$clause"
+  done
+  return 0
+}
+
+# 注記1件を検査し、問題があれば「欠落節 ...」「禁止語 ...」の形で1行1件返す。
+inspect_note() {
+  local text="$1" required_name="$2"
+  local missing forbidden
+  case "$required_name" in
+    exec) missing="$(missing_clauses "$text" "${EXEC_NOTE_REQUIRED[@]}" | tr '\n' ',' | sed 's/,$//')" ;;
+    ref) missing="$(missing_clauses "$text" "${REF_NOTE_REQUIRED[@]}" | tr '\n' ',' | sed 's/,$//')" ;;
+  esac
+  forbidden="$(forbidden_clauses "$text" "${NOTE_FORBIDDEN[@]}" | tr '\n' ',' | sed 's/,$//')"
+  [ -n "$missing" ] && printf '欠落節 %s\n' "$missing"
+  [ -n "$forbidden" ] && printf '禁止語 %s\n' "$forbidden"
+  return 0
+}
+
 # --- (ix-a) 検出器自体の自己検査 ---
 # grep は「欠落なし」と「照合が壊れて何も見つけられない」を区別しない。既知の完全形・
 # 欠落形を直接掛けて、検出器が機能していることを確認する。
-assert_missing() {
-  local description="$1" expected="$2" text="$3"
-  shift 3
+# description / 期待される報告（空なら「問題なし」）/ 注記の種別（exec|ref）/ 注記テキスト
+assert_note() {
+  local description="$1" expected="$2" kind="$3" text="$4"
   local actual
-  actual="$(missing_clauses "$text" "$@" | tr '\n' ',' | sed 's/,$//')"
+  actual="$(inspect_note "$text" "$kind" | tr '\n' '|' | sed 's/|$//')"
   if [ "$actual" = "$expected" ]; then
     PASS_COUNT=$((PASS_COUNT + 1))
     echo "  ok - ${description}"
   else
     FAIL_COUNT=$((FAIL_COUNT + 1))
     FAILED_TESTS+=("不変コア検出器の自己検査: ${description}")
-    echo "  NG - ${description}（expected='${expected}' actual='${actual}'）"
+    echo "  NG - ${description}"
+    echo "       expected: '${expected}'"
+    echo "       actual:   '${actual}'"
   fi
 }
 
 # サンプルはリテラルとして掛けるためシングルクォートで書く（展開したら検査にならない）。
 # shellcheck disable=SC2016
+# サンプルはリテラルとして掛けるためシングルクォートで書く（展開したら検査にならない）。
+# 必須節を「可変部を含まない一文まるごと」にしたので、サンプルもその文をそのまま含む。
+# shellcheck disable=SC2016
 run_exec_note_selfcheck() {
-  local complete='本スキルはプラグインとして配布されるため、スクリプトはプラグイン配下にある。必ず `claude-harness-run xxx` の形式（この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）で実行し、相対パス `scripts/xxx.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/xxx.sh"` にフォールバックする（プラグインルートは「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。ユーザーにランチャー導入を案内すること。'
+  local complete='本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。必ず `claude-harness-run xxx` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）で実行し、相対パス `scripts/xxx.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/xxx.sh"` にフォールバックする（プラグインルートは「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。ユーザーにランチャー導入を案内すること。'
 
-  assert_missing '完全な注記では欠落を報告しない' '' "$complete" "${EXEC_NOTE_REQUIRED[@]}"
+  assert_note '完全な注記では問題を報告しない' '' exec "$complete"
 
   # 実際に起きたドリフト（agents/feature-implementer.md が allowlist 根拠・プレースホルダ・
   # 恒久解の3節を落としていた形）を再現し、3件とも報告されることを確認する。
   # 置換ではなくリテラルで書く: パラメータ展開のパターンでは `*` がグロブとして働き、
   # 意図より広く食って別の節まで消した「別物」を検査してしまうため。
-  local drifted='本スキルはプラグインとして配布されるため、スクリプトはプラグイン配下にある。必ず `claude-harness-run xxx` の形式（パス・バージョン・引用符を付けない）で実行し、相対パス `scripts/xxx.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/xxx.sh"` にフォールバックする（プラグインルートは「Base directory for this skill」から解決した絶対パス）。'
-  assert_missing '実際に起きた3節ドリフトを検出する' \
-    'Bash(claude-harness-run:*),プレースホルダ,ランチャー導入' \
-    "$drifted" "${EXEC_NOTE_REQUIRED[@]}"
+  local drifted='本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。必ず `claude-harness-run xxx` の形式（パス・バージョン・引用符を付けない）で実行し、相対パス `scripts/xxx.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/xxx.sh"` にフォールバックする（プラグインルートは「Base directory for this skill」から解決した絶対パス）。'
+  assert_note '実際に起きた3節ドリフトを検出する' \
+    '欠落節 この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる,`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない,ランチャー導入' \
+    exec "$drifted"
 
-  assert_missing '所在の節が欠けた注記を検出する' 'プラグイン配下' \
-    "${complete//プラグイン配下/導入先}" "${EXEC_NOTE_REQUIRED[@]}"
-  assert_missing '禁止形の節が欠けた注記を検出する' '相対パス' \
-    "${complete//相対パス/相対的なパス表記}" "${EXEC_NOTE_REQUIRED[@]}"
-  assert_missing 'フォールバック発動条件が欠けた注記を検出する' 'command not found' \
-    "${complete//command not found/実行できない場合}" "${EXEC_NOTE_REQUIRED[@]}"
-  assert_missing 'ルート解決手順が欠けた注記を検出する' 'Base directory' \
-    "${complete//Base directory for this skill/スキルの基準ディレクトリ}" "${EXEC_NOTE_REQUIRED[@]}"
+  # 所在の節だけを落とした形。`**` を含む文字列はパラメータ展開のパターンでグロブとして
+  # 働き、意図より広く食って別物を検査してしまうため、置換ではなくリテラルで書く。
+  local no_locus='本スキルはプラグインとして配布されるため、スクリプトは導入先のどこかにある。必ず `claude-harness-run xxx` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）で実行し、相対パス `scripts/xxx.sh` では呼び出さないこと。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/xxx.sh"` にフォールバックする（プラグインルートは「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。ユーザーにランチャー導入を案内すること。'
+  assert_note '所在の節が欠けた注記を検出する' \
+    '欠落節 ユーザーのプロジェクトroot ではなく、プラグイン配下' exec "$no_locus"
+  assert_note 'フォールバック発動条件が欠けた注記を検出する' '欠落節 command not found' \
+    exec "${complete//command not found/実行できない場合}" 
+  assert_note 'ルート解決手順が欠けた注記を検出する' '欠落節 Base directory' \
+    exec "${complete//Base directory for this skill/スキルの基準ディレクトリ}"
+
+  # 反転: 節は在るが「相対パスで呼び出してよい」を足した形。
+  # 部分一致だけの検査ではこれが通ってしまう（必須節はすべて揃っているため）。
+  assert_note '禁止形を許す文言を足した注記を検出する' '禁止語 呼び出してよい' \
+    exec "${complete}なお相対パスで呼び出してよい。"
 }
 run_exec_note_selfcheck
 
@@ -743,13 +812,13 @@ while IFS= read -r f; do
     lineno="${hit%%:*}"
     text="${hit#*:}"
     exec_note_checked=$((exec_note_checked + 1))
-    missing="$(missing_clauses "$text" "${EXEC_NOTE_REQUIRED[@]}" | tr '\n' ',' | sed 's/,$//')"
-    if [ -n "$missing" ]; then
-      exec_note_violations="${exec_note_violations}${f}:${lineno}: 欠落節 ${missing}
+    while IFS= read -r problem; do
+      [ -z "$problem" ] && continue
+      exec_note_violations="${exec_note_violations}${f}:${lineno}: ${problem}
 "
-    fi
+    done <<<"$(inspect_note "$text" exec)"
   done <<<"$(grep -nF "$EXEC_NOTE_MARKER" "$f")"
-done <<<"$(grep -rlF "$EXEC_NOTE_MARKER" skills agents --include='*.md')"
+done <<<"$(grep -rlF "$EXEC_NOTE_MARKER" "${NOTE_SCAN_PATHS[@]}" --include='*.md')"
 
 if [ "$exec_note_checked" -eq 0 ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -757,12 +826,12 @@ if [ "$exec_note_checked" -eq 0 ]; then
   echo "  NG - スクリプトの実行形注記を1件も抽出できず判定不能（検出器が壊れている可能性）"
 elif [ -n "$exec_note_violations" ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("スクリプトの実行形注記から不変コアの節が欠けている")
-  echo "  NG - スクリプトの実行形注記から不変コアの節が欠けている"
+  FAILED_TESTS+=("スクリプトの実行形注記に欠落節または禁止語がある")
+  echo "  NG - スクリプトの実行形注記に欠落節または禁止語がある"
   print_indented "$exec_note_violations"
 else
   PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  ok - スクリプトの実行形注記（${exec_note_checked} 箇所）はすべて不変コアの節を備えている"
+  echo "  ok - スクリプトの実行形注記（${exec_note_checked} 箇所・正本テンプレート含む）は不変コアを備え、反転語も無い"
 fi
 
 echo ""
@@ -773,24 +842,39 @@ echo "=== (x) 参照ファイル読み出し注記の配送経路チェック ==
 # 拒否がそのまま確定するが、**モデルは読めないまま手順を推測して完走できてしまう**
 # （実測: /guarantee-audit bootstrap が references/bootstrap-mode.md を読めないまま完走し、
 #  検証器の exit 2 で初めて発覚した）。
-# そこで読み出しを allowlist 済みの配送経路（read-plugin-doc）へ寄せ、届かない場合は
-# 非0 終了で止まる形にしてある。注記からこの節が落ちると沈黙する失敗へ戻るため固定する。
+# さらに、配送できても**出力上限で本文が途中で切れる**経路がある（exit 0 のまま部分配送）。
+# そこで注記には (1) 配送経路 (2) 非0 での停止規則 (3) 終端マーカーによる切り詰め検査 を
+# 揃って持たせ、いずれかが落ちたら検出する。
 
+# shellcheck disable=SC2016
 run_ref_note_selfcheck() {
-  local complete='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**非0 終了は「読まなくてよかった」ではない** — 推測で続行せず停止して報告すること。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
+  local complete='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない**。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
 
-  assert_missing '完全な読み出し注記では欠落を報告しない' '' "$complete" "${REF_NOTE_REQUIRED[@]}"
-  assert_missing '配送経路が欠けた注記（Read 一本の旧形）を検出する' 'read-plugin-doc' \
-    "${complete//read-plugin-doc/cat}" "${REF_NOTE_REQUIRED[@]}"
+  assert_note '完全な読み出し注記では問題を報告しない' '' ref "$complete"
+
+  assert_note '配送経路が欠けた注記（Read 一本の旧形）を検出する' \
+    '欠落節 read-plugin-doc,read-plugin-doc END' ref "${complete//read-plugin-doc/cat}"
+
   # 停止規則の節だけを落とした形。`**` はパラメータ展開のパターンではグロブとして
-  # 解釈されるため、置換ではなくリテラルを別に書く（置換にすると先頭から食われ、
-  # 別の節まで消えた別物を検査してしまう）。
-  local no_halt_rule='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
-  assert_missing '失敗時の停止規則が欠けた注記を検出する' '非0,停止' \
-    "$no_halt_rule" "${REF_NOTE_REQUIRED[@]}"
+  # 解釈されるため、置換ではなくリテラルを別に書く。
+  local no_halt_rule='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない**。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
+  assert_note '失敗時の停止規則が欠けた注記を検出する' \
+    '欠落節 **非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること' \
+    ref "$no_halt_rule"
+
+  # 終端マーカーの節だけを落とした形（切り詰めの検査手段が無くなる）。
+  local no_end_marker='参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。読み出しは `claude-harness-run read-plugin-doc "skills/x/references/y.md"` で行う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること。`claude-harness-run: command not found` の場合のみ Read へフォールバックし、「Base directory for this skill」を起点に解決する。'
+  assert_note '終端マーカーによる切り詰め検査が欠けた注記を検出する' \
+    '欠落節 read-plugin-doc END' ref "$no_end_marker"
+
+  # **意味の反転**: 必須節をすべて残したまま「停止は不要・続行してよい」を足した形。
+  # 断片の部分一致だけを見る検査ではこれが通ってしまうため、否定側と対で見る。
+  assert_note '停止規則を反転させた注記を検出する' '禁止語 続行してよい,停止は不要' \
+    ref "${complete}ただし本文が得られなくても停止は不要であり、手順を推測して続行してよい。"
 }
 run_ref_note_selfcheck
 
+# --- (x-b) 実ファイルの走査 ---
 ref_note_violations=""
 ref_note_checked=0
 while IFS= read -r f; do
@@ -800,13 +884,13 @@ while IFS= read -r f; do
     lineno="${hit%%:*}"
     text="${hit#*:}"
     ref_note_checked=$((ref_note_checked + 1))
-    missing="$(missing_clauses "$text" "${REF_NOTE_REQUIRED[@]}" | tr '\n' ',' | sed 's/,$//')"
-    if [ -n "$missing" ]; then
-      ref_note_violations="${ref_note_violations}${f}:${lineno}: 欠落節 ${missing}
+    while IFS= read -r problem; do
+      [ -z "$problem" ] && continue
+      ref_note_violations="${ref_note_violations}${f}:${lineno}: ${problem}
 "
-    fi
+    done <<<"$(inspect_note "$text" ref)"
   done <<<"$(grep -nF "$REF_NOTE_MARKER" "$f")"
-done <<<"$(grep -rlF "$REF_NOTE_MARKER" skills agents --include='*.md')"
+done <<<"$(grep -rlF "$REF_NOTE_MARKER" "${NOTE_SCAN_PATHS[@]}" --include='*.md')"
 
 if [ "$ref_note_checked" -eq 0 ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -814,12 +898,51 @@ if [ "$ref_note_checked" -eq 0 ]; then
   echo "  NG - 参照ファイル読み出し注記を1件も抽出できず判定不能（検出器が壊れている可能性）"
 elif [ -n "$ref_note_violations" ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("参照ファイル読み出し注記から配送経路・停止規則の節が欠けている")
-  echo "  NG - 参照ファイル読み出し注記から配送経路・停止規則の節が欠けている"
+  FAILED_TESTS+=("参照ファイル読み出し注記に欠落節または禁止語がある")
+  echo "  NG - 参照ファイル読み出し注記に欠落節または禁止語がある"
   print_indented "$ref_note_violations"
 else
   PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  ok - 参照ファイル読み出し注記（${ref_note_checked} 箇所）はすべて配送経路と停止規則を備えている"
+  echo "  ok - 参照ファイル読み出し注記（${ref_note_checked} 箇所・正本テンプレート含む）は配送経路・停止規則・切り詰め検査を備える"
+fi
+
+# --- (x-c) 注記の存在は「全称条件」で見る ---
+# ここまでの検査は「注記が在るなら中身を見る」という存在条件であり、**注記を1つも
+# 置いていないスキルは素通りする**。references/ templates/ を持つのに読み出し注記が
+# 無いスキルは、Read 直読み指示だけを持ったまま headless で沈黙して失敗する。
+# 新規スキルに対して規約が強制力を持つよう、owner スキル側から全称で確かめる。
+missing_note_skills=""
+owner_skills_checked=0
+while IFS= read -r skill_dir; do
+  [ -z "$skill_dir" ] && continue
+  skill="$(basename "$skill_dir")"
+  if [ ! -d "${skill_dir}/references" ] && [ ! -d "${skill_dir}/templates" ]; then
+    continue
+  fi
+  owner_skills_checked=$((owner_skills_checked + 1))
+  if [ ! -f "${skill_dir}/SKILL.md" ]; then
+    missing_note_skills="${missing_note_skills}${skill}: SKILL.md が無い
+"
+    continue
+  fi
+  if ! grep -qF "$REF_NOTE_MARKER" "${skill_dir}/SKILL.md"; then
+    missing_note_skills="${missing_note_skills}${skill_dir}/SKILL.md: references/ templates/ を持つのに読み出し注記が無い
+"
+  fi
+done <<<"$(find skills -mindepth 1 -maxdepth 1 -type d | sort)"
+
+if [ "$owner_skills_checked" -eq 0 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("references/ templates/ を持つスキルを1件も列挙できず判定不能")
+  echo "  NG - references/ templates/ を持つスキルを1件も列挙できず判定不能（検出器が壊れている可能性）"
+elif [ -n "$missing_note_skills" ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("読み出し注記を持たないスキルがある")
+  echo "  NG - references/ templates/ を持つのに読み出し注記が無いスキルがある"
+  print_indented "$missing_note_skills"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - references/ templates/ を持つスキル（${owner_skills_checked} 件）はすべて読み出し注記を持つ"
 fi
 
 echo ""
@@ -935,20 +1058,34 @@ else
 fi
 
 # --- (xi-c) orphan: 存在するのにどこからも指されていない ---
+# 照合は **owner を含むフルパスへ解決した結果**（(xi-a) の resolve_ref_tokens の出力）で行う。
+# `references/<basename>` の素朴な照合だと (a) 別スキルが同名ファイルを参照しているだけで
+# 「参照済み」に見え、(b) 参照ファイルが本文中に自分の名前を書いていれば自分で自分を
+# 証明してしまう（grep の探索対象に自分自身が入るため）。どちらも空虚に真になる。
+cited_targets=""
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    skills/*) owner="$(printf '%s' "$f" | cut -d/ -f2)" ;;
+    *) owner="" ;;
+  esac
+  while IFS= read -r target; do
+    [ -z "$target" ] && continue
+    case "$target" in "UNRESOLVED "*) continue ;; esac
+    # 自己言及を証明に使わない: 参照元と参照先が同一ファイルなら cite として数えない
+    [ "$target" = "$f" ] && continue
+    cited_targets="${cited_targets}${target}
+"
+  done <<<"$(resolve_ref_tokens "$(cat "$f")" "$owner")"
+done <<<"$(find skills agents -name '*.md' | sort)"
+
 ref_orphans=""
 ref_files_checked=0
 while IFS= read -r target; do
   [ -z "$target" ] && continue
   [ -f "$target" ] || continue
   ref_files_checked=$((ref_files_checked + 1))
-  kind="$(printf '%s' "$target" | cut -d/ -f3)"
-  base="$(basename "$target")"
-  cites="$(grep -rlF "${kind}/${base}" skills agents)"
-  cites_exit=$?
-  if [ "$cites_exit" -ge 2 ]; then
-    ref_orphans="${ref_orphans}${target}: grep 実行エラー（exit ${cites_exit}）
-"
-  elif [ -z "$cites" ]; then
+  if ! printf '%s' "$cited_targets" | grep -Fxq "$target"; then
     ref_orphans="${ref_orphans}${target}: どのスキル・エージェントからも参照されていない
 "
   fi
@@ -989,9 +1126,23 @@ echo "=== (xii) 正本コメントの隣接重複チェック ==="
 # stdin: ファイルの内容。stdout: 隣接重複を「<前の行番号>-<行番号>」の形で1行1件。
 # 空行は読み飛ばす（間に空行が挟まっていても同一コメントの重複であることに変わりはない）。
 find_adjacent_dup_source_comments() {
-  local line prev="" lineno=0 prev_lineno=0
-  while IFS= read -r line; do
+  local raw line prev="" lineno=0 prev_lineno=0
+  while IFS= read -r raw; do
     lineno=$((lineno + 1))
+    # 前後の空白と Markdown の引用記号 `> ` を剥がしてから比較する。
+    # 注記は `>` 引用ブロックや箇条書きの中に置かれるため、行頭固定で見ると
+    # インデントされた重複（`  <!-- 正本: ... -->` の2連）を見逃す。
+    line="$raw"
+    while :; do
+      case "$line" in
+        ' '*) line="${line# }" ;;
+        "$(printf '\t')"*) line="${line#"$(printf '\t')"}" ;;
+        '> ') line="" ;;
+        '>'*) line="${line#>}" ;;
+        *) break ;;
+      esac
+    done
+    line="${line%"${line##*[! ]}"}"
     [ -z "$line" ] && continue
     case "$line" in
       '<!-- 正本: '*' -->')
@@ -1054,6 +1205,23 @@ assert_dup_detection '正当: 正本コメント以外の同一行の連続は�
 assert_dup_detection '正当: 正本コメントが1つだけなら検出しない' '' \
 '> **注記**: 本文
 <!-- 正本: docs/plugin-path-conventions.md -->'
+
+# 注記は `>` 引用ブロックや箇条書きの中に置かれるため、行頭固定で見ると
+# インデント／引用記号つきの重複を見逃す。剥がしてから比較していることを確認する。
+assert_dup_detection '違反: インデントされた同一コメントの重複も検出する' '2-3' \
+'> **注記**: 本文
+  <!-- 正本: docs/plugin-path-conventions.md -->
+  <!-- 正本: docs/plugin-path-conventions.md -->'
+
+assert_dup_detection '違反: 引用記号つきの同一コメントの重複も検出する' '2-3' \
+'> **注記**: 本文
+> <!-- 正本: docs/plugin-path-conventions.md -->
+> <!-- 正本: docs/plugin-path-conventions.md -->'
+
+assert_dup_detection '違反: インデントの有無が違っても同一コメントなら検出する' '2-3' \
+'> **注記**: 本文
+<!-- 正本: docs/plugin-path-conventions.md -->
+    <!-- 正本: docs/plugin-path-conventions.md -->'
 
 # --- (xii-b) 実ファイルの走査 ---
 dup_source_violations=""

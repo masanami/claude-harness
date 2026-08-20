@@ -15,16 +15,26 @@
 #   加えて **配送できない場合は必ず非0 終了する**ので、失敗が沈黙しない。
 #
 # 使い方:
-#   claude-harness-run read-plugin-doc <プラグインルート相対パス>
+#   claude-harness-run read-plugin-doc <プラグインルート相対パス> [--from-line N] [--max-bytes N]
 #
 #   例:
 #     claude-harness-run read-plugin-doc skills/guarantee-audit/references/bootstrap-mode.md
 #     claude-harness-run read-plugin-doc scripts/specs/list-test-files.md
 #
 # 出力:
-#   stdout : 対象ファイルの中身をバイト単位でそのまま（付加なし）
+#   stdout : 開始マーカー行 → 対象ファイルの中身 → 終端（END）または継続（MORE）マーカー行
 #   stderr : 配送レシート（成功時）またはエラー内容と停止指示（失敗時）
-#   exit   : 0=配送成功 / 64=引数不正 / 66=対象なし / 69=プラグインルート解決不能 / 77=配送対象外
+#   exit   : 0=配送成功 / 64=引数不正 / 66=対象なし・空 / 69=ルート解決不能 / 74=書き込み失敗 / 77=配送対象外
+#
+# **マーカーを stdout に、本文の前後へ出すのはなぜか（重要）**:
+#   OS レベルでは全バイトを stdout へ書けるが、**モデルが受け取るのは Bash ツールの出力**であり、
+#   そこには上限がある。上限を超えると出力は先頭側を残して切り詰められ、末尾にあるものは消える。
+#   つまり「stdout は本文のみ・レシートは stderr（後ろ）」という設計では、
+#   大きいファイルで **exit 0 のまま本文が途中で切れ、切れた事実を伝えるものが何も残らない**。
+#   これは本スクリプトが潰そうとした「沈黙する部分成功」そのものである。
+#   そこで (1) 開始マーカーを本文の**前**（切り詰めを生き延びる位置）へ出し、
+#   (2) 終端マーカーを本文の**後ろ**へ出して、**終端マーカーの不在を切り詰めの検査に使う**。
+#   さらに (3) 1回の出力が上限に達しないよう自分で分割配送し、続きの取得コマンドを明示する。
 #
 # **stdout に JSON を1個だけ出す** という scripts/README.md の出力規約には意図的に従わない。
 # 本スクリプトの成果物は機械可読なステータスではなく **モデルが読む本文そのもの**であり、
@@ -39,7 +49,15 @@ RPD_SELF_NAME="read-plugin-doc"
 RPD_EX_USAGE=64       # 引数不正（絶対パス・'..' を含む・引数の数が違う）
 RPD_EX_NOINPUT=66     # 対象ファイルが存在しない／通常ファイルでない
 RPD_EX_UNAVAILABLE=69 # プラグインルートを解決できない（インストール破損）
+RPD_EX_IOERR=74       # stdout への書き込み失敗（パイプの早期終了を含む）
 RPD_EX_NOPERM=77      # 配送対象のサブツリー外
+
+# 1回の配送で stdout へ出す本文の既定上限（バイト）。Bash ツールの出力上限に達して
+# 黙って切り詰められるのを防ぐため、実測された切り詰め閾値より十分小さく取る
+# （実測: 21,315 バイトは全量通過 / 29,300 バイトと 51.8KB は切り詰め）。
+# 上限に達した場合は MORE マーカーと続きの取得コマンドを出す（分割配送）。
+RPD_DEFAULT_MAX_BYTES=16384
+RPD_MIN_MAX_BYTES=1024
 
 rpd_err() {
   printf '%s: %s\n' "$RPD_SELF_NAME" "$*" >&2
@@ -53,9 +71,14 @@ rpd_halt_notice() {
 
 rpd_usage() {
   cat >&2 <<EOF
-Usage: claude-harness-run ${RPD_SELF_NAME} <プラグインルート相対パス>
+Usage: claude-harness-run ${RPD_SELF_NAME} <プラグインルート相対パス> [--from-line N] [--max-bytes N]
 
-  プラグイン同梱の参照ドキュメントを stdout へそのまま出力する。
+  プラグイン同梱の参照ドキュメントを stdout へ配送する。
+  本文の前後にマーカー行が付く（本文ではない。終端マーカーの不在＝切り詰めの検査に使う）。
+
+    --from-line N   N 行目から配送する（既定: 1）。MORE マーカーが示す next-from-line を渡す
+    --max-bytes N   1回の配送で出す本文の上限バイト数（既定: ${RPD_DEFAULT_MAX_BYTES}、最小: ${RPD_MIN_MAX_BYTES}）
+    -h, --help      このヘルプを stderr に出して exit 0（本文は配送しない）
 
   配送対象（これ以外のパスは exit ${RPD_EX_NOPERM} で拒否する）:
     skills/<skill>/references/<name>.md
@@ -65,6 +88,38 @@ Usage: claude-harness-run ${RPD_SELF_NAME} <プラグインルート相対パス
 
   絶対パス・'..' を含むパスは受け付けない。
 EOF
+}
+
+# プラグインの version を返す（取得できなければ 'unknown'）。jq があれば使い、無ければ sed で拾う。
+# 配送元のバージョンをレシートへ出すのは、起動中スキルとは別バージョンの本文が
+# 届いていないかを呼び出し側が確かめられるようにするため（ランチャーは
+# インストール済みの最大バージョンを選ぶので、両者は自動では一致しない）。
+rpd_plugin_version() {
+  local manifest="${1}/.claude-plugin/plugin.json" v=""
+  if [ -f "$manifest" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      v="$(jq -r '.version // empty' "$manifest" 2>/dev/null)"
+    fi
+    if [ -z "$v" ]; then
+      v="$(LC_ALL=C sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" 2>/dev/null | head -1)"
+    fi
+  fi
+  printf '%s\n' "${v:-unknown}"
+}
+
+# stdout への書き込みに失敗した場合の報告。パイプの早期終了（SIGPIPE=141）は
+# 「対象が無い」のではなく「読み手が受け取りを止めた」ので、事実に即した診断を出す
+# （本文を分割して読もうとして `| head -N` する のは自然な行動であり、
+#  それを『ファイルが存在しない』と報告すると原因の切り分けを誤らせる）。
+rpd_report_write_failure() {
+  local status="$1" rel="$2"
+  if [ "$status" -eq 141 ]; then
+    rpd_err "output pipe closed by the reader (SIGPIPE) while delivering: ${rel}"
+    rpd_err "  パイプで受け取りを打ち切ると本文は不完全になる。分割して読む場合は --from-line を使うこと。"
+  else
+    rpd_err "failed to write the document to stdout (status ${status}): ${rel}"
+  fi
+  rpd_halt_notice
 }
 
 # 配送を許すサブツリーか判定する。汎用の cat にしないための fail-closed な allowlist。
@@ -81,23 +136,63 @@ rpd_is_deliverable() {
 }
 
 rpd_main() {
-  if [ "$#" -eq 1 ]; then
+  local rel="" from_line=1 max_bytes="$RPD_DEFAULT_MAX_BYTES" positional=0
+
+  while [ "$#" -gt 0 ]; do
     case "$1" in
       -h | --help)
         rpd_usage
         return 0
         ;;
+      --from-line | --max-bytes)
+        if [ "$#" -lt 2 ]; then
+          rpd_err "$1 requires a value"
+          rpd_usage
+          rpd_halt_notice
+          return "$RPD_EX_USAGE"
+        fi
+        case "$2" in
+          '' | *[!0-9]*)
+            rpd_err "$1 expects a positive integer (got: $2)"
+            rpd_halt_notice
+            return "$RPD_EX_USAGE"
+            ;;
+        esac
+        if [ "$1" = "--from-line" ]; then from_line="$2"; else max_bytes="$2"; fi
+        shift 2
+        ;;
+      -*)
+        rpd_err "unknown option: $1"
+        rpd_usage
+        rpd_halt_notice
+        return "$RPD_EX_USAGE"
+        ;;
+      *)
+        positional=$((positional + 1))
+        rel="$1"
+        shift
+        ;;
     esac
-  fi
+  done
 
-  if [ "$#" -ne 1 ]; then
-    rpd_err "expects exactly one plugin-relative path (got $#)"
+  if [ "$positional" -ne 1 ]; then
+    rpd_err "expects exactly one plugin-relative path (got ${positional})"
     rpd_usage
     rpd_halt_notice
     return "$RPD_EX_USAGE"
   fi
 
-  local rel="$1"
+  if [ "$from_line" -lt 1 ]; then
+    rpd_err "--from-line must be 1 or greater (got: ${from_line})"
+    rpd_halt_notice
+    return "$RPD_EX_USAGE"
+  fi
+
+  if [ "$max_bytes" -lt "$RPD_MIN_MAX_BYTES" ]; then
+    rpd_err "--max-bytes must be ${RPD_MIN_MAX_BYTES} or greater (got: ${max_bytes})"
+    rpd_halt_notice
+    return "$RPD_EX_USAGE"
+  fi
 
   case "$rel" in
     "")
@@ -168,15 +263,86 @@ rpd_main() {
       ;;
   esac
 
-  if ! cat "$full"; then
-    rpd_err "failed to read: ${rel}"
+  if [ ! -r "$full" ]; then
+    rpd_err "document is not readable: ${rel}"
     rpd_halt_notice
     return "$RPD_EX_NOINPUT"
   fi
 
-  local bytes
+  local bytes lines
   bytes="$(wc -c <"$full" | tr -d '[:space:]')"
-  rpd_err "delivered ${rel} (${bytes} bytes)"
+  lines="$(wc -l <"$full" | tr -d '[:space:]')"
+
+  # 0 バイトは「配送成功（本文ゼロ）」にしない。呼び出し側の唯一の停止条件は非0 終了なので、
+  # 空を exit 0 で返すと「読めた」と判断されて手順が進む。チェックアウト破損・書き込み失敗で
+  # 現実に起こりうる形であり、内容のない配送は成功ではない。
+  if [ "$bytes" -eq 0 ]; then
+    rpd_err "document is empty (0 bytes): ${rel}"
+    rpd_err "  空の本文を配送成功として返さない（破損した取得を「読めた」と誤認させないため）。"
+    rpd_halt_notice
+    return "$RPD_EX_NOINPUT"
+  fi
+
+  if [ "$from_line" -gt "$lines" ]; then
+    rpd_err "--from-line ${from_line} is past the end of the document (${lines} lines): ${rel}"
+    rpd_halt_notice
+    return "$RPD_EX_USAGE"
+  fi
+
+  # 本文の上限に収まる最終行を決める。行の途中で切ると UTF-8 の文字境界を割りうるため、
+  # 分割は必ず行境界で行う。1行が単独で上限を超える場合はその行を丸ごと出す（分割できない）。
+  # length() をバイト数として扱うため LC_ALL=C で走らせる。
+  local end_line
+  end_line="$(LC_ALL=C awk -v from="$from_line" -v budget="$max_bytes" '
+    NR < from { next }
+    {
+      n += length($0) + 1
+      if (n > budget && NR > from) { print NR - 1; found = 1; exit }
+    }
+    END { if (!found) print NR }
+  ' "$full")"
+  if [ -z "$end_line" ]; then
+    rpd_err "failed to compute the delivery range for: ${rel}"
+    rpd_halt_notice
+    return "$RPD_EX_IOERR"
+  fi
+
+  local version
+  version="$(rpd_plugin_version "$root")"
+
+  # 開始マーカーは**本文より前**に出す。出力上限による切り詰めは先頭側を残すため、
+  # 前に置いたものだけが確実に読み手へ届く（宣言バイト数・行数もここで先に渡す）。
+  if ! printf '=== read-plugin-doc BEGIN path=%s bytes=%s lines=%s from-line=%s root=%s version=%s ===\n' \
+      "$rel" "$bytes" "$lines" "$from_line" "$root" "$version"; then
+    rpd_report_write_failure "$?" "$rel"
+    return "$RPD_EX_IOERR"
+  fi
+
+  sed -n "${from_line},${end_line}p" "$full"
+  local sed_status=$?
+  if [ "$sed_status" -ne 0 ]; then
+    rpd_report_write_failure "$sed_status" "$rel"
+    return "$RPD_EX_IOERR"
+  fi
+
+  local marker_status=0
+  if [ "$end_line" -ge "$lines" ]; then
+    # 終端マーカー。呼び出し側はこの行の**不在**を「出力が切り詰められた」の検査に使う。
+    printf '=== read-plugin-doc END path=%s delivered-lines=%s-%s complete ===\n' \
+      "$rel" "$from_line" "$end_line" || marker_status=$?
+  else
+    local next_line=$((end_line + 1))
+    printf '=== read-plugin-doc MORE path=%s delivered-lines=%s-%s next-from-line=%s of %s ===\n' \
+      "$rel" "$from_line" "$end_line" "$next_line" "$lines" || marker_status=$?
+    printf '=== 続きの取得: claude-harness-run read-plugin-doc "%s" --from-line %s ===\n' \
+      "$rel" "$next_line" || marker_status=$?
+  fi
+  if [ "$marker_status" -ne 0 ]; then
+    rpd_report_write_failure "$marker_status" "$rel"
+    return "$RPD_EX_IOERR"
+  fi
+
+  rpd_err "delivered ${rel} (${bytes} bytes) from ${root} @${version}"
   return 0
 }
 
