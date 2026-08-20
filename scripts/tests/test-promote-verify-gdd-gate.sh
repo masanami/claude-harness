@@ -101,21 +101,6 @@ skill_section() {
   ' "$SKILL_FILE"
 }
 
-# 任意のファイルに正準文が逐語で存在することを検査する（cross-file 逐語照合用）。
-assert_file_has() {
-  local description="$1" file="$2" phrase="$3"
-  if [ -r "$file" ] && grep -qF -- "$phrase" "$file"; then
-    PASS_COUNT=$((PASS_COUNT + 1))
-    echo "  ok - ${description}"
-  else
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-    FAILED_TESTS+=("$description")
-    echo "  NG - ${description}"
-    echo "       file:   ${file}"
-    echo "       phrase: ${phrase}"
-  fi
-}
-
 # 参照ファイル（Step 5.5 の手順の正本）に正準文が逐語で存在することを検査する。
 assert_ref_contains() {
   local description="$1" phrase="$2"
@@ -622,7 +607,7 @@ echo ""
 echo "=== (B-4) 検査不能≠0件 ==="
 
 assert_ref_contains "索引整合の exit 2・パース不能・実行不能は fail 扱い" \
-  '`guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "broken": null, "error": "<stderr のメッセージ>" }`'
+  '`guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "guarantees": null, "broken": null, "error": "<stderr のメッセージ>" }`'
 assert_ref_contains "索引整合の実行不能を pass・検査対象なしに読み替えない" \
   '**`pass` や「検査対象なし」に読み替えない**'
 assert_ref_contains "検査不能は問題0件と同じではない" \
@@ -708,7 +693,9 @@ assert_ref_contains "散文が読むのは親Issue本文だけだと明示して
 assert_ref_contains "台帳は散文で読まないと明示している" \
   '**台帳（`docs/guarantees.md`）は散文で読まない**'
 assert_ref_contains "台帳の読み取りの正本の定型文がある" \
-  '> **台帳の読み取りの正本（散文で読み直さない）**'
+  '> **台帳の読み取りの正本（この定型文を持つ手順は散文で読み直さない）**'
+assert_ref_contains "定型文の適用範囲が「この定型文が置かれている手順」に限定されている" \
+  '**この定型文が置かれている手順**で台帳から保証 ID・約束文・テスト参照・宣言元を読み取る必要がある場合'
 assert_ref_contains "台帳の読み取りには index.guarantees を使う" \
   '**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと'
 assert_ref_contains "台帳を自分で開いて数え直さない・Grep のヒットを根拠にしない" \
@@ -1027,7 +1014,7 @@ assert_ref_contains "食い違い時も counts/broken/ledger/base を捨てな�
 assert_ref_contains "食い違いは humanReview に積み (d) で allConsistent が false になる" \
   '5.5-7 の (d) により `allConsistent` は `false` になる'
 assert_ref_contains "実行不能系は counts/broken を null で明示初期化する" \
-  '`guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "broken": null, "error": "<stderr のメッセージ>" }`'
+  '`guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "guarantees": null, "broken": null, "error": "<stderr のメッセージ>" }`'
 assert_ref_contains "broken を [] ・counts を 0 で埋めない" \
   '**`broken` を `[]`、`counts` を 0 で埋めない**'
 assert_ref_contains "報告は counts の null / 非 null で文言が変わると明記" \
@@ -1297,57 +1284,146 @@ assert_eq "実スクリプト: 受入基準0件は空虚に真にならない" "
 echo ""
 echo "=== (B-12) 定型文の cross-file 逐語照合（正本1箇所・参照側は逐語コピー） ==="
 
-# 規則の正本は docs/ai-driven-development-strategy.md 5.3 に置き、実行時ファイルへ逐語コピーする。
-# 定型文が参照側に存在すること（＋旧記述が残っていないこと）を機械検出で固定する。
-CT_REF_FILE="${REPO_ROOT}/skills/create-ticket/references/guarantee-section.md"
-QC_SKILL_FILE="${REPO_ROOT}/skills/quality-check/SKILL.md"
-GA_DRIFT_FILE="${REPO_ROOT}/skills/guarantee-audit/references/drift-mode.md"
+# 規則の正本は docs/ai-driven-development-strategy.md 5.3 の ```text ブロックに置き、
+# 実行時ファイルへ**逐語コピー**する。ここでは正本ファイルからブロックを丸ごと抽出し、
+# 各コピー先に**行単位で完全一致**して含まれることを照合する。
+#
+# 先頭1文だけをテストファイル内のリテラルと比較する形にしない: それではコピー側の本体を
+# 削っても正本側を書き換えても検出できず、「一致はテストが固定している」という主張が
+# 成立しない（テストのリテラルは正本のコピーであり、正本そのものではない）。
+#
+# 適用先の一覧は**正本ファイルの「定型文の適用先」の表から読む**。表と実態がずれた場合も
+# ここで落ちる（テスト側に適用先をハードコードすると、表の更新漏れを検出できない）。
 
-# (1) 台帳パスの解決: 正本 + 4つの適用先
-path_canon='**台帳のパスはリポジトリルート基準で解決する（引数を省略しない）**: リポジトリルートを `git rev-parse --show-toplevel` で解決し（`detect-dev-phase` がサブディレクトリからでもリポジトリルートの `CLAUDE.md` を見つけるのと同じ考え方）、台帳の Read にも索引チェックの引数にも `<リポジトリルート>/docs/guarantees.md` を使う。'
-for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE" "$QC_SKILL_FILE" "$GA_DRIFT_FILE"; do
-  assert_file_has "台帳パスの解決の定型文が $(basename "$(dirname "$target_file")")/$(basename "$target_file") に逐語で存在する" \
-    "$target_file" "$path_canon"
-done
+CANON_TMP="${TMP_ROOT}/canon"
+mkdir -p "$CANON_TMP"
 
-# (2) 保証 ID のスコープ検証: 正本 + 2つの適用先
-id_canon='> **保証 ID のスコープ検証（宣言側・検証側に共通）**: 保証 ID が**完全な ID 文法 `G-<N>-<枝番>` に一致する**ことを確認する'
-for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE"; do
-  assert_file_has "保証 ID のスコープ検証の定型文が $(basename "$(dirname "$target_file")")/$(basename "$target_file") に逐語で存在する" \
-    "$target_file" "$id_canon"
-done
-for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE"; do
-  assert_file_has "接頭辞一致だけで通さない旨が $(basename "$target_file") にある" \
-    "$target_file" '**接頭辞 `G-<N>-` の一致だけで通さない**'
-done
+# **注意（macOS の awk）**: BWK awk（macOS 標準・20200816）は**非 ASCII 文字列の `==` を
+# 誤って真にする**（`awk 'BEGIN{print ("「あ」" == "「い」")}'` が `1` を返すことを実測）。
+# 日本語を含む文字列の一致判定に awk の `==` を使うと、**別物どうしが一致と判定される**。
+# ここでの照合は grep -F / cmp（いずれもバイト厳密）だけで行い、awk は行番号の算出にしか使わない。
 
-# (3) 親Issue本文のカテゴリ配下の全件走査: 正本 + 2つの適用先
-scan_canon='- **カテゴリ配下は全件走査する（部分成功≠完全成功）**: 対象カテゴリ配下の行を**1行残らず**確認し、次の**いずれか**を満たすときだけ受理する:'
-for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE"; do
-  assert_file_has "全件走査の定型文が $(basename "$(dirname "$target_file")")/$(basename "$target_file") に逐語で存在する" \
-    "$target_file" "$scan_canon"
-done
-for target_file in "$STRATEGY_FILE" "$CT_REF_FILE" "$REF_FILE"; do
-  assert_file_has "「1件でも有効なら受理」を禁じる文が $(basename "$target_file") にある" \
-    "$target_file" '**「有効な ID が1件でもあれば受理」という判定にしないこと**'
-done
+# 正本ファイルから、指定名の正本マーカーを含む ```text ブロックの中身を取り出す。
+# 引数: <定型文の名前>
+extract_canonical_block() {
+  local name="$1" marker marker_line open_line close_line
+  marker="<!-- 正本: docs/ai-driven-development-strategy.md 5.3「${name}」 -->"
+  marker_line="$(grep -nF -- "$marker" "$STRATEGY_FILE" | head -1 | cut -d: -f1)"
+  if [ -z "$marker_line" ]; then
+    return 0
+  fi
+  open_line="$(awk -v m="$marker_line" 'NR < m && /^```text$/ { last = NR } END { print last + 0 }' "$STRATEGY_FILE")"
+  close_line="$(awk -v m="$marker_line" 'NR > m && /^```$/ { print NR; exit }' "$STRATEGY_FILE")"
+  if [ "$open_line" -eq 0 ] || [ -z "$close_line" ]; then
+    return 0
+  fi
+  sed -n "$((open_line + 1)),$((close_line - 1))p" "$STRATEGY_FILE"
+}
 
-# (4) 台帳の読み取りの正本: 正本 + promote-verify
-read_canon='> **台帳の読み取りの正本（散文で読み直さない）**: 台帳から保証 ID・約束文・テスト参照・宣言元を読み取る必要がある場合は、**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと。'
-for target_file in "$STRATEGY_FILE" "$REF_FILE"; do
-  assert_file_has "台帳の読み取りの正本の定型文が $(basename "$target_file") に逐語で存在する" \
-    "$target_file" "$read_canon"
-done
+# パターンファイルの全行が、対象ファイルに連続して出現するかを判定する（バイト厳密）。
+# 引数: <パターンファイル> <対象ファイル>。出力: MATCH | NOMATCH | EMPTYPATTERN
+file_contains_block() {
+  local pattern_file="$1" target_file="$2"
+  local n first start end slice
+  n="$(awk 'END { print NR + 0 }' "$pattern_file")"
+  if [ "$n" -eq 0 ]; then
+    printf 'EMPTYPATTERN'
+    return 0
+  fi
+  first="$(head -1 "$pattern_file")"
+  slice="$(mktemp)"
+  while IFS= read -r start; do
+    [ -z "$start" ] && continue
+    end=$((start + n - 1))
+    sed -n "${start},${end}p" "$target_file" > "$slice"
+    if cmp -s "$slice" "$pattern_file"; then
+      rm -f "$slice"
+      printf 'MATCH'
+      return 0
+    fi
+  done <<<"$(grep -nFx -- "$first" "$target_file" | cut -d: -f1)"
+  rm -f "$slice"
+  printf 'NOMATCH'
+  return 0
+}
 
-# 正本側の適用先一覧が実態と一致していること（表の更新漏れ検出）
-assert_file_has "正本に定型文の適用先の表がある" "$STRATEGY_FILE" '#### 定型文の適用先（コピー済みの実行時ファイル）'
-for listed in 'skills/create-ticket/references/guarantee-section.md' \
-  'skills/promote-verify/references/guarantee-consistency.md' \
-  'skills/quality-check/SKILL.md' 'skills/guarantee-audit/references/drift-mode.md'; do
-  assert_file_has "適用先の表に ${listed} が載っている" "$STRATEGY_FILE" "$listed"
-done
+# 正本の「定型文の適用先」の表から (名前, 適用先ファイル一覧) を読む。
+canon_table_rows="$(awk '
+  /^#### 定型文の適用先/ { intable = 1; next }
+  intable && /^\| 定型文 \| 適用先 \|/ { next }
+  intable && /^\|---/ { next }
+  intable && /^\|/ { print; next }
+  intable && !/^\|/ { if (started) exit }
+  intable { started = 1 }
+' "$STRATEGY_FILE")"
+
+canon_row_count="$(printf '%s\n' "$canon_table_rows" | grep -c .)"
+if [ "$canon_row_count" -lt 5 ]; then
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  FAILED_TESTS+=("定型文の適用先の表を読めない（${canon_row_count} 行）")
+  echo "  NG - 定型文の適用先の表を読めない（${canon_row_count} 行しか取れず判定不能）"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 定型文の適用先の表から ${canon_row_count} 件の定型文を読み取れる"
+fi
+
+# 正本ファイル内に存在する 正本マーカー付き ```text ブロックの名前一覧（表の網羅性の検査用）
+canon_marker_names="$(grep -oE '<!-- 正本: docs/ai-driven-development-strategy\.md 5\.3「[^」]+」 -->' "$STRATEGY_FILE" \
+  | sed -e 's/^.*5\.3「//' -e 's/」 -->$//' | sort -u)"
+
+canon_table_names=""
+while IFS= read -r row; do
+  [ -z "$row" ] && continue
+  name="$(printf '%s' "$row" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')"
+  targets="$(printf '%s' "$row" | awk -F'|' '{ print $3 }' | grep -oE '(skills|agents)/[A-Za-z0-9_./-]+\.md' | sort -u)"
+  canon_table_names="${canon_table_names}${name}
+"
+
+  block_file="${CANON_TMP}/$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '_').txt"
+  extract_canonical_block "$name" > "$block_file"
+  block_lines="$(grep -c . "$block_file" || true)"
+  if [ "$block_lines" -lt 2 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("定型文「${name}」を正本から抽出できない")
+    echo "  NG - 定型文「${name}」を正本から抽出できない（${block_lines} 行。検査不能を pass にしない）"
+    continue
+  fi
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - 定型文「${name}」を正本から抽出できる（${block_lines} 行）"
+
+  # 表が挙げるファイル名（basename）から実ファイルを解決して照合する
+  while IFS= read -r target_rel; do
+    [ -z "$target_rel" ] && continue
+    target_path="${REPO_ROOT}/${target_rel}"
+    if [ ! -r "$target_path" ]; then
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      FAILED_TESTS+=("適用先 ${target_rel} を読めない（定型文「${name}」）")
+      echo "  NG - 適用先 ${target_rel} を読めない（定型文「${name}」）"
+      continue
+    fi
+    verdict="$(file_contains_block "$block_file" "$target_path")"
+    if [ "$verdict" = "MATCH" ]; then
+      PASS_COUNT=$((PASS_COUNT + 1))
+      echo "  ok - 定型文「${name}」が ${target_rel} に**行単位で完全一致**して存在する"
+    else
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      FAILED_TESTS+=("定型文「${name}」が ${target_rel} と一致しない（${verdict}）")
+      echo "  NG - 定型文「${name}」が ${target_rel} と一致しない（${verdict}）"
+    fi
+  done <<<"$targets"
+done <<<"$canon_table_rows"
+
+# 表の網羅性: 正本に存在する定型文がすべて表に載っていること（定型文を足して表を更新し忘れると落ちる）
+missing_from_table=""
+while IFS= read -r marker_name; do
+  [ -z "$marker_name" ] && continue
+  printf '%s\n' "$canon_table_names" | grep -Fxq -- "$marker_name" || missing_from_table="${missing_from_table}${marker_name} "
+done <<<"$canon_marker_names"
+assert_eq "正本にある定型文はすべて適用先の表に載っている（表の更新漏れ検出）" "" "$missing_from_table"
 
 # 否定検査: cwd 相対で索引チェックを呼ぶ旧記述が消えていること
+QC_SKILL_FILE="${REPO_ROOT}/skills/quality-check/SKILL.md"
+GA_DRIFT_FILE="${REPO_ROOT}/skills/guarantee-audit/references/drift-mode.md"
 for target_file in "$REF_FILE" "$QC_SKILL_FILE" "$GA_DRIFT_FILE"; do
   bad_hits="$(grep -nE 'claude-harness-run guarantee-index-check( docs/guarantees\.md)?$' "$target_file")"
   bad_exit=$?

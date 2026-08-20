@@ -102,7 +102,9 @@ read -r -d '' PROMOTION_DECISION_JQ_READY <<'JQPROG'
     | ( if $criteria == null then ["criteria_unknown"]
         elif ($criteria | type) != "array" then ["criteria_invalid"]
         elif ($criteria | length) == 0 then ["criteria_empty"]
-        elif ([$criteria[] | select((type == "object") and (.needsHumanReview == true))] | length) > 0 then ["criteria_needs_human_review"]
+        elif ([$criteria[] | select((type != "object") or (has("needsHumanReview") | not))] | length) > 0 then ["criteria_review_missing"]
+        elif ([$criteria[] | select((.needsHumanReview | type) != "boolean")] | length) > 0 then ["criteria_review_invalid"]
+        elif ([$criteria[] | select(.needsHumanReview == true)] | length) > 0 then ["criteria_needs_human_review"]
         else [] end ) as $review_blockers
     | ( if $qc == null then ["quality_check_missing"]
         elif ($qc | type) != "object" then ["quality_check_invalid"]

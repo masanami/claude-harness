@@ -127,13 +127,14 @@ exit code:
 |---|---|---|
 | 1 | `allMerged` | `allMerged === true` |
 | 2 | `criteriaConsistent` | `criteria` が**1件以上**あり、全要素の `status` が `"consistent"` |
-| 3 | `criteriaNoHumanReview` | `criteria` が**1件以上**あり、`needsHumanReview === true` の要素が無い |
+| 3 | `criteriaNoHumanReview` | `criteria` が**1件以上**あり、全要素が `needsHumanReview` を**boolean で持ち**、`true` の要素が無い |
 | 4 | `qualityOk` | `qualityCheck.skipped === true` **または** `qualityCheck.result === "pass"` |
 | 5 | `e2eOk` | `e2e.skipped === true` **または** `e2e.passed === true` |
 | 6 | `guaranteeOk` | `guaranteeCheck.skipped === true` **または** `guaranteeCheck.allConsistent === true` |
 
 - **`criteria` が空配列・`null` のときは項2・3を真にしない**（受入基準ゼロ件で昇格可能と誤判定する罠を実装で塞ぐ。`/promote-verify` は Step 3-1 でそもそも中断するが、その防御が外れても本スクリプトで落ちる二重防御）。
 - 項4〜6 の「スキップは OK 扱い」は**意図した意味論**であり変更しないこと。ただし `skipped` が `true` でないのに判定フィールド（`result` / `passed` / `allConsistent`）が無い入力は、真にせず `*_result_missing` を積む（フィールドの不在を「問題なし」に読み替えない）。
+- **項2・3 も同じ規律**である: `criteria` の要素に `status` / `needsHumanReview` が無い、または `needsHumanReview` が boolean でない入力は真にしない。**`needsHumanReview` の不在を「要人間判定なし」に読み替えると、要人間判定の付いた基準を渡し忘れた呼び出しがそのまま `readyForPromotion: true` になる**（項3が判定へ接続されていないのと同じ状態になる）。
 - `guaranteeCheck.skipped` を `true` にしてよいのは SDD期として確定した場合だけ、という規律は呼び出し側（`/promote-verify` の Step 5.5）の責務であり、本スクリプトは判定しない。
 
 `blockers` の語彙:
@@ -145,6 +146,8 @@ exit code:
 | `criteria_invalid` | `criteria` が配列でない |
 | `criteria_empty` | `criteria` が空配列（受入基準ゼロ件） |
 | `criteria_status_missing` | `criteria` の要素に `status` が無い |
+| `criteria_review_missing` | `criteria` の要素に `needsHumanReview` が無い（**不在を「要人間判定なし」に読み替えない**） |
+| `criteria_review_invalid` | `needsHumanReview` が boolean でない（`null` / 文字列など。真偽の判定ができない値を `false` に丸めない） |
 | `criteria_not_consistent` | `consistent` 以外の `status` がある |
 | `criteria_needs_human_review` | `needsHumanReview === true` の基準がある |
 | `quality_check_missing` / `quality_check_invalid` | `qualityCheck` が `null` / オブジェクトでない |

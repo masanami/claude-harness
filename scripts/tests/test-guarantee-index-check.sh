@@ -453,6 +453,89 @@ else
 fi
 
 
+echo "=== test: 値にタブが含まれても列がずれない（出力契約の維持） ==="
+
+# 台帳由来の値は任意の文字を含みうる。タブ区切りの受け渡しでエスケープしていないと、
+# 列がずれて jq が別のフィールドを読む・型変換に失敗して stdout が空になる
+# （＝正当な台帳が不透明に落ちる）。エスケープ・復元の往復を固定する。
+TAB_WS="${TMP_ROOT}/tabws"
+mkdir -p "${TAB_WS}/docs" "${TAB_WS}/tests"
+printf 'it("case a", () => {});\n' > "${TAB_WS}/tests/a.test.ts"
+
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: 約束A\t続き\n\n- テスト: `tests/a.test.ts::case a`\n- 宣言元: #1\n' > "${TAB_WS}/docs/tab-statement.md"
+TAB_OUT="$(cd "$TAB_WS" && bash "$TARGET_SCRIPT" docs/tab-statement.md --base "$TAB_WS" 2>/dev/null)"
+TAB_EXIT=$?
+assert_eq "約束文にタブがあっても exit 0（正当な台帳を落とさない）" "0" "$TAB_EXIT"
+assert_eq "約束文にタブがあっても stdout に JSON を出す（空にならない）" \
+  "pass" "$(jq -r '.status' <<<"$TAB_OUT")"
+assert_eq "約束文のタブは台帳の記載どおり復元される" \
+  "$(printf '約束A\t続き')" "$(jq -r '.guarantees[0].statement' <<<"$TAB_OUT")"
+assert_eq "タブがあっても宣言元の列がずれない" "1" "$(jq -r '.guarantees[0].provenance.issue' <<<"$TAB_OUT")"
+
+printf 'it("case\ta", () => {});\n' > "${TAB_WS}/tests/b.test.ts"
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: 約束A\n\n- テスト: `tests/b.test.ts::case\ta`\n- 宣言元: #1\n' > "${TAB_WS}/docs/tab-ref.md"
+TABREF_OUT="$(cd "$TAB_WS" && bash "$TARGET_SCRIPT" docs/tab-ref.md --base "$TAB_WS" 2>/dev/null)"
+assert_eq "テスト参照にタブがあっても実検査は通る" "pass" "$(jq -r '.status' <<<"$TABREF_OUT")"
+assert_eq "tests[] はタブを含む参照を切り詰めずに返す（実検査が使った値と同一）" \
+  "$(printf 'tests/b.test.ts::case\ta')" "$(jq -r '.guarantees[0].tests[0]' <<<"$TABREF_OUT")"
+
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### 壊れた\t見出し\n\n- テスト: `tests/a.test.ts::case a`\n- 宣言元: #1\n' > "${TAB_WS}/docs/tab-heading.md"
+TABHEAD_OUT="$(cd "$TAB_WS" && bash "$TARGET_SCRIPT" docs/tab-heading.md --base "$TAB_WS" 2>/dev/null)"
+assert_eq "書式違反の見出しにタブがあっても reason 列がずれない" \
+  "malformed_guarantee_id" "$(jq -r '.broken[0].reason' <<<"$TABHEAD_OUT")"
+assert_eq "書式違反の見出しはタブを含めて記載どおり返す" \
+  "$(printf '壊れた\t見出し')" "$(jq -r '.broken[0].guarantee_id' <<<"$TABHEAD_OUT")"
+
+# バックスラッシュはエスケープの導入で壊れやすい。往復で不変であることを固定する
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: path C:\\tmp\\x と \\t を含む\n\n- テスト: `tests/a.test.ts::case a`\n- 宣言元: #1\n' > "${TAB_WS}/docs/backslash.md"
+BS_OUT="$(cd "$TAB_WS" && bash "$TARGET_SCRIPT" docs/backslash.md --base "$TAB_WS" 2>/dev/null)"
+assert_eq "バックスラッシュ・リテラルの \\t を含む約束文が往復で不変" \
+  'path C:\tmp\x と \t を含む' "$(jq -r '.guarantees[0].statement' <<<"$BS_OUT")"
+
+echo "=== test: 保証節が2つ以上ある台帳（黙って併合しない） ==="
+
+DUP_WS="${TMP_ROOT}/dupsec"
+mkdir -p "${DUP_WS}/docs" "${DUP_WS}/tests"
+printf 'it("x", () => {});\n' > "${DUP_WS}/tests/a.test.ts"
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: A\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n\n## 保証ポリシー\n\n### G-1-2: B\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n' > "${DUP_WS}/docs/two-sections.md"
+DUP_OUT="$(cd "$DUP_WS" && bash "$TARGET_SCRIPT" docs/two-sections.md --base "$DUP_WS" 2>/dev/null)"
+DUP_EXIT=$?
+assert_eq "保証節が2つある台帳は exit 1（併合して pass にしない）" "1" "$DUP_EXIT"
+assert_eq "duplicate_guarantee_section を報告する" \
+  "1" "$(jq -r '[.broken[] | select(.reason == "duplicate_guarantee_section")] | length' <<<"$DUP_OUT")"
+assert_eq "2つ目の節の見出しを guarantee_id に入れる" \
+  "保証ポリシー" "$(jq -r '[.broken[] | select(.reason == "duplicate_guarantee_section") | .guarantee_id][0]' <<<"$DUP_OUT")"
+
+# 受理方向: 節が1つなら当然 pass（過剰に落とさない）
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: A\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n\n## Gaps（テストのない公開面）\n' > "${DUP_WS}/docs/one-section.md"
+ONE_OUT="$(cd "$DUP_WS" && bash "$TARGET_SCRIPT" docs/one-section.md --base "$DUP_WS" 2>/dev/null)"
+assert_eq "保証節が1つなら pass（過剰に落とさない）" "pass" "$(jq -r '.status' <<<"$ONE_OUT")"
+# フェンス内の「## 保証」見出しは節として数えない
+printf '# 保証台帳\n\n```markdown\n## 保証（Guarantees）\n```\n\n## 保証（Guarantees）\n\n### G-1-1: A\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n' > "${DUP_WS}/docs/fenced-section.md"
+FENSEC_OUT="$(cd "$DUP_WS" && bash "$TARGET_SCRIPT" docs/fenced-section.md --base "$DUP_WS" 2>/dev/null)"
+assert_eq "フェンス内の「## 保証」見出しは2つ目の節として数えない" "pass" "$(jq -r '.status' <<<"$FENSEC_OUT")"
+
+echo "=== test: 正本台帳に残った「裁可待ち」を警告する（status は落とさない） ==="
+
+PEND_WS="${TMP_ROOT}/pending"
+mkdir -p "${PEND_WS}/docs" "${PEND_WS}/tests"
+printf 'it("x", () => {});\n' > "${PEND_WS}/tests/a.test.ts"
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: A\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: 裁可待ち\n\n### G-1-2: B\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n' > "${PEND_WS}/docs/pending.md"
+PEND_OUT="$(cd "$PEND_WS" && bash "$TARGET_SCRIPT" docs/pending.md --base "$PEND_WS" 2>"${PEND_WS}/stderr.txt")"
+PEND_EXIT=$?
+assert_eq "裁可待ちは書式として正当なので exit 0" "0" "$PEND_EXIT"
+assert_eq "裁可待ちは broken に積まない" "0" "$(jq -r '.broken | length' <<<"$PEND_OUT")"
+assert_eq "裁可待ちは stderr で警告する（黙って通さない）" "1" \
+  "$(grep -c '裁可待ち」のままの保証' "${PEND_WS}/stderr.txt")"
+assert_eq "警告に該当 ID を含める" "1" "$(grep -c 'G-1-1' "${PEND_WS}/stderr.txt")"
+assert_eq "裁可待ちでない保証は警告に出さない" "0" "$(grep -c 'G-1-2' "${PEND_WS}/stderr.txt")"
+
+# 裁可待ちが1件も無ければ警告を出さない（常時警告で意味を失わせない）
+printf '# 保証台帳\n\n## 保証（Guarantees）\n\n### G-1-1: A\n\n- テスト: `tests/a.test.ts::x`\n- 宣言元: #1\n' > "${PEND_WS}/docs/no-pending.md"
+(cd "$PEND_WS" && bash "$TARGET_SCRIPT" docs/no-pending.md --base "$PEND_WS" >/dev/null 2>"${PEND_WS}/stderr2.txt")
+assert_eq "裁可待ちが無ければ警告を出さない" "0" "$(grep -c '裁可待ち」のままの保証' "${PEND_WS}/stderr2.txt")"
+
+
 echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"

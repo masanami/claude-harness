@@ -74,10 +74,23 @@ gic_trim() {
   printf '%s' "$value"
 }
 
+# 走査結果は「タブ区切り1行1レコード」で受け渡し、最後に jq で JSON へ組み立てる。
+# 台帳由来の値（約束文・テスト参照・書式違反の見出しなど）は**任意の文字を含みうる**ため、
+# 値の中のタブがそのまま入ると列がずれ、下流の jq が別のフィールドを読む・型変換に失敗して
+# 出力が空になる（＝正当な台帳が不透明に落ちる）。値は積む前にエスケープし、jq 側で
+# 復元する。復元は単一パス（`\` の次の1文字を見る）で行うため、`\t` を含む約束文も
+# 取り違えない。
+gic_escape_field() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+
 # 検出した問題を GIC_ISSUES へ積む。
 # 引数: <保証ID（不明なら空文字）> <テスト参照（無ければ空文字）> <理由コード>
 gic_add_issue() {
-  GIC_ISSUES+=("${1}"$'\t'"${2}"$'\t'"${3}")
+  GIC_ISSUES+=("$(gic_escape_field "$1")"$'\t'"$(gic_escape_field "$2")"$'\t'"$(gic_escape_field "$3")")
 }
 
 # 直前まで読んでいた保証を1件閉じる。テスト参照ゼロ件・宣言元行の欠落／書式違反を
@@ -100,7 +113,7 @@ gic_close_guarantee() {
     malformed) gic_add_issue "$id" "" "malformed_provenance" ;;
   esac
 
-  GIC_GUARANTEES+=("${seq}"$'\t'"${id}"$'\t'"${statement}"$'\t'"${prov_kind}"$'\t'"${prov_issue}")
+  GIC_GUARANTEES+=("${seq}"$'\t'"$(gic_escape_field "$id")"$'\t'"$(gic_escape_field "$statement")"$'\t'"${prov_kind}"$'\t'"${prov_issue}")
   return 0
 }
 
@@ -173,6 +186,13 @@ gic_scan() {
       current_prov_count=0
       case "$heading" in
         保証*)
+          # 保証節の識別規則（正本: docs/ai-driven-development-strategy.md 5.3）は
+          # 「該当する見出しが2つ以上ある本文は解釈できないとして扱う」。台帳側でこれを
+          # 実装するのは本スクリプトであり、2つ目以降を黙って併合しない
+          # （併合すると、どちらの節を正とするか決められないまま索引が pass する）。
+          if [ "$GIC_HAS_GUARANTEE_SECTION" = "true" ]; then
+            gic_add_issue "$heading" "" "duplicate_guarantee_section"
+          fi
           section="guarantees"
           GIC_HAS_GUARANTEE_SECTION="true"
           ;;
@@ -322,7 +342,7 @@ gic_record_ref() {
 
   GIC_REF_COUNT=$((GIC_REF_COUNT + 1))
   if [ -n "$seq" ]; then
-    GIC_ALL_REFS+=("${seq}"$'\t'"${ref}")
+    GIC_ALL_REFS+=("${seq}"$'\t'"$(gic_escape_field "$ref")")
   fi
 
   case "$ref" in
@@ -401,6 +421,32 @@ gic_resolve_base() {
   fi
 
   pwd
+  return 0
+}
+
+# `宣言元: 裁可待ち` のまま正本台帳に残っている保証を stderr に列挙する（status は変えない）。
+gic_warn_pending_provenance() {
+  local entry pending_ids=""
+  local pending_count=0
+
+  if [ "${#GIC_GUARANTEES[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  for entry in "${GIC_GUARANTEES[@]}"; do
+    case "$entry" in
+      *$'\t'pending$'\t'*)
+        pending_count=$((pending_count + 1))
+        pending_ids="${pending_ids}$(printf '%s' "$entry" | cut -f2) "
+        ;;
+    esac
+  done
+
+  if [ "$pending_count" -gt 0 ]; then
+    echo "Warning: 宣言元が「裁可待ち」のままの保証が ${pending_count} 件あります: ${pending_ids}" >&2
+    echo "  裁可待ちは裁可前のドラフトの規約値です。正本台帳に残っている場合は、裁可した Issue / PR の番号へ差し替えてください（書式は '- 宣言元: #<番号>'）。" >&2
+  fi
+
   return 0
 }
 
@@ -514,10 +560,15 @@ main() {
     --argjson guarantees "$GIC_GUARANTEE_COUNT" \
     --argjson refs "$GIC_REF_COUNT" \
     --argjson gaps "$GIC_GAP_COUNT" '
-      def rows($text): $text | split("\n") | map(select(length > 0) | split("\t"));
+      # gic_escape_field の逆変換。`\\` の次の1文字だけを見る単一パスで復元する
+      # （`gsub("\\\\t")` → `gsub("\\\\\\\\")` の2段階だと `\\t`（バックスラッシュ+t）を
+      #  取り違えるため、必ず1回の走査で解く）。
+      def unesc: gsub("\\\\(?<c>.)"; if .c == "t" then "\t" else .c end);
+      def rows($text): $text | split("\n") | map(select(length > 0) | split("\t") | map(unesc));
       [ split("\n")[]
         | select(length > 0)
         | split("\t")
+        | map(unesc)
         | {
             guarantee_id: .[0],
             ref: (if (.[1] // "") == "" then null else .[1] end),
@@ -560,6 +611,11 @@ main() {
   if [ "$GIC_GUARANTEE_COUNT" -eq 0 ]; then
     echo "Warning: 保証が1件も登録されていません（${ledger}）。索引は空のため pass ですが、台帳としては未整備です。" >&2
   fi
+
+  # 裁可待ちは「裁可前のドラフト」の規約値であり、正本台帳に残っているのは裁可経路の
+  # 取りこぼし（＝出自を追跡できない約束が missing_provenance を回避して登録された状態）。
+  # 書式としては正当なので status は落とさないが、黙って通さず件数を stderr に出す。
+  gic_warn_pending_provenance
 
   exit "$GUARANTEE_INDEX_CHECK_EX_PASS"
 }

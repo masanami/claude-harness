@@ -117,7 +117,7 @@ ac_input() {
   if [ "$d" = "1" ]; then
     human='[]'
   else
-    human='[{"kind":"ledger_read_mismatch","detail":"..."}]'
+    human='[{"kind":"guarantee_provenance_mismatch","detail":"..."}]'
   fi
   printf '{"targets":%s,"guarantees":%s,"index":%s,"humanReview":%s}' \
     "$targets" "$guarantees" "$index" "$human"
@@ -181,7 +181,7 @@ empty_ok='{"targets":[],"guarantees":[],"index":{"status":"pass","error":null},"
 assert_eq "targets 空配列（保証節が「なし」と明示）＋索引 pass ＋要人間判定なし → true" \
   "true" "$(decide all-consistent "$empty_ok")"
 
-empty_with_review='{"targets":[],"guarantees":[],"index":{"status":"pass","error":null},"humanReview":[{"kind":"ledger_read_mismatch"}]}'
+empty_with_review='{"targets":[],"guarantees":[],"index":{"status":"pass","error":null},"humanReview":[{"kind":"guarantee_provenance_mismatch"}]}'
 assert_eq "targets 空でも要人間判定があれば false（空虚な真で素通りしない）" \
   "false" "$(decide all-consistent "$empty_with_review")"
 assert_eq "その場合の blockers は human_review_present" \
@@ -252,7 +252,7 @@ assert_eq "verdict フィールドの不在を「問題なし」に読み替え�
 
 # humanReview の kind は問わない（(d) は非空そのものを見る＝ kind 追加時の接続漏れが起きない）
 kind_failures=0
-for kind in phase_invalid ledger_missing guarantee_section_missing index_error ledger_read_mismatch guarantee_id_scope_mismatch guarantee_provenance_mismatch verification_failed; do
+for kind in phase_invalid ledger_missing guarantee_section_missing index_error decision_unavailable guarantee_id_scope_mismatch guarantee_provenance_mismatch verification_failed; do
   body="{\"targets\":[\"G-158-1\"],\"guarantees\":[{\"guarantee_id\":\"G-158-1\",\"verdict\":\"consistent\"}],\"index\":{\"status\":\"pass\",\"error\":null},\"humanReview\":[{\"kind\":\"${kind}\"}]}"
   if [ "$(decide all-consistent "$body")" != "false" ]; then
     kind_failures=$((kind_failures + 1))
@@ -339,6 +339,40 @@ assert_eq "その blockers は criteria_unknown" \
 criteria_no_status='{"allMerged":true,"criteria":[{"id":"AC-1"}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
 assert_eq "status フィールドの無い基準があれば false" \
   "false" "$(decide ready-for-promotion "$criteria_no_status")"
+
+# needsHumanReview の不在・非boolean を「要人間判定なし」に丸めない
+# （status には has() 検査があるのに項3だけ抜けていると、要人間判定の付いた基準を
+#  渡し忘れた呼び出しがそのまま readyForPromotion: true になる）
+criteria_no_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent"}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
+assert_eq "needsHumanReview が無い基準は true にしない（不在を「なし」に読み替えない）" \
+  "false" "$(decide ready-for-promotion "$criteria_no_review")"
+assert_eq "その blockers は criteria_review_missing" \
+  "criteria_review_missing" "$(blockers_of ready-for-promotion "$criteria_no_review")"
+assert_eq "その場合 criteriaNoHumanReview は false" \
+  "false" "$(term_of ready-for-promotion "$criteria_no_review" criteriaNoHumanReview)"
+
+criteria_null_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":null}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
+assert_eq "needsHumanReview が null の基準は true にしない" \
+  "false" "$(decide ready-for-promotion "$criteria_null_review")"
+assert_eq "その blockers は criteria_review_invalid" \
+  "criteria_review_invalid" "$(blockers_of ready-for-promotion "$criteria_null_review")"
+
+criteria_str_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":"yes"}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
+assert_eq "needsHumanReview が非boolean（文字列）の基準は true にしない" \
+  "false" "$(decide ready-for-promotion "$criteria_str_review")"
+assert_eq "その blockers は criteria_review_invalid" \
+  "criteria_review_invalid" "$(blockers_of ready-for-promotion "$criteria_str_review")"
+
+# 対称性: status と needsHumanReview の欠落は同じ強度で落ちる（同一 jq 内の非対称を作らない）
+assert_eq "status 欠落と needsHumanReview 欠落はどちらも false（検査の非対称が無い）" \
+  "false,false" \
+  "$(printf '%s,%s' "$(decide ready-for-promotion "$criteria_no_status")" "$(decide ready-for-promotion "$criteria_no_review")")"
+
+# 受理方向: boolean で明示されていれば従来どおり通る
+criteria_ok_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true},"guaranteeCheck":{"skipped":true}}'
+assert_eq "needsHumanReview: false は従来どおり true になる（過剰に落とさない）" \
+  "true" "$(decide ready-for-promotion "$criteria_ok_review")"
+
 
 echo ""
 echo "=== (7) CLI 契約（exit code と JSON の一致・実行前提の欠落） ==="
@@ -427,14 +461,15 @@ while IFS= read -r code; do
 done <<<"$impl_blockers"
 assert_eq "実装が返しうる blockers はすべて spec の語彙表に載っている（表の更新漏れ検出）" "" "$undocumented"
 assert_eq "実装が返しうる blockers の総数（語彙表と一致）" \
-  "34" "$(printf '%s\n' "$impl_blockers" | grep -c .)"
+  "36" "$(printf '%s\n' "$impl_blockers" | grep -c .)"
 
 spec_blocker_failures=""
 for code in targets_unknown targets_invalid targets_duplicated guarantees_unknown guarantees_invalid \
   guarantee_id_missing targets_not_covered index_missing index_invalid index_error index_not_pass \
   verdict_missing verdict_not_consistent human_review_invalid human_review_present \
   not_all_merged criteria_unknown criteria_invalid criteria_empty criteria_status_missing \
-  criteria_not_consistent criteria_needs_human_review quality_check_missing quality_check_invalid \
+  criteria_not_consistent criteria_review_missing criteria_review_invalid criteria_needs_human_review \
+  quality_check_missing quality_check_invalid \
   quality_result_missing quality_not_pass e2e_missing e2e_invalid e2e_result_missing e2e_not_passed \
   guarantee_check_missing guarantee_check_invalid guarantee_result_missing guarantee_not_consistent; do
   grep -qF -- "\`${code}\`" "$SPEC_FILE" || spec_blocker_failures="${spec_blocker_failures}${code} "

@@ -8,7 +8,7 @@
 
 **読み取り規則**: 本手順が散文で読む対象は**親Issue本文だけ**である。**台帳（`docs/guarantees.md`）は散文で読まない**（台帳の読み取りは 5.5-4 の決定的スクリプトへ一本化する。散文とスクリプトの二重の規則を持たないため）。
 
-> **台帳の読み取りの正本（散文で読み直さない）**: 台帳から保証 ID・約束文・テスト参照・宣言元を読み取る必要がある場合は、**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと。**自分で台帳ファイルを開いて数え直さない・Grep のヒットを「登録済み」の根拠にしない**（Grep はコードフェンスも節の範囲も見ないため、台帳が引用している書式の記入例や節の外の言及にマッチする）。散文が独自の規則で同じ台帳を読み直すと、**同じ台帳を2つの規則で読む**状態になり、規則がずれた分だけ欠陥になる（索引チェックはフェンス内を見ないため `status` は `pass` のままで、この食い違いは表に出ない）。フィールド定義の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること）。
+> **台帳の読み取りの正本（この定型文を持つ手順は散文で読み直さない）**: **この定型文が置かれている手順**で台帳から保証 ID・約束文・テスト参照・宣言元を読み取る必要がある場合は、**索引チェック（`guarantee-index-check`）の出力 `guarantees` を使う**こと。**自分で台帳ファイルを開いて数え直さない・Grep のヒットを「登録済み」の根拠にしない**（Grep はコードフェンスも節の範囲も見ないため、台帳が引用している書式の記入例や節の外の言及にマッチする）。散文が独自の規則で同じ台帳を読み直すと、**同じ台帳を2つの規則で読む**状態になり、規則がずれた分だけ欠陥になる（索引チェックはフェンス内を見ないため `status` は `pass` のままで、この食い違いは表に出ない）。フィールド定義の正本はプラグイン配下の `scripts/specs/guarantee-index-check.md`（Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/guarantee-index-check.md` として解決すること）。
 <!-- 正本: docs/ai-driven-development-strategy.md 5.3「台帳の読み取りの正本」 -->
 
 親Issue本文には索引チェックに相当する機械的な読み取り手段が無いため、こちらは次の規則に従って自分で読む（**5.5-3 がこの規則に従う**）:
@@ -39,7 +39,9 @@ SKILL.md の Step 5.5 で確定したフェーズに応じて、本ファイル�
 **台帳のパスはリポジトリルート基準で解決する（引数を省略しない）**: リポジトリルートを `git rev-parse --show-toplevel` で解決し（`detect-dev-phase` がサブディレクトリからでもリポジトリルートの `CLAUDE.md` を見つけるのと同じ考え方）、台帳の Read にも索引チェックの引数にも `<リポジトリルート>/docs/guarantees.md` を使う。**cwd 相対で台帳を探さない・索引チェックを引数なしで呼ばない**: 索引チェックは引数を省略すると `docs/guarantees.md` を **cwd 相対**で解決するため、サブディレクトリから起動されると台帳を見つけられない。一方フェーズ判定はリポジトリルートの `CLAUDE.md` を見て `gdd` を返すので、**GDD期と正しく判定したうえで、台帳が実在するのに検査不能になる**という食い違いになる。`git rev-parse --show-toplevel` が解決できない場合（git リポジトリでない等）は cwd を基準にし、**その事実を報告に明記する**（黙って cwd 相対へ倒さない）。テスト参照の基準ディレクトリは台帳の位置から自動解決されるため `--base` は指定しない。
 <!-- 正本: docs/ai-driven-development-strategy.md 5.3「台帳パスの解決」 -->
 
-統合ブランチの作業ツリーに `<リポジトリルート>/docs/guarantees.md` が存在するかを確認する。
+**本手順に適用されるのは、この定型文のうち「索引チェックへ渡す引数の解決」だけ**である。**本ファイルの手順は台帳を Read しない**（読み取りは 5.5-4 のスクリプトへ一本化済み。上記「台帳の読み取りの正本」）。定型文が「台帳の Read にも」と書いているのは、台帳を散文で読む他スキル（`/create-ticket` 等）と共通の文面だからであり、**本手順で台帳を Read する根拠にはならない**。
+
+統合ブランチの作業ツリーに `<リポジトリルート>/docs/guarantees.md` が**存在すること**を確認する（存在確認はファイルの有無だけを見る。中身は読まない）。
 
 存在しない場合は**運用前提の破れ**（GDD期を宣言しているのに駆動文書が無い）として `guaranteeCheck = { skipped: false, phase: "gdd", allConsistent: false, index: null, guarantees: null, humanReview: [{ kind: "ledger_missing", detail: "GDD期だが docs/guarantees.md が存在しない" }] }` とし、5.5-3 以降を実行せずに Step 6 へ進む。**`skipped` にしない**（台帳の新設・正本化は人間の裁可事項であり、本スキルでは行わない）。
 
@@ -87,19 +89,21 @@ SKILL.md の Step 5.5 で確定したフェーズに応じて、本ファイル�
 
 - **exit 0 または 1 で、stdout が妥当な JSON**（`status` が `"pass"` / `"fail"`）で、**`status` と exit code が整合している**（`pass`↔0 / `fail`↔1）→ その JSON を**そのまま** `guaranteeCheck.index` とし、`error` は `null` にする（検査自体は実行でき、結果も信頼できるため）
 - **`status` と exit code が食い違う場合**（`status: "pass"` なのに exit 1 等）→ **暗黙に pass へ倒さない**。取得できた JSON は**破棄せずそのまま保持**し、`status` を `"fail"` へ上書きしたうえで `error` に食い違いの内容を入れる（`{ ...取得した JSON, "status": "fail", "error": "status=<値> と exit code=<値> が食い違う" }`）。**`counts` / `broken` / `ledger` / `base` は取得できているので捨てない**（報告の情報量を落とさないため）。あわせて `humanReview` に `{ kind: "index_error", detail: "status と exit code の食い違い: ..." }` を積む（5.5-7 の (d) により `allConsistent` は `false` になる）
-- **exit 2（台帳が読めない・「保証」節が無い・jq 不在）／stdout が空または JSON としてパース不能／スクリプト実行不能** → 検査自体が実行できていないため、**取得できていないフィールドを `null` で明示的に初期化する**: `guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "broken": null, "error": "<stderr のメッセージ>" }`。**`pass` や「検査対象なし」に読み替えない**（検査不能は「問題0件」と同じではない）。**`broken` を `[]`、`counts` を 0 で埋めない**（空配列は「壊れた参照が無い」を意味してしまう）。あわせて `humanReview` に `{ kind: "index_error", detail: "..." }` を積む
+- **exit 2（台帳が読めない・「保証」節が無い・jq 不在）／stdout が空または JSON としてパース不能／スクリプト実行不能** → 検査自体が実行できていないため、**取得できていないフィールドを `null` で明示的に初期化する**: `guaranteeCheck.index = { "status": "fail", "ledger": null, "base": null, "counts": null, "guarantees": null, "broken": null, "error": "<stderr のメッセージ>" }`。**`pass` や「検査対象なし」に読み替えない**（検査不能は「問題0件」と同じではない）。**`broken` を `[]`、`counts` を 0 で埋めない**（空配列は「壊れた参照が無い」を意味してしまう）。あわせて `humanReview` に `{ kind: "index_error", detail: "..." }` を積む
 
 **`index` の形は経路によらず定義済みにする**（報告テンプレートが読むフィールドを未定義のまま残すと、実行主体が値を捏造することになる。早期失敗で `index` / `guarantees` を `null` 初期化しているのと同じ理由）。組み立てる全経路と、報告テンプレートが読むフィールドの定義状態は次のとおり:
 
-| 経路 | `index` 全体 | `status` | `error` | `counts` | `broken` | 5.5-5 以降 |
-|---|---|---|---|---|---|---|
-| 正常 pass（exit 0・`status: "pass"`） | 取得した JSON をそのまま | `"pass"` | `null` | スクリプトの値 | スクリプトの値（空配列＝壊れた参照なし） | 実行する |
-| 正常 fail（exit 1・`status: "fail"`） | 取得した JSON をそのまま | `"fail"` | `null` | スクリプトの値 | スクリプトの値（1件以上） | 実行する |
-| `status` と exit code の食い違い | 取得した JSON を保持し `status` / `error` を上書き | `"fail"` | 食い違いの説明（非 null） | スクリプトの値（保持） | スクリプトの値（保持） | **実行しない**（`guarantees: null`） |
-| exit 2（実行前提の欠落） | `null` 初期化した形 | `"fail"` | stderr のメッセージ | `null` | `null` | **実行しない**（`guarantees: null`） |
-| stdout が空・JSON パース不能 | 同上 | `"fail"` | パースできない旨 | `null` | `null` | **実行しない**（`guarantees: null`） |
-| スクリプト実行不能（ランチャー不在等） | 同上 | `"fail"` | 実行できない旨 | `null` | `null` | **実行しない**（`guarantees: null`） |
-| 早期失敗（5.5-1〜5.5-3 で中断） | `index` 自体が `null` | — | — | — | — | **実行しない**（`guarantees: null`） |
+| 経路 | `index` 全体 | `status` | `error` | `counts` | `index.guarantees` | `broken` | 5.5-5 以降 |
+|---|---|---|---|---|---|---|---|
+| 正常 pass（exit 0・`status: "pass"`） | 取得した JSON をそのまま | `"pass"` | `null` | スクリプトの値 | スクリプトの値（読み取った保証の一覧） | スクリプトの値（空配列＝壊れた参照なし） | 実行する |
+| 正常 fail（exit 1・`status: "fail"`） | 取得した JSON をそのまま | `"fail"` | `null` | スクリプトの値 | スクリプトの値（読み取れた範囲） | スクリプトの値（1件以上） | 実行する |
+| `status` と exit code の食い違い | 取得した JSON を保持し `status` / `error` を上書き | `"fail"` | 食い違いの説明（非 null） | スクリプトの値（保持） | スクリプトの値（保持。**採用しない**） | スクリプトの値（保持） | **実行しない**（`guaranteeCheck.guarantees: null`） |
+| exit 2（実行前提の欠落） | `null` 初期化した形 | `"fail"` | stderr のメッセージ | `null` | `null` | `null` | **実行しない**（`guaranteeCheck.guarantees: null`） |
+| stdout が空・JSON パース不能 | 同上 | `"fail"` | パースできない旨 | `null` | `null` | `null` | **実行しない**（`guaranteeCheck.guarantees: null`） |
+| スクリプト実行不能（ランチャー不在等） | 同上 | `"fail"` | 実行できない旨 | `null` | `null` | `null` | **実行しない**（`guaranteeCheck.guarantees: null`） |
+| 早期失敗（5.5-1〜5.5-3 で中断） | `index` 自体が `null` | — | — | — | — | — | **実行しない**（`guaranteeCheck.guarantees: null`） |
+
+**`index.guarantees`（索引チェックが読み取った台帳の一覧）と `guaranteeCheck.guarantees`（保証ごとの判定結果）は別物**である。前者は 5.5-5 / 5.5-6 の**入力**、後者は 5.5-7 の**出力**。表の `index.guarantees` 列は前者を指す。
 
 **`index.error` が非 null の経路では 5.5-5 以降を実行しない**（`guaranteeCheck.guarantees = null` のまま Step 6 へ進む）。5.5-5 / 5.5-6 の入力は `index.guarantees`（台帳の読み取り結果）であり、**結果を採用できない索引出力から登録確認・意味検証を組み立てることはできない**ためである。ここで散文が台帳を自分で読みに行くと、まさに解消したはずの「同じ台帳を2つの規則で読む」状態が復活する。この経路では 5.5-4 で `humanReview` に `index_error` を積んでおり、判定は (d) で `false` になる。
 
@@ -200,7 +204,7 @@ guaranteeCheck.allConsistent =
   "phase": "gdd",
   "allConsistent": false,
   "ledger": "docs/guarantees.md",
-  "index": { "status": "fail", "error": null, "ledger": "docs/guarantees.md", "base": "/abs/path", "counts": { "guarantees": 12, "refs": 15, "gaps": 3, "broken": 1 }, "broken": [{ "guarantee_id": "G-101-2", "ref": "tests/api/contact.test.ts::returns 400", "reason": "test_name_not_found" }] },
+  "index": { "status": "fail", "error": null, "ledger": "docs/guarantees.md", "base": "/abs/path", "counts": { "guarantees": 12, "refs": 15, "gaps": 3, "broken": 1 }, "guarantees": [{ "guarantee_id": "G-158-1", "statement": "...", "tests": ["tests/api/contact.test.ts::returns 400"], "provenance": { "kind": "issue", "issue": 158 } }], "broken": [{ "guarantee_id": "G-101-2", "ref": "tests/api/contact.test.ts::returns 400", "reason": "test_name_not_found" }] },
   "guarantees": [
     { "guarantee_id": "G-158-1", "kind": "new", "registered": true, "verdict": "drifted", "evidence": "...", "needsHumanReview": true }
   ],
@@ -225,13 +229,13 @@ guaranteeCheck.allConsistent =
 索引整合チェックの結果を採用できない経路（exit 2 / パース不能 / 実行不能）の `index` の形:
 
 ```json
-{ "status": "fail", "ledger": null, "base": null, "counts": null, "broken": null, "error": "台帳に「保証」節がありません（exit 2）" }
+{ "status": "fail", "ledger": null, "base": null, "counts": null, "guarantees": null, "broken": null, "error": "台帳に「保証」節がありません（exit 2）" }
 ```
 
 `status` と exit code が食い違った経路の `index` の形（取得できた値は保持する）:
 
 ```json
-{ "status": "fail", "ledger": "docs/guarantees.md", "base": "/abs/path", "counts": { "guarantees": 12, "refs": 15, "gaps": 3, "broken": 0 }, "broken": [], "error": "status=pass と exit code=1 が食い違う" }
+{ "status": "fail", "ledger": "docs/guarantees.md", "base": "/abs/path", "counts": { "guarantees": 12, "refs": 15, "gaps": 3, "broken": 0 }, "guarantees": [ ... ], "broken": [], "error": "status=pass と exit code=1 が食い違う" }
 ```
 
 - SDD期は `{ "skipped": true, "reason": "..." }` のみ（他のフィールドを持たせない）
