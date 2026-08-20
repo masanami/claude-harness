@@ -468,17 +468,28 @@ echo "=== test: 節未検出エラーの節見出しが書式仕様と食い違�
 # 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする。
 # scripts/README.md 既出）。抜き出しは grep、比較は文字列一致で行う。
 
-# フェンス内の書式例から、`## 保証` / `## Gaps` で始まる H2 行の**最初の1本**を取り出す。
+# 与えたテキストから、`## 保証` / `## Gaps` で始まる H2 行の**最初の1本**を取り出す。
 # 接頭辞一致は保証節の識別規則（正本 5.3）そのものであり、ここでの literal はその接頭辞だけ。
-heading_from() {
-  local file="$1" prefix="$2" found rc
-  found="$(grep -m1 -E "^${prefix}" "$file")"
+heading_in() {
+  local text="$1" prefix="$2" found rc
+  found="$(printf '%s\n' "$text" | grep -m1 -E "^${prefix}")"
   rc=$?
   if [ "$rc" -ge 2 ]; then
     printf '%s' "grep-error(${rc})"
     return 0
   fi
   printf '%s' "$found"
+}
+
+# **ファイル全体ではなく、コードフェンスの内側（＝書式例）だけ**を取り出す。
+# 見出しを探す範囲をファイル全体にすると、`## 保証` / `## Gaps` で始まる**散文の見出し**が
+# 将来足されたときに、書式例ではない行を正本として採用してしまう（照合が意味を失う）。
+# awk は行の正規表現マッチと print にのみ使う（非 ASCII の `==` は使わない。scripts/README.md）。
+fenced_lines() {
+  awk '
+    /^[[:space:]]{0,3}(```|~~~)/ { inside = !inside; next }
+    inside { print }
+  ' "$1"
 }
 
 SPEC_FILE="${GIC_TEST_DIR}/../specs/guarantee-index-check.md"
@@ -489,8 +500,10 @@ for f in "$STRATEGY_FILE" "$SPEC_FILE" "$BOOTSTRAP_REF"; do
     "true" "$(if [ -r "$f" ]; then echo true; else echo false; fi)"
 done
 
-CANON_GUARANTEE_HEADING="$(heading_from "$STRATEGY_FILE" '## 保証')"
-CANON_GAPS_HEADING="$(heading_from "$STRATEGY_FILE" '## Gaps')"
+# 正本側は、**すでに 5.3 の節を明示して切り出してある `canonical_example`**（上の受理方向
+# テストが使っているもの）から取る。フェンスの中でも「5.3 の書式例」に限定できる唯一の材料。
+CANON_GUARANTEE_HEADING="$(heading_in "${canonical_example:-}" '## 保証')"
+CANON_GAPS_HEADING="$(heading_in "${canonical_example:-}" '## Gaps')"
 
 # 抜き出し自体が空振りしていないこと（空文字どうしの比較は何も検証しないため）
 assert_eq "正本から保証節の見出しを抜き出せる" "true" \
@@ -499,14 +512,16 @@ assert_eq "正本から Gaps 節の見出しを抜き出せる" "true" \
   "$(if [ -n "$CANON_GAPS_HEADING" ]; then echo true; else echo false; fi)"
 
 # (1)=(2), (1)=(3): 書式仕様のコピーどうしが一致していること
+SPEC_FENCED="$(fenced_lines "$SPEC_FILE")"
+BOOTSTRAP_FENCED="$(fenced_lines "$BOOTSTRAP_REF")"
 assert_eq "スクリプト仕様の保証節見出しが正本と一致" \
-  "$CANON_GUARANTEE_HEADING" "$(heading_from "$SPEC_FILE" '## 保証')"
+  "$CANON_GUARANTEE_HEADING" "$(heading_in "$SPEC_FENCED" '## 保証')"
 assert_eq "スクリプト仕様の Gaps 節見出しが正本と一致" \
-  "$CANON_GAPS_HEADING" "$(heading_from "$SPEC_FILE" '## Gaps')"
+  "$CANON_GAPS_HEADING" "$(heading_in "$SPEC_FENCED" '## Gaps')"
 assert_eq "参照ファイル（bootstrap-mode）の保証節見出しが正本と一致" \
-  "$CANON_GUARANTEE_HEADING" "$(heading_from "$BOOTSTRAP_REF" '## 保証')"
+  "$CANON_GUARANTEE_HEADING" "$(heading_in "$BOOTSTRAP_FENCED" '## 保証')"
 assert_eq "参照ファイル（bootstrap-mode）の Gaps 節見出しが正本と一致" \
-  "$CANON_GAPS_HEADING" "$(heading_from "$BOOTSTRAP_REF" '## Gaps')"
+  "$CANON_GAPS_HEADING" "$(heading_in "$BOOTSTRAP_FENCED" '## Gaps')"
 
 # (1)=(4): スクリプトが持つ定数が正本と一致していること（source 済みの変数を直接見る）
 assert_eq "スクリプトの GIC_GUARANTEE_HEADING が正本と一致" \

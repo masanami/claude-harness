@@ -117,16 +117,23 @@ rs_add_hit() {
 # パス形でヒットした行は必ずファイル名も含むため、そのまま弱一致でも当たる。二重計上すると
 # `weak` の件数が「パス形では拾えなかった言及」を表さなくなる（仕分けの対象が読めなくなる）。
 # 除外側（ADR）も同様に既出として扱う——除外した行が weak として復活すると、除外の意味が消える。
-# 引数: <ファイル> <行番号>
+# **判定は退役パスごとに行う**（target・ファイル・行番号の3つ組で見る）。target を見ずに
+# 「ファイル・行番号」だけで既出とすると、1行が2つの退役文書に言及している場合——たとえば
+# 片方はパス形で、もう片方はファイル名だけで書かれている行——**後者の弱一致が、前者のヒットに
+# よって落とされる**（仕分け候補が出力から消える）。
+# 引数: <退役パス> <ファイル> <行番号>
 rs_already_seen() {
-  local file="$1" line="$2" entry seen_file seen_line
-  local escaped_file
+  local target="$1" file="$2" line="$3" entry seen_target seen_file seen_line
+  local escaped_target escaped_file
+  escaped_target="$(rs_escape_field "$target")"
   escaped_file="$(rs_escape_field "$file")"
 
   for entry in ${RS_REFS[@]+"${RS_REFS[@]}"} ${RS_EXCLUDED[@]+"${RS_EXCLUDED[@]}"}; do
+    seen_target="$(printf '%s' "$entry" | cut -f1)"
     seen_file="$(printf '%s' "$entry" | cut -f2)"
     seen_line="$(printf '%s' "$entry" | cut -f3)"
-    if [ "$seen_file" = "$escaped_file" ] && [ "$seen_line" = "$line" ]; then
+    if [ "$seen_target" = "$escaped_target" ] &&
+      [ "$seen_file" = "$escaped_file" ] && [ "$seen_line" = "$line" ]; then
       return 0
     fi
   done
@@ -138,7 +145,7 @@ rs_already_seen() {
 # 引数: <リポジトリルート> <退役パス> <検索語> <一致種別 path|basename>
 rs_scan_term() {
   local root="$1" target="$2" term="$3" kind="$4"
-  local list_file rc file line_no text hit
+  local list_file hit_file rc file line_no text hit
 
   # ファイル名一覧は NUL 区切りで受け取り、**一時ファイル経由で読む**。
   # コマンド置換（`$(...)`）は NUL バイトを捨てるため、`-z` の出力を変数に入れると
@@ -164,9 +171,28 @@ rs_scan_term() {
     return 1
   fi
 
+  # 走査中の中断は break で抜け、後片付けと戻り値はループの外の1箇所に集約する
+  # （読み取り中のファイルをループ内で消す形にしない）。
   while IFS= read -r -d '' file; do
     [ -z "$file" ] && continue
-    # ファイル名にコロンを含みうるため、ファイルごとに grep -n を掛けて `行番号:本文` だけを解析する
+
+    # ファイル名にコロンを含みうるため、ファイルごとに grep -n を掛けて `行番号:本文` だけを解析する。
+    # **この grep の rc も検査する**。プロセス置換で受けると rc が捨てられ、読み取り不能・
+    # 走査中の消失（未追跡ファイル）などで rc≥2 になったファイルが「ヒット0件」に化ける。
+    # git grep が一致を報告したファイルなので、それは掃引漏れであり、他に参照が無ければ
+    # `status: "pass"` になる（＝本スクリプトが塞いでいる欠陥そのもの）。
+    if ! hit_file="$(mktemp)"; then
+      RS_SCAN_ERROR="mktemp failed"
+      break
+    fi
+    grep -n -F -e "$term" -- "${root}/${file}" > "$hit_file" 2>/dev/null
+    rc=$?
+    if [ "$rc" -gt 1 ]; then
+      rm -f "$hit_file"
+      RS_SCAN_ERROR="grep failed (exit ${rc}) for file: ${file}"
+      break
+    fi
+
     while IFS= read -r hit; do
       [ -z "$hit" ] && continue
       line_no="${hit%%:*}"
@@ -174,14 +200,16 @@ rs_scan_term() {
       case "$line_no" in
         '' | *[!0-9]*) continue ;;
       esac
-      if [ "$kind" = "basename" ] && rs_already_seen "$file" "$line_no"; then
+      if [ "$kind" = "basename" ] && rs_already_seen "$target" "$file" "$line_no"; then
         continue
       fi
       rs_add_hit "$target" "$file" "$line_no" "$text" "$kind"
-    done < <(grep -n -F -e "$term" -- "${root}/${file}" 2>/dev/null)
+    done < "$hit_file"
+    rm -f "$hit_file"
   done < "$list_file"
 
   rm -f "$list_file"
+  [ -n "$RS_SCAN_ERROR" ] && return 1
   return 0
 }
 
@@ -333,7 +361,12 @@ main() {
   [ "${#RS_WEAK[@]}" -gt 0 ] && weak_text="$(printf '%s\n' "${RS_WEAK[@]}")"
   targets_text="$(printf '%s\n' "${RS_TARGETS[@]}")"
 
-  jq -n \
+  # jq の rc を検査し、**成功した場合だけ stdout へ出す**。`set -e` は有効でないため、
+  # 検査しないと組み立て失敗が無視され、stdout が空または不完全なまま先へ進む
+  # （参照0件なら exit 0＝呼び出し側は「JSON の無い exit 0」を受け取り、「stdout に JSON を
+  #  1個出す」契約が破れる。参照が残る場合も references を読めないまま exit 1 になる）。
+  local json
+  if ! json="$(jq -n \
     --arg base "$root" \
     --arg adr_prefix "$RS_ADR_PREFIX" \
     --arg targets "$targets_text" \
@@ -369,7 +402,13 @@ main() {
           excluded: $excluded_hits,
           weak_matches: $weak_hits
         }
-    '
+    ')"; then
+    echo "Error: 結果 JSON の組み立てに失敗しました（jq）: ${root}" >&2
+    echo "  組み立てに失敗した結果を stdout へ出さず、走査は未完了として扱います（空の stdout を「参照0件」と読ませないため）。" >&2
+    printf '%s\n' '{"status":"error","error":"json build failed"}' >&2
+    exit "$RETIREMENT_SWEEP_EX_PREREQ"
+  fi
+  printf '%s\n' "$json"
 
   if [ "${#RS_WEAK[@]}" -gt 0 ]; then
     echo "Warning: ファイル名だけの言及が ${#RS_WEAK[@]} 件あります（同名別ファイルの可能性があるため status には数えていません）。" >&2
