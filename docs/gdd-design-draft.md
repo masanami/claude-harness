@@ -1,7 +1,10 @@
 # 保証駆動開発（GDD）導入設計ドラフト
 
+> **凍結（experimental・不採用）**: 本ファイルは GDD（保証駆動開発）レジームに属し、**既定フローの規約ではない**。GDD はレジームとしては不採用であり、機構は削除せず凍結した（追加投資しない。`CLAUDE.md` で GDD期 を宣言済みのプロジェクトでは従来どおり動く）。**既定フローは SDD ＋ コード正（テスト正）であり、機能仕様は保守するが正しさは担保しない**。
+<!-- 凍結注記の正本: docs/ai-driven-development-strategy.md 5 章冒頭 ／ 決定と根拠: docs/adr/0002-gdd-not-adopted-salvage-instruments.md -->
+
 > Refs: Issue #152（保証駆動開発の導入検討）
-> **ステータス: 採用決定済み（2026-08-15・人間判断）／段階実装中**。P1（フェーズ宣言規約・保証台帳フォーマット・`detect-dev-phase.sh`・init-project / define-feature 対応。§6 の P1・Issue #156）と P2（`/guarantee-audit` の bootstrap / drift・`guarantee-auditor`・`guarantee-index-check.sh` / `list-test-files.sh`。§6 の P2・Issue #157）は実装済み。P3（§6・Issue #158）は**全系統実装済み**（quality-check 系統（§5.5）・promote-verify 系統（§5.6）・create-ticket 系統（§5.3）・para-impl / feature-implementer 系統（§5.4）・define-feature 系統（§5.2 の GDD 部分））。P4 は未着手。
+> **ステータス: 不採用・凍結（2026-08-21・人間判断。ADR 0002）**。以下は凍結時点の記録であり、現役のロールアウト計画ではない。旧ステータスは「採用決定済み（2026-08-15・人間判断）／段階実装中」。P1（フェーズ宣言規約・保証台帳フォーマット・`detect-dev-phase.sh`・init-project / define-feature 対応。§6 の P1・Issue #156）と P2（`/guarantee-audit` の bootstrap / drift・`guarantee-auditor`・`guarantee-index-check.sh` / `list-test-files.sh`。§6 の P2・Issue #157）は実装済み。P3（§6・Issue #158）は**全系統実装済み**（quality-check 系統（§5.5）・promote-verify 系統（§5.6）・create-ticket 系統（§5.3）・para-impl / feature-implementer 系統（§5.4）・define-feature 系統（§5.2 の GDD 部分））。P4（ドッグフーディング）は Issue #159 で実施し、その実測をもとに不採用が決定された（ADR 0002）。
 > **規約の正本は `docs/ai-driven-development-strategy.md`「5. 開発フェーズとドキュメントライフサイクル」へ移管済み**（フェーズ宣言の書式・保証台帳の書式・切り替え判断・退役手順・フェーズ判定の共通文言）。本ドキュメントは**ロールアウト計画（§6）と設計判断の記録（§7）**として残す。両者が食い違った場合は戦略ドキュメント側が正。
 > 本文中の「D-n」は本ドラフトで置いた設計判断（意思決定）、「A-n」は検証していない明示的な仮定を指す。一覧は末尾 §7 参照。
 

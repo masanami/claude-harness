@@ -1,5 +1,8 @@
 # 裁可ゲートと保証ブリーフ（GDD期のみ）
 
+> **凍結（experimental・不採用）**: 本ファイルは GDD（保証駆動開発）レジームに属し、**既定フローの規約ではない**。GDD はレジームとしては不採用であり、機構は削除せず凍結した（追加投資しない。`CLAUDE.md` で GDD期 を宣言済みのプロジェクトでは従来どおり動く）。**既定フローは SDD ＋ コード正（テスト正）であり、機能仕様は保守するが正しさは担保しない**。
+<!-- 凍結注記の正本: docs/ai-driven-development-strategy.md 5 章冒頭 ／ 決定と根拠: docs/adr/0002-gdd-not-adopted-salvage-instruments.md -->
+
 > 参照パスは `${CLAUDE_PLUGIN_ROOT}` 配下です（例: `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/guarantee-gate.md`）。Read にはプラグインの絶対パスが必要です（スキル起動時の「Base directory for this skill」を起点に解決する）。
 
 保証台帳（`docs/guarantees.md`）を駆動文書とする GDD期のプロジェクトでのみ実行する追加手順。**Phase 1 では対象 Issue（実装チケットなら親）の裁可（`guarantee:approved`）を確認し、無ければ実装を開始せず停止して人間の裁可を促す**。**Phase 4-5 では裁可対象（親）Issue の保証節（新規宣言＋維持）を `feature-implementer` への委譲プロンプトに含める**。
