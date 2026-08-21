@@ -590,7 +590,7 @@ assert_deliverable() {
   fi
 }
 
-assert_deliverable "許可: skills/*/references/*.md" yes "skills/guarantee-audit/references/bootstrap-mode.md"
+assert_deliverable "許可: skills/*/references/*.md" yes "skills/create-adr/references/record-mode.md"
 assert_deliverable "許可: skills/*/templates/*" yes "skills/define-feature/templates/feature-spec.md"
 assert_deliverable "許可: 拡張子なしの templates 配下も許可" yes "skills/init-project/templates/CLAUDE.md.template"
 assert_deliverable "許可: scripts/specs/*.md" yes "scripts/specs/list-test-files.md"

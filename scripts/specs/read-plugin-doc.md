@@ -12,7 +12,7 @@
 | `references/*.md`・`templates/*`・`scripts/specs/*.md`（Read ツール） | **既定では届かない**（作業ディレクトリ外の Read として拒否される） |
 | 本スクリプト（`claude-harness-run read-plugin-doc <path>`） | **ランチャーが PATH に導入済みで、利用側 settings に `Bash(claude-harness-run:*)` が在れば届く**（`/init-project` が生成する設定には最初から含まれる。未導入環境では注記のフォールバックで Read へ落ち、そこでは拒否されうる） |
 
-対話セッションなら人間が都度許可できるが、headless 委譲には許可する相手がいないため拒否がそのまま確定する。さらに悪いことに **失敗が沈黙する**: モデルは本文を読めないまま手順を推測して完走でき、書式や停止条件だけが外れた成果物が「成功」に見える（実測: `/guarantee-audit bootstrap` が `references/bootstrap-mode.md` を読めないまま完走し、検証器の exit 2 で初めて発覚した）。
+対話セッションなら人間が都度許可できるが、headless 委譲には許可する相手がいないため拒否がそのまま確定する。さらに悪いことに **失敗が沈黙する**: モデルは本文を読めないまま手順を推測して完走でき、書式や停止条件だけが外れた成果物が「成功」に見える（実測: あるスキルが自分の参照ファイルを読めないまま完走し、検証器の exit 2 で初めて発覚した）。
 
 本スクリプトはその沈黙を潰す。届かない場合は必ず非0 終了して stderr に停止指示を出し、**届いたが途中で切れた場合は終端マーカーの不在で分かる**（後述）。
 
@@ -21,7 +21,7 @@
 パス引数はちょうど1個。プラグインルートからの相対パスで指定する（`<base>` からの相対でも絶対パスでもない）。
 
 ```bash
-claude-harness-run read-plugin-doc "skills/guarantee-audit/references/bootstrap-mode.md"
+claude-harness-run read-plugin-doc "skills/create-adr/references/record-mode.md"
 claude-harness-run read-plugin-doc "scripts/specs/list-test-files.md"
 claude-harness-run read-plugin-doc "skills/para-impl/references/star-parallel.md" --from-line 80
 ```

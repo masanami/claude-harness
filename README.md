@@ -114,7 +114,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 | `/demo-e2e` | `/demo-e2e [カタログCSV/CASE_ID/specファイル/画面名]` | E2Eテストケースカタログと突き合わせ、1ケースごとに解説→実演（Headed Playwright）→人間判定を繰り返す |
 | `/quality-check` | `/quality-check` | lint + typecheck + test の一括実行（機械可読な結果） |
 | `/self-review` | `/self-review` | コード変更のセルフレビュー |
-| `/guarantee-audit` | `/guarantee-audit <bootstrap\|drift>` | **【experimental】** 保証台帳の監査。既存テストから台帳ドラフトを生成（`bootstrap`）、または台帳と実態の乖離を検出（`drift`。台帳が必要）。いずれも報告のみで修正はしない。台帳を正とする GDD レジームは不採用であり（ADR 0002）、本スキルは台帳非依存の診断ツールへ再位置づける作業が Issue #194 で進行中 |
+| `/surface-audit` | `/surface-audit` | 公開面×テスト担保の診断。公開面（HTTP API・CLI・公開ライブラリ API・イベント・永続化スキーマ・UI）をカテゴリ側から列挙し、テストが実際に担保している振る舞いと突き合わせて、**テスト未担保の公開面（GAP）**を検出する。**出力はトリアージ前提の候補**であり、ファイル生成・修正・Issue 起票はしない |
 
 ### ユーティリティ
 

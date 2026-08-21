@@ -15,8 +15,6 @@
 | ci-wait.sh | `scripts/specs/ci-wait.md` |
 | worktree-setup.sh / worktree-cleanup.sh | `scripts/specs/worktree-setup.md` |
 | demo-e2e-out.sh | `scripts/specs/demo-e2e-out.md` |
-| detect-dev-phase.sh | `scripts/specs/detect-dev-phase.md` |
-| guarantee-index-check.sh | `scripts/specs/guarantee-index-check.md` |
 | promotion-decision.sh | `scripts/specs/promotion-decision.md` |
 | list-test-files.sh | `scripts/specs/list-test-files.md` |
 | read-plugin-doc.sh | `scripts/specs/read-plugin-doc.md` |

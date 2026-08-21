@@ -8,8 +8,8 @@
 #   読み出しは利用側の allow 設定が無い限り拒否される。対話セッションでは人間が都度許可
 #   できるが、headless 委譲（`claude -p`）には許可する相手がいないため **拒否がそのまま
 #   「読めない」で確定する**。しかもモデルは読めないまま手順を推測して完走できてしまい、
-#   書式・停止条件だけが外れた成果物が「成功」に見える（実測: /guarantee-audit bootstrap が
-#   references/bootstrap-mode.md を読めないまま完走し、検証器の exit 2 で初めて発覚した）。
+#   書式・停止条件だけが外れた成果物が「成功」に見える（実測: あるスキルが自分の参照ファイルを
+#   読めないまま完走し、検証器の exit 2 で初めて発覚した）。
 #   本スクリプトはランチャー経由（`Bash(claude-harness-run:*)` の1行で allowlist 済みの経路）で
 #   同じ内容を配送するため、追加の allow 設定なしに headless でも本文が届く。
 #   加えて **配送できない場合は必ず非0 終了する**ので、失敗が沈黙しない。
@@ -18,7 +18,7 @@
 #   claude-harness-run read-plugin-doc <プラグインルート相対パス> [--from-line N] [--max-bytes N]
 #
 #   例:
-#     claude-harness-run read-plugin-doc skills/guarantee-audit/references/bootstrap-mode.md
+#     claude-harness-run read-plugin-doc skills/create-adr/references/record-mode.md
 #     claude-harness-run read-plugin-doc scripts/specs/list-test-files.md
 #
 # 出力:
