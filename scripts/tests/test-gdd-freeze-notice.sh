@@ -284,6 +284,53 @@ assert_eq "(F-8) init-project に旧規定（同意を得て GDD期 を確定す
   "$(if grep -qF -- '**`GDD期` を候補として提示し、ユーザーの明示的な同意を得る**' "$INIT_SKILL"; then echo true; else echo false; fi)"
 
 echo ""
+echo "=== (F-9) ADR 0002 の決定節から改訂へ辿れる（撤回済みの記述が現役に見えない） ==="
+
+# ADR は「決定」節だけを読まれる。改訂を末尾に置くだけでは、決定節だけを読む相手に
+# 撤回済みの「短命な作業文書」が現役の決定として届く（5.1〜5.7 に節レベル注記を置いたのと
+# 同じ理由）。ここでは**決定節の範囲内**に改訂への参照が在ることを固定する
+# （ファイル全体で grep すると、改訂節そのものが自分を満たしてしまい検査にならない）。
+ADR_DECISION_SECTION="$(awk '
+  /^## 決定$/ { insec = 1; next }
+  insec && /^## / { exit }
+  insec { print }
+' "$ADR_FILE")"
+
+assert_eq "(F-9) 決定節を切り出せる（切り出し失敗を pass にしない）" "true" \
+  "$(if [ "$(printf '%s\n' "$ADR_DECISION_SECTION" | grep -c '[^[:space:]]')" -ge 5 ]; then echo true; else echo false; fi)"
+assert_eq "(F-9) 切り出しに改訂節が混ざっていない（検査が空虚に成立しない）" "false" \
+  "$(if printf '%s\n' "$ADR_DECISION_SECTION" | grep -qF -- '## 改訂（2026-08-21）'; then echo true; else echo false; fi)"
+assert_eq "(F-9) 決定節が撤回対象の記述を実際に含む（前提の確認）" "true" \
+  "$(if printf '%s\n' "$ADR_DECISION_SECTION" | grep -qF -- 'docs は機能追加時の補助資料（短命な作業文書）であり'; then echo true; else echo false; fi)"
+
+for adr_pointer in \
+  '【この段落には改訂がある・2026-08-21】' \
+  '**機能仕様の寿命の扱いは撤回された**' \
+  '**機能仕様は機能の追加・変更のたびに保守し、リリース後に破棄しない**' \
+  '**非権威であること（正しさを担保しない）と、既定フローが SDD＋コード正であることは変わらない。**'; do
+  found="false"
+  printf '%s\n' "$ADR_DECISION_SECTION" | grep -qF -- "$adr_pointer" && found="true"
+  assert_eq "(F-9) 決定節に改訂への参照が在る: ${adr_pointer}" "true" "$found"
+done
+
+assert_file_contains "(F-9) ステータスが Amended である" "$ADR_FILE" \
+  '- **ステータス**: Amended'
+assert_file_contains "(F-9) 改訂節が実在する" "$ADR_FILE" \
+  '## 改訂（2026-08-21）'
+
+# 設計案 D-10（「短命な作業文書」と再定義した当の判断）にも撤回の注記が要る。
+# ファイル冒頭の凍結注記からは 200 行以上離れており、grep で D-10 に直接着地する読み手に届かない。
+DRAFT_FILE="${REPO_ROOT}/docs/gdd-design-draft.md"
+assert_eq "(F-9) 設計案を読める" "true" \
+  "$(if [ -r "$DRAFT_FILE" ]; then echo true; else echo false; fi)"
+assert_file_contains "(F-9) D-10 の直下に撤回の注記が在る" "$DRAFT_FILE" \
+  '**【D-10 の「短命な作業文書」は撤回された・2026-08-21】**'
+assert_file_contains "(F-9) 撤回の範囲（D-10 の前半は生きている）を書き分けている" "$DRAFT_FILE" \
+  'D-10 の前半（GDD期でも define-feature を使い続ける／クリティカル設計集約の価値はフェーズ非依存）は撤回されていない'
+assert_file_contains "(F-9) 判断一覧の表にも撤回が出ている" "$DRAFT_FILE" \
+  '**「短命文書」の部分は ADR 0002 の改訂で撤回**'
+
+echo ""
 echo "=== summary === pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"
 if [ "$FAIL_COUNT" -gt 0 ]; then
   echo "failed tests:"
