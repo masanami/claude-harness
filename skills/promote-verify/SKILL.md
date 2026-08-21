@@ -151,14 +151,14 @@ Step 4 で `status: 'consistent'` と判定された基準**のみ**を対象に
 
 #### 6-1. 品質チェック（QC）
 
-Step 2 で lint/typecheck/test のいずれも特定できなかった場合、または組み立てた CLI フラグ列が空になる場合は、`qualityCheck = { skipped: true, reason: "..." }` として明示スキップする（フラグ無しで実行してしまうと全ゲートが `skip` のまま `result: 'pass'` を返し、`readyForPromotion` を誤って `true` にしうるため、**空のフラグ列も null と同様に明示スキップ扱いにすること**）。
+Step 2 で lint/typecheck/test のいずれも特定できなかった場合、または組み立てた CLI フラグ列が空になる場合は、`qualityCheck = { skipped: true, reason: "..." }` として明示スキップする（フラグ無しで実行すると runner は「実行すべきゲートが1つも無い」として `result: 'skip'`（exit 3）を返す。`pass` ではないので `readyForPromotion` が誤って `true` になることはないが、**理由の記録されない未検証**が昇格判断の材料に混ざるため、**空のフラグ列も null と同様に明示スキップ扱いにすること**。Issue #192 以前は全ゲート skip でも `result: 'pass'` が返っていた）。
 
 それ以外の場合:
 
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run quality-check-runner <Step2で組み立てたCLIフラグ列>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/quality-check-runner.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/quality-check-runner.sh" <Step2で組み立てたCLIフラグ列>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-Bash で上記コマンドを実行し、標準出力の JSON（`{result, auto_fix, gates}`）を `qualityCheck` とする。標準出力が解析可能な JSON にならなかった場合は `qualityCheck = { skipped: false, result: 'fail', error: "..." }` として扱う（fail扱い。暗黙にpassにしない）。
+Bash で上記コマンドを実行し、標準出力の JSON（`{result, auto_fix, gates}`）を `qualityCheck` とする。標準出力が解析可能な JSON にならなかった場合は `qualityCheck = { skipped: false, result: 'fail', error: "..." }` として扱う（fail扱い。暗黙にpassにしない）。`result` が `'skip'`（ゲート未実行＝未検証）だった場合も**そのまま格納し、`pass` にも `skipped: true` にも読み替えない**（`readyForPromotion` は `result === 'pass'` のときだけ真になる）。
 
 #### 6-2. E2E
 

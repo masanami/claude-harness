@@ -39,6 +39,24 @@ assert_eq() {
   fi
 }
 
+# 部分一致アサーション（stderr のメッセージ検査用）。
+assert_contains() {
+  local description="$1"
+  local haystack="$2"
+  local needle="$3"
+
+  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       expected to contain: ${needle}"
+    echo "       actual:              ${haystack}"
+  fi
+}
+
 # =============================================================================
 echo "=== test: gate_status_from_exit ==="
 # =============================================================================
@@ -53,8 +71,22 @@ echo "=== test: compute_result ==="
 
 assert_eq "全てpass -> pass" "pass" "$(compute_result "pass" "pass" "pass")"
 assert_eq "1つでもfailを含む -> fail" "fail" "$(compute_result "pass" "fail" "pass")"
-assert_eq "全てskip -> pass（skipは失敗ではない）" "pass" "$(compute_result "skip" "skip" "skip")"
 assert_eq "pass/skip混在でfail無し -> pass" "pass" "$(compute_result "pass" "skip" "pass")"
+
+# Issue #192: 1つも実行していない状態（全skip）を「全ゲート通過」と読める pass にしない。
+assert_eq "全てskip -> skip（検査していないものを pass に見せない）" \
+  "skip" "$(compute_result "skip" "skip" "skip")"
+assert_eq "引数なし（ゲートが1つも無い）-> skip（空集合を空虚に pass へ倒さない）" \
+  "skip" "$(compute_result)"
+assert_eq "fail と skip の混在 -> fail（failを最優先）" \
+  "fail" "$(compute_result "skip" "fail" "skip")"
+
+# fail-closed: status が既知の3値以外（ゲートJSONの組み立て失敗等で空になった場合を含む）
+# は判定不能であり、pass 側へ落とさない。
+assert_eq "空文字の status -> fail（判定不能を pass に丸めない）" \
+  "fail" "$(compute_result "pass" "" "pass")"
+assert_eq "未知の status -> fail（fail-closed）" \
+  "fail" "$(compute_result "pass" "unknown" "skip")"
 
 # =============================================================================
 echo "=== test: parse_lint_counts ==="
@@ -254,18 +286,57 @@ assert_eq "testゲートのfailed件数" "1" "$(jq -r '.gates.test.failed' <<<"$
 assert_eq "testゲートのpassed件数" "4" "$(jq -r '.gates.test.passed' <<<"$OUT_TEST_FAIL")"
 
 # =============================================================================
-echo "=== test: CLI（全ゲート未指定 -> 全てskip。resultはpass） ==="
+echo "=== test: CLI（引数なし＝実行すべきゲートが1つも無い。Issue #192 の false pass 回帰） ==="
 # =============================================================================
+# 呼び出し側がフラグを渡し忘れた場合、「1つも検査していない」状態が pass（exit 0）
+# として報告されると安全網が素通りする。result は専用の "skip"、exit code は 3 とし、
+# exit code だけを見る呼び出し側にも result だけを見る呼び出し側にも成功と読ませない。
 
-OUT_ALL_SKIP="$("$TARGET_SCRIPT")"
+OUT_ALL_SKIP="$("$TARGET_SCRIPT" 2>/dev/null)"
 EXIT_ALL_SKIP=$?
 
-assert_eq "全ゲート未指定時 result は pass" "pass" "$(jq -r '.result' <<<"$OUT_ALL_SKIP")"
-assert_eq "全ゲート未指定時 exit code は 0" "0" "$EXIT_ALL_SKIP"
+assert_eq "全ゲート未指定時 result は skip（pass にしない）" "skip" "$(jq -r '.result' <<<"$OUT_ALL_SKIP")"
+assert_eq "全ゲート未指定時 exit code は 3（0 にしない）" "3" "$EXIT_ALL_SKIP"
 assert_eq "lintゲートはskip" "skip" "$(jq -r '.gates.lint.status' <<<"$OUT_ALL_SKIP")"
 assert_eq "typecheckゲートはskip" "skip" "$(jq -r '.gates.typecheck.status' <<<"$OUT_ALL_SKIP")"
 assert_eq "testゲートはskip" "skip" "$(jq -r '.gates.test.status' <<<"$OUT_ALL_SKIP")"
 assert_eq "skip時のerrors件数はnull" "null" "$(jq -r '.gates.lint.errors' <<<"$OUT_ALL_SKIP")"
+assert_eq "ゲート未実行でも stdout のJSONは出力される（exit 2 の jq 不在とは異なる）" \
+  "true" "$(jq -e 'has("gates")' <<<"$OUT_ALL_SKIP" >/dev/null 2>&1 && echo true || echo false)"
+
+ERR_ALL_SKIP="$("$TARGET_SCRIPT" 2>&1 >/dev/null)"
+assert_contains "ゲート未実行の事実が stderr に明示される" "$ERR_ALL_SKIP" "no quality gate was executed"
+
+# --auto-fix は「直す」手続きであって検査ではないため、指定されていてもゲート実行数には数えない。
+OUT_AUTOFIX_ONLY="$("$TARGET_SCRIPT" --auto-fix "printf 'fixed\n'" 2>/dev/null)"
+EXIT_AUTOFIX_ONLY=$?
+
+assert_eq "--auto-fix のみ指定でも result は skip（auto-fix は検査ではない）" \
+  "skip" "$(jq -r '.result' <<<"$OUT_AUTOFIX_ONLY")"
+assert_eq "--auto-fix のみ指定時 exit code は 3" "3" "$EXIT_AUTOFIX_ONLY"
+assert_eq "--auto-fix のみ指定でも auto_fix.applied は true" \
+  "true" "$(jq -r '.auto_fix.applied' <<<"$OUT_AUTOFIX_ONLY")"
+
+# 空文字のコマンド（="" は skip 相当の指定）だけを渡した場合も「実行すべきゲートが1つも無い」。
+OUT_EMPTY_CMDS="$("$TARGET_SCRIPT" --lint "" --typecheck "" --test "" 2>/dev/null)"
+EXIT_EMPTY_CMDS=$?
+
+assert_eq "空文字コマンドのみ（実行されるゲートが0）でも result は skip" \
+  "skip" "$(jq -r '.result' <<<"$OUT_EMPTY_CMDS")"
+assert_eq "空文字コマンドのみの exit code は 3" "3" "$EXIT_EMPTY_CMDS"
+
+# =============================================================================
+echo "=== test: CLI（ゲートを1つでも実行していれば従来どおり pass。後方互換） ==="
+# =============================================================================
+# 一部ゲートのみを指定する呼び出し（型チェックの無いプロジェクト等）は正当な既存経路。
+# 「1つも実行していない」場合だけを skip とし、部分実行の pass は変えない。
+
+OUT_PARTIAL_PASS="$("$TARGET_SCRIPT" --test "printf 'Tests: 0 failed, 3 passed, 0 skipped, 3 total\n'" 2>/dev/null)"
+EXIT_PARTIAL_PASS=$?
+
+assert_eq "testゲートのみ実行して成功なら result は pass" "pass" "$(jq -r '.result' <<<"$OUT_PARTIAL_PASS")"
+assert_eq "部分実行passの exit code は 0" "0" "$EXIT_PARTIAL_PASS"
+assert_eq "未指定のlintゲートは skip のまま" "skip" "$(jq -r '.gates.lint.status' <<<"$OUT_PARTIAL_PASS")"
 
 # =============================================================================
 echo "=== test: CLI（複数auto-fixコマンドを検出順に実行しsummaryへ連結） ==="
@@ -300,6 +371,62 @@ assert_eq "--test を2回指定した場合はexit 1" "1" "$?"
 
 "$TARGET_SCRIPT" --lint "" --lint "exit 0" >/dev/null 2>&1
 assert_eq "1回目が空文字でも2回目の--lintはexit 1（値の中身でなくフラグ指定回数で重複判定）" "1" "$?"
+
+# =============================================================================
+echo "=== test: skip 契約が仕様・呼び出し側ドキュメントへ伝播しているか（Issue #192） ==="
+# =============================================================================
+# runner が返す "skip" は、最終的に LLM（スキル・サブエージェント）が解釈して初めて
+# 意味を持つ。呼び出し側の手順が「skip も pass のうち」と読める状態へ戻ると、
+# スクリプトを直しても false pass が LLM 層で復活する。そのため、仕様の正本と
+# 各呼び出し側が skip を pass に読み替えない旨を明記していることを逐語で固定する
+# （test-quality-check-gdd-gate.sh (B) と同じドリフト検出方式）。
+
+QCR_TEST_REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+assert_file_contains() {
+  local description="$1"
+  local file="$2"
+  local needle="$3"
+
+  if [ ! -f "$file" ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       file not found: ${file}"
+    return
+  fi
+  if grep -qF -- "$needle" "$file"; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  ok - ${description}"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_TESTS+=("$description")
+    echo "  NG - ${description}"
+    echo "       expected ${file} to contain: ${needle}"
+  fi
+}
+
+assert_file_contains "仕様の正本に result:\"skip\" の節がある" \
+  "${QCR_TEST_REPO_ROOT}/scripts/specs/quality-check-runner.md" \
+  '## ゲートが1つも無い場合（`result: "skip"`）'
+assert_file_contains "仕様の正本に skip の終了コード 3 が記載されている" \
+  "${QCR_TEST_REPO_ROOT}/scripts/specs/quality-check-runner.md" \
+  '`skip` なら 3'
+assert_file_contains "/quality-check は skip を pass に読み替えない" \
+  "${QCR_TEST_REPO_ROOT}/skills/quality-check/SKILL.md" \
+  '`pass` にも読み替えない'
+assert_file_contains "/promote-verify は skip をそのまま格納する（pass にも明示スキップにもしない）" \
+  "${QCR_TEST_REPO_ROOT}/skills/promote-verify/SKILL.md" \
+  'そのまま格納し、`pass` にも `skipped: true` にも読み替えない'
+assert_file_contains "feature-implementer に skip の扱い（4-3）がある" \
+  "${QCR_TEST_REPO_ROOT}/agents/feature-implementer.md" \
+  '### 4-3. `skip`（ゲートが1つも実行されていない）場合'
+assert_file_contains "/commit は skip を pass に読み替えず未検証として報告する" \
+  "${QCR_TEST_REPO_ROOT}/skills/commit/SKILL.md" \
+  '「品質ゲート未検証」である事実をユーザーへの報告に明記する'
+assert_file_contains "/para-impl のリードが skip の返却を扱う行を持つ" \
+  "${QCR_TEST_REPO_ROOT}/skills/para-impl/SKILL.md" \
+  '`skip`（`/quality-check` の品質ゲートが1つも実行されていない＝未検証）'
 
 echo ""
 echo "=== summary ==="
