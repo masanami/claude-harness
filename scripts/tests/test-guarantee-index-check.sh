@@ -414,22 +414,23 @@ assert_eq "status が pass" "pass" "$(jq -r '.status' <<<"$EXPLICIT_BASE_OUT")"
 
 echo "=== test: 受理方向（正本の書式例がそのまま pass する） ==="
 
-# 生成側の正規形（docs/ai-driven-development-strategy.md 5.3 の書式例）を検証側が受理すること。
-# 「拒否すべきものを拒否する」だけでなく「受理すべきものを受理する」を固定する
-# （検査を足したときに、正しい台帳まで落とすようになっていないかの受理方向テスト）。
-STRATEGY_FILE="${GIC_TEST_DIR}/../../docs/ai-driven-development-strategy.md"
-if [ ! -r "$STRATEGY_FILE" ]; then
-  echo "  NG - 戦略ドキュメントを読めません（検査不能を pass にはしない）: ${STRATEGY_FILE}" >&2
+# 生成側の正規形（scripts/specs/guarantee-index-check.md「パースの規約」の書式例）を
+# 検証側が受理すること。「拒否すべきものを拒否する」だけでなく「受理すべきものを受理する」を
+# 固定する（検査を足したときに、正しい台帳まで落とすようになっていないかの受理方向テスト）。
+# 書式の正本は本スクリプトの仕様書である（台帳レジームの撤去に伴い、戦略ドキュメント側の
+# 記述は削除された。ADR 0002）。
+CANON_FORMAT_FILE="${GIC_TEST_DIR}/../specs/guarantee-index-check.md"
+if [ ! -r "$CANON_FORMAT_FILE" ]; then
+  echo "  NG - 書式の正本を読めません（検査不能を pass にはしない）: ${CANON_FORMAT_FILE}" >&2
   FAIL_COUNT=$((FAIL_COUNT + 1))
-  FAILED_TESTS+=("戦略ドキュメントを読めない")
+  FAILED_TESTS+=("書式の正本を読めない")
 else
-  # 5.3 の書式例（最初の markdown フェンス）を切り出す
+  # 書式例（保証節を含む最初の markdown フェンス）を切り出す
   canonical_example="$(awk '
-    /^### 5.3 保証台帳/ { section = 1 }
-    section && /^```markdown$/ && !started { started = 1; next }
+    /^```markdown$/ && !started { started = 1; next }
     started && /^```$/ { exit }
     started { print }
-  ' "$STRATEGY_FILE")"
+  ' "$CANON_FORMAT_FILE")"
   assert_eq "正本から書式例を切り出せる（切り出し失敗を pass にしない）" \
     "true" "$(if printf '%s' "$canonical_example" | grep -qF '## 保証（Guarantees）'; then echo true; else echo false; fi)"
 
@@ -444,10 +445,10 @@ else
   CANON_EXIT=$?
   assert_eq "正本の書式例は exit 0（正規形を落とさない）" "0" "$CANON_EXIT"
   assert_eq "正本の書式例は status pass" "pass" "$(jq -r '.status' <<<"$CANON_OUT")"
-  assert_eq "正本の書式例から保証を2件読み取る" "2" "$(jq -r '.guarantees | length' <<<"$CANON_OUT")"
-  assert_eq "正本の書式例の宣言元を数値で読み取る" "123,130" \
+  assert_eq "正本の書式例から保証を1件読み取る" "1" "$(jq -r '.guarantees | length' <<<"$CANON_OUT")"
+  assert_eq "正本の書式例の宣言元を数値で読み取る" "123" \
     "$(jq -r '[.guarantees[].provenance.issue | tostring] | join(",")' <<<"$CANON_OUT")"
-  assert_eq "正本の書式例の provenance.kind はすべて issue" "issue,issue" \
+  assert_eq "正本の書式例の provenance.kind はすべて issue" "issue" \
     "$(jq -r '[.guarantees[].provenance.kind] | join(",")' <<<"$CANON_OUT")"
   assert_eq "正本の書式例から GAP を1件数える" "1" "$(jq -r '.counts.gaps' <<<"$CANON_OUT")"
 fi
@@ -459,17 +460,16 @@ echo "=== test: 節未検出エラーの節見出しが書式仕様と食い違�
 # 自己回復不能点になっていた。エラーへ期待する節見出しを載せて解消したが、**節名がスクリプトと
 # 書式仕様の2箇所に現れる**ため、片方だけ直っても誰も検出しない状態になりうる（散文の
 # 「一致させること」では守られない）。ここで4者の一致を固定する:
-#   1. 正本: docs/ai-driven-development-strategy.md 5.3 の書式例
-#   2. スクリプト仕様: scripts/specs/guarantee-index-check.md「パースの規約」の書式例
-#   3. 参照ファイル: skills/guarantee-audit/references/bootstrap-mode.md のドラフト書式
-#   4. 節未検出エラー（stderr）が提示する期待見出し
+#   1. 正本: scripts/specs/guarantee-index-check.md「パースの規約」の書式例
+#   2. 参照ファイル: skills/guarantee-audit/references/bootstrap-mode.md のドラフト書式
+#   3. 節未検出エラー（stderr）が提示する期待見出し
 # 節見出しはテストにも直書きせず**正本から抜き出して**突き合わせる（ここに literal を置くと
 # 5つ目のコピーになり、正本を変えてもテストだけが古い値で通り続ける）。
 # 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする。
 # scripts/README.md 既出）。抜き出しは grep、比較は文字列一致で行う。
 
 # 与えたテキストから、`## 保証` / `## Gaps` で始まる H2 行の**最初の1本**を取り出す。
-# 接頭辞一致は保証節の識別規則（正本 5.3）そのものであり、ここでの literal はその接頭辞だけ。
+# 接頭辞一致は保証節の識別規則そのものであり、ここでの literal はその接頭辞だけ。
 heading_in() {
   local text="$1" prefix="$2" found rc
   found="$(printf '%s\n' "$text" | grep -m1 -E "^${prefix}")"
@@ -492,16 +492,16 @@ fenced_lines() {
   ' "$1"
 }
 
-SPEC_FILE="${GIC_TEST_DIR}/../specs/guarantee-index-check.md"
+SPEC_FILE="$CANON_FORMAT_FILE"
 BOOTSTRAP_REF="${GIC_TEST_DIR}/../../skills/guarantee-audit/references/bootstrap-mode.md"
 
-for f in "$STRATEGY_FILE" "$SPEC_FILE" "$BOOTSTRAP_REF"; do
+for f in "$SPEC_FILE" "$BOOTSTRAP_REF"; do
   assert_eq "書式仕様を読める（読めない状態を pass にしない）: $(basename "$f")" \
     "true" "$(if [ -r "$f" ]; then echo true; else echo false; fi)"
 done
 
-# 正本側は、**すでに 5.3 の節を明示して切り出してある `canonical_example`**（上の受理方向
-# テストが使っているもの）から取る。フェンスの中でも「5.3 の書式例」に限定できる唯一の材料。
+# 正本側は、**すでに書式例のフェンスを切り出してある `canonical_example`**（上の受理方向
+# テストが使っているもの）から取る。
 CANON_GUARANTEE_HEADING="$(heading_in "${canonical_example:-}" '## 保証')"
 CANON_GAPS_HEADING="$(heading_in "${canonical_example:-}" '## Gaps')"
 

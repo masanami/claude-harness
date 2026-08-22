@@ -1,8 +1,5 @@
 # guarantee-index-check.sh の出力仕様（正本）
 
-> **凍結（experimental・不採用）**: 本ファイルは GDD（保証駆動開発）レジームに属し、**既定フローの規約ではない**。GDD はレジームとしては不採用であり、機構は削除せず凍結した（追加投資しない。`CLAUDE.md` で GDD期 を宣言済みのプロジェクトでは従来どおり動く）。**既定フローは SDD ＋ コード正（テスト正）であり、機能仕様は保守するが正しさは担保しない**。
-<!-- 凍結注記の正本: docs/ai-driven-development-strategy.md 5 章冒頭 ／ 決定と根拠: docs/adr/0002-gdd-not-adopted-salvage-instruments.md -->
-
 保証台帳（`docs/guarantees.md`）の**テスト対応索引**を決定的に検査する。gh 呼び出しは一切行わない（gh 非依存）。
 
 検査するのは「索引ドリフト」（テストの改名・削除・移動により台帳の参照が実在しなくなること）・「ID の重複」・「書式の破れ（保証 ID / GAP ID / テスト参照 / 宣言元）」であり、**意味ドリフト**（約束の文言とテストの実際の検証内容の乖離）は検査しない。意味整合は `/guarantee-audit drift` の LLM fan-out の責務。台帳の書式・運用の正本は `docs/ai-driven-development-strategy.md`「開発フェーズとドキュメントライフサイクル」の章。

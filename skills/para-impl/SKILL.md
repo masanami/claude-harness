@@ -1,6 +1,6 @@
 ---
 name: para-impl
-description: "GitHub Issueを分析し、設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認の1チケットフローを実装フェーズの人間ゲートなしで実行する。複数Issue指定時は並列実行する。GDD期は裁可済み（guarantee:approved）の Issue だけを実装し、保証節を実装エージェントへ引き継ぐ。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
+description: "GitHub Issueを分析し、設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認の1チケットフローを実装フェーズの人間ゲートなしで実行する。複数Issue指定時は並列実行する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
 argument-hint: "<Issue番号> [Issue番号...] [--base <統合ブランチ>]"
 model: opus
 # effort: 設計〜TDD実装〜PRの自走フローを担うため high。
@@ -76,24 +76,6 @@ fi
 2. **E2E対象判定**（各Issueごと）
    - 認証フロー、権限制御、クリティカルパスなどの場合は E2E対象とする
 
-### 裁可ゲート（GDD期のみ）
-
-開発フェーズ（SDD期 / GDD期）を判定し、GDD期は対象 Issue（実装チケットなら親）の裁可を確認してから Phase 2 へ進む。
-
-> **開発フェーズの判定（重要）**: フェーズは必ず `claude-harness-run detect-dev-phase` の出力だけで判定し、`CLAUDE.md` を自分で grep しないこと（判定規約の重複実装を防ぐため）。stdout に `{"phase":"sdd"|"gdd"|"invalid","reason":"...","source":"..."}` が1個返る。フェーズ依存の追加挙動は **`phase` が `gdd` のときだけ**行い、`sdd`（宣言なしを含む）では一切挙動を変えない。**`phase` が `invalid`（exit 1）、またはスクリプトを実行できない・stdout が JSON としてパースできない（exit 2 等）場合は、`sdd` とみなさない**。フェーズ依存の処理を停止し、`reason` と `source`（および stderr のメッセージ）を添えて「要人間判定」としてユーザーに報告すること（不正な宣言や実行失敗によって GDD のゲート群が暗黙に無効化される事故を防ぐため）。`claude-harness-run: command not found` の場合のみ `bash "<プラグインルート>/scripts/detect-dev-phase.sh"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。
-<!-- 正本: docs/ai-driven-development-strategy.md 5.2 / docs/plugin-path-conventions.md -->
-
-**判定器への入力は「実装が到達する base」の内容にする（本スキル固有・重要）**: 本スキルの実装が到達するのは現在の作業ツリーではなく `{base}`（「base 統合ブランチの決定」で確定したブランチ。既定はリポジトリの既定ブランチ）であり、`{base}` の checkout は Phase 3 まで行われない。引数なしの実行は**手元の checkout** の `CLAUDE.md` を読むため、手元と `{base}` の宣言が異なると判定を取り違える（例: `{base}` は GDD 宣言・手元は宣言なし → 裁可ゲートが素通りし、未裁可の Issue が実装される）。したがって判定は次の手順で行う（**判定器を迂回しない**——フェーズの解釈は常にスクリプトの出力のみであり、ここで変えるのは判定器への入力だけ）:
-
-1. `git fetch origin {base}` を実行する（失敗した場合は判定不能として中断する。`sdd` に読み替えない）
-2. `git cat-file -e "origin/{base}:CLAUDE.md"` で `CLAUDE.md` の存在を確認する。存在しない場合は判定器の `no_claude_md` と同じ意味（宣言なし＝`sdd`）として扱い、従来どおりゲートなしで進む（この存在確認はフェーズ文法の解釈ではない。`CLAUDE.md` の中身を自分で読む・grep することは引き続き行わない）
-3. 存在する場合は `git show "origin/{base}:CLAUDE.md"` を一時ファイルへ書き出し、`claude-harness-run detect-dev-phase "<一時ファイルのパス>"` で判定する（`invalid`・実行不能の扱いは上記の定型文のとおり）
-4. base が Issue ごとに異なる場合は base ごとに判定し、**`gdd` の base に属する Issue にのみ裁可ゲートを適用する**（1件でも `invalid`・判定不能の base があれば全体を中断する）。**混在時に `gdd` 側で裁可ゲートの停止が出た場合も、停止は起動全体——`sdd` の base に属する Issue を含む全 Issue——に適用する**（部分実行しない。`guarantee-gate.md` 1-c と同じ理由）。停止時の報告（1-d）には `sdd` 側の Issue も `判定: 対象外（base が SDD期）` として列挙する（黙って落とさない）
-
-**判定の基準を base に置く理由**: 裁可ゲートが守るのは実装が到達するコードベース（base ブランチ）の開発規律であり、手元 checkout の状態は偶然（別作業の残り・古い既定ブランチ）でありうる。**base が SDD なら手元が GDD 宣言でも従来どおり挙動を変えない**（SDD期不変＝default-OFF の原則は「対象（base）が SDD なら不変」を意味する）。Phase 3 以降の各層（feature-implementer・`/quality-check` の GDD ゲート）は checkout 済みの base 内容を読むため、この判定基準と整合する。
-
-`gdd` の場合のみ、**`skills/para-impl/references/guarantee-gate.md` を前掲の配送経路で読み出し**（`claude-harness-run read-plugin-doc "skills/para-impl/references/guarantee-gate.md"`。Read 直読みは前掲の注記のとおりランチャー未導入時のフォールバックに限り、その場合は「Base directory for this skill」を起点に `<base>/references/guarantee-gate.md` として解決する）、その「Phase 1: 裁可ゲート」に従って対象 Issue（実装チケットなら親）に `guarantee:approved` が付いているかを確認する。無ければ **Phase 2 以降へ進まず処理を止めて人間の裁可を促す**（統合ブランチ存在チェックと同じ「前提未充足での停止」パターンを使う。新しい待ち合わせ機構は作らない。裁可対象の解決・判定表・停止時の報告の正本は同参照ファイル）。`invalid`・判定不能の場合は上記の定型文に従い中断する。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、以降の手順は従来どおり行う（参照ファイルも読み出さない）。
-
 ---
 
 ## Phase 2: 実行計画
@@ -145,8 +127,6 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 
 リードは要件チケット本文の **「クリティカル設計決定」セクション**をエージェントに渡し、その方針に従って実装するよう指示する。委譲プロンプトには**合流ゲート伝播条項**（`references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める。
 
-**GDD期**（Phase 1 の裁可ゲートを通過している場合）は、さらに**裁可対象（親）Issue の保証節（新規宣言＋維持）を委譲プロンプトに含める**（読み取り文法・同一性の検証・記載形式の正本は `references/guarantee-gate.md`「Phase 4-5: 保証節の注入」。合流ゲート伝播条項の規定は変更せず並記で追加する）。**裁可対象（親）が複数の実装チケットに分解されている場合は、今回の起動が1チケットだけでも、注入の前に新規宣言の担当割当（分解の全体像から決定的規則で各 ID をちょうど1チケット・全数検証）を解決し、各チケットには担当分の新規宣言＋全維持保証を渡す**（割当の要否は起動形態でなく親の分解の構造で決める。同参照ファイル「新規宣言の担当割当」が正本）。SDD期はこの注入を行わない（従来どおり）。
-
 エージェントから受け取る返却内容:
 
 - **変更ファイル一覧 / 追加テスト件数 / TDDサイクルの概要**
@@ -167,7 +147,7 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 |---|---|
 | 通常完了 | Phase 6（コミット）へ |
 | `failure`（`/quality-check` 3回反復しても通らない） | 当該チケットをスキップ。並列モードでは他 worker は継続 |
-| クリティカル設計の逸脱検知で Phase 2 停止（GDD期の保証逸脱——維持する保証への抵触——、保証節の読み取り不能・フェーズ判定 `invalid` による停止も同じパスで返る） | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（**この動作は同パスで返るすべての停止に適用する**。headless の場合は「判断待ち」として完了報告に明記する） |
+| クリティカル設計の逸脱検知で Phase 2 停止 | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（headless の場合は「判断待ち」として完了報告に明記する） |
 
 ### Phase 6: コミット
 
@@ -259,7 +239,6 @@ gh pr checks {PR番号} --watch
 
 ## 禁止事項
 
-- GDD期に `guarantee:approved` の無い Issue の実装開始（裁可ゲートの迂回）、およびエージェント自身による `guarantee:approved` の付与
 - スコープ外の機能追加
 - 設計フェーズ（Phase 4-5 の設計成果物出力）の省略
 - 要件チケットの「クリティカル設計決定」を無視した実装
@@ -269,7 +248,6 @@ gh pr checks {PR番号} --watch
 
 ## ユーザーへの確認タイミング
 
-- **Phase 1: 裁可ゲート未通過（GDD期）**（実装を開始せず、人間の裁可待ちとして停止・報告する）
 - Issueの要件が不明確な場合
 - 複数の実装アプローチが考えられる場合
 - スコープの拡大が必要と判断した場合

@@ -10,8 +10,6 @@ gh issue view {親Issue番号} --json title,body,number
 
 > **注意（二重注入防止）**: 要件モードは機能仕様の内容を親Issue本文にそのまま再掲する設計のため、後述の Step 3-2（ticket-decomposer への Task 委譲）には**親Issue本文のみ**を渡し、機能仕様ドキュメントの内容は渡さない（両方渡すとほぼ全文が二重注入になる）。手動編集で親Issue本文と機能仕様ドキュメントが乖離しているケースは、親Issue本文側を正として扱う。
 
-> **GDD期のみ（SKILL.md のフェーズ判定が `gdd` の場合）**: 親Issue本文に「## 保証（Guarantees）」節があることを確認し、無い／書式を解釈できない場合は**実装チケットを1件も作成せずに中断する**。確認の読み取り規則（フェンス内の引用を節の存在とみなさない）・中断時の報告・親Issueの裁可状態の取得は参照ファイル `references/guarantee-section.md`（共通-2・分解-1）が正本であり、そちらを Read して従うこと。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、以降の手順は従来どおり行う。
-
 ### Step 2: コードベース分析
 
 機能仕様（クリティカル設計決定・機能全体の設計セクション）の内容から、変更が必要なモジュール・ファイル群を Glob/Grep で特定する。
@@ -136,7 +134,7 @@ Step 3-4 までであなた自身が保持している `finalTasks`（`{title, s
 各 Issue 本文に必ず含める:
 
 - `Parent: #{親Issue番号}`
-- `対応する受入基準: {当該タスクの acceptance_criteria_covered の ID 一覧（例: AC-1, AC-3） | なし}`——分解計画の網羅検証済みの割当を**そのまま転記**する（ID を創作・省略・言い換えしない。該当0件のタスクは `なし` と明記する）。位置はテンプレート `implementation-ticket.md` のとおりヘッダ行群の末尾。開発フェーズによらず常に含める（下流の `/para-impl` がこの行を機械的なアンカーとして完全一致で読むため、実行のたびに揺れる判断で書かない）
+- `対応する受入基準: {当該タスクの acceptance_criteria_covered の ID 一覧（例: AC-1, AC-3） | なし}`——分解計画の網羅検証済みの割当を**そのまま転記**する（ID を創作・省略・言い換えしない。該当0件のタスクは `なし` と明記する）。位置はテンプレート `implementation-ticket.md` のとおりヘッダ行群の末尾。常に含める（下流の `/para-impl` がこの行を機械的なアンカーとして完全一致で読むため、実行のたびに揺れる判断で書かない）
 - 依存先がある場合: `依存: #{番号}` を「依存チケット」セクションに記述
 - 親要件チケットの「クリティカル設計決定」「機能全体の設計」セクションへの参照（機能仕様ドキュメント `docs/features/{slug}.md` へのリンク）
 - **`--base` 指定時のみ**: `Base: {統合ブランチ}`（例 `Base: feat/issue-42`）を本文冒頭付近に記録する。`/para-impl` はこの行を読み取り、サブタスク PR の base を統合ブランチにする
@@ -147,8 +145,6 @@ gh issue create \
   --body "$(cat ticket-body.md)" \
   --label "implementation"
 ```
-
-> **GDD期のみ（SKILL.md のフェーズ判定が `gdd` の場合）**: 各 Issue 本文の冒頭のヘッダ行に `保証: 親#{親Issue番号} の保証節参照` の1行を含める（位置はテンプレート `implementation-ticket.md` の並び `Parent:` → `Base:`（`--base` 指定時のみ）→ `保証:` に従う。親の保証節の内容は転記しない）。**実装チケットには裁可ラベル（`guarantee:proposed` / `guarantee:approved`）を付けない**（裁可の単位は親Issue）。詳細は参照ファイル `references/guarantee-section.md`（分解-2）が正本であり、そちらを Read して従うこと。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、本文にこの行を入れない。
 
 GitHub Sub-issue 機能が使えるなら `gh api` で親へ紐付ける（`/repos/{owner}/{repo}/issues/{N}/sub_issues`）。
 
@@ -182,5 +178,3 @@ git checkout -b {統合ブランチ} "origin/$DEFAULT_BRANCH" && git push -u ori
 # 並列実装（サブタスク PR の base は統合ブランチ）
 /para-impl {番号1} {番号2} {番号3} --base {統合ブランチ}
 ```
-
-> **GDD期のみ（SKILL.md のフェーズ判定が `gdd` の場合）**: 上記の報告に、全チケットへ `保証: 親#{親Issue番号} の保証節参照` を入れた旨と、分解-1 で取得した親Issueの裁可状態（`guarantee:approved` が無ければ `/para-impl` の前に人間の裁可が必要である旨）を足す。書式は参照ファイル `references/guarantee-section.md`（分解-2）が正本。`sdd`（フェーズ宣言なしを含む）では本項を実行せず、報告は上記のみとする。

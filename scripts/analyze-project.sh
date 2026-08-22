@@ -17,7 +17,7 @@
 #     "commands": {"test":..., "lint":..., "typecheck":..., "format":..., "build":..., "dev":...},
 #     "testPrereqs": {"setupFiles":[...], "pretest": "..."|null},
 #     "dirTree": {"entries":[...], "depthLimit":N, "maxEntries":N, "truncated":bool},
-#     "docs": {"docsDir":"docs"|null, "designDocs":[...], "guaranteesLedger":"docs/guarantees.md"|null,
+#     "docs": {"docsDir":"docs"|null, "designDocs":[...],
 #              "adrDir":"docs/adr"|null},
 #     "testDirs": [...], "e2eDirs": [...], "colocatedTests": true|false,
 #     "branchEvidence": {"status":"ok"|"not_a_git_repo", "branches":[...],
@@ -612,12 +612,6 @@ fetch_docs_evidence() {
   local design_docs_json
   design_docs_json=$(printf '%s\n' "${results[@]:-}" | awk 'NF' | sort -u | jq -R -s 'split("\n") | map(select(length>0))')
 
-  # 保証台帳（GDD期の駆動文書）の有無。フェーズの自動判定には使わない（フェーズを確定できるのは
-  # CLAUDE.md の宣言のみ。detect-dev-phase.sh 参照）。/init-project が「GDD期を既定候補として
-  # 人間に提示する」ための材料として返す。
-  local guarantees_ledger="null"
-  [ -f "$dir/docs/guarantees.md" ] && guarantees_ledger='"docs/guarantees.md"'
-
   # 設計判断記録（ADR）の置き場の有無。/init-project がドキュメントマップに「整備済み」として
   # 載せるかの判断材料。ADR はオンデマンドで1件ずつ増える運用のため、ディレクトリはあるが
   # *.md が1件も無い状態は「未整備」と同じ扱い（null）にする（空の受け皿を整備済みと見せない）。
@@ -628,8 +622,8 @@ fetch_docs_evidence() {
   fi
 
   DOCS_JSON=$(jq -n --argjson docsDir "$docs_dir" --argjson designDocs "$design_docs_json" \
-    --argjson guaranteesLedger "$guarantees_ledger" --argjson adrDir "$adr_dir" \
-    '{docsDir:$docsDir, designDocs:$designDocs, guaranteesLedger:$guaranteesLedger, adrDir:$adrDir}')
+    --argjson adrDir "$adr_dir" \
+    '{docsDir:$docsDir, designDocs:$designDocs, adrDir:$adrDir}')
 }
 
 fetch_named_dirs() {

@@ -344,7 +344,7 @@ echo "=== (7b) 分割配送 ==="
 # 潰したはずの「9割正しい成果物」がそのまま再現する。自分で分割して MORE マーカーと
 # 続きの取得コマンドを出すことで、切り詰めに到達させない／到達しても検知できるようにする。
 
-BIG_REL="skills/create-ticket/references/guarantee-section.md"
+BIG_REL="skills/para-impl/references/star-parallel.md"
 BIG_BYTES="$(wc -c <"${REPO_ROOT}/${BIG_REL}" | tr -d '[:space:]')"
 
 run_rpd "$REPO_ROOT" "$BIG_REL"

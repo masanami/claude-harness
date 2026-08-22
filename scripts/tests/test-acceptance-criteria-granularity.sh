@@ -120,10 +120,8 @@ assert_eq "(A-1) 粒度節は 4.4 と 5 章（凍結章）の間に在る" "true
   "$(if [ -n "$GRAN_LINE" ] && [ -n "$SEC44_LINE" ] && [ -n "$SEC5_LINE" ] \
       && [ "$GRAN_LINE" -gt "$SEC44_LINE" ] && [ "$GRAN_LINE" -lt "$SEC5_LINE" ]; then echo true; else echo false; fi)"
 
-assert_file_contains "(A-1) 出所（凍結した台帳の運用）と、台帳に依存しないことを明示している" "$STRATEGY_FILE" \
-  '**出所は凍結した保証台帳（→ 5.3）の運用だが、規律そのものは台帳に依存しない**'
-assert_file_contains "(A-1) 保証側の粒度規約と正本を二重に持たないと明示している" "$STRATEGY_FILE" \
-  '**GDD期の保証節に適用する版は 5.3 が正本であり、二重に持たない**'
+assert_file_contains "(A-1) 出所（撤去した台帳の運用）と、台帳に依存しないことを明示している" "$STRATEGY_FILE" \
+  '**出所は撤去した保証台帳（GDD）の運用だが、規律そのものは台帳に依存しない**'
 
 echo ""
 echo "=== (A-2) 配送用の定型文を正本から切り出せる ==="
@@ -170,7 +168,13 @@ ag_core "(A-3) 停止条件が「それ以上割らない」条件として提�
   '**次の2つのいずれかに当たれば、それ以上割らない**（原子化の停止条件'
 ag_core "(A-3) 停止条件が定義と同じ軸で判定されると明記している" \
   '**どちらも「独立に撤回・変更できるか」という定義と同じ軸で判定する**'
-ag_core "(A-3) 停止条件 S1（同一規則の実例）" '**(S1) 同一規則の実例**'
+ag_core "(A-3) 停止条件 S1（同一の対象に対する同一規則の実例）" '**(S1) 同一の対象に対する同一規則の実例**'
+# codex P2-1（PR #196）: 独立に設定できる複数フィールドを S1 でまとめると、1フィールドだけを
+# 検証したテストが全フィールド分の裏付けとして通る。例外の範囲を「同一の対象」に限る。
+ag_core "(A-3) S1 は同一の対象（1フィールド・1エンドポイント）に限定されている" \
+  '（**1つのフィールド・エンドポイント**に対する、列挙値の各要素・境界値の上限/下限/境界ちょうど・入力バリエーション）'
+ag_core "(A-3) 独立に設定できる複数フィールドは S1 に含めない" \
+  '**独立に設定できる複数のフィールドをまとめるのは S1 ではない**'
 ag_core "(A-3) S1 は規則を1基準とし実例は基準文に列挙する" \
   '**規則を1基準とし、実例は基準文の中で列挙する**'
 ag_core "(A-3) S1 は「単文の基準＋多数のテスト」を正常形と認める" \
@@ -275,8 +279,8 @@ done <<<"$EXCLUDED_TARGETS"
 # 判定側・GDD 側が例外として明示されていること（例外表が空洞化していないことの確認）
 assert_file_contains "(A-7) 判定側（spec-critic）が例外に挙がっている" "$STRATEGY_FILE" \
   '`agents/spec-critic.md`（`acceptance-criteria-testability`）'
-assert_file_contains "(A-7) GDD の保証節（5.3 が正本）が例外に挙がっている" "$STRATEGY_FILE" \
-  '**同じ規律を2つの正本から配らない**'
+assert_file_contains "(A-7) 転記・割当の手順が例外に挙がっている（基準文を書く手順だけが対象）" "$STRATEGY_FILE" \
+  '`skills/create-ticket/references/requirement-mode.md`（要件モード）'
 
 echo ""
 echo "=== (A-8) 規約が強制を委ねている先（spec-critic の複合文判定）が実在する ==="
@@ -287,8 +291,10 @@ assert_file_contains "(A-8) 判定側が複合文を blocker 候補としてい�
   '**1項目に複数の主張が入った複合文は blocker 候補**'
 assert_file_contains "(A-8) 判定側が「代表1件だけが検証される」を理由に挙げている" "$CRITIC_FILE" \
   '**代表1件だけが検証される形**'
-assert_file_contains "(A-8) 判定側が S1（同一規則の実例）を割らせない例外を持つ" "$CRITIC_FILE" \
-  '**ただし同一規則の実例の列挙は複合文ではない**'
+assert_file_contains "(A-8) 判定側が S1（同一の対象に対する同一規則の実例）を割らせない例外を持つ" "$CRITIC_FILE" \
+  '**ただし同一の対象に対する同一規則の実例の列挙は複合文ではない**'
+assert_file_contains "(A-8) 判定側が独立に設定できる複数フィールドを例外から外している" "$CRITIC_FILE" \
+  '**独立に設定できる複数のフィールドはこの例外に含めない**'
 assert_file_contains "(A-8) 判定側が生成側の正本（4.5）を出典コメントで指している" "$CRITIC_FILE" \
   '<!-- 生成側の規約の正本: docs/ai-driven-development-strategy.md 4.5「受入基準の粒度」 -->'
 assert_file_contains "(A-8) 正本が強制の所在として spec-critic を指している" "$STRATEGY_FILE" \
