@@ -505,16 +505,16 @@ assert_arg_detection() {
   fi
 }
 
-assert_arg_detection '違反: 引用符なしの台帳パスを検出する' yes \
-  'claude-harness-run guarantee-index-check <リポジトリルート>/docs/guarantees.md'
+assert_arg_detection '違反: 引用符なしの絶対パス引数を検出する' yes \
+  'claude-harness-run read-plugin-doc <リポジトリルート>/scripts/specs/list-test-files.md'
 assert_arg_detection '違反: 引用符なしの cwd 相対パスを検出する' yes \
-  'claude-harness-run guarantee-index-check docs/guarantees.md'
+  'claude-harness-run read-plugin-doc scripts/specs/list-test-files.md'
 assert_arg_detection '違反: 引用符なしのパスプレースホルダを検出する' yes \
   'claude-harness-run reply-and-resolve <PR番号> <items_json_file>'
 assert_arg_detection '違反: フォールバック形の引数側の引用漏れも検出する' yes \
-  'bash "<プラグインルート>/scripts/guarantee-index-check.sh" docs/guarantees.md'
+  'bash "<プラグインルート>/scripts/read-plugin-doc.sh" scripts/specs/list-test-files.md'
 assert_arg_detection '正当: 引用符付きのパス引数は検出しない' no \
-  'claude-harness-run guarantee-index-check "<リポジトリルート>/docs/guarantees.md"'
+  'claude-harness-run read-plugin-doc "<リポジトリルート>/scripts/specs/list-test-files.md"'
 assert_arg_detection '正当: target のスクリプトパス（引用符なしが規約）は検出しない' no \
   'claude-harness-run skills/demo/scripts/run-walkthrough.mjs "/絶対パス/flow.mjs"'
 assert_arg_detection '正当: 番号・フラグ列は検出しない' no \
@@ -851,7 +851,7 @@ echo "=== (x) 参照ファイル読み出し注記の配送経路チェック ==
 # references/ templates/ はプラグイン配下＝作業ディレクトリ外にあり、Read ツールでの
 # 読み出しは利用側の allow が無ければ拒否される。headless 委譲には許可する相手がいないため
 # 拒否がそのまま確定するが、**モデルは読めないまま手順を推測して完走できてしまう**
-# （実測: /guarantee-audit bootstrap が references/bootstrap-mode.md を読めないまま完走し、
+# （実測: あるスキルが自分の参照ファイルを読めないまま完走し、
 #  検証器の exit 2 で初めて発覚した）。
 # さらに、配送できても**出力上限で本文が途中で切れる**経路がある（exit 0 のまま部分配送）。
 # そこで注記には (1) 配送経路 (2) 非0 での停止規則 (3) 終端マーカーによる切り詰め検査 を
@@ -964,8 +964,8 @@ else
 fi
 
 # --- (x-d) 注記が参照ファイルを1本に決め打ちしていないか ---
-# モード別スキル（`/create-adr` の記録／昇格判定、`/guarantee-audit` の bootstrap／drift、
-# `/create-ticket` の要件／実装分解）では、読み出す参照ファイルが選んだモードで変わる。
+# モード別スキル（`/create-adr` の記録／昇格判定、`/create-ticket` の要件／実装分解）では、
+# 読み出す参照ファイルが選んだモードで変わる。
 # 注記が**最初のモードのファイルを固定的に名指し**していると、別モードを選んだ利用者は
 # 違う手順書を配送されるか、拒否される Read 経路へ落ちる。**注記と本文の表という2つの規則が
 # 同じものについて食い違う**状態であり、実際に3スキルでこの形になっていた。
@@ -1284,9 +1284,9 @@ run_ref_resolve_selfcheck() {
   assert_resolves 'エージェント側の <...base>/../<skill>/ も解決する' '' \
     'skills/create-ticket/references/requirement-mode.md' \
     '`<tdd-implのbase>/../create-ticket/references/requirement-mode.md` で解決して Read する'
-  assert_resolves 'プラグインルート相対のフルパスをそのまま扱う' 'guarantee-audit' \
-    'skills/guarantee-audit/references/bootstrap-mode.md' \
-    'read-plugin-doc "skills/guarantee-audit/references/bootstrap-mode.md"'
+  assert_resolves 'プラグインルート相対のフルパスをそのまま扱う' 'create-adr' \
+    'skills/create-adr/references/record-mode.md' \
+    'read-plugin-doc "skills/create-adr/references/record-mode.md"'
   assert_resolves '裸の templates/ も owner で解決する' 'init-project' \
     'skills/init-project/templates/detection-report.md' '`templates/detection-report.md` を Read し'
   assert_resolves 'owner の無いファイルからの裸の参照は解決不能として報告する' '' \
