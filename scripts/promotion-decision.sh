@@ -24,7 +24,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
 }
 
 # 終了コード（scripts/specs/promotion-decision.md と一致させること）
-PROMOTION_DECISION_EX_TRUE=0   # 判定が true（allConsistent / readyForPromotion）
+PROMOTION_DECISION_EX_TRUE=0   # 判定が true（readyForPromotion）
 PROMOTION_DECISION_EX_FALSE=1  # 判定が false（stdout には JSON を出す）
 PROMOTION_DECISION_EX_PREREQ=2 # 実行前提の欠落（jq 不在・引数不正・入力が JSON でない・必須キー欠落）
 
@@ -211,7 +211,7 @@ main() {
   fi
 
   local result
-  if ! result="$(printf '%s' "$input" | jq -c --arg id_pattern "$GUARANTEE_ID_PATTERN" "$program" 2>/dev/null)"; then
+  if ! result="$(printf '%s' "$input" | jq -c "$program" 2>/dev/null)"; then
     echo "Error: 入力を判定式へ掛けられません（期待するオブジェクトではありません）" >&2
     printf '%s\n' '{"status":"error","error":"input is not valid JSON"}' >&2
     exit "$PROMOTION_DECISION_EX_PREREQ"

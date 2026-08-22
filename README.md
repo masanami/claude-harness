@@ -20,7 +20,7 @@ Claude Code プラグインとして、任意のリポジトリに横展開で�
 | カテゴリ | 内容 |
 |---------|------|
 | エージェント (6) | コードレビュー、設計レビュー、機能実装(設計成果物＋TDD: feature-implementer)、チケット実装worker(ticket-worker)、ドキュメント整合性検証、E2Eテスト実装(e2e-engineer) |
-| スキル | 機能定義(要件＋クリティカル設計)、チケット作成、並列実装、TDD実装、技術負債チェック、プロジェクト初期設定、E2Eテスト作成、E2Eテストシナリオ解説＋独立検証、動作確認(デモ)、PRレビュー対応、PRマージ、Conventional Commits、PRセルフレビュー、品質ゲートチェック、保証台帳の監査、設計判断記録(ADR)の作成 |
+| スキル | 機能定義(要件＋クリティカル設計)、チケット作成、並列実装、TDD実装、技術負債チェック、プロジェクト初期設定、E2Eテスト作成、E2Eテストシナリオ解説＋独立検証、動作確認(デモ)、PRレビュー対応、PRマージ、Conventional Commits、PRセルフレビュー、品質ゲートチェック、公開面×テスト担保の診断(surface-audit)、設計判断記録(ADR)の作成 |
 | フック (1) | Write/Edit後の自動フォーマット |
 | ワークフロー定義 (1) | ブランチ戦略 |
 
@@ -48,6 +48,8 @@ claude --plugin-dir /path/to/claude-harness
 #    （CLAUDE_HARNESS_ROOT 優先 → installed_plugins.json の有効な installPath のうち
 #      最大バージョン → cache 配下の最大バージョン）
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+#    （末尾の `|| true` は set -e 下で落ちないため。未導入の環境では
+#      installed_plugins.json が無く jq が非0で終わる＝まさにこの手順を実行する状況）
 SRC="${CLAUDE_HARNESS_ROOT:-$(jq -r '
   [ .plugins | to_entries[]
     | select(.key | startswith("claude-harness@"))
@@ -55,9 +57,9 @@ SRC="${CLAUDE_HARNESS_ROOT:-$(jq -r '
   ]
   | max_by(.version // "0" | split(".") | map(tonumber? // 0))
   | .installPath // empty
-' "$CONFIG_DIR/plugins/installed_plugins.json" 2>/dev/null)}"
+' "$CONFIG_DIR/plugins/installed_plugins.json" 2>/dev/null || true)}"
 [ -f "$SRC/bin/claude-harness-run" ] || SRC="$(ls -d "$CONFIG_DIR"/plugins/cache/*/claude-harness/*/ 2>/dev/null \
-  | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+  | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || true)"
 
 # 2. ランチャーを PATH 上へコピーする
 mkdir -p ~/.local/bin
@@ -138,6 +140,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 ### ガイド
 
+- [変更履歴](CHANGELOG.md) — 破壊的変更と移行手順（4.0.0 以降）
 - [セットアップガイド](docs/getting-started.md) — インストールからCLAUDE.md整備、動作確認まで
 - [スクリプトランチャー](docs/script-launcher.md) — `claude-harness-run` の導入手順、allowlist の書き方、permission マッチャの実測記録
 - [カスタマイズ方法](docs/customization.md) — エージェント/スキルのオーバーライド、フック追加
