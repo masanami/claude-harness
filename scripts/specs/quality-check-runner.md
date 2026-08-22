@@ -7,7 +7,7 @@
 stdout JSON:
 ```json
 {
-  "result": "pass" | "fail",
+  "result": "pass" | "fail" | "skip",
   "auto_fix": { "applied": bool, "summary": "cmd1 → cmd2" },
   "gates": {
     "lint":      { "status": "pass"|"fail"|"skip", "errors": n|null, "warnings": n|null },
@@ -19,11 +19,21 @@ stdout JSON:
 
 | フィールド | 型 / 値 | 意味 |
 |---|---|---|
-| `result` | `"pass"` \| `"fail"` | `gates.*.status` のいずれかが `fail` なら `fail`、それ以外（全て `pass`/`skip`）は `pass` |
+| `result` | `"pass"` \| `"fail"` \| `"skip"` | 優先順位 `fail` > `skip` > `pass` で判定する。`gates.*.status` のいずれかが `fail` なら `fail`。`fail` が無く**実行されたゲート（`skip` 以外）が1つも無い**なら `skip`（＝何も検査していない。下記「ゲートが1つも無い場合」）。それ以外（1つ以上実行され `fail` 無し）は `pass`。**既知の3値以外の `status`（判定不能）は `fail` 側へ倒す**（fail-closed） |
 | `gates.*.status` | `"pass"` \| `"fail"` \| `"skip"` | **exit code のみ**で判定（0 → pass、非0 → fail）。対応フラグ未指定なら `skip` |
 | `gates.lint.errors` / `.warnings`、`gates.typecheck.errors`、`gates.test.passed`/`.failed`/`.skipped` | 数値 \| `null` | ツール出力からの best-effort 抽出（ESLintの`X problems (Y errors, Z warnings)`、tscの`Found N errors.`、Jest/Vitest/pytestの`N passed`/`N failed`/`N skipped`等のパターンに対応）。**該当する集計行が複数ある場合は合算する**（下記「件数の集計方針」）。**抽出できない場合は `null`。`status` の判定には使わない** |
 | `auto_fix.applied` | bool | `--auto-fix` が1つ以上指定されたか |
 | `auto_fix.summary` | string | 実行した auto-fix コマンドを検出順に `" → "` 区切りで連結したもの |
+
+## ゲートが1つも無い場合（`result: "skip"`）
+
+`--lint` / `--typecheck` / `--test` が**すべて未指定（または空文字）**で、実行されたゲートが1つも無い場合は、`result` を `"pass"` ではなく **`"skip"`**（exit code 3）とする。`gates.*` はすべて `status: "skip"` のままで、stdout のJSONは通常どおり出力される。
+
+- **理由**: 全ゲート skip を `pass`（exit 0）にすると、呼び出し側がフラグを渡し忘れた場合に**何も検査していないのに品質チェックが成功したと報告される**（Issue #192。必須ゲートという安全網が素通りする）。「1つも実行していない」は「全ゲート通過」ではない
+- **`fail` ではなく専用の `skip` にした理由**: `fail`（exit 1）にすると、実際に lint / 型 / テストが落ちた状態と区別できない。呼び出し側の失敗分析（`gates.*.status == "fail"` を読んで原因を提示する経路）が、分析対象の無い fail を受け取ることになる。**未検証は「検査して落ちた」とは別の状態**として返し、呼び出し側に別扱いを強制する
+- **exit code を非0（3）にした理由**: exit code しか見ない呼び出し側（`if runner …; then` 形）にも成功と読ませないため。0（pass）・1（fail / CLI引数不正）・2（jq不在）と重ならない値を割り当てている
+- **`--auto-fix` はゲート数に数えない**: auto-fix は「機械的に直せる範囲を直す」手続きであって検査ではないため、`--auto-fix` だけを指定した実行も `result: "skip"` になる（`auto_fix.applied` は `true` のまま）
+- **一部のゲートだけが skip の場合は従来どおり `pass`**: 型チェックの無いプロジェクトのように、対応するコマンドが存在しないゲートを省略する呼び出しは正当な構成であり、後方互換を保つ。区別するのは**「1つも実行していない」場合だけ**（どのゲートが実行されなかったかは `gates.*.status` で判別できる）
 
 ## 件数の集計方針
 
@@ -43,6 +53,6 @@ npm workspaces・cargo のように**1回の実行で集計行が複数回出力
 - auto-fix → lint → 型チェック → テストの順に実行する。**前段の失敗で後段をスキップしない**（全ゲートの結果を返す）
 - auto-fix コマンドが失敗（非0 exit）しても致命的エラーとはせず、警告を stderr に出して次のコマンドへ進む（機械的に直せる範囲を適用する手続きであり、型エラー・テスト失敗の修正は対象外のため）
 - 各コマンドの生の stdout/stderr（`--- <gate>: <cmd> ---` 区切り）は **stderr に転記**する。件数抽出で丸められる詳細（lintエラー箇所・型エラー内容・失敗テストのスタックトレース等）を、失敗時に呼び出し側が原因分析するために使う
-- 終了コード: `result` が `pass` なら 0、`fail` なら 1。jq 不在は 2、CLI引数不正（未知フラグ・値欠落・`--lint`/`--typecheck`/`--test` の重複指定）は 1（個別メッセージは stderr）。**exit 2（jq不在）の場合は stdout にJSONが出力されない**ため、呼び出し側は exit code を先に確認してから stdout をJSONとしてパースすること
+- 終了コード: `result` が `pass` なら 0、`fail` なら 1、`skip` なら 3。jq 不在は 2、CLI引数不正（未知フラグ・値欠落・`--lint`/`--typecheck`/`--test` の重複指定）は 1（個別メッセージは stderr）。**exit 2（jq不在）の場合は stdout にJSONが出力されない**ため、呼び出し側は exit code を先に確認してから stdout をJSONとしてパースすること（**exit 3 の場合は stdout にJSONが出力される**）
 - `--lint`/`--typecheck`/`--test` はそれぞれ1回のみ指定可（`--auto-fix` は0回以上）。重複指定は無言の上書きを避けるため exit 1 のエラーとする
 - bash 3.2（macOS既定）の `set -u` 下での空配列展開の互換性に配慮した実装になっている（`${arr[@]+"${arr[@]}"}` イディオム）

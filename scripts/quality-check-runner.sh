@@ -26,15 +26,37 @@ gate_status_from_exit() {
 }
 
 # 各ゲートの status（"pass"|"fail"|"skip"）から総合判定を行う。
-# いずれかが fail なら fail、それ以外（pass/skip のみ）は pass。
+# 判定の優先順位は fail > skip > pass:
+#   - いずれかが "fail"（または想定外の値。下記 fail-closed）なら "fail"
+#   - fail が無く、実行されたゲート（"pass"）が1つも無ければ "skip"
+#   - それ以外（1つ以上 "pass" があり fail が無い）は "pass"
+#
+# 全 skip を "pass" にしないのは、**1つも検査していない状態を「全ゲート通過」と
+# 読める結果にしない**ため（Issue #192。呼び出し側がフラグを渡し忘れると安全網が
+# 素通りしていた）。引数が0個の場合も、空集合を空虚に真として "pass" へ倒さず
+# "skip" を返す。
+# 一部だけ skip（型チェックの無いプロジェクト等）は正当な構成のため従来どおり
+# "pass" とする——「1つも実行していない」場合だけを区別する。
+#
+# fail-closed: 既知の3値以外（空文字・未知の status）は "fail" とする。ゲートJSONの
+# 組み立てに失敗して status が空になったような**判定不能の状態を "pass" 側へ落とさない**
+# ため（「検査できなかった」を「問題なし」に丸めない）。
 compute_result() {
-  local s
+  local s executed="false"
   for s in "$@"; do
-    if [ "$s" = "fail" ]; then
-      echo "fail"
-      return
-    fi
+    case "$s" in
+      pass) executed="true" ;;
+      skip) ;;
+      *)
+        echo "fail"
+        return
+        ;;
+    esac
   done
+  if [ "$executed" = "false" ]; then
+    echo "skip"
+    return
+  fi
   echo "pass"
 }
 
@@ -249,6 +271,9 @@ Usage: ${prog} [--auto-fix CMD]... [--lint CMD] [--typecheck CMD] [--test CMD]
 コマンドは呼び出し側（LLM）がプロジェクト設定（CLAUDE.md / package.json 等）から
 特定した上で渡す。このスクリプトはコマンドの意味を解釈せず、実行してexit codeで
 判定するだけ。
+
+--lint / --typecheck / --test をすべて省略（または空文字を指定）した場合は、
+何も検査されないため result は "pass" ではなく "skip"、exit code は 3 を返す。
 EOF
 }
 
@@ -360,11 +385,21 @@ main() {
       gates: {lint: $lint, typecheck: $typecheck, test: $test}
     }'
 
-  if [ "$result" = "pass" ]; then
-    exit 0
-  else
-    exit 1
-  fi
+  case "$result" in
+    pass)
+      exit 0
+      ;;
+    skip)
+      # 実行すべきゲートが1つも無かった＝何も検査していない。exit code だけを見る
+      # 呼び出し側にも成功と読ませないため、pass（0）とも fail（1）とも別の 3 を返す。
+      echo "Error: no quality gate was executed (--lint / --typecheck / --test were all unspecified or empty)." >&2
+      echo "       Nothing was verified. This is NOT a pass: specify at least one gate command." >&2
+      exit 3
+      ;;
+    *)
+      exit 1
+      ;;
+  esac
 }
 
 # `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。

@@ -28,7 +28,7 @@ CLAUDE.md および `package.json` 等から、以下のコマンドを特定す
 - 型チェックコマンド
 - テストコマンド
 
-該当するコマンドが存在しないものは省略する（手順2のスクリプトが「スキップ」として扱い、失敗とはしない）。
+該当するコマンドが存在しないものは省略する（手順2のスクリプトが「スキップ」として扱い、失敗とはしない）。**ただし lint / 型チェック / テストのいずれも特定できなかった場合**、手順2は `result: "skip"`（exit 3）を返す。`pass` に読み替えず、**未検証として報告する**（手順2・手順3）。
 
 ### 2. quality-check-runner.sh の実行
 
@@ -51,14 +51,15 @@ claude-harness-run quality-check-runner \
 1. **stdout が空、または JSON としてパースできない** → **実行エラー**として扱う（品質 fail ではない）。stderr のメッセージをそのまま報告し、**手順3以降に進まず中断する**。原因は主に次の2系統:
    - **ランチャー段階の失敗**（`quality-check-runner` が起動される前に終了。exit `69` = プラグインルート／実行系を解決できない、`66` = target が見つからない、`64` = 引数不正、`command not found` = ランチャー未導入）。この場合は上記注記のフォールバック形を試し、ランチャー導入をユーザーに案内する
    - **runner 段階の失敗**（exit `2` = jq 不在、exit `1` + 空 stdout = CLI引数不正）
-2. **stdout が妥当な JSON** → 品質結果として解釈する。exit code は `result` が `pass` なら 0、`fail` なら 1
+2. **stdout が妥当な JSON** → 品質結果として解釈する。exit code は `result` が `pass` なら 0、`fail` なら 1、`skip` なら 3
    - JSON の `result` と exit code が食い違う場合は**実行エラー扱い**とし、暗黙に pass へ倒さない
+   - **`result: "skip"`（exit 3）はゲートが1つも実行されなかった状態**。品質 fail ではないが、**`pass` にも読み替えない**。手順1でコマンドを取りこぼしていたなら特定し直して再実行し、それでも `skip` なら**未検証（⊘ SKIP）として手順3で報告する**（総合判定を `PASS` にしない）
 
 出力 JSON の**フィールド定義と件数抽出の仕様の正本は、プラグイン配下の `scripts/specs/quality-check-runner.md`**（ここには複製しない）。**cwd 起点の相対パス `scripts/specs/quality-check-runner.md` では導入先プロジェクトの同名ファイルを誤って参照しうるため、Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/quality-check-runner.md` として解決すること。
 
 ### 3. 結果サマリー
 
-手順2で得た stdout の JSON（`{result, auto_fix, gates}`）を、**機械可読な結果として最後にそのまま出力**する（呼び出し元のスキル/エージェントが判定に使う）。
+手順2で得た stdout の JSON（`{result, auto_fix, gates}`）を、**機械可読な結果として最後にそのまま出力**する（呼び出し元のスキル/エージェントが判定に使う）。`result` が `"skip"` の場合も**そのまま出力し、`"pass"` に書き換えない**。
 
 あわせて `gates.*` の内容から**人間向けサマリー**（✅ パス / ❌ 失敗 / ⊘ スキップ）を組み立てて提示する:
 
@@ -74,7 +75,7 @@ claude-harness-run quality-check-runner \
 | 型チェック | ✅/❌/⊘ | errors |
 | テスト | ✅/❌/⊘ | passed/failed/skipped |
 
-### 総合判定: ✅ PASS / ❌ FAIL
+### 総合判定: ✅ PASS / ❌ FAIL / ⊘ SKIP（ゲート未実行）
 ```
 
 ### 4. 失敗時の対応
