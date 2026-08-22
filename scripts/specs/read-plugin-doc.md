@@ -23,7 +23,7 @@
 ```bash
 claude-harness-run read-plugin-doc "skills/guarantee-audit/references/bootstrap-mode.md"
 claude-harness-run read-plugin-doc "scripts/specs/list-test-files.md"
-claude-harness-run read-plugin-doc "skills/create-ticket/references/guarantee-section.md" --from-line 80
+claude-harness-run read-plugin-doc "skills/para-impl/references/star-parallel.md" --from-line 80
 ```
 
 | フラグ | 意味 |

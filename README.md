@@ -114,7 +114,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 | `/demo-e2e` | `/demo-e2e [カタログCSV/CASE_ID/specファイル/画面名]` | E2Eテストケースカタログと突き合わせ、1ケースごとに解説→実演（Headed Playwright）→人間判定を繰り返す |
 | `/quality-check` | `/quality-check` | lint + typecheck + test の一括実行（機械可読な結果） |
 | `/self-review` | `/self-review` | コード変更のセルフレビュー |
-| `/guarantee-audit` | `/guarantee-audit <bootstrap\|drift>` | 保証台帳の監査。既存テストから台帳ドラフトを生成（`bootstrap`。GDD期への切り替え準備として SDD期でも実行できる）、または台帳と実態の乖離を検出（`drift`。台帳が必要）。いずれも報告のみで修正はしない |
+| `/guarantee-audit` | `/guarantee-audit <bootstrap\|drift>` | **【experimental】** 保証台帳の監査。既存テストから台帳ドラフトを生成（`bootstrap`）、または台帳と実態の乖離を検出（`drift`。台帳が必要）。いずれも報告のみで修正はしない。台帳を正とする GDD レジームは不採用であり（ADR 0002）、本スキルは台帳非依存の診断ツールへ再位置づける作業が Issue #194 で進行中 |
 
 ### ユーティリティ
 
@@ -132,7 +132,8 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 ### 戦略・ワークフロー
 
-- [AI駆動開発戦略](docs/ai-driven-development-strategy.md) — 開発サイクル、レビュー優先順位、品質保証・テスト戦略、クリティカル箇所の定義、設計判断記録（ADR）の規約、開発フェーズ（SDD期/GDD期）とドキュメントライフサイクル
+- [AI駆動開発戦略](docs/ai-driven-development-strategy.md) — 開発サイクル、レビュー優先順位、品質保証・テスト戦略、クリティカル箇所の定義、設計判断記録（ADR）の規約、既定の開発フロー（SDD ＋ コード正・テスト正／4.4）と受入基準の粒度（4.5）
+- [ADR 0002: GDD を不採用とし、計装のみ回収する](docs/adr/0002-gdd-not-adopted-salvage-instruments.md) — 既定フローを確定させた決定と根拠（改訂2 で GDD 固有資産の削除まで決定）
 - [ブランチ戦略](docs/branching-strategy.md) — GitHub Flow、Conventional Commits、マージ規約
 
 ### ガイド

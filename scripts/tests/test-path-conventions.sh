@@ -38,7 +38,7 @@
 #     「配送元の同一性」が停止を要求している義務を、呼び出し側の注記へ接続する）。
 #     さらに references/ templates/ を持つスキルに注記が在ることを**全称条件**で確かめる
 #     （「注記が在るなら中身を見る」だけでは、注記を置いていない新規スキルが素通りする）。
-#     加えて (x-e) が、para-impl のゲート参照3本（guarantee-gate / join-gate / star-parallel）
+#     加えて (x-e) が、para-impl のゲート参照2本（join-gate / star-parallel）
 #     については**本文中の個々の読み出し指示まで**配送経路が第一手であることを見る
 #     （注記は配送経路・本文は Read という二重規則の再発防止）。検出器の自己検査つき。
 # (xi) references/ templates/ 参照の解決性（dangling / orphan / 解決不能表記）。
@@ -1038,10 +1038,10 @@ assert_uncovered '正当: ファイルごとに注記があれば全部カバー
 > 参照ファイルは導入先プロジェクトではなく…`templates/CLAUDE.md.template`…
 雛形は `templates/CLAUDE.md.template`。'
 
-assert_uncovered '違反: 複数の未カバーをすべて報告する' 'references/guarantee-gate.md,references/join-gate.md' \
-'> 参照ファイルは導入先プロジェクトではなく…`references/star-parallel.md`…
+assert_uncovered '違反: 複数の未カバーをすべて報告する' 'references/join-gate.md,references/star-parallel.md' \
+'> 参照ファイルは導入先プロジェクトではなく…`references/impl-flow.md`…
+`skills/para-impl/references/impl-flow.md` を読む。
 `skills/para-impl/references/star-parallel.md` を読む。
-`skills/para-impl/references/guarantee-gate.md` を読む。
 `skills/para-impl/references/join-gate.md` を読む。'
 
 hardcoded_notes=""
@@ -1076,17 +1076,15 @@ fi
 # `Read し` のままだと注記と本文で規則が二重化し、実際に届くのは Read 経路になる**
 # （PR #184 で codex が指摘した形）。para-impl の3つの参照ファイルは
 # **ゲートの手順書**であり、読めなければゲートそのものが無効化される:
-#   - references/guarantee-gate.md … GDD の裁可ゲート（`guarantee:approved` 未付与なら実装しない）
 #   - references/join-gate.md      … 合流ゲート（サブエージェント起動前に必読と指定されている）
 #   - references/star-parallel.md  … star 型並列実装の手順
-# しかも guarantee-gate.md は 35KB 超で、Read が通っても出力上限の切り詰め域にある
+# star-parallel.md は 19KB 超で、Read が通っても出力上限の切り詰め域にある
 # （配送経路なら `--from-line` で分割配送される）。
-# 検査対象を para-impl の3本に限定するのは、他スキルの残存が別種の性質（表の中のパス表記・
+# 検査対象を para-impl の2本に限定するのは、他スキルの残存が別種の性質（表の中のパス表記・
 # 条件付き参照・スクリプト実行の記述）を持ち、一律の判定に載せると PR #176 型の
 # 「掃引の横展開が範囲外を壊す」回帰を作るため。移行が進んだ分だけここへ足す。
 
 PARA_IMPL_GATE_REFS=(
-  references/guarantee-gate.md
   references/join-gate.md
   references/star-parallel.md
 )
@@ -1281,18 +1279,18 @@ run_ref_resolve_selfcheck() {
   assert_resolves '同一スキル内の <base> 相対を owner で解決する' 'para-impl' \
     'skills/para-impl/references/star-parallel.md' '手順は `<base>/references/star-parallel.md` を読む'
   assert_resolves 'スキル跨ぎの <base>/../<skill>/ を正しく解決する' 'para-impl' \
-    'skills/create-ticket/references/guarantee-section.md' \
-    '正本は `<base>/../create-ticket/references/guarantee-section.md`'
+    'skills/create-ticket/references/requirement-mode.md' \
+    '正本は `<base>/../create-ticket/references/requirement-mode.md`'
   assert_resolves 'エージェント側の <...base>/../<skill>/ も解決する' '' \
-    'skills/create-ticket/references/guarantee-section.md' \
-    '`<tdd-implのbase>/../create-ticket/references/guarantee-section.md` で解決して Read する'
+    'skills/create-ticket/references/requirement-mode.md' \
+    '`<tdd-implのbase>/../create-ticket/references/requirement-mode.md` で解決して Read する'
   assert_resolves 'プラグインルート相対のフルパスをそのまま扱う' 'guarantee-audit' \
     'skills/guarantee-audit/references/bootstrap-mode.md' \
     'read-plugin-doc "skills/guarantee-audit/references/bootstrap-mode.md"'
   assert_resolves '裸の templates/ も owner で解決する' 'init-project' \
     'skills/init-project/templates/detection-report.md' '`templates/detection-report.md` を Read し'
   assert_resolves 'owner の無いファイルからの裸の参照は解決不能として報告する' '' \
-    'UNRESOLVED references/guarantee-section.md' '正本は `references/guarantee-section.md`'
+    'UNRESOLVED references/nonexistent-ref.md' '正本は `references/nonexistent-ref.md`'
   assert_resolves '参照トークンが無ければ何も返さない' 'demo' '' 'ここには参照トークンが無い'
 }
 run_ref_resolve_selfcheck

@@ -155,7 +155,7 @@ Base directory はスキル起動時に必ずコンテキストへ与えられ�
 
 > **本リポジトリ内の移行は未完了（2026-08-20 時点）**: 上の規約は「第一手は配送経路」だが、**各スキル本文中の個々の読み出し指示はまだ Read 直読みのまま残っている**。実測 22ファイル・54行（`grep -rnE '<[^>]*base[^>]*>/(\.\./)*([a-z0-9-]+/)*(references|templates|scripts)/|\$\{CLAUDE_PLUGIN_ROOT\}/(skills|scripts)/' skills/ agents/ --include='*.md' | grep -v read-plugin-doc`。フォールバックとして残した `<base>/...` の行も該当するため、この数は「未移行の箇所数」ではなく上限）。
 >
-> **移行済み**: `/para-impl` のゲート参照3本（`references/guarantee-gate.md`・`references/join-gate.md`・`references/star-parallel.md`）。ゲートの手順書は読めなければゲートそのものが無効化されるため先に移した（`guarantee-gate.md` は 35KB 超で、Read が通っても出力上限の切り詰め域にある）。`scripts/tests/test-path-conventions.sh` (x-e) が差し戻しを検出する。
+> **移行済み**: `/para-impl` のゲート参照2本（`references/join-gate.md`・`references/star-parallel.md`）。ゲートの手順書は読めなければゲートそのものが無効化されるため先に移した（`star-parallel.md` は 19KB 超で、Read が通っても出力上限の切り詰め域にある）。`scripts/tests/test-path-conventions.sh` (x-e) が差し戻しを検出する。
 >
 > つまり**注記（入口）は配送経路を指し、本文中の具体的な指示は Read を指す**という二重状態にある。文字通りに従うエージェントは、実行の直前に置かれた具体的な指示のほうを採りうるため、headless では拒否されて元の沈黙する失敗に戻る。
 >

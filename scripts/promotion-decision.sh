@@ -1,9 +1,8 @@
 #!/bin/bash
 # promotion-decision.sh
 # 使い方: promotion-decision.sh <mode> [--input <file>]
-#   mode: all-consistent | ready-for-promotion
-# /promote-verify の2つの判定式（Step 5.5-7 の `allConsistent` と Step 7 の
-# `readyForPromotion`）を決定的に評価する。判定の材料（各項の入力値）は stdin の JSON で
+#   mode: ready-for-promotion
+# /promote-verify の判定式（Step 7 の `readyForPromotion`）を決定的に評価する。判定の材料（各項の入力値）は stdin の JSON で
 # 受け取り、総合判定・各項の真偽・落ちた理由コードを stdout に JSON で1個返す。
 # 仕様の正本は scripts/specs/promotion-decision.md を参照。
 #
@@ -29,69 +28,12 @@ PROMOTION_DECISION_EX_TRUE=0   # 判定が true（allConsistent / readyForPromot
 PROMOTION_DECISION_EX_FALSE=1  # 判定が false（stdout には JSON を出す）
 PROMOTION_DECISION_EX_PREREQ=2 # 実行前提の欠落（jq 不在・引数不正・入力が JSON でない・必須キー欠落）
 
-PROMOTION_DECISION_MODES="all-consistent ready-for-promotion"
+PROMOTION_DECISION_MODES="ready-for-promotion"
 
-# all-consistent モードの判定式（5.5-7 の (a)〜(d)）。
-# 項を増減するときは scripts/specs/promotion-decision.md の項の表と
-# skills/promote-verify/references/guarantee-consistency.md の算出式も同時に更新すること。
-read -r -d '' PROMOTION_DECISION_JQ_ALL_CONSISTENT <<'JQPROG'
-# 識別子の妥当性。**「キーが在る」ことを「値が妥当」と読み替えない**:
-# `null` / 空文字 / 数値 / オブジェクトのような値は、targets と guarantees の両方に
-# 同じものが入っていれば集合比較が一致してしまい、**実在の保証を1件も特定していないのに
-# 全件カバー済みと判定される**。書式は $id_pattern（lib/common.sh の唯一の定義）で照合する。
-def valid_id: (type == "string") and (length > 0) and test("^\($id_pattern)$");
-
-. as $in
-| (["targets", "guarantees", "index", "humanReview"]) as $required
-| [ $required[] | . as $k | select(($in | has($k)) | not) ] as $missing
-| if ($missing | length) > 0 then
-    { error: "missing required keys", missing: $missing }
-  else
-    ($in.targets) as $targets
-    | ($in.guarantees) as $gs
-    | ($in.index) as $index
-    | ($in.humanReview) as $hr
-    | ( if $targets == null then ["targets_unknown"]
-        elif ($targets | type) != "array" then ["targets_invalid"]
-        elif ([$targets[] | select(valid_id | not)] | length) > 0 then ["target_id_invalid"]
-        elif ($targets | unique | length) != ($targets | length) then ["targets_duplicated"]
-        elif $gs == null then ["guarantees_unknown"]
-        elif ($gs | type) != "array" then ["guarantees_invalid"]
-        elif ([$gs[] | select((type != "object") or (has("guarantee_id") | not))] | length) > 0 then ["guarantee_id_missing"]
-        elif ([$gs[] | select(.guarantee_id | valid_id | not)] | length) > 0 then ["guarantee_id_invalid"]
-        elif ($targets | sort) != ($gs | map(.guarantee_id) | sort) then ["targets_not_covered"]
-        else [] end ) as $a_blockers
-    | ( if $index == null then ["index_missing"]
-        elif ($index | type) != "object" then ["index_invalid"]
-        elif ($index | has("error")) and ($index.error != null) then ["index_error"]
-        elif ($index.status) != "pass" then ["index_not_pass"]
-        else [] end ) as $b_blockers
-    | ( if $gs == null then ["guarantees_unknown"]
-        elif ($gs | type) != "array" then ["guarantees_invalid"]
-        elif ([$gs[] | select((type != "object") or (has("verdict") | not))] | length) > 0 then ["verdict_missing"]
-        elif ([$gs[] | select(.verdict != "consistent")] | length) > 0 then ["verdict_not_consistent"]
-        else [] end ) as $c_blockers
-    | ( if ($hr | type) != "array" then ["human_review_invalid"]
-        elif ($hr | length) > 0 then ["human_review_present"]
-        else [] end ) as $d_blockers
-    | {
-        mode: "all-consistent",
-        allConsistent: ((($a_blockers + $b_blockers + $c_blockers + $d_blockers) | length) == 0),
-        terms: {
-          targetsCovered: (($a_blockers | length) == 0),
-          indexPass: (($b_blockers | length) == 0),
-          allVerdictsConsistent: (($c_blockers | length) == 0),
-          noHumanReview: (($d_blockers | length) == 0)
-        },
-        blockers: (($a_blockers + $b_blockers + $c_blockers + $d_blockers) | unique)
-      }
-  end
-JQPROG
-
-# ready-for-promotion モードの判定式（Step 7 の6項）。
+# ready-for-promotion モードの判定式（Step 7 の5項）。
 read -r -d '' PROMOTION_DECISION_JQ_READY <<'JQPROG'
 . as $in
-| (["allMerged", "criteria", "qualityCheck", "e2e", "guaranteeCheck"]) as $required
+| (["allMerged", "criteria", "qualityCheck", "e2e"]) as $required
 | [ $required[] | . as $k | select(($in | has($k)) | not) ] as $missing
 | if ($missing | length) > 0 then
     { error: "missing required keys", missing: $missing }
@@ -99,7 +41,6 @@ read -r -d '' PROMOTION_DECISION_JQ_READY <<'JQPROG'
     ($in.criteria) as $criteria
     | ($in.qualityCheck) as $qc
     | ($in.e2e) as $e2e
-    | ($in.guaranteeCheck) as $gc
     | ( if ($in.allMerged) == true then [] else ["not_all_merged"] end ) as $merged_blockers
     | ( if $criteria == null then ["criteria_unknown"]
         elif ($criteria | type) != "array" then ["criteria_invalid"]
@@ -128,13 +69,7 @@ read -r -d '' PROMOTION_DECISION_JQ_READY <<'JQPROG'
         elif ($e2e | has("passed") | not) then ["e2e_result_missing"]
         elif ($e2e.passed) != true then ["e2e_not_passed"]
         else [] end ) as $e2e_blockers
-    | ( if $gc == null then ["guarantee_check_missing"]
-        elif ($gc | type) != "object" then ["guarantee_check_invalid"]
-        elif ($gc.skipped) == true then []
-        elif ($gc | has("allConsistent") | not) then ["guarantee_result_missing"]
-        elif ($gc.allConsistent) != true then ["guarantee_not_consistent"]
-        else [] end ) as $gc_blockers
-    | ($merged_blockers + $status_blockers + $review_blockers + $qc_blockers + $e2e_blockers + $gc_blockers) as $all_blockers
+    | ($merged_blockers + $status_blockers + $review_blockers + $qc_blockers + $e2e_blockers) as $all_blockers
     | {
         mode: "ready-for-promotion",
         readyForPromotion: (($all_blockers | length) == 0),
@@ -143,8 +78,7 @@ read -r -d '' PROMOTION_DECISION_JQ_READY <<'JQPROG'
           criteriaConsistent: (($status_blockers | length) == 0),
           criteriaNoHumanReview: (($review_blockers | length) == 0),
           qualityOk: (($qc_blockers | length) == 0),
-          e2eOk: (($e2e_blockers | length) == 0),
-          guaranteeOk: (($gc_blockers | length) == 0)
+          e2eOk: (($e2e_blockers | length) == 0)
         },
         blockers: ($all_blockers | unique)
       }
@@ -168,7 +102,6 @@ EOF
 # 引数: <mode>
 pd_program_for_mode() {
   case "$1" in
-    all-consistent) printf '%s' "$PROMOTION_DECISION_JQ_ALL_CONSISTENT" ;;
     ready-for-promotion) printf '%s' "$PROMOTION_DECISION_JQ_READY" ;;
     *) return 1 ;;
   esac
@@ -179,7 +112,6 @@ pd_program_for_mode() {
 # 引数: <mode>
 pd_decision_field_for_mode() {
   case "$1" in
-    all-consistent) printf '%s' "allConsistent" ;;
     ready-for-promotion) printf '%s' "readyForPromotion" ;;
     *) return 1 ;;
   esac
