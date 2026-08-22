@@ -40,11 +40,6 @@
 #       （完全な jq プログラム自体は呼び出し箇所ごとに異なる= any/select 等の外側の形が
 #       異なるため、共通化対象は述語部分の文字列に留める）。
 
-# 保証 ID の書式（`G-{宣言元番号}-{枝番}`）。昇格判定の材料検査（promotion-decision.sh）が使う。
-# POSIX ERE（bash の `=~`）と Oniguruma（jq の `test()`）のどちらでもそのまま使える表記に限る。
-# shellcheck disable=SC2034 # source した側（promotion-decision.sh）で使う
-GUARANTEE_ID_PATTERN='G-[0-9]+-[0-9]+'
-
 # check_jq の実体。error_json 引数を必須で取る内部実装。check_jq（既定JSON）と
 # analyze-project.sh 側のローカル上書き（自スクリプト専用JSON）の両方から呼ばれる共通コア。
 _common_check_jq_impl() {

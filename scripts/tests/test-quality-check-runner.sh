@@ -378,8 +378,7 @@ echo "=== test: skip 契約が仕様・呼び出し側ドキュメントへ伝�
 # runner が返す "skip" は、最終的に LLM（スキル・サブエージェント）が解釈して初めて
 # 意味を持つ。呼び出し側の手順が「skip も pass のうち」と読める状態へ戻ると、
 # スクリプトを直しても false pass が LLM 層で復活する。そのため、仕様の正本と
-# 各呼び出し側が skip を pass に読み替えない旨を明記していることを逐語で固定する
-# （test-quality-check-gdd-gate.sh (B) と同じドリフト検出方式）。
+# 各呼び出し側が skip を pass に読み替えない旨を明記していることを逐語で固定する。
 
 QCR_TEST_REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
