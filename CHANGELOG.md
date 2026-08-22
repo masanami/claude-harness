@@ -125,16 +125,21 @@ grep -n -A4 '^## 開発フェーズ' CLAUDE.md
 
 ```bash
 # 4.0.0 以降（ランチャー経由でも exit code はそのまま伝播する）
-claude-harness-run quality-check-runner --lint "..." --typecheck "..." --test "..."
-case $? in
-  0) ;;                                  # pass
-  1) echo "品質ゲート失敗" ;;            # fail（gates.*.status を見て原因を提示）
-  2) echo "jq 不在 / 引数不正" ;;        # stdout に JSON は出ない
+# 終了コードは「裸で実行して次行で $? を読む」形では取れない。CI が set -e を
+# 有効にしていると、非0 終了の時点でシェルが終了し case へ到達しないため。
+# `|| status=$?` で受けると errexit が発動せず、4系統すべてを分岐できる。
+status=0                     # 成功時は `||` 側が走らないので初期化が要る
+claude-harness-run quality-check-runner --lint "..." --typecheck "..." --test "..." || status=$?
+case "$status" in
+  0) ;;                                             # pass
+  1) echo "品質ゲート失敗、または CLI 引数不正" ;;  # gates.*.status を見て原因を提示
+  2) echo "jq 不在" ;;                              # stdout に JSON は出ない
   3) echo "未検証（ゲートが1つも実行されていない）" ;;  # pass に読み替えない
 esac
 ```
 
-`if runner; then ok; fi` のような真偽だけの判定は、exit 3 を「失敗」側へ落とす。これは安全側の挙動なので急ぎの修正は要らないが、`fail` と `skip` を区別して報告するのが正しい対応。
+- **CLI 引数不正（未知フラグ・値欠落・`--lint`/`--typecheck`/`--test` の重複指定）は exit 1** であり、exit 2 は jq 不在のみ。`gates.*.status` に `fail` が1つも無いのに exit 1 なら引数不正を疑う。
+- `if runner; then ok; fi` のような真偽だけの判定は、exit 3 を「失敗」側へ落とす。これは安全側の挙動なので急ぎの修正は要らないが、`fail` と `skip` を区別して報告するのが正しい対応。
 
 #### (E) `promotion-decision.sh` を直接呼ぶ自動化を直す
 

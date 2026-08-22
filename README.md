@@ -48,6 +48,8 @@ claude --plugin-dir /path/to/claude-harness
 #    （CLAUDE_HARNESS_ROOT 優先 → installed_plugins.json の有効な installPath のうち
 #      最大バージョン → cache 配下の最大バージョン）
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+#    （末尾の `|| true` は set -e 下で落ちないため。未導入の環境では
+#      installed_plugins.json が無く jq が非0で終わる＝まさにこの手順を実行する状況）
 SRC="${CLAUDE_HARNESS_ROOT:-$(jq -r '
   [ .plugins | to_entries[]
     | select(.key | startswith("claude-harness@"))
@@ -55,9 +57,9 @@ SRC="${CLAUDE_HARNESS_ROOT:-$(jq -r '
   ]
   | max_by(.version // "0" | split(".") | map(tonumber? // 0))
   | .installPath // empty
-' "$CONFIG_DIR/plugins/installed_plugins.json" 2>/dev/null)}"
+' "$CONFIG_DIR/plugins/installed_plugins.json" 2>/dev/null || true)}"
 [ -f "$SRC/bin/claude-harness-run" ] || SRC="$(ls -d "$CONFIG_DIR"/plugins/cache/*/claude-harness/*/ 2>/dev/null \
-  | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+  | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || true)"
 
 # 2. ランチャーを PATH 上へコピーする
 mkdir -p ~/.local/bin
