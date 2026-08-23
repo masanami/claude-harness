@@ -8,6 +8,21 @@
 
 ---
 
+## 4.1.0
+
+### 追加
+
+- `/codex-review`を追加。Codex CLIをread-only sandboxで実行し、code/design lane、finding verifier、集約を1つの構造化review capsuleとして返す。
+- `/self-review`から、利用可能な場合にCodex review capsuleをshadow modeで併走できるようにした。現行Claude panelの収束判定・自動修正にはまだ合成しない。
+- schema検証、timeout、lane/verifierの部分失敗検出、usage・wall time計測を備えた`codex-review-runner`を追加。部分失敗や不正出力を「指摘なし」として扱わない。
+
+### 運用上の注意
+
+- 本バージョンのCodex reviewはPhase 0/1の比較運用であり、正式なレビューゲートではない。Codexが利用できない場合もClaude reviewは継続し、Codex側は`not_run`として理由を報告する。
+- 評価期間中は、品質比較とdefect proxyの測定のため、PR上の外部レビューを従来どおり維持する。
+
+---
+
 ## 4.0.0
 
 **GDD（Guarantee-Driven Development / 保証駆動開発）レジームを撤去した。** 保証台帳 `docs/guarantees.md` を駆動文書とし、保証 ID・裁可ラベル・索引ゲートで運用するレジームは**不採用**となり、機構ごと削除された。既定フローは **SDD ＋ コード正・テスト正**に一本化される。
