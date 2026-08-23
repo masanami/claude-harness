@@ -88,6 +88,11 @@
 - **受入基準の粒度規約（1基準 = 1主張 = 1検証）**を既定フローへ移植した（[`docs/ai-driven-development-strategy.md` 4.5](docs/ai-driven-development-strategy.md)）。GDD の運用で得た知見を台帳用語から独立させたもの。`/define-feature` と `spec-critic` に配送済みで、**新たに書く受入基準に前向きに適用**する（既存の一括再分割は求めない）。
 - `docs/ai-driven-development-strategy.md` の既定フロー節（4.4）が「機能仕様は保守する。ただし正しさは担保しない」を明文化し、**機能仕様の退役手順（ADR 昇格判定 → 削除 → 被参照の掃引）の正本**になった。GDD レジームを記述していた 5 章が削除され、旧 6 章「リスクと対策」が **5 章へ繰り上がっている**（外部から章節番号で参照している場合は要確認）。
 - `docs/gdd-design-draft.md` を削除。
+- **`retirement-sweep` が変更履歴（`CHANGELOG.md`）を除外するようになった**（`--changelog <path>` で差し替え可。既定 `CHANGELOG.md`）。破壊的変更節の「`<path>` を削除した」は**削除された事実の記録**であって被参照ではなく、除外しないと**削除した PR 自身が恒久的な `fail` の原因を作る**（「参照 0 件」を exit code で判定するという目的が成立しなくなる）。ADR の出所記録を `--adr-dir` で除外しているのと同じ扱い。
+  - 出力 JSON に **`excluded_files`** を追加した（`excluded_dirs` は従来どおり。除外集合の全体は両者の和）。既存フィールドの意味・名前は変えていない。
+  - **除外したヒットは捨てず `excluded` に入り `counts.excluded` に数える**（stderr にも件数を出す）。掃引の範囲は目視できる。
+  - **除外は無効化できない**（`--changelog ""` は exit 2。`--adr-dir` と同じ規定）。また**ディレクトリを受け付けない**（単一ファイルの完全一致。木ごと外せる形にすると、設けないと決めた汎用 `--exclude` と同じになる）。
+  - **影響**: 変更履歴にしかヒットが無かったリポジトリは `status` が `fail` → `pass`（exit 1 → 0）に変わる。CI で exit code を見ている場合は結果が変わりうる。
 
 ### 移行手順
 

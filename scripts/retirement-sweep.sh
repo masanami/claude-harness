@@ -1,8 +1,8 @@
 #!/bin/bash
 # retirement-sweep.sh
-# 使い方: retirement-sweep.sh <退役したパス>... [--base <dir>] [--adr-dir <dir>]
+# 使い方: retirement-sweep.sh <退役したパス>... [--base <dir>] [--adr-dir <dir>] [--changelog <path>]
 # 退役（削除）した駆動文書への参照がリポジトリに残っていないかを決定的に走査し、
-# {status, base, targets, excluded_dirs, counts, references, excluded, weak_matches} の
+# {status, base, targets, excluded_dirs, excluded_files, counts, references, excluded, weak_matches} の
 # JSON を stdout に1個返す。仕様の正本は scripts/specs/retirement-sweep.md を参照。
 #
 # なぜあるか:
@@ -11,7 +11,7 @@
 #   52箇所／28ファイル残った（README のリンクが 404 になり、実装コメントから設計根拠を
 #   辿れなくなった）。退役の目的（エージェントの Glob/Grep から汚染源を除く）に対して
 #   「辿れない参照を撒く」という逆の結果になる。
-# - 「grep して直す」という散文の手順では、除外してよい参照（ADR の出所記録）の扱いが
+# - 「grep して直す」という散文の手順では、除外してよい参照（ADR の出所記録・変更履歴の削除告知）の扱いが
 #   担当者ごとにぶれ、消してはいけない参照まで消える。除外集合をスクリプト1箇所に持ち、
 #   **除外した分も件数と一覧に出す**ことで、掃引の範囲を目視できる形にする。
 #
@@ -47,6 +47,14 @@ RETIREMENT_SWEEP_EX_PREREQ=2 # 実行前提の欠落（jq 不在・引数不正�
 # 「検査していないものを 0 件に見せる」経路になり、本スクリプトが塞いでいる欠陥と同型になる。
 RETIREMENT_SWEEP_DEFAULT_ADR_DIR="docs/adr/"
 
+# 既定の除外ファイル。変更履歴の破壊的変更節は「<path> を削除した」と書く場所であり、
+# ADR の出所記録と同じく**削除された事実の記録**であって被参照ではない。利用者が移行に
+# 使う情報そのものなので、掃引の都合でパス表記を伏せると告知が成立しない。
+# **ディレクトリ前置きではなく単一ファイルの完全一致で照合する**（前置きにすると
+# `--changelog docs/` のような指定で木ごと外せてしまい、禁じている汎用 --exclude と
+# 同じものになる）。置き場を変えているプロジェクトのために --changelog で差し替える。
+RETIREMENT_SWEEP_DEFAULT_CHANGELOG="CHANGELOG.md"
+
 # 走査結果の受け皿（bash 3.2 では未代入配列の展開が set -u で落ちるため先に宣言する）
 RS_REFS=()
 RS_EXCLUDED=()
@@ -57,6 +65,7 @@ RS_STILL_PRESENT=()
 # 除外プレフィックス（main が --adr-dir から解決して上書きする）と、走査エラーの記録。
 # 関数を直接テストする経路（source して呼ぶ）でも未定義参照にならないよう既定値を置く。
 RS_ADR_PREFIX="$RETIREMENT_SWEEP_DEFAULT_ADR_DIR"
+RS_CHANGELOG_PATH="$RETIREMENT_SWEEP_DEFAULT_CHANGELOG"
 RS_SCAN_ERROR=""
 
 # 前後の空白を除去する。
@@ -91,19 +100,37 @@ rs_normalize_dir_prefix() {
   printf '%s/' "$dir"
 }
 
-# ヒットを1件積む。除外プレフィックスに該当するものは RS_EXCLUDED へ回す。
+# 与えたファイル表記を「リポジトリルート相対のファイルパス」に正規化する。
+# `./CHANGELOG.md` `CHANGELOG.md` のいずれも `CHANGELOG.md` になる。
+# **末尾スラッシュは畳まない**——`docs/` がそのまま返ることで、呼び出し側が
+# 「ディレクトリを渡された」と判定して弾ける（単一ファイル限定を機械で強制する）。
+rs_normalize_file_path() {
+  local path
+  path="$(rs_trim "$1")"
+  path="${path#./}"
+  printf '%s' "$path"
+}
+
+# ヒットを1件積む。除外対象に該当するものは RS_EXCLUDED へ回す。
 # 引数: <退役パス> <ヒットしたファイル> <行番号> <行本文> <一致種別 path|basename>
 rs_add_hit() {
   local target="$1" file="$2" line="$3" text="$4" kind="$5"
   local record
   record="$(rs_escape_field "$target")"$'\t'"$(rs_escape_field "$file")"$'\t'"${line}"$'\t'"$(rs_escape_field "$text")"$'\t'"${kind}"
 
+  # 除外は2つだけ（仕様「除外は『消してはいけない参照』の列挙であって、検査の無効化ではない」）:
+  # (1) ADR 置き場は**ディレクトリ前置き**で、(2) 変更履歴は**単一ファイルの完全一致**で判定する。
+  # 変更履歴を前置き照合にしない理由は RETIREMENT_SWEEP_DEFAULT_CHANGELOG の注記を参照。
   case "$file" in
     "${RS_ADR_PREFIX}"*)
       RS_EXCLUDED+=("$record")
       return 0
       ;;
   esac
+  if [ "$file" = "$RS_CHANGELOG_PATH" ]; then
+    RS_EXCLUDED+=("$record")
+    return 0
+  fi
 
   if [ "$kind" = "basename" ]; then
     RS_WEAK+=("$record")
@@ -217,12 +244,15 @@ print_usage() {
   local prog
   prog="$(basename "$0")"
   cat >&2 <<EOF
-Usage: ${prog} <退役したパス>... [--base <dir>] [--adr-dir <dir>]
+Usage: ${prog} <退役したパス>... [--base <dir>] [--adr-dir <dir>] [--changelog <path>]
 
-  <退役したパス>  削除済みの駆動文書のパス（リポジトリルート相対）。1個以上、複数可。
-  --base <dir>    走査するリポジトリの作業ツリー（既定: cwd から解決したリポジトリルート）。
-  --adr-dir <dir> 除外する ADR 置き場（既定: ${RETIREMENT_SWEEP_DEFAULT_ADR_DIR}）。
-                  ADR の「宣言元は退役した <path>」は正しい出所記録のため書き換えない。
+  <退役したパス>    削除済みの駆動文書のパス（リポジトリルート相対）。1個以上、複数可。
+  --base <dir>      走査するリポジトリの作業ツリー（既定: cwd から解決したリポジトリルート）。
+  --adr-dir <dir>   除外する ADR 置き場（既定: ${RETIREMENT_SWEEP_DEFAULT_ADR_DIR}）。
+                    ADR の「宣言元は退役した <path>」は正しい出所記録のため書き換えない。
+  --changelog <path> 除外する変更履歴ファイル（既定: ${RETIREMENT_SWEEP_DEFAULT_CHANGELOG}）。
+                    破壊的変更節の「<path> を削除した」は削除の告知のため書き換えない。
+                    **単一ファイルのみ**（ディレクトリは受け付けない）。
   stdout に {"status":"pass"|"fail","base":...,"counts":{...},"references":[...],...} を1個出力する。
   exit code: ${RETIREMENT_SWEEP_EX_PASS}=参照なし / ${RETIREMENT_SWEEP_EX_FAIL}=参照が残っている / ${RETIREMENT_SWEEP_EX_PREREQ}=実行前提の欠落
 EOF
@@ -231,6 +261,7 @@ EOF
 main() {
   local explicit_base=""
   local adr_dir="$RETIREMENT_SWEEP_DEFAULT_ADR_DIR"
+  local changelog="$RETIREMENT_SWEEP_DEFAULT_CHANGELOG"
   local -a targets=()
 
   while [ "$#" -gt 0 ]; do
@@ -255,6 +286,15 @@ main() {
           exit "$RETIREMENT_SWEEP_EX_PREREQ"
         fi
         adr_dir="$2"
+        shift 2
+        ;;
+      --changelog)
+        if [ "$#" -lt 2 ]; then
+          echo "Error: --changelog requires a value" >&2
+          printf '%s\n' '{"status":"error","error":"--changelog requires a value"}' >&2
+          exit "$RETIREMENT_SWEEP_EX_PREREQ"
+        fi
+        changelog="$2"
         shift 2
         ;;
       -*)
@@ -308,6 +348,21 @@ main() {
     printf '%s\n' '{"status":"error","error":"empty adr dir"}' >&2
     exit "$RETIREMENT_SWEEP_EX_PREREQ"
   fi
+
+  RS_CHANGELOG_PATH="$(rs_normalize_file_path "$changelog")"
+  if [ -z "$RS_CHANGELOG_PATH" ]; then
+    echo "Error: --changelog が空です（除外を空にすると変更履歴の削除告知まで掃引対象になります）" >&2
+    printf '%s\n' '{"status":"error","error":"empty changelog path"}' >&2
+    exit "$RETIREMENT_SWEEP_EX_PREREQ"
+  fi
+  # ディレクトリを受け付けると「木ごと除外できるフラグ」になり、禁じている汎用 --exclude と同じになる。
+  if [ "${RS_CHANGELOG_PATH}" != "${RS_CHANGELOG_PATH%/}" ]; then
+    echo "Error: --changelog はディレクトリを受け付けません（単一ファイルのみ）: ${RS_CHANGELOG_PATH}" >&2
+    echo "  木ごと外せる形にすると、本スクリプトが設けていない汎用の --exclude と同じものになります。" >&2
+    printf '%s\n' '{"status":"error","error":"changelog path is a directory"}' >&2
+    exit "$RETIREMENT_SWEEP_EX_PREREQ"
+  fi
+  # 変更履歴が存在しないリポジトリでも壊れない: 完全一致の照合語になるだけで、どのヒットにも当たらない。
 
   # 退役対象がまだ残っていないか（削除前に走らせた 0 件を「片付いた」と読ませない）
   local t normalized
@@ -369,6 +424,7 @@ main() {
   if ! json="$(jq -n \
     --arg base "$root" \
     --arg adr_prefix "$RS_ADR_PREFIX" \
+    --arg changelog_path "$RS_CHANGELOG_PATH" \
     --arg targets "$targets_text" \
     --arg refs "$refs_text" \
     --arg excluded "$excluded_text" \
@@ -391,6 +447,7 @@ main() {
           base: $base,
           targets: ($targets | split("\n") | map(select(length > 0))),
           excluded_dirs: [$adr_prefix],
+          excluded_files: [$changelog_path],
           counts: {
             targets: ($targets | split("\n") | map(select(length > 0)) | length),
             references: ($references | length),
@@ -416,7 +473,7 @@ main() {
   fi
 
   if [ "${#RS_EXCLUDED[@]}" -gt 0 ]; then
-    echo "Note: 除外ディレクトリ（${RS_ADR_PREFIX}）内の参照が ${#RS_EXCLUDED[@]} 件あります。これは退役した文書の出所記録であり、書き換えません。" >&2
+    echo "Note: 除外対象（ディレクトリ ${RS_ADR_PREFIX} / ファイル ${RS_CHANGELOG_PATH}）の参照が ${#RS_EXCLUDED[@]} 件あります。これは削除された事実の記録（ADR の出所記録・変更履歴の削除告知）であり、書き換えません。" >&2
   fi
 
   if [ "${#RS_REFS[@]}" -gt 0 ]; then

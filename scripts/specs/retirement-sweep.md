@@ -6,21 +6,31 @@
 
 手順側の正本は `docs/ai-driven-development-strategy.md` 4.4「既定の開発フロー」の**「機能仕様を削除するときは、被参照の掃引までが1セット」**。**付け替え先の判断基準（どの参照を ADR 番号 / 宣言元 Issue 番号 / 参照ごと削除 のどれへ向けるか）はそちらが正本**であり、本スクリプトは判断しない（候補を漏れなく出すところまでが責務）。
 
-## `scripts/retirement-sweep.sh <退役したパス>... [--base <dir>] [--adr-dir <dir>]`
+## `scripts/retirement-sweep.sh <退役したパス>... [--base <dir>] [--adr-dir <dir>] [--changelog <path>]`
 
 - `<退役したパス>` は**リポジトリルート相対**のパスを1個以上。複数指定できる（退役は複数ファイルをまとめて行うのが通常）。
 - `--base <dir>` は走査するリポジトリの作業ツリー（既定: cwd から `git rev-parse --show-toplevel` で解決したルート）。
 - `--adr-dir <dir>` は除外する ADR 置き場（既定: `docs/adr/`）。`docs/adr` / `./docs/adr/` のいずれの表記でも同じ前置きに正規化する。
+- `--changelog <path>` は除外する変更履歴ファイル（既定: `CHANGELOG.md`）。**単一ファイルのみ**で、`docs/` のようなディレクトリ表記（末尾スラッシュ）は exit 2 で弾く。`./CHANGELOG.md` は `CHANGELOG.md` に正規化する。指定したファイルが存在しないリポジトリでも壊れない（照合語が1つ増えるだけで、どのヒットにも当たらない）。
 
 走査対象は **git の追跡ファイル＋未追跡（非 ignore）ファイル**（`git grep --untracked`）。退役 PR の作業中——削除をコミットする前——に実行できるようにするため。
 
 ### 除外は「消してはいけない参照」の列挙であって、検査の無効化ではない
 
-ADR の `宣言元は退役した <path>` は**正しい出所記録**であり、退役に伴って書き換えてはいけない（実測でこの形が10箇所あった）。そのため `--adr-dir` 配下は `status` の判定から外す。ただし:
+除外してよいのは「**退役パスを書いてはいるが、被参照ではなく削除された事実の記録である**」箇所に限る。現在**2つだけ**を、理由つきで次に列挙する（この列挙が除外集合の正本であり、増やす場合も同じ形で理由を書く）:
+
+| # | 除外対象 | オプション | 照合の形 | 何を書いている場所か | 消してはいけない理由 |
+|---|---|---|---|---|---|
+| 1 | **ADR の出所記録** | `--adr-dir <dir>`（既定 `docs/adr/`） | **ディレクトリ前置き** | `宣言元は退役した <path>` | 正しい出所記録であり、退役に伴って書き換えてはいけない（実測でこの形が10箇所あった） |
+| 2 | **変更履歴の削除告知** | `--changelog <path>`（既定 `CHANGELOG.md`） | **単一ファイルの完全一致** | 破壊的変更節の `<path> を削除した` | **利用者が移行に使う情報そのもの**。パス表記を伏せると告知が成立しない。しかも**削除した PR が自分で恒久的な `fail` の原因を作る**ことになり、「参照 0 件」を exit code で判定するという本スクリプトの目的が成立しなくなる |
+
+いずれについても:
 
 - 除外したヒットは**捨てずに `excluded` として返し、`counts.excluded` に数え、stderr にも件数を出す**。黙って範囲を狭めると、掃引漏れと「除外して正しかった」が区別できなくなる。
-- **汎用の `--exclude` は設けない。** 任意のパスを掃引対象から外せるフラグは、それ自体が「検査していないものを 0 件に見せる」経路になり、本スクリプトが塞いでいる欠陥と同型になる。除外してよい集合は上記1つだけであり、増やす場合は本仕様に理由つきで列挙する。
-- `--adr-dir` に空文字は渡せない（exit 2）。除外を空にすると ADR の出所記録まで掃引対象になり、**消してはいけない参照を消す**方向の誤りを誘発する。
+- **汎用の `--exclude` は設けない。** 任意のパスを掃引対象から外せるフラグは、それ自体が「検査していないものを 0 件に見せる」経路になり、本スクリプトが塞いでいる欠陥と同型になる。**上表のように、対象を名指しして理由を書いたものだけを増やす。**
+- **`--changelog` はディレクトリを受け付けない**（末尾スラッシュは exit 2）。前置き照合にすると `--changelog docs/` で木ごと外せてしまい、設けないと決めた汎用 `--exclude` と同じものになる。**単一ファイルの完全一致であることが、汎用化しないことの機械的な担保**である。
+- **`--adr-dir` / `--changelog` に空文字は渡せない**（exit 2）。除外を空にすると上表の「消してはいけない参照」が掃引対象に戻り、**消してはいけない参照を消す**方向の誤りを誘発する。「そのファイルが無いリポジトリ」は空文字ではなく**既定値のまま**で正しく扱える（照合語がどのヒットにも当たらないだけ）。
+- **除外はファイル単位であり、節単位ではない。** 変更履歴の中に本物の参照切れ（削除告知ではないリンク）が混ざっていても除外される。節を機械的に見分ける手段が無いため、**`excluded` に出して件数を可視化する**ことで代える（退役 PR のレビューで目視できる）。
 
 ### 一致の取り方（パス形と弱一致）
 
@@ -53,12 +63,14 @@ ADR の `宣言元は退役した <path>` は**正しい出所記録**であり�
   "base": "/path/to/repo",
   "targets": ["docs/features/daily-report.md"],
   "excluded_dirs": ["docs/adr/"],
-  "counts": { "targets": 1, "references": 3, "files": 2, "excluded": 1, "weak": 1 },
+  "excluded_files": ["CHANGELOG.md"],
+  "counts": { "targets": 1, "references": 3, "files": 2, "excluded": 2, "weak": 1 },
   "references": [
     { "target": "docs/features/daily-report.md", "file": "src/report.ts", "line": 1, "text": "// 設計根拠: docs/features/daily-report.md の 3.2 節", "match": "path" }
   ],
   "excluded": [
-    { "target": "docs/features/daily-report.md", "file": "docs/adr/0007-report.md", "line": 2, "text": "宣言元は退役した docs/features/daily-report.md", "match": "path" }
+    { "target": "docs/features/daily-report.md", "file": "docs/adr/0007-report.md", "line": 2, "text": "宣言元は退役した docs/features/daily-report.md", "match": "path" },
+    { "target": "docs/features/daily-report.md", "file": "CHANGELOG.md", "line": 9, "text": "- `docs/features/daily-report.md` を削除した", "match": "path" }
   ],
   "weak_matches": [
     { "target": "docs/features/daily-report.md", "file": "web/note.md", "line": 1, "text": "無関係な daily-report.md という言及だけの行", "match": "basename" }
@@ -72,9 +84,10 @@ ADR の `宣言元は退役した <path>` は**正しい出所記録**であり�
 | `base` | string | 走査したリポジトリルート（絶対パス） |
 | `targets` | `[string]` | 走査した退役パス（正規化後。先頭の `./` は除去） |
 | `excluded_dirs` | `[string]` | 除外したディレクトリの前置き（末尾スラッシュ付き） |
+| `excluded_files` | `[string]` | 除外したファイルパス（完全一致で照合したもの）。**除外集合の全体は `excluded_dirs` ∪ `excluded_files`** |
 | `counts` | object | `targets` / `references` / `files`（`references` のユニークファイル数）/ `excluded` / `weak` |
 | `references` | `[{target, file, line, text, match}]` | 付け替えるべき参照。`file` はリポジトリルート相対、`line` は数値、`text` はヒット行の記載どおり |
-| `excluded` | 同上 | 除外ディレクトリ内のヒット（**書き換えない**。件数の可視化のために返す） |
+| `excluded` | 同上 | 除外対象（`excluded_dirs` 配下 / `excluded_files` に一致）のヒット（**書き換えない**。件数の可視化のために返す） |
 | `weak_matches` | 同上 | ファイル名だけの言及（`status` には影響しない。人間が仕分ける） |
 
 - **合否判定に使う契約フィールドは `status` と `references` の2つ。** `excluded` / `weak_matches` / `counts` は仕分けと報告のための付加情報。
@@ -86,9 +99,9 @@ ADR の `宣言元は退役した <path>` は**正しい出所記録**であり�
 |---|---|
 | 0 | `status: "pass"`（`references` が0件。弱一致・除外の件数は stderr に出る） |
 | 1 | `status: "fail"`（付け替えるべき参照が残っている。stdout には JSON を出す） |
-| 2 | 実行前提の欠落（jq 不在・未知オプション・対象が0個・空のパス・`--base` が存在しない・git 作業ツリーでない・`--adr-dir` が空・**退役対象がまだ作業ツリーに存在する**・走査エラー・**結果 JSON の組み立て失敗**）。**stdout は空**で、stderr にエラー JSON とメッセージを出す |
+| 2 | 実行前提の欠落（jq 不在・未知オプション・対象が0個・空のパス・`--base` が存在しない・git 作業ツリーでない・`--adr-dir` が空・**`--changelog` が空またはディレクトリ**・**退役対象がまだ作業ツリーに存在する**・走査エラー・**結果 JSON の組み立て失敗**）。**stdout は空**で、stderr にエラー JSON とメッセージを出す |
 
-`error` の語彙（exit 2 のとき stderr の JSON に入る）: `jq not found` / `unknown option` / `--base requires a value` / `--adr-dir requires a value` / `no target given` / `empty target path` / `base directory not found` / `not a git work tree` / `empty adr dir` / `retired path still present` / `scan failed` / `json build failed`。
+`error` の語彙（exit 2 のとき stderr の JSON に入る）: `jq not found` / `unknown option` / `--base requires a value` / `--adr-dir requires a value` / `--changelog requires a value` / `no target given` / `empty target path` / `base directory not found` / `not a git work tree` / `empty adr dir` / `empty changelog path` / `changelog path is a directory` / `retired path still present` / `scan failed` / `json build failed`。
 
 **走査（`scan failed`）と組み立て（`json build failed`）の失敗は、どちらも stdout に何も出さずに exit 2 とする。** 部分的な結果を出すと、呼び出し側はそれを完全な走査結果として読む——「検査できなかった」が「参照0件」に化ける経路を作らない。
 
@@ -98,14 +111,9 @@ ADR の `宣言元は退役した <path>` は**正しい出所記録**であり�
 - **`scan failed`（走査の実行エラー）を「ヒット無し」として通さない。** `grep` の exit code は 0=マッチあり / 1=マッチなし / 2以上=実行エラーであり、2以上を握りつぶすと掃引漏れが `pass` に見える。**これはファイル一覧を取る `git grep` だけでなく、ファイルごとに行を取る `grep` にも等しく適用する**——一覧に載ったファイル（＝一致があると報告されたファイル）を読めなかった場合、そのファイルのヒットが0件に化けるため、握りつぶすと確実な掃引漏れになる。
 - **`json build failed` を「参照0件」として通さない。** 組み立てに失敗した結果は stdout へ出さない（空の stdout ＋ exit 0 を「参照が無かった」と読ませない）。
 - exit 0 は「**指定したパス表記の参照が残っていない**」ことしか意味しない（上記「検出できないもの」）。退役 PR のレビューは、この結果に加えて `weak_matches` の仕分け結果を添えて行う。
-- **「削除された事実そのものを記録している参照」を消して `pass` にしない（既知の誤検出）。** 次の2種は、退役パスを**意図的に書いている**箇所であり、リテラル一致では通常の被参照と区別できない。`references` に載って `status: "fail"` を立てるが、**`pass` にするために書き換えるのは本末転倒**である:
-
-  | 種別 | 実例 | 消してはいけない理由 |
-  |---|---|---|
-  | **不在を検査するアサーション** | `scripts/tests/test-surface-audit.sh`（退役パスを列挙して「存在しないこと」を assert する） | 削除の完了を検査するものが無くなる。掃引の都合で回帰検知を捨てることになる |
-  | **削除を告知する変更履歴** | `CHANGELOG.md` の破壊的変更節（「どのパスを削除したか」を利用者に伝える） | 利用者が移行に使う情報そのもの。パス表記を伏せると告知が成立しない |
-
-  `docs/adr/` の出所記録を `--adr-dir` で除外しているのと**同じ理由**だが、**これらは除外機構を持たない**（任意パスを外せるフラグは「検査していないものを 0 件に見せる」経路になるため設けない。前掲「除外は『消してはいけない参照』の列挙であって、検査の無効化ではない」）。したがって**退役 PR のレビューで人間・エージェントが仕分け、`fail` のまま先へ進める**のが正しい運用である。**仕分けた事実と対象行は PR に残す**（次に走らせた人が同じ `fail` を「未掃引」と読まないようにするため）。
+- **「不在を検査するアサーション」を消して `pass` にしない（既知の誤検出）。** 削除の完了そのものを固定するテスト——退役パスを列挙して「存在しないこと」を assert するもの（実例: `scripts/tests/test-surface-audit.sh`）——は、退役パスを**意図的に書いている**箇所でありながら、リテラル一致では通常の被参照と区別できない。`references` に載って `status: "fail"` を立てるが、**`pass` にするためにアサーションを削るのは本末転倒**である（削除の完了を検査するものが無くなり、掃引の都合で回帰検知を捨てることになる）。
+  - **これは除外機構を持たない。** 前掲の除外2つ（ADR の出所記録・変更履歴の削除告知）が**置き場で名指しできる**のに対し、不在アサーションは**任意のテストファイルの中に、通常の参照と同一の文字列として現れる**。除外するには「そのファイル全体」か「そのパスを含む行すべて」を外すしかなく、どちらも本物の参照切れを一緒に隠す。**原理的に機械で切り分けられない**ため、機構ではなく運用で扱う。
+  - したがって**退役 PR のレビューで人間・エージェントが仕分け、`fail` のまま先へ進める**のが正しい。**仕分けた事実と対象行は PR に残す**（次に走らせた人が同じ `fail` を「未掃引」と読まないようにするため）。
 
 ## 挙動の要点
 
@@ -114,4 +122,5 @@ ADR の `宣言元は退役した <path>` は**正しい出所記録**であり�
 - ヒット行の解析はファイルごとに `grep -n` を掛けて `行番号:本文` だけを見る（`git grep` の `ファイル:行:本文` を解析すると、コロンを含むファイル名で列がずれる）。**この `grep` の出力も一時ファイルへ受けて rc を判定する**（プロセス置換で受けると rc が捨てられ、実行エラーがヒット0件に化ける）
 - 結果 JSON は `jq` の rc を検査したうえで、**成功した場合だけ stdout へ出す**（`set -e` は有効でないため、検査しないと組み立て失敗が無視され、空または不完全な stdout のまま exit 0 になりうる）
 - jq 不在時は stderr にエラーメッセージ + エラー JSON を出し exit 2（`scripts/README.md`「出力規約」に従う）
+- 除外の照合形は対象ごとに違う: ADR は `case "$file" in "${prefix}"*` の**前置き一致**、変更履歴は `[ "$file" = "$path" ]` の**完全一致**。完全一致にしているのは汎用化を機械的に防ぐため（`rs_normalize_file_path` が末尾スラッシュを畳まないのも、`main` が「ディレクトリを渡された」と判定して弾けるようにするため）
 - 参照を書き換える機能は持たない（検出と修正の分離。付け替えは退役 PR の作業として人間・エージェントが行う）
