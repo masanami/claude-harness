@@ -16,7 +16,7 @@
 - 監査スキルの作り直し: [ADR 0003 — `/surface-audit` が `/guarantee-audit` を置き換える](docs/adr/0003-surface-audit-replaces-guarantee-audit.md)
 - 既定フローの正本: [`docs/ai-driven-development-strategy.md` 4.4](docs/ai-driven-development-strategy.md)
 
-**フェーズ宣言に依存していた分岐——(4) と (7)——は、`CLAUDE.md` に `## 開発フェーズ` 節が無い／`SDD期` と宣言していたプロジェクトでは元から発動していなかったため、スキルの挙動に変化がない。** 一方 **(1)(2)(3)(5)(6) はフェーズによらず全プロジェクトに影響する**（監査スキルの改名・サブエージェント名の変更・スクリプトの削除・品質ゲートの `skip` 契約・昇格判定の mode 削除）。とくに **(5) は GDD を一度も使っていないプロジェクトでも呼び出し側の exit code 判定に影響する**ため、必ず確認すること。
+**フェーズ宣言に依存していた分岐——(4) と (7)——は、`CLAUDE.md` に `## 開発フェーズ` 節が無い／`SDD期` と宣言していたプロジェクトでは元から発動していなかったため、スキルの挙動に変化がない。** 一方 **(1)(2)(3)(5)(6)(8) はフェーズによらず全プロジェクトに影響する**（監査スキルの改名・サブエージェント名の変更・スクリプトの削除・品質ゲートの `skip` 契約・昇格判定の mode 削除・**昇格判定が品質のスキップを許可しなくなったこと**）。とくに **(5) と (8) は GDD を一度も使っていないプロジェクトでも判定結果と exit code に影響する**ため、必ず確認すること。
 
 ### 破壊的変更
 
@@ -83,11 +83,30 @@
 - `docs/customization.md` の effort 対応表が `guarantee-auditor` / `guarantee-audit` から `surface-auditor` / `surface-audit` に変わった（オーバーライドで effort を指定している場合は名称を追随させる）。
 - 削除された参照ファイル: `skills/create-ticket/references/guarantee-section.md`、`skills/define-feature/references/planned-guarantees.md`、`skills/para-impl/references/guarantee-gate.md`、`skills/promote-verify/references/guarantee-consistency.md`。
 
+#### (8) `promotion-decision.sh`: 品質ゲートが1つも実行されていない場合は常にブロックする（**全プロジェクトに影響**）
+
+`ready-for-promotion` の判定式から **`qualityCheck.skipped === true` を許可条件から外した**。実行されたゲートが1つも無い状態は、理由が何であれ `readyForPromotion: false` になる。
+
+| 入力の `qualityCheck` | 3.6.0 まで | 4.0.0 |
+|---|---|---|
+| `{"skipped": true, "reason": "..."}` | **`true`**（blockers 空） | **`false`** / `blockers: ["quality_not_verified"]` |
+| `{"skipped": false, "result": "skip"}` | `false` / `["quality_not_pass"]` | `false` / **`["quality_not_verified"]`**（コードが変わった） |
+| `{"result": "pass"}` | `true` | `true`（変更なし） |
+| `{"result": "fail"}` | `false` / `["quality_not_pass"]` | 変更なし |
+
+- **なぜ**: `/promote-verify` は「lint/typecheck/test のいずれも特定できなかった場合は `skipped: true` にする」と指示しており、**検査コマンドを特定できなかっただけで、何も検証していない変更が昇格可になっていた**。しかもこの経路は `quality-check-runner` を**呼ばない**ため、(5) で入れた `result: "skip"` / exit 3 の安全網が構造的に届かなかった。
+- **「コマンドが存在しない」と「特定できなかった」を区別しない**。`readyForPromotion` は最終ゲートではなくその先に人間承認があるため、ブロックしても人間が状況を見て承認できる（fail-closed の方が安い）。
+- **`blockers` の語彙に `quality_not_verified` が増えた**（19 → 20 語）。「検査していない」と「検査して落ちた（`quality_not_pass`）」を分ける。分岐している呼び出し側は追加が必要。
+- **一部のゲートだけが未実行の場合は従来どおり `pass`**。`quality-check-runner` は1つも実行していないときだけ `result: "skip"` を返す（→ (5)）。ブロックするのはその場合だけである。
+- **E2E（`e2e.skipped`）は変更なし**。スキップは許可条件のまま——E2E が無いプロジェクトは珍しくないため、非対称は意図したもの。
+- `/promote-verify` 側も追随済み: 検査コマンドを特定できなかった場合は `{ skipped: false, result: 'skip', reason: "..." }` を渡す（**理由は `reason` に残るが、判定はブロックされる**）。
+
 ### 追加・変更（破壊的でないもの）
 
 - **受入基準の粒度規約（1基準 = 1主張 = 1検証）**を既定フローへ移植した（[`docs/ai-driven-development-strategy.md` 4.5](docs/ai-driven-development-strategy.md)）。GDD の運用で得た知見を台帳用語から独立させたもの。`/define-feature` と `spec-critic` に配送済みで、**新たに書く受入基準に前向きに適用**する（既存の一括再分割は求めない）。
 - `docs/ai-driven-development-strategy.md` の既定フロー節（4.4）が「機能仕様は保守する。ただし正しさは担保しない」を明文化し、**機能仕様の退役手順（ADR 昇格判定 → 削除 → 被参照の掃引）の正本**になった。GDD レジームを記述していた 5 章が削除され、旧 6 章「リスクと対策」が **5 章へ繰り上がっている**（外部から章節番号で参照している場合は要確認）。
 - `docs/gdd-design-draft.md` を削除。
+- **ランチャー導入スニペットの解決順を修正**（`README.md` / `docs/getting-started.md` / `docs/script-launcher.md`）。最大バージョンを先に選んでから実体を確認していたため、**最新エントリの実体が消えていると有効な旧候補を飛ばして解決に失敗**していた（`installed_plugins.json` に残ったまま cache ディレクトリが消えた場合に発生。実測で再現）。`bin/claude-harness-run` と同じく**候補を検証してからバージョン降順に最初の1件を採る**形にした（ランチャー本体の挙動は元から正しく、変更していない）。
 - **`retirement-sweep` が変更履歴（`CHANGELOG.md`）を除外するようになった**（`--changelog <path>` で差し替え可。既定 `CHANGELOG.md`）。破壊的変更節の「`<path>` を削除した」は**削除された事実の記録**であって被参照ではなく、除外しないと**削除した PR 自身が恒久的な `fail` の原因を作る**（「参照 0 件」を exit code で判定するという目的が成立しなくなる）。ADR の出所記録を `--adr-dir` で除外しているのと同じ扱い。
   - 出力 JSON に **`excluded_files`** を追加した（`excluded_dirs` は従来どおり。除外集合の全体は両者の和）。既存フィールドの意味・名前は変えていない。
   - **除外したヒットは捨てず `excluded` に入り `counts.excluded` に数える**（stderr にも件数を出す）。掃引の範囲は目視できる。
@@ -150,6 +169,8 @@ esac
 
 - `all-consistent` モードの呼び出しを削除する（呼ぶと exit 2）。
 - `ready-for-promotion` へ渡す JSON から `guaranteeCheck` キーを外す（残っていても無視されるが、材料を揃える側の手順から落とす）。
+- **`qualityCheck` に `skipped: true` を渡している箇所を直す**（→ (8)）。検査コマンドを特定できなかった場合は `{ "skipped": false, "result": "skip", "reason": "..." }` を渡す——**理由は `reason` に残るが判定はブロックされる**。`skipped: true` のままだと `quality_not_verified` でブロックされ、`readyForPromotion` は `false` になる。
+- `blockers` を読んで分岐している場合は **`quality_not_verified` を追加**する（`quality_not_pass` とは別状態。「検査していない」と「検査して落ちた」で対応が違う）。
 
 ### 変わらないもの
 

@@ -57,10 +57,16 @@ read -r -d '' PROMOTION_DECISION_JQ_READY <<'JQPROG'
         elif ([$criteria[] | select((.needsHumanReview | type) != "boolean")] | length) > 0 then ["criteria_review_invalid"]
         elif ([$criteria[] | select(.needsHumanReview == true)] | length) > 0 then ["criteria_needs_human_review"]
         else [] end ) as $review_blockers
+    # 品質は「実行されたゲートが1つも無いなら常にブロックする」（人間決定 2026-08-23）。
+    # skipped: true を許可条件にしていた時期は、Step 2 で検査コマンドを特定できなかった
+    # だけで readyForPromotion: true になり、**quality-check-runner を呼ばない経路**が
+    # Issue #192 の exit 3 の安全網を素通りしていた。理由（reason）は入力に残してよいが、
+    # **記録のために許可条件へ倒さない**。ゲート未実行は fail とは別状態なので専用コードを積む。
     | ( if $qc == null then ["quality_check_missing"]
         elif ($qc | type) != "object" then ["quality_check_invalid"]
-        elif ($qc.skipped) == true then []
+        elif ($qc.skipped) == true then ["quality_not_verified"]
         elif ($qc | has("result") | not) then ["quality_result_missing"]
+        elif ($qc.result) == "skip" then ["quality_not_verified"]
         elif ($qc.result) != "pass" then ["quality_not_pass"]
         else [] end ) as $qc_blockers
     | ( if $e2e == null then ["e2e_missing"]

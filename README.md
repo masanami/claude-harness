@@ -45,21 +45,27 @@ claude --plugin-dir /path/to/claude-harness
 
 ```bash
 # 1. インストール先を、ランチャー自身と同じ規則で解決する
-#    （CLAUDE_HARNESS_ROOT 優先 → installed_plugins.json の有効な installPath のうち
-#      最大バージョン → cache 配下の最大バージョン）
+#    （CLAUDE_HARNESS_ROOT 優先 → installed_plugins.json → cache 配下）
+#    **候補を検証してからバージョン降順に最初の1件を採る**。最大バージョンを先に選ぶと、
+#    その実体が消えている場合に有効な旧候補を飛ばして解決に失敗する（bin/claude-harness-run
+#    の chr_resolve_from_installed_json も、この順で候補を絞ってから選んでいる）。
+#    各所の `|| true` は set -e 下で落ちないため（未導入の環境では installed_plugins.json が
+#    無く jq が非0で終わる＝まさにこの手順を実行する状況）。
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-#    （末尾の `|| true` は set -e 下で落ちないため。未導入の環境では
-#      installed_plugins.json が無く jq が非0で終わる＝まさにこの手順を実行する状況）
-SRC="${CLAUDE_HARNESS_ROOT:-$(jq -r '
-  [ .plugins | to_entries[]
+SRC="${CLAUDE_HARNESS_ROOT:-}"
+if [ -z "$SRC" ]; then
+  while IFS= read -r cand; do
+    if [ -n "$cand" ] && [ -f "${cand%/}/bin/claude-harness-run" ]; then SRC="${cand%/}"; break; fi
+  done <<EOF
+$(jq -r '[ (.plugins // {}) | to_entries[]
     | select(.key | startswith("claude-harness@"))
-    | .value[]? | select(type == "object" and .installPath != null)
-  ]
-  | max_by(.version // "0" | split(".") | map(tonumber? // 0))
-  | .installPath // empty
-' "$CONFIG_DIR/plugins/installed_plugins.json" 2>/dev/null || true)}"
-[ -f "$SRC/bin/claude-harness-run" ] || SRC="$(ls -d "$CONFIG_DIR"/plugins/cache/*/claude-harness/*/ 2>/dev/null \
-  | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || true)"
+    | (if (.value | type) == "array" then .value[] else .value end)
+    | select(type == "object" and .installPath != null) ]
+  | sort_by(.version // "0" | split(".") | map(tonumber? // 0)) | reverse
+  | .[].installPath' "$CONFIG_DIR/plugins/installed_plugins.json" 2>/dev/null || true)
+$(ls -d "$CONFIG_DIR"/plugins/cache/*/claude-harness/*/ 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n -r || true)
+EOF
+fi
 
 # 2. ランチャーを PATH 上へコピーする
 mkdir -p ~/.local/bin

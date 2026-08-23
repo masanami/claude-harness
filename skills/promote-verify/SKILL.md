@@ -151,7 +151,9 @@ Step 4 で `status: 'consistent'` と判定された基準**のみ**を対象に
 
 #### 6-1. 品質チェック（QC）
 
-Step 2 で lint/typecheck/test のいずれも特定できなかった場合、または組み立てた CLI フラグ列が空になる場合は、`qualityCheck = { skipped: true, reason: "..." }` として明示スキップする（フラグ無しで実行すると runner は `result: 'skip'` を返し、**理由の記録されない未検証**が昇格判断の材料に混ざるため、**空のフラグ列も null と同様に明示スキップ扱いにすること**）。
+Step 2 で lint/typecheck/test のいずれも特定できなかった場合、または組み立てた CLI フラグ列が空になる場合は、`qualityCheck = { skipped: false, result: 'skip', reason: "..." }` とする（**理由は `reason` に残す**が、`result` は `'skip'` ＝ゲート未実行のままにする）。
+
+> **`qualityCheck` を `skipped: true` にしない（重要）**: 品質は**実行されたゲートが1つも無いなら常にブロックする**（人間決定 2026-08-23）。`skipped: true` は昇格可の材料にならず、判定側は `quality_not_verified` を積んで `readyForPromotion` を `false` にする（正本は `scripts/specs/promotion-decision.md`「ゲート未実行は常にブロックする」。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/promotion-decision.md` として解決する）。**理由を記録するために許可条件へ倒さないこと**——`reason` に書けば報告には出る。「検査コマンドを特定できなかった」で昇格可になる経路は、`quality-check-runner` を呼ばないぶん Issue #192 の `result: 'skip'` / exit 3 の安全網が届かない。**`e2e` の `skipped: true` は従来どおり**（この規律は品質だけに適用する）。
 
 それ以外の場合:
 
@@ -203,11 +205,11 @@ readyForPromotion =
      allMerged === true
   AND すべての criterion で status === 'consistent'
   AND すべての criterion で needsHumanReview !== true
-  AND (qualityCheck.skipped === true OR qualityCheck.result === 'pass')
-  AND (e2e.skipped === true OR e2e.passed === true)
+  AND qualityCheck.result === 'pass'          # skipped は許可条件にしない（ゲート未実行は常にブロック）
+  AND (e2e.skipped === true OR e2e.passed === true)   # E2E のスキップは従来どおり OK 扱い
 ```
 
-（`allMerged` は Step 3-3 の結果。「スキップはOK扱い」という意味論も含め、この式の意味は変更しないこと）
+（`allMerged` は Step 3-3 の結果。**品質はスキップを OK 扱いにせず、E2E はする**——この非対称は意図したものであり、「対称にする」方向へ戻さないこと）
 
 ### Step 8: 後始末（一時ファイルのクリーンアップ）
 
@@ -239,7 +241,7 @@ Step 3-2 で取得した `diff_file` があれば、`rm -f "<diff_fileの絶対�
 
 ### 品質チェック（QC）
 
-{qualityCheck.skipped ? `⊘ スキップ（理由: ${reason}）` : `${result === 'pass' ? '✅ pass' : '❌ fail'}（gates: lint=..., typecheck=..., test=...）`}
+{result === 'skip' ? `❌ 未検証（ゲートが1つも実行されていない。理由: ${reason ?? '(記録なし)'}）— 昇格はブロックされます` : `${result === 'pass' ? '✅ pass' : '❌ fail'}（gates: lint=..., typecheck=..., test=...）`}
 
 ### E2E
 
