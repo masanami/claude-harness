@@ -74,6 +74,11 @@ emit_failure() {
     }'
 }
 
+read_codex_diagnostic() {
+  local stderr_file="$1"
+  tail -n 20 "$stderr_file" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//'
+}
+
 validate_capsule() {
   local final_file="$1"
 
@@ -84,18 +89,23 @@ validate_capsule() {
     def valid_lane:
       type == "object"
       and only(["name", "status", "error"])
+      and has("name") and has("status") and has("error")
       and (.name | IN("code", "design"))
       and (.status | IN("complete", "failed"))
       and (.error == null or (.error | type == "string"));
     def valid_verification:
       type == "object"
       and only(["status", "verdict", "reason"])
+      and has("status") and has("verdict") and has("reason")
       and (.status | IN("not_required", "complete", "failed"))
       and (.verdict == null or (.verdict | IN("confirmed", "refuted", "uncertain")))
       and (.reason == null or (.reason | type == "string"));
     def valid_finding:
       type == "object"
       and only(["id", "file", "line", "severity", "claim", "evidence", "initialVerdict", "verdict", "sourceLane", "verificationRequired", "verification"])
+      and has("id") and has("file") and has("line") and has("severity")
+      and has("claim") and has("evidence") and has("initialVerdict") and has("verdict")
+      and has("sourceLane") and has("verificationRequired") and has("verification")
       and (.id | type == "string" and length > 0)
       and (.file | type == "string" and length > 0)
       and (.line == null or (.line | integer_at_least(1)))
@@ -399,12 +409,17 @@ main() {
   fi
 
   if [ -f "$timeout_marker" ]; then
-    emit_failure "codex_timeout" "codex exec exceeded ${timeout_seconds} seconds" "$duration_seconds" "$codex_exit"
+    local timeout_diagnostic="" timeout_message="codex exec exceeded ${timeout_seconds} seconds"
+    timeout_diagnostic="$(read_codex_diagnostic "$stderr_file")"
+    if [ -n "$timeout_diagnostic" ]; then
+      timeout_message="${timeout_message}: ${timeout_diagnostic}"
+    fi
+    emit_failure "codex_timeout" "$timeout_message" "$duration_seconds" "$codex_exit"
     exit "$CODEX_REVIEW_EX_FAILED"
   fi
   if [ "$codex_exit" -ne 0 ]; then
     local diagnostic=""
-    diagnostic="$(tail -n 20 "$stderr_file" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+    diagnostic="$(read_codex_diagnostic "$stderr_file")"
     if [ -n "$diagnostic" ]; then
       emit_failure "codex_failed" "codex exec failed: ${diagnostic}" "$duration_seconds" "$codex_exit"
     else

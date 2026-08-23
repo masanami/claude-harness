@@ -71,6 +71,9 @@ if [ "${1:-}" = "--version" ]; then
 fi
 printf '%s\n' "$@" >"${FAKE_CODEX_ARGS_FILE}"
 cat >"${FAKE_CODEX_PROMPT_FILE}"
+if [ -n "${FAKE_CODEX_STDERR:-}" ]; then
+  printf '%s\n' "$FAKE_CODEX_STDERR" >&2
+fi
 if [ -n "${FAKE_CODEX_SLEEP:-}" ]; then
   sleep "$FAKE_CODEX_SLEEP"
 fi
@@ -84,9 +87,6 @@ if [ -n "${FAKE_CODEX_FINAL:-}" ] && [ -n "$out" ]; then
   cp "$FAKE_CODEX_FINAL" "$out"
 fi
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":101,"output_tokens":17}}'
-if [ -n "${FAKE_CODEX_STDERR:-}" ]; then
-  printf '%s\n' "$FAKE_CODEX_STDERR" >&2
-fi
 exit "${FAKE_CODEX_EXIT:-0}"
 EOF
 chmod +x "${FAKE_BIN}/codex"
@@ -212,12 +212,15 @@ echo "=== test: hard timeout ==="
 export FAKE_CODEX_FINAL="$COMPLETE_RESULT"
 export FAKE_CODEX_EXIT=0
 export FAKE_CODEX_SLEEP=2
+export FAKE_CODEX_STDERR="timeout diagnostic"
 OUT="$(PATH="${FAKE_BIN}:$PATH" "$RUNNER" --repo "$TARGET_REPO" --diff-file "$DIFF_FILE" --timeout 1)"
 RC=$?
 assert_eq "timeoutはexit 4" "4" "$RC"
 assert_eq "timeout理由を構造化" "codex_timeout" "$(jq -r '.errors[0].code' <<<"$OUT")"
 assert_eq "timeoutはterminal failure" "true" "$(jq -r '.metrics.terminal_failure' <<<"$OUT")"
+assert_contains "timeoutもstderr診断を保持" "timeout diagnostic" "$(jq -r '.errors[0].message' <<<"$OUT")"
 unset FAKE_CODEX_SLEEP
+unset FAKE_CODEX_STDERR
 
 echo "=== test: 入力検証 ==="
 PATH="${FAKE_BIN}:$PATH" "$RUNNER" --repo "$TARGET_REPO" >/dev/null 2>&1
@@ -260,6 +263,23 @@ OUT="$(PATH="${FAKE_BIN}:$PATH" "$RUNNER" --repo "$TARGET_REPO" --diff-file "$DI
 RC=$?
 assert_eq "verifier後にconfirmedでもcomplete" "0" "$RC"
 assert_eq "verifierをagent自己申告数へ計上" "3" "$(jq -r '.metrics.agent_calls_declared' <<<"$OUT")"
+
+assert_required_omission_rejected() {
+  local description="$1" jq_filter="$2"
+  local invalid_file="${WORK_DIR}/missing-required.json" output rc
+  jq "$jq_filter" "$VERIFIED_RESULT" >"$invalid_file"
+  export FAKE_CODEX_FINAL="$invalid_file"
+  output="$(PATH="${FAKE_BIN}:$PATH" "$RUNNER" --repo "$TARGET_REPO" --diff-file "$DIFF_FILE")"
+  rc=$?
+  assert_eq "$description" "4" "$rc"
+  assert_eq "${description}: 契約違反を明示" "invalid_capsule_contract" "$(jq -r '.errors[0].code' <<<"$output")"
+}
+
+echo "=== test: nullable必須fieldの欠落を拒否 ==="
+assert_required_omission_rejected "lane.error欠落を拒否" 'del(.lanes[0].error)'
+assert_required_omission_rejected "finding.line欠落を拒否" 'del(.findings[0].line)'
+assert_required_omission_rejected "verification.verdict欠落を拒否" 'del(.findings[0].verification.verdict)'
+assert_required_omission_rejected "verification.reason欠落を拒否" 'del(.findings[0].verification.reason)'
 
 echo "=== test: verifier集計不整合はfailed ==="
 INVALID_VERIFIER_RESULT="${WORK_DIR}/invalid-verifier.json"
