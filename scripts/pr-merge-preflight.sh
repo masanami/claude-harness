@@ -16,11 +16,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
 PR_MERGE_PREFLIGHT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SENSITIVE_PATHS_CONFIG="${PR_MERGE_PREFLIGHT_DIR}/config/sensitive-paths.txt"
 
-# 外部レビュー待機ポーリングの既定値。
-# 既存 SKILL.md Phase 1 の仕様（60秒間隔・最大10回・最大約10分）を踏襲する。
+# 外部レビュー待機ポーリングは明示指定時だけ行う。
+# ローカルレビューを既定ゲートとし、PR上の外部AIレビューを待たない（Issue #155）。
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-60}"
 POLL_SLEEP_CMD="${POLL_SLEEP_CMD:-sleep}"
-DEFAULT_TIMEOUT_SECONDS=600
+DEFAULT_TIMEOUT_SECONDS=0
 
 # ---------------------------------------------------------------------------
 # gh 呼び出し（外部作用あり）
@@ -341,8 +341,8 @@ main() {
   fi
 
   # sensitive パターン設定ファイルの読み込みは PR番号にもリモート状態にも依存しない
-  # 静的な前提条件（欠損＝インストール破損）のため、最大約10分かかりうる外部レビュー
-  # 待機ポーリングやその他の gh 呼び出しより前に fail-fast する（セルフレビュー指摘:
+  # 静的な前提条件（欠損＝インストール破損）のため、明示設定時には長時間になりうる
+  # 外部レビュー待機ポーリングやその他の gh 呼び出しより前に fail-fast する（セルフレビュー指摘:
   # Issue #129。ポーリング後まで検出が遅延すると、インストール破損時に無駄な待機の末に
   # 失敗するUXになってしまうため）。
   local patterns

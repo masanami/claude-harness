@@ -43,6 +43,17 @@ Task ツールには出力検証機構が無いため、**指示文（プロン�
 - 両エージェントの指摘は単純結合する（`(file,line)` で重複除去しない。code-reviewer/design-reviewer が同一箇所を別々の理由で指摘するケースは、それぞれ独立した情報として扱う）
 - どちらか一方でも構造化返却に失敗する・応答が得られない場合は、レビュー未実施のまま「指摘ゼロ」として扱わない。ループを止め、要人間判断として報告する（偽収束防止）
 
+### Step 2.5: Codex shadow review（初回のみ）
+
+1周目のStep 2と並行して、Codex CLIが利用可能で、Issue番号または現在branchのPR本文をcontextとして取得できる場合は`/codex-review`と同じread-only capsuleを**shadow mode**で1回実行する。2周目以降は再実行しない。
+
+- `claude-harness-run codex-review-runner --diff-file "<diff_file>" --base "<base>" --issue-file "<context_file>" [--contract '<contract_path>']...`を使う。`contract_path`は値中の`'`を`'\''`へ置換してから全体をシングルクォートで囲む。ランチャー未導入時のフォールバック、context作成、非信頼データの扱い、終了コードは`/codex-review`のStep 2〜4と同じ
+- Step 2のClaude reviewerも同じ`diff_file`を読むため、Codex shadow側は共有`diff_file`を削除しない。`diff_file`の所有者は`/self-review`であり、全reviewerとshadow capsuleの合流後、既存のStep 1/Step 5規則に従って1回だけ削除する。Codex用に作成したcontext一時ファイルだけをshadow側で削除する
+- Codex結果は現行Claude panelの`findings`、`toVerify`、`toFix`、`residualFindings`、`converged`へ合成しない。Phase 1の比較用shadow結果として独立に保持する
+- `partial`/`failed`/Codex未導入を「指摘なし」へ変換しない。Claude panelの成否とは別に`codexShadow.status`と失敗理由を報告する
+- Codex findingsはこの実行内で自動修正しない。妥当性・重複・追加発見は、現行Claude panelとの比較材料として報告する
+- Issue/PR contextを取得できない場合は、要件を欠いたレビューを黙って実行せず`codexShadow.status: not_run`と理由を記録する
+
 ### Step 3: 懐疑的検証（finding-verifier 単一懐疑者）
 
 `skills/pr-merge/SKILL.md` 分岐C・`skills/promote-verify/SKILL.md` と同じ「単一懐疑者」設計に統一している（Issue #130。旧来の3体多数決は廃止）。
@@ -108,6 +119,14 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 - 実施ラウンド数: {rounds}
 - 各ラウンドの指摘数推移: {roundHistory の一覧}
 - 収束: ✅ 収束（残指摘なし） / ⚠️ 未収束（自動修正ループが打ち切られ、残指摘が解消しないまま終了。上限3周への到達に限らず、要人間判断の指摘が残った場合や修正後の `/quality-check` が `fail` になり打ち切った場合を含む）
+
+### Codex shadow review（初回のみ）
+- 状態: {complete / partial / failed / not_run}
+- lane: {code/designの状態}
+- verifier: {状態・attempted・completed・failed}
+- 指摘数: {findings件数}
+- 計測: {duration_seconds・usage（取得できた範囲）}
+- Claude panelとの差分: {追加発見・重複・Claude側のみの指摘。自動修正には未使用}
 
 ### 残指摘（収束しなかった場合）
 

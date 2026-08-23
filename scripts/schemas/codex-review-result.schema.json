@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "lanes",
+    "verifierStatus",
+    "findings",
+    "failedLanes",
+    "summary"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["complete", "partial", "failed"]
+    },
+    "lanes": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "error"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": ["code", "design"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["complete", "failed"]
+          },
+          "error": {
+            "type": ["string", "null"]
+          }
+        }
+      }
+    },
+    "verifierStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "attempted", "completed", "failed"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["complete", "partial", "failed", "not_required"]
+        },
+        "attempted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "file",
+          "line",
+          "severity",
+          "claim",
+          "evidence",
+          "initialVerdict",
+          "verdict",
+          "sourceLane",
+          "verificationRequired",
+          "verification"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "claim": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["confirmed", "plausible", "refuted", "uncertain"]
+          },
+          "initialVerdict": {
+            "type": "string",
+            "enum": ["confirmed", "plausible"]
+          },
+          "sourceLane": {
+            "type": "string",
+            "enum": ["code", "design"]
+          },
+          "verificationRequired": {
+            "type": "boolean"
+          },
+          "verification": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "verdict", "reason"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["not_required", "complete", "failed"]
+              },
+              "verdict": {
+                "type": ["string", "null"],
+                "enum": ["confirmed", "refuted", "uncertain", null]
+              },
+              "reason": {
+                "type": ["string", "null"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "failedLanes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  }
+}

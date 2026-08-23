@@ -32,9 +32,9 @@ PR番号: $ARGUMENTS
 
 ## 実行手順
 
-### Phase 0-1: Preflight（base/ゲート判定・CI・mergeable・外部レビュー待機）
+### Phase 0-1: Preflight（base/ゲート判定・CI・mergeable・レビューsnapshot）
 
-base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeable の取得、外部レビュー待機のポーリングは、決定的な処理として preflight スクリプトに切り出されている。**このフェーズでは生の gh JSON をメインのコンテキストに滞留させず、スクリプトが返す構造化済みJSONのみを扱う。**
+base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeable・現在のレビュー状態の取得は、決定的な処理として preflight スクリプトに切り出されている。**このフェーズでは生の gh JSON をメインのコンテキストに滞留させず、スクリプトが返す構造化済みJSONのみを扱う。**
 
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run pr-merge-preflight <PR番号>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/pr-merge-preflight.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/pr-merge-preflight.sh" <PR番号>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
@@ -51,7 +51,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    - 内部で以下を決定的に行う（LLMの自己規律ポーリングには依存しない）:
      - base とリポジトリの既定ブランチの取得・比較によるゲート判定（`main` 決め打ちにしない。既定ブランチが `master`/`develop` 等でも正しく判定する）
      - CI チェック結果・`mergeable`/`mergeStateStatus`・reviews の取得
-     - 外部レビュー未投稿時のポーリング待機（既定: 60秒間隔・最大10回・最大約10分。第2引数の秒数で上書き可）
+     - 現在の外部レビュー状態のsnapshot取得（既定は待機なし。待機が必要な運用のみ第2引数へ正の秒数を指定して明示的に有効化）
      - `CHANGES_REQUESTED` / CI失敗 / コンフリクトの blocking 判定
      - 変更差分の risk 算出（`files_changed`/`insertions`/`deletions`/`touches_sensitive`）
    - スクリプトが非0 exitで終了した場合（jq不在・PRが見つからない等の致命的エラー）は、stderr の内容を確認し、それを報告して処理を中断する（設定ファイル欠損によるエラーもこの経路に含まれ、その場合はインストール破損として報告する）
