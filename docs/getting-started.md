@@ -75,6 +75,17 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 ランチャーは実行のたびにインストール済みプラグインの現行版を解決するため、プラグインを更新してもコピーを置き直す必要はありません。詳細・トラブルシューティングは [スクリプトランチャー](./script-launcher.md) を参照してください。
 
+### Codex shadow reviewを使う場合
+
+`/codex-review` と `/self-review` のCodex shadow laneには、認証済みのCodex CLIと`jq`が必要です。
+
+```bash
+codex --version
+jq --version
+```
+
+Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。未導入・認証失敗・laneの部分失敗はClaude側の指摘ゼロへ合成されず、shadow reviewの`not_run` / `partial` / `failed`として独立に報告されます。
+
 ---
 
 ## 3. プロジェクトのCLAUDE.mdを整備
@@ -139,6 +150,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 /commit → Conventional Commits形式でコミット
 /quality-check → 品質ゲートチェック
 /para-impl 123 → Issue #123 の実装を開始
+/codex-review 123 → 現在の差分をCodexのread-only capsuleでshadow review
 ```
 
 ---
