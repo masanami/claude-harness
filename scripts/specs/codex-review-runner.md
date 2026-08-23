@@ -90,6 +90,8 @@ timeoutは`result: failed`、error code `codex_timeout`、exit 4としてfail-cl
 
 同じ`representative_task_id`について`baseline`（現行Claude panel）と`shadow`（Claude panel + Codex capsule）を1組で記録する。比較条件を変えないため、Claude reviewerのmodel/effortは計測のために変更しない。
 
+Phase 0/1の測定中は、PR上の外部レビューを各対象PRで従来どおり実行し、セーフティネットとして維持する。`confirmed_major_findings_per_pr`を測定できなくなるため、Codex capsuleの正経路化を判断する前に外部レビューを無効化してはならない。
+
 | 項目 | 取得元 |
 |---|---|
 | `claude_total_usage` | 外側の`claude -p --output-format json`結果。input/output/cache等、取得できたキーをそのまま保持 |

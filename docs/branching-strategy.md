@@ -215,9 +215,7 @@ Refs: #123
 - 設計方針の確認をしたい
 - WIP（Work In Progress）であることを明示したい
 
-> **AI 実装時のルール**: `/para-impl` 等のAIエージェントは Phase 4-5 で必須ゲート・ローカルのセルフレビュー（必要に応じて Codex shadow review）を通過した状態で PR を作成するため、**通常PR（非ドラフト）で開く**ことを既定とする。`/explain-e2e` は PR 作成の前提条件ではない（単一Issueでは Phase 7 で実施済み、star 型並列実装では worker の PR 作成後にリードがメインセッションで実施する）。PR上の外部AIレビューは既定ゲートではなく待機しない。レビューコメントが付いた場合だけ `/pr-review-respond` で対応する。意図的に保留したい場合のみドラフトを選ぶ。
-
-CodeRabbit の自動PRレビューは repository root の `.coderabbit.yaml` で無効化する。必要な場合はPRコメントの明示的な手動レビュー要求を使い、通常フローの必須工程には戻さない。
+> **AI 実装時のルール**: `/para-impl` 等のAIエージェントは Phase 4-5 で必須ゲート・セルフレビューを通過した状態で PR を作成するため、**通常PR（非ドラフト）で開く**ことを既定とする。`/explain-e2e` は PR 作成の前提条件ではない（単一Issueでは Phase 7 で実施済み、star 型並列実装では worker の PR 作成後にリードがメインセッションで実施する）。これにより CodeRabbit 等の AI レビューが即時起動し、`/pr-review-respond` へ繋がる。意図的に保留したい場合のみドラフトを選ぶ。
 
 ---
 

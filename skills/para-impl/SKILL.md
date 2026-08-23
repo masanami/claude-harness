@@ -175,7 +175,7 @@ E2E対象機能の場合、Phase 4-5 で feature-implementer が返した E2Eシ
 
 ### Phase 8: プッシュ・PR作成
 
-PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4-5 で必須ゲート・セルフレビュー（Codex shadow reviewを利用可能）を通過済みのため、**通常PR（非ドラフト）で開く**。PR上の外部AIレビューは既定ゲートではなく待機もしない。レビューコメントが実際に付いた場合だけ `/pr-review-respond` で対応する。`/explain-e2e` は PR 作成の前提条件ではない——単一Issueでは Phase 7 で実施済み、複数Issue（star 型）では worker の PR 作成後にリードがメインセッションで実施する。
+PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4-5 で必須ゲート・セルフレビューを通過済みのため、**通常PR（非ドラフト）で開く**（AI レビューを即時起動し `/pr-review-respond` へ繋ぐ）。`/explain-e2e` は PR 作成の前提条件ではない——単一Issueでは Phase 7 で実施済み、複数Issue（star 型）では worker の PR 作成後にリードがメインセッションで実施する。
 
 feature-implementer が**クロスリポジトリ依存の確証結果**を返した場合は、そのまま PR 本文に転記する（確証の規律・形式は feature-implementer / code-reviewer 側に定義）。
 
@@ -224,7 +224,7 @@ gh pr checks {PR番号} --watch
 3. クリティカル設計の逸脱検知でユーザー判断を仰いだ場合はその結果
 4. E2E結果（対象機能の場合）— /explain-e2e の解説と独立検証結果
 5. **次のアクションの案内**:
-   - レビューコメントがある場合の対応: `/pr-review-respond {PR番号}`
+   - レビュー対応: `/pr-review-respond {PR番号}`
    - マージ: `/pr-merge {PR番号}`
 
 ---
@@ -234,7 +234,7 @@ gh pr checks {PR番号} --watch
 - プロダクションコード
 - テストコード（単体・結合・E2E）
 - 設計内容（クリティカル/E2E対象時の人間レビュー記録を含む）
-- Pull Request（Issueごとに1つ、ローカルレビュー済みの通常PR→CI緑→必要なレビューコメント対応→マージ）
+- Pull Request（Issueごとに1つ、通常PR→CI緑＋AIレビュー対応→マージ）
 
 ---
 

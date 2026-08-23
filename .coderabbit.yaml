@@ -1,6 +1,0 @@
-# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-
-# Issue #155: AI review is a push-before-local step. PR review is opt-in only.
-reviews:
-  auto_review:
-    enabled: false

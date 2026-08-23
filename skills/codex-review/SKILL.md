@@ -65,7 +65,7 @@ runnerのstdout JSONを保持する。exit codeと`result`を次のように扱�
 - failed lanes / errors
 - durationと取得できたusage
 
-Phase 0/1の比較実行として依頼された場合は、同一`representative_task_id`のbaseline/shadowを対にし、Claude総usageは外側のheadless結果、Codex usage・wall time・agent/capsule calls・schema/terminal failureはrunner結果から記録する。取得不能値を0へ置換しない。ローカルゲート後のconfirmed P1/Major、外部レビュー後の修正round、偽陽性、追加変更量はPR運用後に追記する。
+Phase 0/1の比較実行として依頼された場合は、同一`representative_task_id`のbaseline/shadowを対にし、Claude総usageは外側のheadless結果、Codex usage・wall time・agent/capsule calls・schema/terminal failureはrunner結果から記録する。取得不能値を0へ置換しない。PR上の外部レビューは各対象PRで従来どおり実行し、ローカルゲート後のconfirmed P1/Major、外部レビュー後の修正round、偽陽性、追加変更量をPR運用後に追記する。Codex capsuleの正経路化を判断する前に外部レビューを無効化しない。
 
 `complete`かつfindings 0件の場合のみ「Codex reviewでは指摘なし」と表現できる。これは実装全体の品質保証や既存`/self-review`の収束を意味しない。
 
