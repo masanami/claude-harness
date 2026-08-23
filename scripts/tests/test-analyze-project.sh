@@ -523,14 +523,14 @@ assert_eq "docsDirがnull" "null" "$(jq -r '.docsDir' <<<"$DOCS_JSON")"
 assert_eq "designDocsが空配列" "0" "$(jq '.designDocs | length' <<<"$DOCS_JSON")"
 assert_eq "adrDirがnull" "null" "$(jq -r '.adrDir' <<<"$DOCS_JSON")"
 
-echo "=== test: fetch_docs_evidence (保証台帳の検出) ==="
+echo "=== test: fetch_docs_evidence (docs/guarantees.md は designDocs に載せない) ==="
 GUARANTEES_DIR="${TMP_ROOT}/guarantees-project"
 mkdir -p "$GUARANTEES_DIR/docs"
 : > "$GUARANTEES_DIR/docs/guarantees.md"
 fetch_docs_evidence "$GUARANTEES_DIR"
 assert_eq "docs配下にguarantees.mdがあってもdesignDocsには含めない" "false" "$(jq '.designDocs | any(. == "docs/guarantees.md")' <<<"$DOCS_JSON")"
 
-echo "=== test: fetch_docs_evidence (docsDirはあるが保証台帳が無い) ==="
+echo "=== test: fetch_docs_evidence (docs/adr が無い場合) ==="
 fetch_docs_evidence "$DOCS_DIR_FIXTURE"
 assert_eq "docs/adrが無ければadrDirはnull" "null" "$(jq -r '.adrDir' <<<"$DOCS_JSON")"
 

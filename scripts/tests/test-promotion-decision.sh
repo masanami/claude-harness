@@ -136,11 +136,40 @@ assert_eq "E2E だけ偽 → false" "false" "$(decide ready-for-promotion "$(rp_
 assert_eq "すべて真 → true" "true" "$(decide ready-for-promotion "$(rp_input 1 1 1 1 1)")"
 
 echo ""
-echo "=== (5) ready-for-promotion の「スキップは OK 扱い」の意味論 ==="
+echo "=== (5) ready-for-promotion のスキップの意味論（品質と E2E で非対称） ==="
 
-skipped_all='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true,"reason":"..."},"e2e":{"skipped":true,"reason":"..."}}'
-assert_eq "QC/E2E がともに明示スキップなら true（スキップは OK 扱い）" \
-  "true" "$(decide ready-for-promotion "$skipped_all")"
+# 品質のスキップは**許可条件ではない**（人間決定 2026-08-23）。ゲートが1つも実行されていない
+# 状態を「OK 扱い」にすると、検査コマンドを特定できなかっただけで未検証のまま昇格可になる。
+# E2E のスキップは従来どおり OK 扱いのまま（非対称は意図したもの）。
+qc_skipped='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true,"reason":"検出できず"},"e2e":{"skipped":true,"reason":"..."}}'
+assert_eq "QC が明示スキップなら false（ゲート未実行は常にブロック）" \
+  "false" "$(decide ready-for-promotion "$qc_skipped")"
+assert_eq "その blockers は quality_not_verified（fail とは別状態）" \
+  "quality_not_verified" "$(blockers_of ready-for-promotion "$qc_skipped")"
+
+# runner が返す result:"skip"（ゲートが1つも実行されなかった実行。Issue #192）も同じ扱い。
+# skipped:true との2経路があるが、どちらも同じ blockers に落ちる（呼び出し側が2つの規則を読まない）。
+qc_result_skip='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"skip"},"e2e":{"skipped":true}}'
+assert_eq "QC の result:skip も false" "false" "$(decide ready-for-promotion "$qc_result_skip")"
+assert_eq "その blockers も quality_not_verified" \
+  "quality_not_verified" "$(blockers_of ready-for-promotion "$qc_result_skip")"
+
+# 矛盾入力（スキップと宣言しつつ pass も載せる）は fail-closed でブロックする。
+qc_skip_and_pass='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true,"result":"pass"},"e2e":{"skipped":true}}'
+assert_eq "skipped:true と result:pass が同時に来たらブロックする（fail-closed）" \
+  "false" "$(decide ready-for-promotion "$qc_skip_and_pass")"
+
+# 「一部のゲートだけ未実行」は従来どおり通る。runner は1つも実行しなかったときだけ
+# result:"skip" を返し、型チェックの無いプロジェクト等の部分 skip は result:"pass" を返す。
+qc_partial='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass","gates":{"lint":{"status":"pass"},"typecheck":{"status":"skip"},"test":{"status":"pass"}}},"e2e":{"skipped":true}}'
+assert_eq "一部のゲートだけ skip なら従来どおり true（過剰に落とさない）" \
+  "true" "$(decide ready-for-promotion "$qc_partial")"
+
+# E2E は本決定の対象外。スキップは OK 扱いのまま（変えていないことを固定する）。
+e2e_skipped='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true,"reason":"E2E コマンド無し"}}'
+assert_eq "E2E の明示スキップは従来どおり true（品質との非対称は意図したもの）" \
+  "true" "$(decide ready-for-promotion "$e2e_skipped")"
+assert_eq "E2E スキップ時に blockers は空" "" "$(blockers_of ready-for-promotion "$e2e_skipped")"
 
 qc_no_result='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false},"e2e":{"skipped":true}}'
 assert_eq "スキップでないのに result が無い QC は true にしない" \
@@ -148,14 +177,14 @@ assert_eq "スキップでないのに result が無い QC は true にしない
 assert_eq "その blockers は quality_result_missing" \
   "quality_result_missing" "$(blockers_of ready-for-promotion "$qc_no_result")"
 
-e2e_no_result='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":false}}'
+e2e_no_result='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":false}}'
 assert_eq "スキップでないのに passed が無い E2E は true にしない" \
   "false" "$(decide ready-for-promotion "$e2e_no_result")"
 
 echo ""
 echo "=== (6) ready-for-promotion の空集合ケース（受入基準ゼロ件） ==="
 
-criteria_empty='{"allMerged":true,"criteria":[],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+criteria_empty='{"allMerged":true,"criteria":[],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 assert_eq "受入基準が空配列なら false（全称条件を空虚に真にしない）" \
   "false" "$(decide ready-for-promotion "$criteria_empty")"
 assert_eq "その blockers は criteria_empty" \
@@ -165,19 +194,19 @@ assert_eq "空配列では criteriaConsistent を真にしない" \
 assert_eq "空配列では criteriaNoHumanReview も真にしない" \
   "false" "$(term_of ready-for-promotion "$criteria_empty" criteriaNoHumanReview)"
 
-criteria_null='{"allMerged":true,"criteria":null,"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+criteria_null='{"allMerged":true,"criteria":null,"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 assert_eq "受入基準が null なら false" "false" "$(decide ready-for-promotion "$criteria_null")"
 assert_eq "その blockers は criteria_unknown" \
   "criteria_unknown" "$(blockers_of ready-for-promotion "$criteria_null")"
 
-criteria_no_status='{"allMerged":true,"criteria":[{"id":"AC-1"}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+criteria_no_status='{"allMerged":true,"criteria":[{"id":"AC-1"}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 assert_eq "status フィールドの無い基準があれば false" \
   "false" "$(decide ready-for-promotion "$criteria_no_status")"
 
 # needsHumanReview の不在・非boolean を「要人間判定なし」に丸めない
 # （status には has() 検査があるのに項3だけ抜けていると、要人間判定の付いた基準を
 #  渡し忘れた呼び出しがそのまま readyForPromotion: true になる）
-criteria_no_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent"}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+criteria_no_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent"}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 assert_eq "needsHumanReview が無い基準は true にしない（不在を「なし」に読み替えない）" \
   "false" "$(decide ready-for-promotion "$criteria_no_review")"
 assert_eq "その blockers は criteria_review_missing" \
@@ -185,13 +214,13 @@ assert_eq "その blockers は criteria_review_missing" \
 assert_eq "その場合 criteriaNoHumanReview は false" \
   "false" "$(term_of ready-for-promotion "$criteria_no_review" criteriaNoHumanReview)"
 
-criteria_null_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":null}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+criteria_null_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":null}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 assert_eq "needsHumanReview が null の基準は true にしない" \
   "false" "$(decide ready-for-promotion "$criteria_null_review")"
 assert_eq "その blockers は criteria_review_invalid" \
   "criteria_review_invalid" "$(blockers_of ready-for-promotion "$criteria_null_review")"
 
-criteria_str_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":"yes"}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+criteria_str_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":"yes"}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 assert_eq "needsHumanReview が非boolean（文字列）の基準は true にしない" \
   "false" "$(decide ready-for-promotion "$criteria_str_review")"
 assert_eq "その blockers は criteria_review_invalid" \
@@ -203,7 +232,7 @@ assert_eq "status 欠落と needsHumanReview 欠落はどちらも false（検�
   "$(printf '%s,%s' "$(decide ready-for-promotion "$criteria_no_status")" "$(decide ready-for-promotion "$criteria_no_review")")"
 
 # 受理方向: boolean で明示されていれば従来どおり通る
-criteria_ok_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+criteria_ok_review='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 assert_eq "needsHumanReview: false は従来どおり true になる（過剰に落とさない）" \
   "true" "$(decide ready-for-promotion "$criteria_ok_review")"
 
@@ -290,26 +319,51 @@ while IFS= read -r code; do
 done <<<"$impl_blockers"
 assert_eq "実装が返しうる blockers はすべて spec の語彙表に載っている（表の更新漏れ検出）" "" "$undocumented"
 assert_eq "実装が返しうる blockers の総数（語彙表と一致）" \
-  "19" "$(printf '%s\n' "$impl_blockers" | grep -c .)"
+  "20" "$(printf '%s\n' "$impl_blockers" | grep -c .)"
 
 spec_blocker_failures=""
 for code in not_all_merged criteria_unknown criteria_invalid criteria_empty criteria_status_missing \
   criteria_not_consistent criteria_review_missing criteria_review_invalid criteria_needs_human_review \
   criteria_id_missing criteria_id_invalid \
   quality_check_missing quality_check_invalid \
-  quality_result_missing quality_not_pass e2e_missing e2e_invalid e2e_result_missing e2e_not_passed; do
+  quality_result_missing quality_not_verified quality_not_pass \
+  e2e_missing e2e_invalid e2e_result_missing e2e_not_passed; do
   grep -qF -- "\`${code}\`" "$SPEC_FILE" || spec_blocker_failures="${spec_blocker_failures}${code} "
   grep -qF -- "\"${code}\"" "$TARGET_SCRIPT" || spec_blocker_failures="${spec_blocker_failures}${code}(impl) "
 done
 assert_eq "blockers の語彙が spec と実装の双方に存在する" "" "$spec_blocker_failures"
 
 echo ""
+echo "=== (10-b) 呼び出し側の散文が判定式と食い違っていない（この穴の生まれ方そのもの） ==="
+
+# この欠陥は「スクリプトの判定式が skipped:true を許可し、SKILL.md が『特定できなければ
+# skipped:true にせよ』と指示していた」という **散文と判定式の食い違い**で生まれた。
+# 片方だけ直すと再発するため、呼び出し側の散文にも逐語のアンカーを置いて機械で固定する。
+PV_SKILL="${REPO_ROOT}/skills/promote-verify/SKILL.md"
+assert_eq "/promote-verify の SKILL.md を読める（読めない状態を pass にしない）" "true" \
+  "$(if [ -r "$PV_SKILL" ]; then echo true; else echo false; fi)"
+
+# (a) qualityCheck を skipped:true にせよ、と読める指示が残っていないこと
+# shellcheck disable=SC2016 # バッククォートは正規表現リテラル（シェル展開の対象ではない）
+assert_eq "qualityCheck を skipped:true にする指示が無い" "0" \
+  "$(grep -cE '`?qualityCheck`? *= *\{ *skipped: *true' "$PV_SKILL")"
+# (b) 対応表の論理式に qualityCheck.skipped が許可条件として現れないこと
+assert_eq "対応表の論理式が qualityCheck.skipped を許可条件にしていない" "0" \
+  "$(grep -cF 'qualityCheck.skipped === true' "$PV_SKILL")"
+# (c) ブロックする旨を明示していること（消しただけで意図が伝わらない状態にしない）
+assert_eq "ゲート未実行は常にブロックする旨を明示している" "true" \
+  "$(if grep -qF -- '実行されたゲートが1つも無いなら常にブロックする' "$PV_SKILL"; then echo true; else echo false; fi)"
+# (d) E2E のスキップは従来どおり許可条件のままであること（品質だけの規律だと分かる形）
+assert_eq "E2E のスキップは許可条件のまま（非対称を消していない）" "true" \
+  "$(if grep -qF -- 'e2e.skipped === true OR e2e.passed === true' "$PV_SKILL"; then echo true; else echo false; fi)"
+
+echo ""
 echo "=== (11) criteria[].id の妥当性（契約フィールドを無検査で通さない） ==="
 
 rp_with_id() {
-  printf '{"allMerged":true,"criteria":[{"id":%s,"status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}' "$1"
+  printf '{"allMerged":true,"criteria":[{"id":%s,"status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}' "$1"
 }
-criteria_id_no_key='{"allMerged":true,"criteria":[{"status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+criteria_id_no_key='{"allMerged":true,"criteria":[{"status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 assert_eq "criteria[].id が無ければ false" "false" "$(decide ready-for-promotion "$criteria_id_no_key")"
 assert_eq "その blockers は criteria_id_missing" \
   "criteria_id_missing" "$(blockers_of ready-for-promotion "$criteria_id_no_key")"
@@ -337,7 +391,7 @@ sweep_check() {
   fi
 }
 
-RP_TAIL='"qualityCheck":{"skipped":true},"e2e":{"skipped":true}'
+RP_TAIL='"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}'
 sweep_check "allMerged=\"true\""   ready-for-promotion "{\"allMerged\":\"true\",\"criteria\":[{\"id\":\"AC-1\",\"status\":\"consistent\",\"needsHumanReview\":false}],${RP_TAIL}}"
 sweep_check "allMerged=1"          ready-for-promotion "{\"allMerged\":1,\"criteria\":[{\"id\":\"AC-1\",\"status\":\"consistent\",\"needsHumanReview\":false}],${RP_TAIL}}"
 sweep_check "allMerged=null"       ready-for-promotion "{\"allMerged\":null,\"criteria\":[{\"id\":\"AC-1\",\"status\":\"consistent\",\"needsHumanReview\":false}],${RP_TAIL}}"
@@ -345,14 +399,14 @@ sweep_check "status=null"          ready-for-promotion "{\"allMerged\":true,\"cr
 sweep_check "status=123"           ready-for-promotion "{\"allMerged\":true,\"criteria\":[{\"id\":\"AC-1\",\"status\":123,\"needsHumanReview\":false}],${RP_TAIL}}"
 sweep_check "qc.skipped=\"true\""  ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":"true"},"e2e":{"skipped":true}}'
 sweep_check "qc.result=null"       ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":null},"e2e":{"skipped":true}}'
-sweep_check "e2e.passed=\"true\""  ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":false,"passed":"true"}}'
-sweep_check "e2e.passed=1"         ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":false,"passed":1}}'
+sweep_check "e2e.passed=\"true\""  ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":false,"passed":"true"}}'
+sweep_check "e2e.passed=1"         ready-for-promotion '{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":false,"passed":1}}'
 assert_eq "全フィールドの不正値が真として読まれない（掃引8ケース）" "" "$sweep_failures"
 
 echo ""
 echo "=== (13) 入力はちょうど1つの JSON オブジェクト（1入力1出力の契約） ==="
 
-RP_ONE='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":true},"e2e":{"skipped":true}}'
+RP_ONE='{"allMerged":true,"criteria":[{"id":"AC-1","status":"consistent","needsHumanReview":false}],"qualityCheck":{"skipped":false,"result":"pass"},"e2e":{"skipped":true}}'
 multi_out="$(printf '%s %s' "$RP_ONE" "$RP_ONE" | bash "$TARGET_SCRIPT" ready-for-promotion 2>/dev/null)"
 multi_exit=$?
 assert_eq "JSON 値が2つある入力は exit 2（判定 false と誤報告しない）" "2" "$multi_exit"

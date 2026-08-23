@@ -3,7 +3,7 @@
 # 受入基準の粒度規約（`docs/ai-driven-development-strategy.md` 4.5「受入基準の粒度」）の
 # 構造不変条件テスト。
 #
-# 本規約は保証台帳（5.3・凍結）で得た知見を、台帳用語から独立した形で既定フロー（SDD）の
+# 本規約は撤去した保証台帳（GDD）の運用で得た知見を、台帳用語から独立した形で既定フロー（SDD）の
 # 受入基準へ移植したものである（ADR 0002「計装は回収する」）。散文の規約には型検査もテストも
 # 効かないため、規約そのものではなく**規約が成立するための構造**を固定する:
 #   (A-1) 正本に粒度節が 4.5 として在る（4.4 と 5 章の間）
@@ -116,7 +116,7 @@ assert_file_contains "(A-1) 粒度節の見出しが在る" "$STRATEGY_FILE" \
 GRAN_LINE="$(awk '/^### 4\.5 / { print NR; exit }' "$STRATEGY_FILE")"
 SEC44_LINE="$(awk '/^### 4\.4 / { print NR; exit }' "$STRATEGY_FILE")"
 SEC5_LINE="$(awk '/^## 5\./    { print NR; exit }' "$STRATEGY_FILE")"
-assert_eq "(A-1) 粒度節は 4.4 と 5 章（凍結章）の間に在る" "true" \
+assert_eq "(A-1) 粒度節は 4.4 と 5 章の間に在る" "true" \
   "$(if [ -n "$GRAN_LINE" ] && [ -n "$SEC44_LINE" ] && [ -n "$SEC5_LINE" ] \
       && [ "$GRAN_LINE" -gt "$SEC44_LINE" ] && [ "$GRAN_LINE" -lt "$SEC5_LINE" ]; then echo true; else echo false; fi)"
 
@@ -206,7 +206,7 @@ ag_core "(A-3) 前向き適用（既存の受入基準の一括再分割を要�
 echo ""
 echo "=== (A-4) 定型文が台帳用語から独立している（移植の要件そのもの） ==="
 
-# 台帳レジーム（凍結）の語彙が混ざっていると、SDD の受入基準を書く手順が
+# 台帳レジーム（撤去済み）の語彙が混ざっていると、SDD の受入基準を書く手順が
 # 存在しない台帳・裁可を前提にしてしまう。
 for ledger_term in '保証台帳' '保証 ID' '裁可' 'guarantee-index-check' 'missing_test_ref' 'G-{' 'Gaps'; do
   found="false"

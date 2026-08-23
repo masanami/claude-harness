@@ -24,7 +24,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
 }
 
 # 終了コード（scripts/specs/promotion-decision.md と一致させること）
-PROMOTION_DECISION_EX_TRUE=0   # 判定が true（allConsistent / readyForPromotion）
+PROMOTION_DECISION_EX_TRUE=0   # 判定が true（readyForPromotion）
 PROMOTION_DECISION_EX_FALSE=1  # 判定が false（stdout には JSON を出す）
 PROMOTION_DECISION_EX_PREREQ=2 # 実行前提の欠落（jq 不在・引数不正・入力が JSON でない・必須キー欠落）
 
@@ -57,10 +57,16 @@ read -r -d '' PROMOTION_DECISION_JQ_READY <<'JQPROG'
         elif ([$criteria[] | select((.needsHumanReview | type) != "boolean")] | length) > 0 then ["criteria_review_invalid"]
         elif ([$criteria[] | select(.needsHumanReview == true)] | length) > 0 then ["criteria_needs_human_review"]
         else [] end ) as $review_blockers
+    # 品質は「実行されたゲートが1つも無いなら常にブロックする」（人間決定 2026-08-23）。
+    # skipped: true を許可条件にしていた時期は、Step 2 で検査コマンドを特定できなかった
+    # だけで readyForPromotion: true になり、**quality-check-runner を呼ばない経路**が
+    # Issue #192 の exit 3 の安全網を素通りしていた。理由（reason）は入力に残してよいが、
+    # **記録のために許可条件へ倒さない**。ゲート未実行は fail とは別状態なので専用コードを積む。
     | ( if $qc == null then ["quality_check_missing"]
         elif ($qc | type) != "object" then ["quality_check_invalid"]
-        elif ($qc.skipped) == true then []
+        elif ($qc.skipped) == true then ["quality_not_verified"]
         elif ($qc | has("result") | not) then ["quality_result_missing"]
+        elif ($qc.result) == "skip" then ["quality_not_verified"]
         elif ($qc.result) != "pass" then ["quality_not_pass"]
         else [] end ) as $qc_blockers
     | ( if $e2e == null then ["e2e_missing"]
@@ -211,7 +217,7 @@ main() {
   fi
 
   local result
-  if ! result="$(printf '%s' "$input" | jq -c --arg id_pattern "$GUARANTEE_ID_PATTERN" "$program" 2>/dev/null)"; then
+  if ! result="$(printf '%s' "$input" | jq -c "$program" 2>/dev/null)"; then
     echo "Error: 入力を判定式へ掛けられません（期待するオブジェクトではありません）" >&2
     printf '%s\n' '{"status":"error","error":"input is not valid JSON"}' >&2
     exit "$PROMOTION_DECISION_EX_PREREQ"
