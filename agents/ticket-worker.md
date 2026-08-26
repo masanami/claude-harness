@@ -53,7 +53,7 @@ cd "{worktreeパス}" && bash "{ci-wait.shの絶対パス}" {PR番号}
 ## 返却内容
 
 - PR URL と CI ステータス（green / 失敗内容）
-- feature-implementer から受け取った実装サマリー（変更ファイル・テスト件数・`/quality-check`・`/self-review` の結果）
+- feature-implementer から受け取った実装サマリー（変更ファイル・テスト件数・`/quality-check` の結果、`/self-review` の `converged` と **`residualFindings` の全件**（`file:line`・`severity`・`claim`・`reason`）。`converged: true` でも残指摘は載るため、`converged` で分岐せず空でなければ全件転記する）
 - E2E対象の場合: `/create-e2e` の結果と、リードが `/explain-e2e` に使うシナリオ一覧・完了条件トレーサビリティ表
 - クロスリポジトリ依存の確証結果（該当する場合）
 - `failure`・判断待ちで終了した場合: どのフェーズで何が起きたか（試行回数・最後の CI 状態・失敗ログ抜粋を含む）、リードに必要な判断・作業

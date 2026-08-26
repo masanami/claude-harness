@@ -131,7 +131,7 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 
 - **変更ファイル一覧 / 追加テスト件数 / TDDサイクルの概要**
 - **`/quality-check` の最終結果**（`pass` / `skip` / `failure`）
-- **`/self-review` の結果サマリー**（指摘あり/なし、反復回数。完了条件達成・スコープ確認の観点も含む）
+- **`/self-review` の結果サマリー**（反復回数・`converged`・**残指摘（`residualFindings`）の全件**（`file:line`・`severity`・`claim`・`reason`）。完了条件達成・スコープ確認の観点も含む）
 - **E2Eシナリオ一覧と完了条件トレーサビリティ表**（E2E対象の場合、Phase 7 で使う）
 
 ```text
@@ -176,6 +176,8 @@ E2E対象機能の場合、Phase 4-5 で feature-implementer が返した E2Eシ
 ### Phase 8: プッシュ・PR作成
 
 PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4-5 で必須ゲート・セルフレビューを通過済みのため、**通常PR（非ドラフト）で開く**（AI レビューを即時起動し `/pr-review-respond` へ繋ぐ）。`/explain-e2e` は PR 作成の前提条件ではない——単一Issueでは Phase 7 で実施済み、複数Issue（star 型）では worker の PR 作成後にリードがメインセッションで実施する。
+
+feature-implementer が**残指摘（`residualFindings`）**を返した場合は、その全件をそのまま PR 本文に転記する。`converged: true` でも省略しない——`/self-review` は自動修正の対象外にした指摘を `converged: true` のまま返すため、`converged` で分岐すると引き取り手のいない指摘が PR に載らないまま消える。
 
 feature-implementer が**クロスリポジトリ依存の確証結果**を返した場合は、そのまま PR 本文に転記する（確証の規律・形式は feature-implementer / code-reviewer 側に定義）。
 
