@@ -22,7 +22,8 @@
 #         `code-reviewer` 観点G）が実在する。正本は「強制はこの2箇所が担う」と書いている
 #         だけなので、どちらかが消えると規約がその分だけ宙に浮く
 #   (R-9) 正本コメントが**純粋なポインタ**であり、規範を1文字も持たないこと。実行時ファイルの
-#         HTML コメントがモデルへ配送されないことは保証された挙動ではないため、「配送されない」
+#         HTML コメントは**実測上モデルへ配送される**（`skills/` `agents/` の両経路で 10/10。
+#         除去されるのは `CLAUDE.md` の自動注入だけ。(f) の実測表）ため、「配送されない」
 #         側に賭けず、**配送されても失われる規範が無い**側で成立させる（(f) の
 #         「規範は常にコメントの直前にインラインで書き切る」の機械化）
 #
@@ -311,7 +312,7 @@ assert_file_contains "(R-8) 正本が「遵守は機械で検査できない」�
 echo ""
 echo "=== (R-9) 正本コメントは純粋なポインタであり規範を持たない ==="
 
-# 実行時ファイルの HTML コメントがモデルへ配送されないことは保証された挙動ではない。
+# 実行時ファイルの HTML コメントは実測上モデルへ配送される（(f) の実測表）。
 # したがって「配送されない」前提に賭けず、**配送されても害が無い**形で成立させる:
 #   (1) コメント行はポインタの書式ちょうどであること（規範を紛れ込ませられない）
 #   (2) コメント行を取り除いても、定型文の規範が丸ごと残っていること
@@ -333,6 +334,93 @@ assert_eq "(R-9) コメントを除いた本体だけで判定軸が読み取れ
 
 assert_file_contains "(R-9) 正本がこの不変条件（コメントは配送されても害が無い形）を明記している" "$CONV_FILE" \
   '**正本コメントは純粋なポインタにする。**'
+
+echo ""
+echo "=== (R-10) 配送可否の実測記録が正本に残っている ==="
+
+# (R-9) が「配送されても害が無い形」で成立させている根拠は、(f) の実測（HTML コメントは
+# `skills/` `agents/` では届く）である。配送そのものは外部 API と課金を伴い結果も決定的で
+# ないためテストスイートでは回せない（プローブは scripts/probes/ に独立して置く）。
+# ここで固定するのは**記録が残っていること**と**前提が黙って元へ戻らないこと**の2点。
+FSEC="$(awk '
+  /^## \(f\) / { insec = 1 }
+  insec && /^## 再発防止テスト/ { exit }
+  insec { print }
+' "$CONV_FILE")"
+
+assert_eq "(R-10) (f) 節を切り出せる（切り出し失敗を pass にしない）" "true" \
+  "$(if [ -n "$FSEC" ]; then echo true; else echo false; fi)"
+
+assert_eq "(R-10) (f) に実測表の節が在る" "true" \
+  "$(if printf '%s\n' "$FSEC" | grep -qF -- '### 実測した配送可否'; then echo true; else echo false; fi)"
+
+# 表の各行は「面」と「配送されるか」の対で意味を成す。ただし**行全体から判定語を探しては
+# ならない**——実測表は1行に複数の配送面（HTML コメント列・frontmatter コメント列）を持つため、
+# 行内で2列を**入れ替える**反転は、同じ行のどこかに期待語が残っている限り素通りする。
+# したがって対象**セル（列）を抽出してから**照合する。列番号はヘッダから引き当てる
+# （テストに列番号の literal を置くと、列を増減した正本と黙ってずれる＝第2のリストになる）。
+TABLE="$(printf '%s\n' "$FSEC" | awk '
+  /^\| 面 / { intbl = 1 }
+  intbl && /^\|/ { print; next }
+  intbl { exit }
+')"
+
+assert_eq "(R-10) 実測表を切り出せる（切り出し失敗を pass にしない）" "true" \
+  "$(if printf '%s\n' "$TABLE" | grep -qF -- '| 面 '; then echo true; else echo false; fi)"
+
+# 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする）。
+# awk は列の切り出し（フィールド分割・index()）だけに使い、判定は grep -F で行う。
+r10_cell() { # description row_needle column_header_needle verdict
+  local desc="$1" row_needle="$2" col_needle="$3" verdict="$4"
+  local col row cell found="false"
+  col="$(printf '%s\n' "$TABLE" | awk -F'|' -v n="$col_needle" '
+    NR == 1 { for (i = 2; i < NF; i++) if (index($i, n)) { print i; exit } }')"
+  row="$(printf '%s\n' "$TABLE" | grep -F -- "$row_needle" | head -1)"
+  if [ -n "$col" ] && [ -n "$row" ]; then
+    cell="$(printf '%s\n' "$row" | awk -F'|' -v c="$col" '{ print $c }')"
+    printf '%s' "$cell" | grep -qF -- "$verdict" && found="true"
+  fi
+  assert_eq "$desc" "true" "$found"
+}
+
+# HTML コメント列と frontmatter コメント列の**両方**を固定する。片側だけを見ると、
+# 2列を入れ替えた反転（HTML=配送されない / frontmatter=配送される）が通ってしまう。
+r10_cell "(R-10) SKILL.md 行: HTML コメント列が「配送される」" \
+  'skills/**/SKILL.md' 'HTML コメント' '**配送される**'
+r10_cell "(R-10) SKILL.md 行: frontmatter コメント列が「配送されない」" \
+  'skills/**/SKILL.md' 'frontmatter のコメント行' '配送されない'
+r10_cell "(R-10) agents/*.md 行: HTML コメント列が「配送される」" \
+  'agents/*.md' 'HTML コメント' '**配送される**'
+r10_cell "(R-10) agents/*.md 行: frontmatter コメント列が「配送されない」" \
+  'agents/*.md' 'frontmatter のコメント行' '配送されない'
+r10_cell "(R-10) CLAUDE.md 行: HTML コメント列が「配送されない」（対照）" \
+  'CLAUDE.md' 'HTML コメント' '配送されない'
+
+# 正本が挙げるプローブ手順が実在すること（(xi) と同じ dangling 参照の防止）。
+# パスはテストに literal を置かず、正本から抜き出す。
+PROBE_PATH="$(printf '%s\n' "$FSEC" | grep -o 'scripts/probes/[A-Za-z0-9_-]*\.sh' | head -1)"
+assert_eq "(R-10) 正本がプローブ手順のパスを挙げている" "true" \
+  "$(if [ -n "$PROBE_PATH" ]; then echo true; else echo false; fi)"
+assert_eq "(R-10) そのプローブが実在する: ${PROBE_PATH:-<未記載>}" "true" \
+  "$(if [ -n "$PROBE_PATH" ] && [ -f "${REPO_ROOT}/${PROBE_PATH}" ]; then echo true; else echo false; fi)"
+assert_eq "(R-10) そのプローブが bash 構文として妥当" "true" \
+  "$(if [ -n "$PROBE_PATH" ] && bash -n "${REPO_ROOT}/${PROBE_PATH}" 2>/dev/null; then echo true; else echo false; fi)"
+
+# 反転の不在: 実測前の前提（コメントは読まれない／配送は保証されない）へ黙って戻す書き換えを止める。
+# 走査は (f)(h) の両節。CLAUDE.md 行の「配送されない」は正当なので、面を伴わない断定だけを見る。
+HSEC="$(awk '
+  /^## \(h\) / { insec = 1 }
+  insec && /^## \(f\) / { exit }
+  insec { print }
+' "$CONV_FILE")"
+assert_eq "(R-10) (h) 節を切り出せる（切り出し失敗を pass にしない）" "true" \
+  "$(if [ -n "$HSEC" ]; then echo true; else echo false; fi)"
+for reverted in 'モデルはコメントを読みに行かない' 'コメントはモデルへ配送されない' \
+                'コメントがモデルへ配送されないことは' '保証された挙動ではない'; do
+  found="false"
+  printf '%s\n%s\n' "$FSEC" "$HSEC" | grep -qF -- "$reverted" && found="true"
+  assert_eq "(R-10) 実測前の前提へ戻す断定が無い: ${reverted}" "false" "$found"
+done
 
 echo ""
 echo "=== summary === pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"
