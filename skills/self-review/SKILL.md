@@ -30,9 +30,30 @@ Task ツールで `code-reviewer`（`subagent_type: 'claude-harness:code-reviewe
 
 Task ツールには出力検証機構が無いため、**指示文（プロンプト）で明示的に構造化返却を課す**。各指摘を以下の形で返すよう、プロンプトに明記する:
 
+<!-- convergence-canon:start -->
 ```text
 {findings: [{file, line, severity: "high"|"medium"|"low", claim, evidence, verdict: "CONFIRMED"|"PLAUSIBLE"}, ...]}
 ```
+
+**severity の順序と2つのしきい値**（本スキル内で severity の値を書く箇所はここだけ。Step 3 以降はこの語で参照し、値を再列挙しない）:
+
+- **順序**: `high` > `medium` > `low`。**この3値以外の値・`severity` の欠落・値を読み取れない応答は、すべて `high` として扱う**（未知の値を軽い側へ落とすと、修正もされず収束も妨げないまま消えるため）
+- **検証しきい値** = `high`。これ以上かつ `verdict: "PLAUSIBLE"` の指摘だけが Step 3 の懐疑的検証にかかる
+- **修正しきい値** = `medium` 以上。これ以上の指摘だけが Step 4 の自動修正の対象になり、Step 5 の `converged` を左右する
+- **修正しきい値未満の指摘は自動修正しない**。Step 5 の `residualFindings` へ `below_fix_threshold` の `reason` 付きで計上し、`converged` を `false` にしない。修正するかは呼び出し元が決める。**これらの解消をループの終了条件にしない**——修正が新たな批評面を同じ速さで生む種類の成果物（テストコード・ドキュメント・リファクタ・命名）では、指摘が尽きた状態に到達しないことがあり、上限まで回し続けても残る指摘の中身は変わらないため
+
+`converged` の真理値表（3つの入力の全組合せを網羅する。`（問わない）` はその欄が両方の値を取りうることを表す）:
+
+| `/quality-check` の `fail`／非機械可読 | 修正しきい値以上の残指摘 | 修正しきい値未満の残指摘 | `converged` |
+|---|---|---|---|
+| あり | （問わない） | （問わない） | `false` |
+| なし | あり | （問わない） | `false` |
+| なし | なし | あり | `true` |
+| なし | なし | なし | `true` |
+
+**`converged: true` は「残指摘が無い」を意味しない**（修正しきい値未満の残指摘は残りうる）。`converged` の値に関わらず、`residualFindings` は Step 6 で必ず全件報告する。
+<!-- convergence-canon:end -->
+<!-- 経緯: docs/adr/0004-self-review-convergence-by-severity.md -->
 
 該当する指摘が無い場合は `{findings: []}` を返させる（裸の配列 `[]` ではなく `findings` プロパティを持つオブジェクトで返すこと）。
 
@@ -58,7 +79,7 @@ Task ツールには出力検証機構が無いため、**指示文（プロン�
 
 `skills/pr-merge/SKILL.md` 分岐C・`skills/promote-verify/SKILL.md` と同じ「単一懐疑者」設計に統一している（Issue #130。旧来の3体多数決は廃止）。
 
-Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の指摘のみを検証対象（`toVerify`）とする。それ以外（`verdict: "CONFIRMED"` の指摘、および `severity: "medium"`/`"low"` の指摘）は懐疑的検証をスキップし、レビュアーの一次判定をそのまま信頼する（`trusted`。偽陽性修正の退行リスクが相対的に低い箇所へのコスト最適化）。
+Step 2 の指摘のうち、**検証しきい値以上**かつ `verdict: "PLAUSIBLE"` の指摘のみを検証対象（`toVerify`）とする。それ以外（`verdict: "CONFIRMED"` の指摘、および検証しきい値未満の指摘）は懐疑的検証をスキップし、レビュアーの一次判定をそのまま信頼する（`trusted`。偽陽性修正の退行リスクが相対的に低い箇所へのコスト最適化）。
 
 `toVerify` が空でなければ、各指摘について:
 
@@ -80,9 +101,9 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 
 ### Step 4: 修正 → 反復
 
-`toFix` = `trusted` ∪（Step 3で `confirmed` になった指摘）を、`(file, line, claim)` の完全一致で重複除去したもの。
+`toFix` = （`trusted` ∪ Step 3で `confirmed` になった指摘）のうち**修正しきい値以上**のものを、`(file, line, claim)` の完全一致で重複除去したもの。修正しきい値未満の指摘は `toFix` に入れず、`below_fix_threshold` の `reason` を付けて残指摘（`residualFindings`）へ退避する（この周で退避したものを次周の再レビュー結果と混ぜない）。
 
-- `toFix` が空の場合、その周でループを終了する（残るのは `needs_human_judgment` のみ）
+- `toFix` が空の場合、その周でループを終了する（残るのは `needs_human_judgment` と `below_fix_threshold` のみ）
 - `toFix` が空でない場合、確定した指摘を修正する:
   - 呼び出し元自身（メインセッション、または `feature-implementer` 等のサブエージェント）が、既に `/self-review` を実行中の同一コンテキストのまま Edit/Write で直接対応する**インライン修正**で完結させることを基本とする。呼び出し元自身を Task で新たに spawn する必要は無い
   - 呼び出し元以外の実装エージェントへ委譲したい場合のみ、Task ツールで `subagent_type: 'claude-harness:feature-implementer'` としてスコープ付きで呼び出す（この場合、呼び出された側は `agents/feature-implementer.md` の再入回避の注記に従い、Phase 1〜5 を再帰的に開始しない）
@@ -95,16 +116,15 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 **ループの上限・終了条件**（この規律を自分で数えて守ること。コード側の強制ではない）:
 
 - 最大 **3周**（初回のフルレビュー後、Step 3〜4〜再Step 2 の反復を最大3回）
-- 各周のレビューで指摘が0件（`findings.length === 0`）になった時点で反復を終了する
-- `toFix` が空になった時点（Step 4冒頭）でも反復を終了する
+- `toFix` が空になった時点（Step 4冒頭）で反復を終了する。指摘が1件も出なかった周・修正しきい値未満の指摘しか出なかった周・しきい値以上が全て `uncertain` だった周は、いずれもこの1条件で終了する。**「指摘が0件」を独立した終了条件として持たない**——修正しきい値未満の指摘は解消を待たずに終了する側であり、0件を待つと終了しない成果物がある
 - `/quality-check` が `fail` になった時点でも反復を終了する（上記）
-- 3回反復しても指摘が残る場合は、そのまま残指摘として扱いループを終了する
+- 3回反復しても修正しきい値以上の指摘が残る場合は、そのまま残指摘として扱いループを終了する
 
 ### Step 5: 結果の集約
 
-- `residualFindings` = 最終周の `findings`（0件でなければ）＋ 各周で蓄積した `needs_human_judgment` を、`(file,line)` ＋ `claim` 正規化（先頭64文字）のキーで重複除去したもの。`refuted` 判定の指摘はここに含めない（懐疑者が「妥当な指摘ではない」と判定した以上、未解決の問題としては扱わない）
+- `residualFindings` = 最終周の `findings`（0件でなければ）＋ 各周で蓄積した `needs_human_judgment` ＋ 各周で `below_fix_threshold` として退避した指摘を、`(file,line)` ＋ `claim` 正規化（先頭64文字）のキーで重複除去したもの。各要素は `file`/`line`/`severity`/`claim`/`evidence`/`reason` を持たせる。**しきい値以上と未満を別の配列へ分けない**（`severity` で判別でき、2本の配列は同期がずれるため）。`refuted` 判定の指摘はここに含めない（懐疑者が「妥当な指摘ではない」と判定した以上、未解決の問題としては扱わない）
 - `refutedFindings` = 各周で `refuted` 判定になった指摘（`file`/`line`/`severity`/`claim`）に、その判定を下した懐疑者の `reason` を対にして蓄積したもの（`toFix`/`residualFindings` どちらにも含めないが、握りつぶさず Step 6 で一覧として報告する）
-- `converged` = `/quality-check` が一度も `fail`（または機械可読な結果を返さない terminal 失敗）にならず、かつ `residualFindings` が空である場合のみ `true`
+- `converged` = `/quality-check` が一度も `fail`（または機械可読な結果を返さない terminal 失敗）にならず、かつ `residualFindings` に**修正しきい値以上の指摘が1件も無い**場合のみ `true`（Step 2 の真理値表に従う）
 - `roundHistory` = `[{round, findingsCount}, ...]`。Step 2 を実施するたびに、その周の指摘件数を追記する（初回のフルレビューが round 1、以降の確認モードレビューが round 2, 3, ...）
 - `rounds` = `roundHistory` の要素数
 
@@ -118,7 +138,7 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 ### 実施サマリー
 - 実施ラウンド数: {rounds}
 - 各ラウンドの指摘数推移: {roundHistory の一覧}
-- 収束: ✅ 収束（残指摘なし） / ⚠️ 未収束（自動修正ループが打ち切られ、残指摘が解消しないまま終了。上限3周への到達に限らず、要人間判断の指摘が残った場合や修正後の `/quality-check` が `fail` になり打ち切った場合を含む）
+- 収束: ✅ 収束（修正しきい値以上の残指摘なし。しきい値未満の残指摘は残りうる） / ⚠️ 未収束（修正しきい値以上の残指摘が解消しないまま終了。上限3周への到達に限らず、要人間判断の指摘が残った場合や修正後の `/quality-check` が `fail` になり打ち切った場合を含む）
 
 ### Codex shadow review（初回のみ）
 - 状態: {complete / partial / failed / not_run}
@@ -128,13 +148,15 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 - 計測: {duration_seconds・usage（取得できた範囲）}
 - Claude panelとの差分: {追加発見・重複・Claude側のみの指摘。自動修正には未使用}
 
-### 残指摘（収束しなかった場合）
+### 残指摘
+
+`residualFindings` が空でなければ、**`converged` の値に関わらず全件**をこの表で出す（件数への丸め・しきい値未満の省略・「収束したので省略」をしない。呼び出し元がそのまま PR 本文・完了報告へ転記できる形にするため）:
 
 | # | ファイル:行 | severity | 指摘内容 | 根拠 | 状態 |
 |---|-----------|----------|---------|------|------|
-| 1 | {file}:{line} | {severity} | {claim} | {evidence} | {懐疑者の判定（例: "uncertain"） または "3周経過で未解消" または "quality-check failed after fix" または "懐疑者が terminal 失敗/不正応答のため判定不能"} |
+| 1 | {file}:{line} | {severity} | {claim} | {evidence} | {reason: 懐疑者の判定（例: "uncertain"） または "below_fix_threshold" または "3周経過で未解消" または "quality-check failed after fix" または "懐疑者が terminal 失敗/不正応答のため判定不能"} |
 
-（`converged: true` の場合は「収束しました。残指摘はありません」を報告する）
+（`residualFindings` が空の場合のみ「残指摘はありません」を報告する）
 
 ### 懐疑者が棄却した指摘（refuted。`refutedFindings` が空でない場合のみ）
 
@@ -145,4 +167,6 @@ Step 2 の指摘のうち、`severity: "high"` かつ `verdict: "PLAUSIBLE"` の
 
 ### Step 7: 残指摘がある場合（人間判断）
 
-`converged: false` の場合、`residualFindings` を上記の表で提示し、ユーザーに次の対応（手動修正・追加のコンテキスト提供の上で再度 `/self-review` を実行・許容してこのまま進める等）を確認する。**自動修正ループは打ち切り済み（上限3周への到達に限らず、要人間判断の指摘が残った場合や修正後の `/quality-check` が `fail` になった場合も含む）のため、ここから先の対応はユーザー判断に委ねる**（無限に自動修正を試み続けない）。
+`residualFindings` が空でない場合、`converged` の値に関わらず上記の表で提示し、ユーザーに次の対応（手動修正・追加のコンテキスト提供の上で再度 `/self-review` を実行・許容してこのまま進める等）を確認する。**自動修正ループは打ち切り済み（上限3周への到達に限らず、要人間判断の指摘が残った場合や修正後の `/quality-check` が `fail` になった場合、修正しきい値未満で自動修正の対象外になった場合も含む）のため、ここから先の対応はユーザー判断に委ねる**（無限に自動修正を試み続けない）。
+
+`converged: true` かつ修正しきい値未満の残指摘だけが残っている場合も、一覧を省略しない。この状態は「レビューで何も出なかった」ではなく「自動修正の対象外にした指摘が引き取り手を待っている」であり、区別が付かなくなると下流が黙って落とす。

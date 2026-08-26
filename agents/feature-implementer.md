@@ -183,7 +183,13 @@ Phase 3 を完了したら、**Skill ツール経由で `/quality-check` を呼�
 
 ### 5-2. 残指摘がある場合
 
-`/self-review` が `converged: false`（自動修正ループが打ち切られ、残指摘が解消しないまま終了した。上限3周への到達に限らず、要人間判断の指摘が残った場合や、修正後の `/quality-check` が `fail` になり打ち切った場合を含む）を返した場合、`/self-review` 側で既に自動修正ループは尽くされているため、**追加の修正を自力で繰り返さない**。残指摘（`residualFindings`）の内容を確認し、完了条件・受入基準に関わる致命的な指摘が残っていないかを判断する:
+**残指摘の受け取りは `converged` の値で分岐させない。** `/self-review` は自動修正の対象外にした指摘（`reason: below_fix_threshold`）を `converged: true` のまま `residualFindings` に載せて返す。`converged` だけを見て「残指摘なし」と判断すると、この指摘が黙って消える。`residualFindings` が空でなければ、`converged` の値に関わらず**全件を返却内容へ転記する**（件数への丸め・severity での間引きをしない）。
+
+`/self-review` が `converged: false`（修正しきい値以上の残指摘が残っている）を返した場合、`/self-review` 側で既に自動修正ループは尽くされているため、**追加の修正を自力で繰り返さない**。
+
+**`converged: false` を「3周回し切った」と読まない。** 1周目でも `converged: false` になる（要人間判断の指摘が残った場合・修正後の `/quality-check` が `fail` になり打ち切った場合）。ラウンド数が上限未満であることを「まだループは尽きていない」と読んで、自分で修正を続けない。
+
+残指摘（`residualFindings`）の内容を確認し、完了条件・受入基準に関わる致命的な指摘が残っていないかを判断する:
 
 > **優先判定（他の判定に先立つ）**: `residualFindings` の中に、修正後の `/quality-check` 失敗に起因する要素（`reason` に `quality-check failed after fix` 等が入っている）が1件でも含まれる場合、severity・スコープの内容に関わらず**無条件で `failure`** として返却する。これは Phase 4 の必須ゲート（`/quality-check` 通過必須）を裏付けるものであり、下記2つの判定基準よりも優先する。
 
@@ -220,7 +226,8 @@ Phase 2-3 で「✅ クリティカル設計整合」を自己申告した場合
 - 追加・変更したテストの一覧と件数
 - TDDサイクルの概要（実装した実装計画ステップ）
 - `/quality-check` の最終結果（`pass` or `failure`）と**各ゲートの詳細**（`lint` / `typecheck` / `test` の `status` と件数）。呼び出し元がどのゲートで何が起きたかを判断できる粒度で返す
-- `/self-review` の結果サマリー（`rounds`/`roundHistory`/`converged`/残指摘の有無、**完了条件達成・スコープ確認の所見**）
+- `/self-review` の結果サマリー（`rounds`/`roundHistory`/`converged`、**完了条件達成・スコープ確認の所見**）
+- **`/self-review` の `residualFindings` の全件** — 各要素の `file:line`・`severity`・`claim`・`reason` を返す。**有無・件数へ丸めない**（呼び出し元がそのまま PR 本文へ転記するため、丸めると転記先で復元できない）
 - **クロスリポジトリ依存の確証結果**（該当する場合。仮定・確証根拠 repo@ref/file:line・未確証の仮定の明示。呼び出し元が PR 本文に転記する）
 - **Phase 5-3 の懐疑的検証結果**（該当する場合。懐疑者数（1体 or 3体）と最終 verdict）
 - **後発見のクリティカル箇所**（下記）があれば明示
@@ -228,6 +235,7 @@ Phase 2-3 で「✅ クリティカル設計整合」を自己申告した場合
 ### `failure` で終了した場合
 
 - 失敗内容と試行回数、および**どのゲート（`lint` / `typecheck` / `test`）が失敗したか**の内訳（`/quality-check` の機械可読結果から `gates.*.status` を転記）
+- **`/self-review` の `residualFindings` の全件**（Phase 5 まで到達していた場合。通常完了時と同じ形式。`failure` で終わる場合も引き取り手が判断できるよう残す）
 - **クロスリポジトリ依存の確証結果**（該当する場合。通常完了時と同じ形式。`failure` で終わる場合も確証済み/未確証の証跡を呼び出し元に残す）
 
 ### 後発見のクリティカル箇所がある場合
