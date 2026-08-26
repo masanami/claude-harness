@@ -354,19 +354,47 @@ assert_eq "(R-10) (f) 節を切り出せる（切り出し失敗を pass にし�
 assert_eq "(R-10) (f) に実測表の節が在る" "true" \
   "$(if printf '%s\n' "$FSEC" | grep -qF -- '### 実測した配送可否'; then echo true; else echo false; fi)"
 
-# 表の各行は「面」と「配送されるか」の対で意味を成す。片方だけ残ると記録が反転しうるため
-# 行単位（面と判定が同じ行に在ること）で見る。
-r10_row() { # description needle verdict
-  local desc="$1" needle="$2" verdict="$3" found="false"
-  printf '%s\n' "$FSEC" | grep -F -- "$needle" | grep -qF -- "$verdict" && found="true"
+# 表の各行は「面」と「配送されるか」の対で意味を成す。ただし**行全体から判定語を探しては
+# ならない**——実測表は1行に複数の配送面（HTML コメント列・frontmatter コメント列）を持つため、
+# 行内で2列を**入れ替える**反転は、同じ行のどこかに期待語が残っている限り素通りする。
+# したがって対象**セル（列）を抽出してから**照合する。列番号はヘッダから引き当てる
+# （テストに列番号の literal を置くと、列を増減した正本と黙ってずれる＝第2のリストになる）。
+TABLE="$(printf '%s\n' "$FSEC" | awk '
+  /^\| 面 / { intbl = 1 }
+  intbl && /^\|/ { print; next }
+  intbl { exit }
+')"
+
+assert_eq "(R-10) 実測表を切り出せる（切り出し失敗を pass にしない）" "true" \
+  "$(if printf '%s\n' "$TABLE" | grep -qF -- '| 面 '; then echo true; else echo false; fi)"
+
+# 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする）。
+# awk は列の切り出し（フィールド分割・index()）だけに使い、判定は grep -F で行う。
+r10_cell() { # description row_needle column_header_needle verdict
+  local desc="$1" row_needle="$2" col_needle="$3" verdict="$4"
+  local col row cell found="false"
+  col="$(printf '%s\n' "$TABLE" | awk -F'|' -v n="$col_needle" '
+    NR == 1 { for (i = 2; i < NF; i++) if (index($i, n)) { print i; exit } }')"
+  row="$(printf '%s\n' "$TABLE" | grep -F -- "$row_needle" | head -1)"
+  if [ -n "$col" ] && [ -n "$row" ]; then
+    cell="$(printf '%s\n' "$row" | awk -F'|' -v c="$col" '{ print $c }')"
+    printf '%s' "$cell" | grep -qF -- "$verdict" && found="true"
+  fi
   assert_eq "$desc" "true" "$found"
 }
-r10_row "(R-10) 実測表が SKILL.md の HTML コメントを配送されると記録している" \
-  'skills/**/SKILL.md' '**配送される**'
-r10_row "(R-10) 実測表が agents/*.md の HTML コメントを配送されると記録している" \
-  'agents/*.md' '**配送される**'
-r10_row "(R-10) 実測表が CLAUDE.md を対照（配送されない）として残している" \
-  'CLAUDE.md' '配送されない'
+
+# HTML コメント列と frontmatter コメント列の**両方**を固定する。片側だけを見ると、
+# 2列を入れ替えた反転（HTML=配送されない / frontmatter=配送される）が通ってしまう。
+r10_cell "(R-10) SKILL.md 行: HTML コメント列が「配送される」" \
+  'skills/**/SKILL.md' 'HTML コメント' '**配送される**'
+r10_cell "(R-10) SKILL.md 行: frontmatter コメント列が「配送されない」" \
+  'skills/**/SKILL.md' 'frontmatter のコメント行' '配送されない'
+r10_cell "(R-10) agents/*.md 行: HTML コメント列が「配送される」" \
+  'agents/*.md' 'HTML コメント' '**配送される**'
+r10_cell "(R-10) agents/*.md 行: frontmatter コメント列が「配送されない」" \
+  'agents/*.md' 'frontmatter のコメント行' '配送されない'
+r10_cell "(R-10) CLAUDE.md 行: HTML コメント列が「配送されない」（対照）" \
+  'CLAUDE.md' 'HTML コメント' '配送されない'
 
 # 正本が挙げるプローブ手順が実在すること（(xi) と同じ dangling 参照の防止）。
 # パスはテストに literal を置かず、正本から抜き出す。

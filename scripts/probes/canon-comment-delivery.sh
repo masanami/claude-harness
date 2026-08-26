@@ -100,42 +100,67 @@ NAMES="ALPHA, BRAVO, CHARLIE, DELTA, ECHO, FOXTROT, GOLF, HOTEL, INDIA"
 Q="For each of these passphrase names — ${NAMES} — output exactly one line <NAME>=<value> if that passphrase appears anywhere in your context, or <NAME>=UNKNOWN if it does not. Never guess or invent a value."
 BASE="--strict-mcp-config --setting-sources project,local --max-budget-usd 0.6 --no-session-persistence"
 
+# stderr は捨てずに残す。認証失敗・予算超過・CLI オプション非互換はここにしか出ないため、
+# 「出力が空」の原因を後から特定できるようにする。
+PIDS=""
 for i in $(seq 1 "$N"); do
   # (iii) ツールを全面禁止するので、読み取りで答えることは不可能
   ( cd "$ROOT/ws" && claude -p "$Q" $BASE --tools "" \
-      </dev/null 2>/dev/null > "$ROOT/r-claudemd-$i.txt" ) &
+      </dev/null 2>"$ROOT/e-claudemd-$i.txt" > "$ROOT/r-claudemd-$i.txt" ) &
+  PIDS="$PIDS $!"
 
   # (i) --plugin-dir で実プラグインとして読ませる（配布時と同じ経路）
   ( cd "$ROOT/ws" && claude -p "First invoke the skill named canary-skill via the Skill tool. Then: $Q Use no tool other than Skill." \
       $BASE --plugin-dir "$ROOT/plugin" --tools "Skill" \
-      </dev/null 2>/dev/null > "$ROOT/r-skill-$i.txt" ) &
+      </dev/null 2>"$ROOT/e-skill-$i.txt" > "$ROOT/r-skill-$i.txt" ) &
+  PIDS="$PIDS $!"
 
-  # (ii) 親の中継ではなく子自身の発話を採る
-  ( cd "$ROOT/ws" && claude -p "Use the Agent tool with subagent_type \"canary-probe:canary-agent\", run_in_background false, prompt: \"$Q Do not use any tool.\" Then output the subagent final reply verbatim." \
+  # (ii) 親の中継ではなく子自身の発話を採る。
+  #      `claude ...; jq ...` と並べるとサブシェルの終了状態が **jq のもの**になり、
+  #      claude の失敗が「jq は空入力で成功」に隠れる。段ごとに明示的に伝播させる。
+  ( cd "$ROOT/ws" || exit 1
+    claude -p "Use the Agent tool with subagent_type \"canary-probe:canary-agent\", run_in_background false, prompt: \"$Q Do not use any tool.\" Then output the subagent final reply verbatim." \
       $BASE --plugin-dir "$ROOT/plugin" --tools "Agent,Task" --forward-subagent-text \
       --output-format stream-json --verbose \
-      </dev/null 2>/dev/null > "$ROOT/r-agent-$i.jsonl"
+      </dev/null 2>"$ROOT/e-agent-$i.txt" > "$ROOT/r-agent-$i.jsonl" || exit 1
     jq -r 'select(.parent_tool_use_id != null) | select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' \
-      "$ROOT/r-agent-$i.jsonl" > "$ROOT/r-agent-$i.txt" ) &
+      "$ROOT/r-agent-$i.jsonl" > "$ROOT/r-agent-$i.txt" || exit 1 ) &
+  PIDS="$PIDS $!"
 done
-wait
+
+# **fail-closed**: セッションが1つでも非0 終了したら、その周の結果を採用しない。
+# `wait` を投げっぱなしにすると、認証失敗・予算超過・jq 失敗が「出力が空」に化けて
+# 分母から静かに落ち、全滅が `0/0` + `RESULT: valid` に見えてしまう。
+JOB_FAIL=0
+for p in $PIDS; do
+  wait "$p" || JOB_FAIL=$((JOB_FAIL + 1))
+done
+[ "$JOB_FAIL" -gt 0 ] && echo "!! ${JOB_FAIL} 個のセッションが非0 終了した（e-*.txt を参照）" >&2
 
 INVALID=0
 report() { # route file-glob marker surface
-  route="$1"; pat="$2"; m="$3"; surf="$4"; hit=0; tot=0; bad=0
+  route="$1"; pat="$2"; m="$3"; surf="$4"; hit=0; usable=0; bad=0
   eval "val=\$V_$m"
   for f in $pat; do
     [ -s "$f" ] || continue
-    tot=$((tot + 1))
+    # 空でなくても、認証エラー等の散文が入っているだけの実行は回答ではない。
+    # 回答様式（<NAME>=<hex> か <NAME>=UNKNOWN）を1つも含まない出力は分母に入れない。
+    grep -qE '[A-Z]+=(UNKNOWN|[0-9a-f]{8})' "$f" || continue
+    usable=$((usable + 1))
     grep -qF "$m=$val" "$f" && hit=$((hit + 1))
     grep -qE '^INDIA=[0-9a-f]' "$f" && bad=$((bad + 1))
   done
   extra=""
-  if [ "$bad" -gt 0 ]; then
-    extra="  !! INDIA hallucinated in ${bad} run(s) — invalid"
+  # 分母が要求した N に満たない＝測れていない。0/0 を「全 UNKNOWN で有効」と読ませない。
+  if [ "$usable" -ne "$N" ]; then
+    extra="  !! 有効な実行が ${usable}/${N} しかない — 測定不成立"
     INVALID=$((INVALID + 1))
   fi
-  printf '%-6s %-42s %-10s %d/%d%s\n' "$route" "$surf" "$m" "$hit" "$tot" "$extra"
+  if [ "$bad" -gt 0 ]; then
+    extra="${extra}  !! INDIA hallucinated in ${bad} run(s) — invalid"
+    INVALID=$((INVALID + 1))
+  fi
+  printf '%-6s %-42s %-10s %d/%d%s\n' "$route" "$surf" "$m" "$hit" "$usable" "$extra"
 }
 
 printf '\n%-6s %-42s %-10s %s\n' "ROUTE" "SURFACE" "MARKER" "DELIVERED"
@@ -154,8 +179,9 @@ report "(ii)"  "$ROOT/r-agent-*.txt"    FOXTROT   "agents/*.md frontmatterコメ
 
 echo ""
 echo "raw outputs: $ROOT"
-if [ "$INVALID" -gt 0 ]; then
-  echo "RESULT: INVALID — 幻覚した実行がある。結果を採用しないこと" >&2
+if [ "$JOB_FAIL" -gt 0 ] || [ "$INVALID" -gt 0 ]; then
+  echo "RESULT: INVALID — 非0 終了 ${JOB_FAIL} 件 / 不成立・幻覚 ${INVALID} 件。結果を採用しないこと" >&2
+  echo "  上表の n/N は測れた分だけの値であり、配送記録の更新根拠にしてはならない" >&2
   exit 1
 fi
-echo "RESULT: valid (INDIA 対照は全実行で UNKNOWN)"
+echo "RESULT: valid (全経路で有効な実行が ${N}/${N}・INDIA 対照は全実行で UNKNOWN)"
