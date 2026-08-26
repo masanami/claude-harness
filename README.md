@@ -150,6 +150,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 - [変更履歴](CHANGELOG.md) — 破壊的変更と移行手順（4.0.0 以降）
 - [セットアップガイド](docs/getting-started.md) — インストールからCLAUDE.md整備、動作確認まで
 - [スクリプトランチャー](docs/script-launcher.md) — `claude-harness-run` の導入手順、allowlist の書き方、permission マッチャの実測記録
+- [プラグイン内ファイル参照のパス規約](docs/plugin-path-conventions.md) — スキル・エージェントを書くときの規約。パス解決、`SKILL.md` と `references/` の線引き、**実行時テキストと docs の書き分け（(h)）**
 - [カスタマイズ方法](docs/customization.md) — エージェント/スキルのオーバーライド、フック追加
 
 ---
