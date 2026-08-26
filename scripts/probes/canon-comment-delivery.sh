@@ -33,6 +33,14 @@ set -u
 N="${1:-3}"
 AGENT_MODEL="${2:-opus}"
 
+# 反復回数は正の整数に限る。不正値は分母 N を壊し、判定を黙って狂わせる:
+# 非整数・負値では `[ "$usable" -ne "$N" ]` が `integer expression expected` で
+# エラーとなり、成立判定そのものが効かなくなる（BSD の `seq 1 0` は "1 0" を
+# 返すため N=0 は偶然 invalid になるが、これに依存しない）。
+case "$N" in
+  ''|*[!0-9]*|0) echo "反復回数は1以上の整数で指定すること（指定値: '${N}'）" >&2; exit 2 ;;
+esac
+
 for cmd in claude jq openssl; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "required command not found: $cmd" >&2; exit 2; }
 done
@@ -138,22 +146,42 @@ done
 [ "$JOB_FAIL" -gt 0 ] && echo "!! ${JOB_FAIL} 個のセッションが非0 終了した（e-*.txt を参照）" >&2
 
 INVALID=0
+
+# 応答の**全体**を検証する。1行でも回答様式を含めば有効、とすると、劣化して
+# `ALPHA=UNKNOWN` の1行だけを返した応答が分母に入り、全項目 0/N ＝「どこにも
+# 配送されない」という**誤った記録**がそのまま `RESULT: valid` で通る（実測で再現）。
+# 対照 INDIA を省いた応答も、幻覚検査を空虚に通過してしまう。
+# 期待する名前は問い合わせ文 $NAMES から導出する（第2のリストを作らない）。
+NAME_LIST="$(printf '%s' "$NAMES" | tr ',' ' ')"
+response_is_complete() { # file
+  local f="$1" name cnt
+  for name in $NAME_LIST; do
+    cnt="$(grep -cE "^[[:space:]]*${name}=(UNKNOWN|[0-9a-f]{8})[[:space:]]*$" "$f")" || cnt=0
+    [ "$cnt" -eq 1 ] || return 1
+  done
+  return 0
+}
+
 report() { # route file-glob marker surface
-  route="$1"; pat="$2"; m="$3"; surf="$4"; hit=0; usable=0; bad=0
+  route="$1"; pat="$2"; m="$3"; surf="$4"; hit=0; usable=0; bad=0; incomplete=0
+  val=""
   eval "val=\$V_$m"
   for f in $pat; do
     [ -s "$f" ] || continue
-    # 空でなくても、認証エラー等の散文が入っているだけの実行は回答ではない。
-    # 回答様式（<NAME>=<hex> か <NAME>=UNKNOWN）を1つも含まない出力は分母に入れない。
-    grep -qE '[A-Z]+=(UNKNOWN|[0-9a-f]{8})' "$f" || continue
+    # 認証エラー等の散文だけの出力・部分的な応答は回答ではない。分母に入れない。
+    if ! response_is_complete "$f"; then
+      incomplete=$((incomplete + 1))
+      continue
+    fi
     usable=$((usable + 1))
     grep -qF "$m=$val" "$f" && hit=$((hit + 1))
-    grep -qE '^INDIA=[0-9a-f]' "$f" && bad=$((bad + 1))
+    # 対照 INDIA に値が付いた＝幻覚。UNKNOWN 以外は無効。
+    grep -qE '^[[:space:]]*INDIA=[0-9a-f]{8}[[:space:]]*$' "$f" && bad=$((bad + 1))
   done
   extra=""
   # 分母が要求した N に満たない＝測れていない。0/0 を「全 UNKNOWN で有効」と読ませない。
   if [ "$usable" -ne "$N" ]; then
-    extra="  !! 有効な実行が ${usable}/${N} しかない — 測定不成立"
+    extra="  !! 有効な実行が ${usable}/${N} しかない（応答不備 ${incomplete} 件）— 測定不成立"
     INVALID=$((INVALID + 1))
   fi
   if [ "$bad" -gt 0 ]; then
