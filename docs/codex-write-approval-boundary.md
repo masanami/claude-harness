@@ -2,7 +2,7 @@
 
 Issue [#200](https://github.com/masanami/claude-harness/issues/200) の「最終決定（2026-08-23）」§6 が Phase 2（`codex exec --sandbox workspace-write` を使う ticket worker PoC）の着手条件として挙げた7項目を、**実際に強制できる単位**へ落とした設計。
 
-**本文書はまだ決定ではない。** §8 に未決の設計判断を列挙してある。そこが埋まるまで Phase 2 へ進まない（#200 §6 の停止条件）。
+**本文書は決定である**（→ §8。境界を強制する層・Phase 2 の可否・Codex に許す git 操作の範囲を 2026-08-27 に確定した）。**Phase 2a の着手条件**も §8 に置いてある。未決のまま残した項目は §8.4 に分離してある。
 
 **本文書のいちばんの価値は §5「強制できない項目」にある。** 7項目のうち何が OS とプロセス起動で機械的に止まり、何が止まらないのかを、推測ではなく実測で切り分けてある。強制できないものを「設計した」と書いてしまうのが、この種の境界設計でいちばん危険な失敗であり、それを避けるのが本文書の目的である。
 
@@ -113,7 +113,57 @@ worktree 内は書き込み可能なので、**エージェントは自分の次
 
 `--sandbox` の help はスコープを明示している——*"Select the sandbox policy to use when executing **model-generated shell commands**"*。**MCP ツール呼び出しはシェルコマンドではない。** サンドボックスモードは MCP サーバのプロセスを縛らない。
 
-現行の `scripts/codex-review-runner.sh` は `--ignore-user-config` を渡していないので、**read-only レビューカプセルにもこの経路は開いている**（本文書のスコープ外だが、同じ対策で塞がる）。
+現行の `scripts/codex-review-runner.sh` は `--ignore-user-config` も `--ignore-rules` も渡していないので、**read-only レビューカプセルにもこの2経路は開いている**。本文書のスコープ外として [#211](https://github.com/masanami/claude-harness/issues/211) に分離した（守るべきものも対策の重心も違うため）。
+
+### 実測8: 環境を「必要なものだけ通す」形に絞っても codex exec は動き、`gh` の資格情報は消える
+
+`env -i` で環境を空にし、**次の6つだけを通して** `codex exec --sandbox workspace-write --ignore-rules --ignore-user-config` を起動した:
+
+```text
+PATH  HOME(隔離した空ディレクトリ)  CODEX_HOME  TMPDIR  LANG  TERM
+```
+
+結果:
+
+| 検証 | 結果 |
+|---|---|
+| codex exec の起動・完走 | ✅ 正常に完走した（この6つで足りる） |
+| `gh auth status` | **exit 1** `You are not logged into any GitHub hosts.` |
+
+**`HOME` を隔離するだけで `gh` の資格情報（`~/.config/gh/hosts.yml`）が届かなくなる**ことを実測で確認した。`GH_TOKEN` 等を消す作業は、この形では「消す」ではなく「通さない」になる。
+
+codex 自身が子プロセスへ `CODEX_CI=1` `NO_COLOR=1` `PAGER=cat` `LC_ALL` `LOGNAME` を追加し、PATH の先頭に自前のディレクトリを差し込むことも確認した（＝渡した環境がそのまま子に届くわけではない）。
+
+**残る穴を明記する**: `PATH` は**通さざるを得ない**（ticket worker は `git` `node` 等を実行する）。実測に使った PATH には `~/bin` `~/.local/bin` `~/.pyenv/shims` など**operator の `$HOME` 配下**が多数含まれていた。`HOME` を隔離しても **PATH 経由で operator のホーム配下の実行ファイルは届く**。これは意図的に残す残余リスクであり、閉じるなら固定 PATH を渡すしかない（→ §8.4）。
+
+### 実測9（決定的・runner 代行でも残る）: worktree の `.git` ファイルは書き換えられ、runner 側の git 実行を乗っ取れる
+
+git worktree の `.git` は**作業ツリー内にある通常のファイル**（実測2）＝ **workspace-write で書き込み可能**である。これを攻撃者が用意した gitdir へ向けると、その gitdir の `config` が有効になる:
+
+```text
+$ printf 'gitdir: <worktree>/.evilgit/.git
+' > <worktree>/.git
+$ git --git-dir=<worktree>/.evilgit/.git config core.fsmonitor  <worktree 内のスクリプト>
+$ git --git-dir=<worktree>/.evilgit/.git config core.hooksPath  <worktree 内のディレクトリ>
+```
+
+**runner（サンドボックスの外）が素の git を打つと実行される**:
+
+| runner 側のコマンド | 経路 | 結果 |
+|---|---|---|
+| `git -C <worktree> status --porcelain` | `core.fsmonitor` | **実行された** |
+| `git -C <worktree> commit` | `core.hooksPath` の `pre-commit` | **実行された** |
+
+これは #200 §6 のどの項目でもなく、**「commit / push を runner が代行する」という設計そのものが持ち込む迂回路**である。L1 は共有 `.git` を完全に閉じている（実測2）のに、**runner が worktree 内の `.git` ファイルを信用した瞬間に、その閉じ方が無意味になる。**
+
+対策も同じ環境で実測した:
+
+| 対策 | `git status`（fsmonitor） | `git commit`（hook） | 形 |
+|---|---|---|---|
+| **M1: `GIT_DIR` / `GIT_WORK_TREE` を明示**（`.git` ファイルを一切参照させない） | 実行されず | — | **構造的**。列挙が要らない |
+| M2: `-c core.fsmonitor= -c core.hooksPath=/dev/null` でコマンドライン上書き | 実行されず | 実行されず | **列挙が要る**（`diff.external` `core.pager` 等を数え上げ続けることになる） |
+
+M1 では `git status` の出力に `.evilgit/` が untracked として現れ、**本物の gitdir が使われた**ことも確認できた。
 
 ---
 
@@ -154,9 +204,9 @@ worktree 内は書き込み可能なので、**エージェントは自分の次
 | worktree 内の local write | Codex | L1 + L2 | `--sandbox workspace-write -C <worktree>`。worktree は `/tmp`・`$TMPDIR` の配下に置かない |
 | worktree 外の local write | 誰も | L1 | 同上（実測1 下段が示す既定挙動） |
 | settings / 認証情報 / 権限設定の変更 | 誰も | L1 + L2 + **検出** | `~/.codex` は L1 が拒否（実測）。**worktree 内**の保護対象パス（`.claude/settings.json`・`scripts/*` 等）は L1 では止まらないので、runner が引き渡し前後のハッシュ差分で検出し fail-closed（→ §5-1） |
-| **commit** | **runner**（Codex ではない） | L1 が構造的に拒否 + L2 | worktree 構成では sandbox 内 commit が原理的に不可能（実測2・4）。`--ignore-rules` で `.rules` の穴を塞げば「渡さなくても勝手にできない」状態になる |
-| **push** | **runner** | L3 | worktree に到達可能な remote 資格情報を置かない（scrubbed env + 隔離 `HOME`） |
-| **Issue / PR** | **runner** | L3 | `gh` の資格情報を渡さない（`GH_TOKEN`/`GITHUB_TOKEN` を落とし、`HOME` を隔離して `~/.config/gh/hosts.yml` を不可視にする） |
+| **commit** | **runner**（Codex ではない） | L1 が構造的に拒否 + L2 | worktree 構成では sandbox 内 commit が原理的に不可能（実測2・4）。`--ignore-rules` で `.rules` の穴を塞げば「渡さなくても勝手にできない」状態になる。**runner が代行するときは実測9 の M1 が必須** |
+| **push** | **runner** | L3 | worktree に到達可能な remote 資格情報を置かない（環境の positive list + 隔離 `HOME`。実測8） |
+| **Issue / PR** | **runner** | L3 | `gh` の資格情報を渡さない。**実測8 で `gh auth status` が exit 1 になることを確認済み** |
 | **merge（既定ブランチへの昇格）** | **人間** | L3 + 運用ゲート | 上に同じ。加えて `CLAUDE.md` の昇格ゲート（可逆／不可逆の区別）が既存どおり効く |
 
 **「別権限として扱う」の実体は、この表の「誰が実行するか」列がすべて違う値を取ること**である。権限名の列挙ではなく、**実行主体の分離**として表現する。
@@ -175,11 +225,30 @@ L2 は runner が完全に握れる唯一の層なので、ここに全部を集
 | `--ignore-user-config` | **必須** | 実測7。MCP・plugin 経路を落とす。auth は `CODEX_HOME` から読まれるので Codex 自身の認証は壊れない |
 | `CODEX_HOME` | runner 管理のディレクトリ（`auth.json` のみ） | `.rules` も `config.toml` も同居させない |
 | `HOME` | 実行ごとの隔離ディレクトリ | `~/.config/gh/hosts.yml`・`~/.ssh`・`~/.gitconfig`（`credential.helper`）・`~/.netrc` を不可視にする（L3） |
-| 環境変数 | `GH_TOKEN` / `GITHUB_TOKEN` / `GIT_ASKPASS` / `SSH_AUTH_SOCK` 等を除去 | L3 |
+| 環境変数 | **`env -i` から始め、下の positive list だけを通す** | L3。実測8 |
 | worktree の位置 | `/tmp`・`$TMPDIR` の配下**ではない**こと | 実測1。既存 `scripts/worktree-setup.sh` の既定（`<repo>-worktrees`）はこれを満たす |
 | worktree のパス形 | `<worktree_root>/issue-<N>` の**形**を正規表現で要求し、realpath で正規化して検査 | 前置一致検査は「そのディレクトリ自身」も受理してしまう。パス列挙ではなく形で塞ぐ（`scripts/read-plugin-doc.sh` の配送対象検査と同じ方式） |
 
-### 3.1 「設定したつもり」を潰す起動時 self-check
+### 3.1 環境は「消す」ではなく「通す」（positive list）
+
+**既知の危険な変数を列挙して消す形は採らない。** 消す側のリストは、新しい資格情報キャリア（新しい CLI の `*_TOKEN`、新しい認証ソケット）が増えるたびに追随が要り、追随を忘れた時点で黙って穴が開く——2つのリストを同期させる規定が必ずずれるのと同じ形である。
+
+代わりに `env -i` を起点に、**動かすために必要だと実測できたものだけ**を通す:
+
+| 変数 | なぜ通すか |
+|---|---|
+| `PATH` | ticket worker が `git` `node` 等を実行するため。**残余リスクあり**（下記） |
+| `HOME` | **実行ごとの隔離ディレクトリを渡す**。operator の `$HOME` は渡さない（実測8: これだけで `gh auth status` が exit 1 になる） |
+| `CODEX_HOME` | runner 管理のディレクトリ（`auth.json` のみ）。`--ignore-user-config` でも auth はここから読まれる |
+| `TMPDIR` | 実行ごとの一時ディレクトリ。**worktree の祖先にしない**（実測1） |
+| `LANG` | ロケール依存の出力差を避けるため |
+| `TERM` | 端末制御文字の混入を避けるため |
+
+この6つで `codex exec` が完走することを実測した（実測8）。**この表に無いものは通さない。** 新しい変数を足すときは、なぜ必要かを実測で示してこの表に1行足す——リストは1つのままで、増える方向にしか動かない。
+
+**`PATH` は意図的に残す残余リスク**である。operator の PATH には `~/bin` `~/.local/bin` 等が含まれ、`HOME` を隔離しても**そこにある実行ファイルは届く**（実測8）。閉じるなら固定 PATH を渡すしかないが、利用側プロジェクトのツールチェーン（パッケージマネージャ・言語ランタイム）を runner が知り得ないため、現時点では採らない（→ §8.4）。
+
+### 3.2 「設定したつもり」を潰す起動時 self-check
 
 上の表を**書いただけでは効かない**。runner は起動直後に**実効設定を読み戻して照合**する:
 
@@ -187,6 +256,8 @@ L2 は runner が完全に握れる唯一の層なので、ここに全部を集
 - 期待値（`workspace-write [workdir]` を含む・`/tmp` や `$TMPDIR` が worktree の祖先でない・`approval: never`）と一致しなければ**即中断**
 
 これは「flag を渡し忘れた」「codex のバージョンが上がって既定が変わった」を**機械で**検出できる唯一の手段である。
+
+**バナーは `--ignore-rules` / `--ignore-user-config` の有無を表示しない。** この2つは runner のコード側でしか検査できないので、§7.1 のテストで固定する。
 
 ---
 
@@ -218,8 +289,8 @@ L2 は runner が完全に握れる唯一の層なので、ここに全部を集
 
 - **できる**: `~/.codex`・`~/.claude`・共有 `.git` への書き込みは L1 が拒否する（実測: `touch $HOME/.codex/probe-home.txt` → `Operation not permitted`、実測2 の表）
 - **できない**: worktree の中にある `.claude/settings.json`・`scripts/*`・`.github/workflows/*` は、worktree 内である以上 L1 は止めない。「これらだけ書けない」を OS 権限で表現するには、実行ごとに chmod するか別マウントに逃がすしかなく、`git checkout` で戻る／プラグインとして配布できない
-- **代替案（検出＋ fail-closed）**: 引き渡し**前**に `sensitive-paths.txt` にマッチする worktree 内ファイルのハッシュを取り、返却時に再取得して差分があれば**成果物を採用しない**。加えて `AGENTS.md`・`.codex/`・`.rules` を同じ扱いにする（実測6）
-- **限界を明記する**: これは「変更させない」ではなく「変更されたら採用しない」である。Phase 2a（local implementation のみ、外部作用なし、失敗時は worktree ごと破棄）ではこの強度で釣り合うが、Phase 2b（commit / PR まで拡張）では釣り合わない
+- **代替案（検出＋ fail-closed）**: 引き渡し**前**に `sensitive-paths.txt` にマッチする worktree 内ファイルのハッシュを取り、返却時に再取得して差分があれば**成果物を採用しない**。加えて `AGENTS.md`・`.codex/`・`.rules`（実測6）と **worktree の `.git` ファイル**（実測9）を同じ扱いにする
+- **限界を明記する**: これは「変更させない」ではなく「変更されたら採用しない」である。Phase 2a（local implementation のみ、外部作用なし、失敗時は worktree ごと破棄）ではこの強度で釣り合うが、Phase 2b（commit / PR まで拡張）では釣り合わない。**この差分検査は Phase 2a の着手条件である**（→ §8.2）
 
 ### 5-2. 「agent 自身が権限・approval policy を変更できない」——**ファイルシステム権限だけでは保証できない**
 
@@ -227,7 +298,7 @@ L2 は runner が完全に握れる唯一の層なので、ここに全部を集
 - しかし **worktree 内の `AGENTS.md` は書けて、次回起動時に確実にモデルへ届く**（実測6）。「権限設定」そのものではないが、**指示層の自己改変**であり、プロンプト側の規律に依存した対策はすべてこれで無効化されうる
 - `--ignore-rules` の help は "user or **project** execpolicy `.rules` files" と述べており、**project スコープの `.rules` が存在する**。その探索パスは 0.145.0 では未確認（→ §9）。worktree 内に置けるなら、これは指示層ではなく**権限層**の自己改変になる
 - **代替案**: ① `--ignore-rules` を runner が常時付ける（project `.rules` の探索パスが何であれ、読まれない）② `AGENTS.md`・`.codex/` を 5-1 の差分検査対象に含める ③ **プロンプトに書いた規律を安全性の根拠にしない**（読ませて守らせる形は到達性が保証されない）
-- **残る限界**: `--ignore-rules` を付け忘れた1回で穴が開く。だから §3.1 の起動時 self-check が要る（付け忘れを検出する）。ただし self-check はバナー出力に依存しており、**バナーは `.rules` の有無を表示しない**——`--ignore-rules` の有無は runner のコード側でしか検査できない（→ §7 のテストで固定する）
+- **残る限界**: `--ignore-rules` を付け忘れた1回で穴が開く。§3.2 の起動時 self-check は**この付け忘れを検出できない**——バナーは `.rules` の有無を表示しないため。したがって `--ignore-rules` / `--ignore-user-config` の欠落は **runner のコード側でしか検査できず、§7.1 の negative test だけが歯止めになる**
 
 ### 5-3. 「provider 切替によって権限が拡大しない」——**「等価にする」形では強制できない**
 
@@ -276,11 +347,36 @@ L2 は runner が完全に握れる唯一の層なので、ここに全部を集
 
 ### 6.1 層を足したときに、上の層が下の層を迂回しないこと
 
-本設計は L1（OS）の上に L2（起動条件）と runner の検査を足す。過去に「下層のゲートを上層が迂回する」欠陥を作った実例（PR #195 / `promote-verify` Step 6-1）があるため、迂回しないことを明示する:
+本設計は L1（OS）の上に L2（起動条件）と runner の検査を足す。過去に「下層のゲートを上層が迂回する」欠陥を作った実例（PR #195 / `promote-verify` Step 6-1）があるため、迂回しないことを明示する。
 
-- **runner は worktree 内で git を実行しない**——実行するなら、worktree 内の `.git` を信用しない形（`git -C` で共有 `.git` 側から操作する）にする。git worktree 構成では `.git` が共有側にあり Codex から書けない（実測2）ので、**この構成を維持している限り hook / config 経由の迂回は成立しない**
-- **独立 clone に切り替えると、この保証は消える**（`.git/hooks`・`.git/config` が worktree 内＝Codex 書き込み可能になり、runner が `git status` を打った瞬間に `core.fsmonitor` / alias / `diff.external` 経由で unsandboxed 実行が起きうる）。§8 の質問③に直結する
+**この節はいちばん注意が要る。commit / push / PR を runner が代行する設計（→ §8 ③）は、それ自体が迂回路を1本持ち込む。**
+
+#### 迂回路: worktree の `.git` ファイル（実測9）
+
+L1 は共有 `.git` を完全に閉じている（実測2）。ところが **worktree の `.git` は作業ツリー内の通常ファイルであり、Codex から書き換えられる**。攻撃者が用意した gitdir へ向け直せば、`core.fsmonitor` や `core.hooksPath` が有効になり、**runner が素の git を打った瞬間にサンドボックス外で実行される**（実測9 で `git status` と `git commit` の両方で再現した）。
+
+つまり「Codex は共有 `.git` を触れないから安全」は**成り立たない**。触れるのは `.git` そのものではなく、**`.git` の行き先**である。
+
+#### 迂回しない形（必須。実測9 の M1）
+
+runner が worktree に対して git を実行するときは、**`.git` ファイルを一切参照させない**:
+
+```sh
+GIT_DIR="<main>/.git/worktrees/<name>" GIT_WORK_TREE="<worktree>" git <subcommand> …
+```
+
+- 設定の出所が **Codex から書けない共有 `.git/config`** に固定される
+- **列挙が要らない**。`core.fsmonitor` `core.hooksPath` `diff.external` `core.pager` … を数え上げ続ける形（実測9 の M2）は、いずれ数え漏れる
+- `.gitattributes` は worktree 内にあり Codex が書けるが、`filter` / `diff` ドライバの**定義**は config 側にあるため、M1 の下では実行に至らない
+- **`git submodule` 系は打たない**。`.gitmodules` は worktree 内にあり、`ext::` 等の transport で任意コマンド実行に至りうる
+
+**この形を runner の git 実行の唯一の経路にする**（`sync-free-invariant`。素の `git -C <worktree>` を書ける場所を残さない）。§7.1 でテストとして固定する。
+
+#### その他の迂回禁止
+
+- **独立 clone には切り替えない**（→ §8 ③ の決定）。`.git/hooks`・`.git/config` そのものが Codex 書き込み可能になり、M1 でも塞げなくなる
 - **runner の検査は Codex の成果物を読む前に走る**——`sensitive-paths.txt` の差分検査を「Codex の報告 JSON を信じて省略する」経路を作らない
+- **差分検査は `.git` ファイルの中身も対象にする**——実測9 の書き換えは、M1 で無害化したうえで**検出もする**（`protected_path_modified`）。無害化だけだと「攻撃が起きた事実」が報告に出ない
 
 ---
 
@@ -291,12 +387,14 @@ L2 は runner が完全に握れる唯一の層なので、ここに全部を集
 | 検査対象 | 固定の仕方 |
 |---|---|
 | runner が渡す flag 列 | `codex` をスタブに差し替えて引数を記録し、`--sandbox workspace-write` / `--ignore-rules` / `--ignore-user-config` / `-C <worktree>` が**すべて**在ることを assert |
-| 環境スクラブ | スタブが受け取った環境を書き出し、`GH_TOKEN` 等が**不在**であること・`HOME` と `CODEX_HOME` が runner 管理パスであることを assert |
+| 環境の positive list | スタブが受け取った環境を書き出し、**§3.1 の表に無い変数が1つも無い**こと（不在検査ではなく完全一致）・`HOME` と `CODEX_HOME` が runner 管理パスであることを assert。危険変数の不在検査にしないのは、リストが育つ形になるため |
 | worktree パス検査 | `/tmp/x`・`$TMPDIR/x`・`<root>` 自身・`..` を含むパス・形が違うパスが**すべて拒否**されること（前置一致の落とし穴を直接突く負例を含める） |
 | 起動時 self-check | バナーを偽装したスタブ（`sandbox: danger-full-access` / `approval: on-request` / バナー無し）で**中断**すること |
-| 保護対象パスの差分検査 | `sensitive-paths.txt` の各パターンに当たるファイルを worktree 内で改変した状態を作り、`protected_path_modified` になること。`AGENTS.md` 新規作成も同様 |
+| 保護対象パスの差分検査 | `sensitive-paths.txt` の各パターンに当たるファイルを worktree 内で改変した状態を作り、`protected_path_modified` になること。`AGENTS.md` 新規作成、**`.git` ファイルの書き換え**（実測9 の再現）も同様 |
+| **runner の git 実行経路** | runner が打つ git がすべて `GIT_DIR` / `GIT_WORK_TREE` 明示であること（素の `git -C <worktree>` が1箇所も無いこと）。実測9 の細工を仕込んだ worktree を用意し、runner の代行 commit で**細工が実行されない**ことまで assert する |
 | fail-closed の exit code | §6 の表の各行を1テストにする |
 | 正本の単一性 | `codex exec` を直接呼ぶ箇所が runner 以外に無いこと（リポジトリ全体の grep） |
+| flag の欠落 | `--ignore-rules` / `--ignore-user-config` はバナーに現れない（→ §3.2）ため、**コード側でしか検査できない**。この2つを外した場合にテストが落ちることを確認する（negative test） |
 
 ### 7.2 テストで固定できないもの（probe テスト＝実測の再取得）
 
@@ -314,57 +412,78 @@ seatbelt の挙動そのものは OS と codex のバージョンに依存し、
 
 ---
 
-## 8. 未決の設計判断（意思決定者の回答が要る）
+## 8. 決定（2026-08-27）
 
-**この3点が埋まるまで本文書は「決定」ではなく、Phase 2 へ進まない。**
+**この3点は人間が確定させた決定である。** 実装はこの決定に従う。
 
-### ① 境界を強制する層をどこに置くか
+### 8.1 境界を強制する層 → **flag + 環境スクラブ + `HOME`/`CODEX_HOME` の隔離**
 
-| 案 | 内容 | 評価 |
+`--sandbox workspace-write --ignore-rules --ignore-user-config` に加えて、**環境を positive list に絞り**（→ §3.1）、`HOME` と `CODEX_HOME` を runner 管理の隔離ディレクトリにする。
+
+- 環境の絞り込みは **「既知の危険な変数を消す」ではなく「必要な変数だけを通す」** 向きで書く。消す側のリストは新しい資格情報キャリアが増えるたびに追随が要り、忘れた時点で黙って穴が開く（`sync-free-invariant`）
+- 実測8 のとおり、`HOME` を隔離するだけで `gh auth status` は exit 1 になる。**外部 write の禁止は、規則ではなく資格情報の不在で成立している**
+- **専用 OS ユーザ／コンテナは採らない。** claude-harness はプラグインであり、利用側マシンの構成に踏み込めない＝配布形態と衝突するため。**Phase 3 以降の選択肢としては残す**（実測8 の PATH 残余リスクを閉じるにはこの方向しかない）
+
+### 8.2 Phase 2 の可否 → **Phase 2a に限って許容する**
+
+§5 の強制できない3項目（5-1 worktree 内の保護対象ファイル / 5-2 `AGENTS.md` による自己改変 / 5-5 MCP 経路）を、**Phase 2a に限って**許容する。範囲は「local implementation のみ・外部作用なし・失敗時は worktree ごと破棄で回復可能」。
+
+**Phase 2a の着手条件（この2つが実装されるまで着手しない）:**
+
+1. **起動時 self-check**（→ §3.2）——実効サンドボックスと approval をバナーから読み戻して照合し、不一致なら中断する
+2. **保護対象パスの差分検査**（→ §5-1）——`scripts/config/sensitive-paths.txt` にマッチするパス、および `AGENTS.md` / `.codex/` / `.rules` / **worktree の `.git` ファイル**（実測9）の変更を引き渡し前後のハッシュで検出し、変化があれば成果物を採用しない
+
+加えて、runner が worktree に対して git を実行する経路は §6.1 の M1（`GIT_DIR` / `GIT_WORK_TREE` 明示）に限る。これは Phase 2a で runner が commit を代行する以上、着手条件と同格である。
+
+**Phase 2b（commit / PR まで拡張）へ進むときは、この判断を取り直す。** Phase 2a で許容が成り立つのは「検出したら成果物を捨てれば回復する」からであり、**Phase 2b では『採用しない』では回復しない**（外部作用は取り消せない）。
+
+### 8.3 Codex に許す git 操作 → **working tree の変更のみ。commit / push / PR は runner が代行する**
+
+人間の意向は「Claude の子に許しているのと同等（作業ブランチへの push・PR 作成まで）を Codex にも許してよい」だった。**成果の範囲はそのとおりにするが、実現方式は runner 代行にする。**
+
+理由——**Claude の子と Codex では境界の正体が違う**:
+
+| | 境界の正体 | エージェントが迂回しうるか |
 |---|---|---|
-| A | codex の flag のみ（`--sandbox workspace-write --ignore-rules --ignore-user-config`） | 実測4 が示すとおり flag だけでも `.rules` の穴は塞がる。ただし `gh` の資格情報は環境と `HOME` に残ったままなので、**L1 が1度でも破れれば外部作用が通る** |
-| **B（推奨）** | A + **環境スクラブと `HOME`/`CODEX_HOME` の隔離**（L3） | 外部作用を「規則」ではなく「能力の不在」で止める。許可リストを1つも増やさないので同期ずれが起きない |
-| C | B + 専用 OS ユーザ / コンテナ | 最も強いが、claude-harness は**プラグイン**であり利用側マシンの構成に踏み込めない。配布形態と衝突する |
+| Claude の子 | **方針**（`.claude/settings.json` の allow/ask/deny ＋ 分類器） | 原理的にはしうる（方針は方針である） |
+| Codex worker | **能力の不在**（サンドボックスの `.git` 全面拒否＝実測2） | できない（渡していないものは使えない） |
 
-**推奨 B**。根拠: A では実測4 の `gh api user` が「サンドボックスが破れた瞬間に成功する」状態のまま残る。C は Phase 3 以降の選択肢として残し、今は採らない。
+Codex 自身に commit / push を許すことは、**いちばん強く閉じている境界を policy ベースへ格下げする**ことを意味し、本設計の中心命題（§2）と正面から衝突する。しかも実測2・4 のとおり、worktree 構成での sandbox 内 commit は**そもそも原理的に不可能**なので、許すには構成を独立 clone に変える（＝`.git/hooks`・`.git/config` を Codex 書き込み可能にする）しかない。
 
-### ② 「強制できない項目」を許容して Phase 2 へ進むか
+**runner 代行なら成果は同等**である——実装は commit され、作業ブランチへ push され、PR まで出る。能力の不在は保たれたままになる。
 
-§5 の 5-1（worktree 内の保護対象ファイル）・5-2（`AGENTS.md` による自己改変）・5-5（MCP 経路の残存可能性）は、**検出＋ fail-closed** までしか作れない。
+> **「同じ権限を与える」ではなく「同じ成果を出す」で要件を満たす。**
 
-| 案 | 内容 |
+**代行に伴って runner 側で無効化すべきもの**（実測9。詳細と実測値は §6.1）:
+
+| 対象 | 措置 |
 |---|---|
-| **A（推奨・条件つき）** | Phase 2a（local implementation のみ・外部作用なし・失敗時は worktree ごと破棄で回復可能）に限って許容し、**§3.1 の起動時 self-check と §5-1 の差分検査が実装されていること**を着手条件にする |
-| B | すべて OS レベルで強制できるまで進まない | → 実質コンテナ化が前提になり、プラグインという配布形態と衝突する（①の C と同じ壁） |
+| worktree の `.git` ファイル | **参照させない**。`GIT_DIR` / `GIT_WORK_TREE` を明示して git を実行する（M1） |
+| `core.fsmonitor` / `core.hooksPath` / `diff.external` / `core.pager` 等 | M1 の下では設定の出所が共有 `.git/config` に固定されるので、**個別の無効化は不要**（個別列挙＝M2 は採らない。数え漏れるため） |
+| `.gitmodules` | `git submodule` 系のサブコマンドを打たない |
+| `.gitattributes` | M1 の下ではドライバ定義が config 側にあるため実行に至らない。追加措置なし |
 
-**推奨 A**。根拠: Phase 2a の被害範囲は worktree 内に閉じ、外部作用の能力は渡していない（B 案の下では）。検出できれば成果物を捨てるだけで回復する。ただし **Phase 2b（commit / PR まで拡張）へ進むときは、この判断を必ず取り直す**——そこでは「採用しない」では回復しない。
+### 8.4 未決のまま残す項目
 
-### ③ Codex に許す git 操作の範囲
-
-| 案 | 内容 | 評価 |
-|---|---|---|
-| **A（推奨）** | **working tree の変更のみ。commit は runner** | 実測2・4 のとおり worktree 構成では sandbox 内 commit が**構造的に不可能**なので、「許さない」を追加の仕掛けなしで満たせる。#200 本文の Phase 2a（「commit / push / PR は当面 runner または Claude lead に残す」）とも一致 |
-| B | 独立 clone に切り替えて commit まで許す | `.git` が worktree 内に入るので commit できるようになるが、**同時に `.git/hooks` と `.git/config` が Codex 書き込み可能になる**。runner が後でその clone に対して git を打つと unsandboxed 実行が起きうる（§6.1）。「下層のゲートを上層が迂回する」形そのもの |
-| C | push / PR 作成まで | Phase 2b。本設計のスコープ外。②で判断を取り直してから |
-
-**推奨 A**。根拠: B は commit 1つのために、本文書がいちばん強く閉じられている境界（実測2 の `.git` 全面拒否）を自分から開ける。得るものと失うものが釣り合わない。
-
----
+- **`PATH` の残余リスク**——`HOME` を隔離しても、PATH 経由で operator の `$HOME` 配下の実行ファイルは届く（実測8）。固定 PATH を渡す案は、利用側プロジェクトのツールチェーンを runner が知り得ないため今回は採らない。8.1 の「Phase 3 以降の選択肢」（隔離環境）と同じ枠で扱う
+- **Phase 2b の可否**——8.2 のとおり、そこで判断を取り直す
+- **Linux（landlock）での挙動**——実測はすべて macOS / seatbelt（→ §9）
 
 ## 9. 置いた仮定・未検証事項
 
 **仮定（軽微・可逆な範囲。本文書の構成に関する判断）**
 
 - 本文書は `docs/` 側に置いた。実行時テキスト（`skills/` `agents/`）ではなく**設計判断の記録**であり、`docs/plugin-path-conventions.md` (h) の判定軸（「この文を削るとモデルの振る舞いが変わるか」）では docs 側になるため
-- ADR ではなく設計ドキュメントにした。§8 が未決であり、**まだ決定ではない**ため。①②③ が確定したら ADR 昇格の要否を別途判定する
-- 差分検査の対象は「`sensitive-paths.txt` にマッチするパス + `AGENTS.md` + `.codex/` + `.rules`」に限定した（worktree 全体のハッシュ検査は、Codex が作った正当な成果物との区別が付かないため）
+- ADR ではなく設計ドキュメントにした。§8 の3点は確定したが、実装（runner）がまだ無く、恒常的な設計決定として固まったとは言えないため。Phase 2a の実装が入った時点で `/create-adr` による ADR 昇格の要否を判定する
+- 差分検査の対象は「`sensitive-paths.txt` にマッチするパス + `AGENTS.md` + `.codex/` + `.rules` + worktree の `.git` ファイル」に限定した（worktree 全体のハッシュ検査は、Codex が作った正当な成果物との区別が付かないため）
 
 **未検証**
 
 - **push の実測**——`git push` が `.rules` の `["git","commit"]` prefix に**マッチしない**ことは形から明らかだが、`git` 全体を覆う rule が存在する環境での挙動は測っていない。§2.1 の現行表の push 行は実測4 からの**推論**である
 - **project スコープ `.rules` の探索パス**——`--ignore-rules` の help が "user or project" と述べる一方、0.145.0 のバイナリからは探索パスを特定できなかった。worktree 内に置けるかどうかが 5-2 の深刻度を左右する
-- **`--ignore-user-config` 適用後の prompt-input**——`codex debug prompt-input` は当該フラグを受け付けないため、`codex exec` 側で MCP が実際に消えることは未実測。実測7 は「user config 由来の MCP・plugin が既定で注入される」ことのみを示す
+- **`--ignore-user-config` 適用後に MCP が消えること**——`codex debug prompt-input` は当該フラグを受け付けないため未実測。`--ignore-user-config` 付きで `codex exec` が正常に完走することは実測8 で確認したが、MCP ツールの不在そのものは測っていない。実測7 は「user config 由来の MCP・plugin が既定で注入される」ことのみを示す
 - **Linux（landlock）での挙動**——実測はすべて macOS 26.5 / seatbelt。writable root の既定（`/tmp`・`$TMPDIR`）が同じかは未確認
+- **`PATH` 経由で届く実行ファイルの実害**——実測8 で PATH に operator の `$HOME` 配下が含まれることは確認したが、そこから資格情報付きの CLI に到達できるか（例: 別の認証済みツール）は個別に測っていない（→ §8.4）
 - **`--add-dir` の粒度**——共有 `.git` の一部だけを writable にできるかは試していない。仮にできても §6.1 の理由から採らない方針
 
 ---

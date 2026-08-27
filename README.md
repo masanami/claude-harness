@@ -144,7 +144,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 - [AI駆動開発戦略](docs/ai-driven-development-strategy.md) — 開発サイクル、レビュー優先順位、品質保証・テスト戦略、クリティカル箇所の定義、設計判断記録（ADR）の規約、既定の開発フロー（SDD ＋ コード正・テスト正／4.4）と受入基準の粒度（4.5）
 - [ADR 0002: GDD を不採用とし、計装のみ回収する](docs/adr/0002-gdd-not-adopted-salvage-instruments.md) — 既定フローを確定させた決定と根拠（改訂2 で GDD 固有資産の削除まで決定）
 - [ブランチ戦略](docs/branching-strategy.md) — GitHub Flow、Conventional Commits、マージ規約
-- [Codex ticket worker の承認境界](docs/codex-write-approval-boundary.md) — `codex exec --sandbox workspace-write` で何が OS レベルで強制でき、何ができないか（実測）。commit / push / Issue / PR / merge の権限分解と fail-closed 規定（Issue #200 §6。**未決の設計判断あり**）
+- [Codex ticket worker の承認境界](docs/codex-write-approval-boundary.md) — `codex exec --sandbox workspace-write` で何が OS レベルで強制でき、何ができないか（実測）。commit / push / Issue / PR / merge の権限分解、fail-closed 規定、**Phase 2a の着手条件**（Issue #200 §6）
 
 ### ガイド
 
