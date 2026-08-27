@@ -77,14 +77,14 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 ### Codex shadow reviewを使う場合
 
-`/codex-review` と `/self-review` のCodex shadow laneには、認証済みのCodex CLIと`jq`が必要です。
+`/codex-review` には、認証済みのCodex CLIと`jq`が必要です。
 
 ```bash
 codex --version
 jq --version
 ```
 
-Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。未導入・認証失敗・laneの部分失敗はClaude側の指摘ゼロへ合成されず、shadow reviewの`not_run` / `partial` / `failed`として独立に報告されます。
+Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。未導入・認証失敗・laneの部分失敗はレビュー完了・指摘ゼロとして扱われず、shadow reviewの`partial` / `failed`として独立に報告されます。
 
 ---
 
