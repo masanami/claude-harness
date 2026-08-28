@@ -84,7 +84,7 @@ codex --version
 jq --version
 ```
 
-Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。未導入・認証失敗・laneの部分失敗はレビュー完了・指摘ゼロとして扱われず、shadow reviewの`partial` / `failed`として独立に報告されます。
+Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。`codex` / `jq` / 同梱schemaの未導入は実行前提エラー（`result: "failed"`、exit 69）、Codexの実行失敗・認証失敗はレビュー失敗（`result: "failed"`、`errors[].code: "codex_failed"`、exit 4）、laneの部分失敗は`result: "partial"`（exit 3）として区別されます。いずれもレビュー完了・指摘ゼロとしては扱われず、独立に報告されます。
 
 ---
 
