@@ -20,10 +20,11 @@
 #         片方だけを更新すると落ちる。ID の重複・書式ずれも見る
 #   (E-6) **反転語彙の不在**。「検出0件のクラスは報告から省略してよい」という読み替えは
 #         掃引の網羅性の主張そのものを空虚にするため、機械で止める
-#   (E-7) **`sweepOutcome` 真理値表の完全性と参照実装との一致**。4入力の全16組合せが重複なく
+#   (E-7) **`sweepOutcome` 真理値表の完全性と参照実装との一致**。5入力の全32組合せが重複なく
 #         1回ずつ現れ、各行が参照実装と一致する。**掃引した対象が空のケース**（空虚な真の
-#         入口）と**掃引できなかった対象が残るケース**（部分成功を完全成功として集計する
-#         入口）を表から落とせないようにする
+#         入口）・**掃引できなかった対象が残るケース**（部分成功を完全成功として集計する
+#         入口）・**掃引範囲が対象集合と合わないケース**（自己申告を照合せず存在と形だけを
+#         見る入口）を表から落とせないようにする
 #   (E-8) **既存の軽い使い方が壊れていないこと**。引数なし＝標準モードであり、掃引モードへは
 #         完全一致でしか入らない、が規定として在る
 #   (E-9) 掃引モードが委ねている先（掃引エージェント・`finding-verifier`・報告契約）が実在し、
@@ -250,6 +251,8 @@ dc_core "(E-4) 検出0件でも掃引範囲を報告する（空虚な真の防�
   '**検出が0件でも、掃引した対象範囲を必ず報告する。** 「検出なし」は掃引した範囲の上でしか主張できない'
 dc_core "(E-4) 掃引できなかった対象を0件に丸めない" \
   '**掃引できなかった対象を「0件」に丸めない。** 読めなかった・実行できなかった対象は、掃引した対象とは別に列挙する'
+dc_core "(E-4) 掃引範囲が渡された対象の全体を過不足なく覆う（取りこぼしの禁止）" \
+  '**掃引した対象と掃引できなかった対象で、渡された対象の全体を過不足なく覆う。** どちらの一覧にも現れない対象を残さず、同じ対象を両方に入れない'
 
 echo ""
 echo "=== (E-5) 索引とクラス定義の ID 集合・題名が一致する（語彙駆動） ==="
@@ -312,36 +315,44 @@ COMBOS=""
 TABLE_MISMATCH=""
 while IFS= read -r row; do
   [ -z "$row" ] && continue
-  IFS='|' read -r _ c_resp c_scope c_rest c_find c_out _tail <<<"$row"
+  IFS='|' read -r _ c_resp c_scope c_rest c_split c_find c_out _tail <<<"$row"
   c_resp="$(trim "$c_resp")"; c_scope="$(trim "$c_scope")"; c_rest="$(trim "$c_rest")"
-  c_find="$(trim "$c_find")"; c_out="$(trim "$c_out")"
+  c_split="$(trim "$c_split")"; c_find="$(trim "$c_find")"; c_out="$(trim "$c_out")"
 
-  resp_vals="$c_resp"; scope_vals="$c_scope"; rest_vals="$c_rest"; find_vals="$c_find"
+  resp_vals="$c_resp"; scope_vals="$c_scope"; rest_vals="$c_rest"
+  split_vals="$c_split"; find_vals="$c_find"
   [ "$c_resp" = "（問わない）" ] && resp_vals="あり なし"
   [ "$c_scope" = "（問わない）" ] && scope_vals="あり なし"
   [ "$c_rest" = "（問わない）" ] && rest_vals="あり なし"
+  [ "$c_split" = "（問わない）" ] && split_vals="あり なし"
   [ "$c_find" = "（問わない）" ] && find_vals="あり なし"
 
   for resp in $resp_vals; do
     for scope in $scope_vals; do
       for rest in $rest_vals; do
-        for find in $find_vals; do
-          # 参照実装: 構造化応答を受領していない、または掃引した対象が空なら掃引は成立していない。
-          # 成立していても掃引できなかった対象が残っていれば部分掃引であり、完全掃引の2状態
-          # （found / none）へは落とさない。完全に掃引できていれば、指摘の有無で分かれる。
-          if [ "$resp" = "なし" ] || [ "$scope" = "なし" ]; then
-            expected='`not_sweepable`'
-          elif [ "$rest" = "あり" ]; then
-            expected='`partial`'
-          elif [ "$find" = "あり" ]; then
-            expected='`found`'
-          else
-            expected='`none`'
-          fi
-          if [ "$c_out" != "$expected" ]; then
-            TABLE_MISMATCH="${TABLE_MISMATCH}[resp=${resp} scope=${scope} rest=${rest} find=${find}] table=${c_out} ref=${expected} "
-          fi
-          COMBOS="${COMBOS}$(yn "$resp")$(yn "$scope")$(yn "$rest")$(yn "$find")"$'\n'
+        for split in $split_vals; do
+          for find in $find_vals; do
+            # 参照実装: 構造化応答を受領していない、または掃引した対象が空なら掃引は成立していない。
+            # 掃引範囲が対象集合を重複なく分割していない応答も、自己申告を検証できないため
+            # 成立とみなさない（partial へは落とさない。partial は掃引者が覆えない範囲を
+            # 正しく申告した状態にだけ使う）。分割が合っていて掃引できなかった対象が残れば
+            # 部分掃引。完全に掃引できていれば、指摘の有無で分かれる。
+            if [ "$resp" = "なし" ] || [ "$scope" = "なし" ]; then
+              expected='`not_sweepable`'
+            elif [ "$split" = "なし" ]; then
+              expected='`not_sweepable`'
+            elif [ "$rest" = "あり" ]; then
+              expected='`partial`'
+            elif [ "$find" = "あり" ]; then
+              expected='`found`'
+            else
+              expected='`none`'
+            fi
+            if [ "$c_out" != "$expected" ]; then
+              TABLE_MISMATCH="${TABLE_MISMATCH}[resp=${resp} scope=${scope} rest=${rest} split=${split} find=${find}] table=${c_out} ref=${expected} "
+            fi
+            COMBOS="${COMBOS}$(yn "$resp")$(yn "$scope")$(yn "$rest")$(yn "$split")$(yn "$find")"$'\n'
+          done
         done
       done
     done
@@ -353,8 +364,8 @@ COMBO_TOTAL="$(printf '%s' "$COMBOS" | grep -c '[^[:space:]]')"
 COMBO_UNIQUE="$(printf '%s' "$COMBOS" | grep '[^[:space:]]' | LC_ALL=C sort -u | wc -l | tr -d ' ')"
 UNMAPPED="$(printf '%s' "$COMBOS" | grep -c '?')"
 assert_eq "(E-7) 表の欄が あり/なし/（問わない） 以外の語を含まない" "0" "$UNMAPPED"
-assert_eq "(E-7) 4入力の全16組合せを網羅している" "16" "$COMBO_UNIQUE"
-assert_eq "(E-7) 同じ組合せを2回書いていない（重複行が無い）" "16" "$COMBO_TOTAL"
+assert_eq "(E-7) 5入力の全32組合せを網羅している" "32" "$COMBO_UNIQUE"
+assert_eq "(E-7) 同じ組合せを2回書いていない（重複行が無い）" "32" "$COMBO_TOTAL"
 
 echo ""
 echo "=== (E-8) 既存の軽い使い方が壊れていない（引数なし＝標準モード） ==="
@@ -398,8 +409,22 @@ assert_file_contains "(E-9) 統合: 重複除去の claim 正規化が切り詰�
 TRUNC_FOUND="false"
 grep -qE '先頭[0-9]+文字' "$SWEEP_REF" && TRUNC_FOUND="true"
 assert_eq "(E-9) 掃引モードの重複除去に文字数での切り詰めが無い" "false" "$TRUNC_FOUND"
-assert_file_contains "(E-9) 受領検査: クラス数と一致しなければ停止する" "$SWEEP_REF" \
-  '**カタログのクラス数と要素数が一致しない場合は、報告を出さずに欠落したクラスを明示して停止する**'
+# 受領検査は「件数の一致」ではなく「集合の一致」で行う。件数比較は、同じクラスが2回現れて
+# 別のクラスが欠けるケースと、対象を両方の一覧から落とすケースを素通りさせる（D-10）。
+assert_file_contains "(E-9) 受領検査: クラス集合の完全一致と重複の不在を確認する" "$SWEEP_REF" \
+  '**`defectClass` の集合がカタログのクラス集合と完全に一致し、重複が無いことを確認する。件数の一致で代用しない**'
+assert_file_contains "(E-9) 受領検査: 不一致時は欠落・重複・カタログ外を列挙して停止する" "$SWEEP_REF" \
+  '**欠落したクラス・重複したクラス・カタログに無いクラスを列挙して停止する**'
+assert_file_contains "(E-9) 受領検査: 掃引範囲を対象集合と照合する" "$SWEEP_REF" \
+  '**`sweptScope` を `sweepTargets` と照合する。**'
+assert_file_contains "(E-9) 受領検査: 照合に落ちた応答を partial にしない" "$SWEEP_REF" \
+  '**照合に落ちた応答を `partial` にしない。**'
+assert_file_contains "(E-9) S1: 照合の基準となる対象集合を確定する" "$SWEEP_REF" \
+  '**変更対象の集合（`sweepTargets`）を確定する**'
+# 件数比較へ差し戻されたら落とす（集合の同一性を件数で代用させない）。
+COUNT_ONLY="false"
+grep -qF -- 'カタログのクラス数と要素数が一致しない場合' "$SWEEP_REF" && COUNT_ONLY="true"
+assert_eq "(E-9) 受領検査が件数比較へ差し戻されていない" "false" "$COUNT_ONLY"
 assert_file_contains "(E-9) 掃引側に severity を付けさせない（しきい値の正本を1つに保つ）" "$SWEEP_REF" \
   '**`severity` を返させない**'
 assert_file_contains "(E-9) 掃引エージェント側にも severity を付けない規律が在る" "agents/defect-sweeper.md" \
