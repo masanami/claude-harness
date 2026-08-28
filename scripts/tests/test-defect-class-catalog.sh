@@ -20,8 +20,9 @@
 #         片方だけを更新すると落ちる。ID の重複・書式ずれも見る
 #   (E-6) **反転語彙の不在**。「検出0件のクラスは報告から省略してよい」という読み替えは
 #         掃引の網羅性の主張そのものを空虚にするため、機械で止める
-#   (E-7) **`sweepOutcome` 真理値表の完全性と参照実装との一致**。3入力の全8組合せが重複なく
+#   (E-7) **`sweepOutcome` 真理値表の完全性と参照実装との一致**。4入力の全16組合せが重複なく
 #         1回ずつ現れ、各行が参照実装と一致する。**掃引した対象が空のケース**（空虚な真の
+#         入口）と**掃引できなかった対象が残るケース**（部分成功を完全成功として集計する
 #         入口）を表から落とせないようにする
 #   (E-8) **既存の軽い使い方が壊れていないこと**。引数なし＝標準モードであり、掃引モードへは
 #         完全一致でしか入らない、が規定として在る
@@ -311,31 +312,37 @@ COMBOS=""
 TABLE_MISMATCH=""
 while IFS= read -r row; do
   [ -z "$row" ] && continue
-  IFS='|' read -r _ c_resp c_scope c_find c_out _rest <<<"$row"
-  c_resp="$(trim "$c_resp")"; c_scope="$(trim "$c_scope")"
+  IFS='|' read -r _ c_resp c_scope c_rest c_find c_out _tail <<<"$row"
+  c_resp="$(trim "$c_resp")"; c_scope="$(trim "$c_scope")"; c_rest="$(trim "$c_rest")"
   c_find="$(trim "$c_find")"; c_out="$(trim "$c_out")"
 
-  resp_vals="$c_resp"; scope_vals="$c_scope"; find_vals="$c_find"
+  resp_vals="$c_resp"; scope_vals="$c_scope"; rest_vals="$c_rest"; find_vals="$c_find"
   [ "$c_resp" = "（問わない）" ] && resp_vals="あり なし"
   [ "$c_scope" = "（問わない）" ] && scope_vals="あり なし"
+  [ "$c_rest" = "（問わない）" ] && rest_vals="あり なし"
   [ "$c_find" = "（問わない）" ] && find_vals="あり なし"
 
   for resp in $resp_vals; do
     for scope in $scope_vals; do
-      for find in $find_vals; do
-        # 参照実装: 構造化応答を受領していない、または掃引した対象が空なら掃引は成立していない。
-        # 成立していれば、指摘の有無で found / none に分かれる。
-        if [ "$resp" = "なし" ] || [ "$scope" = "なし" ]; then
-          expected='`not_sweepable`'
-        elif [ "$find" = "あり" ]; then
-          expected='`found`'
-        else
-          expected='`none`'
-        fi
-        if [ "$c_out" != "$expected" ]; then
-          TABLE_MISMATCH="${TABLE_MISMATCH}[resp=${resp} scope=${scope} find=${find}] table=${c_out} ref=${expected} "
-        fi
-        COMBOS="${COMBOS}$(yn "$resp")$(yn "$scope")$(yn "$find")"$'\n'
+      for rest in $rest_vals; do
+        for find in $find_vals; do
+          # 参照実装: 構造化応答を受領していない、または掃引した対象が空なら掃引は成立していない。
+          # 成立していても掃引できなかった対象が残っていれば部分掃引であり、完全掃引の2状態
+          # （found / none）へは落とさない。完全に掃引できていれば、指摘の有無で分かれる。
+          if [ "$resp" = "なし" ] || [ "$scope" = "なし" ]; then
+            expected='`not_sweepable`'
+          elif [ "$rest" = "あり" ]; then
+            expected='`partial`'
+          elif [ "$find" = "あり" ]; then
+            expected='`found`'
+          else
+            expected='`none`'
+          fi
+          if [ "$c_out" != "$expected" ]; then
+            TABLE_MISMATCH="${TABLE_MISMATCH}[resp=${resp} scope=${scope} rest=${rest} find=${find}] table=${c_out} ref=${expected} "
+          fi
+          COMBOS="${COMBOS}$(yn "$resp")$(yn "$scope")$(yn "$rest")$(yn "$find")"$'\n'
+        done
       done
     done
   done
@@ -346,8 +353,8 @@ COMBO_TOTAL="$(printf '%s' "$COMBOS" | grep -c '[^[:space:]]')"
 COMBO_UNIQUE="$(printf '%s' "$COMBOS" | grep '[^[:space:]]' | LC_ALL=C sort -u | wc -l | tr -d ' ')"
 UNMAPPED="$(printf '%s' "$COMBOS" | grep -c '?')"
 assert_eq "(E-7) 表の欄が あり/なし/（問わない） 以外の語を含まない" "0" "$UNMAPPED"
-assert_eq "(E-7) 3入力の全8組合せを網羅している" "8" "$COMBO_UNIQUE"
-assert_eq "(E-7) 同じ組合せを2回書いていない（重複行が無い）" "8" "$COMBO_TOTAL"
+assert_eq "(E-7) 4入力の全16組合せを網羅している" "16" "$COMBO_UNIQUE"
+assert_eq "(E-7) 同じ組合せを2回書いていない（重複行が無い）" "16" "$COMBO_TOTAL"
 
 echo ""
 echo "=== (E-8) 既存の軽い使い方が壊れていない（引数なし＝標準モード） ==="
@@ -381,6 +388,16 @@ assert_file_contains "(E-9) 報告契約: カバレッジ表は全クラス分�
   '**行数はカタログのクラス数と一致する。**'
 assert_file_contains "(E-9) 報告契約: 指摘が空でもカバレッジ表を出す" "$SWEEP_REF" \
   'ただし下の掃引カバレッジ表は**必ず出す**'
+assert_file_contains "(E-9) 報告契約: サマリーが完全掃引と部分掃引を別の行で数える" "$SWEEP_REF" \
+  '- 完全に掃引したクラス数: {found + none の件数} / {カタログのクラス数}'
+assert_file_contains "(E-9) 報告契約: 部分掃引のクラス数をサマリーに出す" "$SWEEP_REF" \
+  '- 一部しか掃引できなかったクラス数: {partial の件数}'
+assert_file_contains "(E-9) 統合: 重複除去の claim 正規化が切り詰めを含まない" "$SWEEP_REF" \
+  '**claim の全文を使い、先頭 N 文字への切り詰めをしない**'
+# 文字数での切り詰めが再導入されると、先頭が同じで後半が異なる別々の指摘が1件に潰れる。
+TRUNC_FOUND="false"
+grep -qE '先頭[0-9]+文字' "$SWEEP_REF" && TRUNC_FOUND="true"
+assert_eq "(E-9) 掃引モードの重複除去に文字数での切り詰めが無い" "false" "$TRUNC_FOUND"
 assert_file_contains "(E-9) 受領検査: クラス数と一致しなければ停止する" "$SWEEP_REF" \
   '**カタログのクラス数と要素数が一致しない場合は、報告を出さずに欠落したクラスを明示して停止する**'
 assert_file_contains "(E-9) 掃引側に severity を付けさせない（しきい値の正本を1つに保つ）" "$SWEEP_REF" \
