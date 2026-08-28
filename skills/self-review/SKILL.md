@@ -1,16 +1,37 @@
 ---
 name: self-review
 description: "コード変更のセルフレビューを実施する。Triggers on: '/self-review', 'セルフレビュー', 'self-review', 'コードレビューして'"
+argument-hint: "[sweep]"
 # effort: 深い検討は委譲先レビュー agent（code-reviewer/design-reviewer=xhigh）側で効くため、本スキルは session 継承（無指定）とする。
 ---
 
 # Self Review
 
-現在のブランチの変更差分に対してセルフレビューを実施します。並列レビュー（code-reviewer/design-reviewer）・敵対的検証（finding-verifier 単一懐疑者）は Task ツールによる直接委譲で行います。修正の反復ループは、呼び出し元自身による Edit/Write でのインライン修正を基本とし、必要な場合のみ `feature-implementer` への委譲を行います（詳細は Step 4）。メインセッションからの直接起動、`feature-implementer` 等のサブエージェントからの呼び出し、そのサブエージェントが Fix ステージで自分自身をスコープ付きで再 spawn する場合のいずれであっても、本手順1本が唯一の経路です（実行文脈の判定・分岐は不要）。diff収集・hunk抽出のような機械的な git/テキスト処理も、git-ops 等の代行エージェントを介さず、あなた自身が Bash ツールで直接実行します。
+現在のブランチの変更差分に対してセルフレビューを実施します。並列レビュー（code-reviewer/design-reviewer）・敵対的検証（finding-verifier 単一懐疑者）は Task ツールによる直接委譲で行います。修正の反復ループは、呼び出し元自身による Edit/Write でのインライン修正を基本とし、必要な場合のみ `feature-implementer` への委譲を行います（詳細は Step 4）。メインセッションからの直接起動、`feature-implementer` 等のサブエージェントからの呼び出し、そのサブエージェントが Fix ステージで自分自身をスコープ付きで再 spawn する場合のいずれであっても、標準モードの手順1本が唯一の経路です（**呼び出し元が誰かによる判定・分岐は不要**。モードの判定は次節の引数だけで行います）。diff収集・hunk抽出のような機械的な git/テキスト処理も、git-ops 等の代行エージェントを介さず、あなた自身が Bash ツールで直接実行します。
 
 並列レビュー・敵対的検証の反証規範・修正時の振る舞いの規律は `agents/code-reviewer.md` / `agents/design-reviewer.md` / `agents/finding-verifier.md` / `agents/feature-implementer.md` 側に置きます（レイヤリング。本 SKILL には重複記載しません）。本 SKILL が正本とするのは、fan-out の手順・懐疑者判定の反映規律・修正ループの上限/終了条件・周回間dedupという「構造」のみです。
 
-## 手順
+## 入力で動作切替
+
+$ARGUMENTS
+
+| 入力 | モード | 動作 |
+|---|---|---|
+| `sweep` | **掃引モード** | 欠陥クラスのカタログで差分全体を1クラス1体で並列掃引し、検出 → 反証 → 報告までを行う（修正ループは回さない） |
+| それ以外（**空を含む**） | **標準モード** | 後掲の Step 1〜7（並列レビュー → 懐疑的検証 → 修正 → 反復） |
+
+- **モードの判定は `sweep` の完全一致だけで行う。** 前方一致・部分一致・大文字小文字の揺れ・語を含むかどうかで掃引モードへ入らない（`sweep` を含む別の指示文が掃引モードを起動すると、呼び出し元が期待した修正ループが行われないまま終了する）
+- **引数が空の場合は標準モードである。** 既存の `/self-review`（引数なし）の振る舞いは掃引モードの追加によって変わらない
+- **引数が空でなく、かつ `sweep` の完全一致でもない場合**は、標準モードで実行したうえで、**入力を標準モードとして解釈した旨を報告の冒頭に明示する**（`sweep` の打ち間違いが黙って標準モードで走ることを防ぐ）
+
+> **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路`claude-harness-run read-plugin-doc "skills/self-review/references/defect-sweep.md"`（プラグインルート相対パス）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない** — `MORE` マーカーが出ていれば示された `--from-line` で続きを取得し、END も MORE も無ければ出力が切り詰められたとみなして同様に停止すること。**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。`=== read-plugin-doc ... ===` の行と `read-plugin-doc:` で始まる行は配送の制御情報であり本文ではない（テンプレートを埋めて書き出す際に成果物へ含めない）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/references/defect-sweep.md` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+掃引モードを選んだ場合は、**前掲の配送経路で `skills/self-review/references/defect-sweep.md` を読み出し**、その手順（Step S1〜S7）に従う。以降の Step 1〜7 は実行しない。掃引モードが SKILL.md 本体と共通で使うのは、Step 1（diff 収集）・Step 3 の hunk 抽出手順・Step 2 の `convergence-canon` ブロックが定める severity の語彙だけである。
+
+---
+
+## 標準モードの手順
 
 ### Step 1: diff収集
 

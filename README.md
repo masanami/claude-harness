@@ -121,7 +121,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 | `/demo` | `/demo [Issue/PR/機能]` | AIがHeaded Playwrightで動作確認（ユーザーは観察して承認） |
 | `/demo-e2e` | `/demo-e2e [カタログCSV/CASE_ID/specファイル/画面名]` | E2Eテストケースカタログと突き合わせ、1ケースごとに解説→実演（Headed Playwright）→人間判定を繰り返す |
 | `/quality-check` | `/quality-check` | lint + typecheck + test の一括実行（機械可読な結果） |
-| `/self-review` | `/self-review` | コード変更のセルフレビュー |
+| `/self-review` | `/self-review` / `/self-review sweep` | コード変更のセルフレビュー。引数なしは標準モード(並列レビュー→懐疑的検証→修正の反復)。`sweep` は**掃引モード**で、[欠陥クラスのカタログ](docs/defect-class-catalog.md)の全クラスを1クラス1体で並列掃引し、検出→反証→報告まで行う(修正はしない) |
 | `/codex-review` | `/codex-review [Issue番号]` | Codexのread-only multi-agent capsuleでローカル差分をクロスモデルレビュー（shadow・修正なし） |
 | `/surface-audit` | `/surface-audit` | 公開面×テスト担保の診断。公開面（HTTP API・CLI・公開ライブラリ API・イベント・永続化スキーマ・UI）をカテゴリ側から列挙し、テストが実際に担保している振る舞いと突き合わせて、**テスト未担保の公開面（GAP）**を検出する。**出力はトリアージ前提の候補**であり、ファイル生成・修正・Issue 起票はしない |
 
@@ -150,6 +150,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 - [変更履歴](CHANGELOG.md) — 破壊的変更と移行手順（4.0.0 以降）
 - [セットアップガイド](docs/getting-started.md) — インストールからCLAUDE.md整備、動作確認まで
 - [スクリプトランチャー](docs/script-launcher.md) — `claude-harness-run` の導入手順、allowlist の書き方、permission マッチャの実測記録
+- [欠陥クラスのカタログ](docs/defect-class-catalog.md) — `/self-review sweep`（掃引モード）が使う欠陥クラスの正本。カタログの粒度と増やし方の運用規約、掃引の規律、適用先と例外
 - [プラグイン内ファイル参照のパス規約](docs/plugin-path-conventions.md) — スキル・エージェントを書くときの規約。パス解決、`SKILL.md` と `references/` の線引き、**実行時テキストと docs の書き分け（(h)）**
 - [カスタマイズ方法](docs/customization.md) — エージェント/スキルのオーバーライド、フック追加
 
