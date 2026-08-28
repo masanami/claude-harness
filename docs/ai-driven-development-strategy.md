@@ -18,6 +18,7 @@
 
 - [ブランチ戦略](./branching-strategy.md) — GitHub Flow、PR規約
 - [ADR 0002: GDD（保証駆動開発）を不採用とし、計装のみ回収する](./adr/0002-gdd-not-adopted-salvage-instruments.md) — 既定フロー（4.4）を確定させた決定と根拠
+- [欠陥クラスのカタログ](./defect-class-catalog.md) — 独立の敵対レビュー（`/self-review sweep`）が掃引に使う欠陥クラスの正本。本文書 4.5 と同じ「正本1箇所＋逐語コピー＋cross-file 照合テスト」の規律に乗る
 
 ---
 
