@@ -94,19 +94,41 @@ read_codex_diagnostic() {
 # 1行に畳まないため -uall を使う（畳まれるとファイル単位の申告と比較できない）。
 # rename は宛先側を採用する。
 #
-# `--ignored=matching` が要る理由: 既定では ignored ファイルが出力されないため、
+# `--ignored=traditional` が要る理由: 既定では ignored ファイルが出力されないため、
 # `.env` のような .gitignore 対象パスへの書き込みが照合を素通りして complete になる。
-# `matching` を選ぶのは、`traditional` が `-uall` と組み合わさると ignored ディレクトリを
-# ファイル単位へ展開してしまうため（実測: 600ファイルの node_modules 相当で 600 行）。
-# それだけの未申告パスが出れば正当な作業でも常時 changes_mismatch になり、検査自体が
-# 無意味になる。`matching` は ignore パターンに一致したディレクトリを1エントリへ畳むので
-# （同実測で 1 行）、巨大な ignored ツリーを差分に載せずに ignored ファイルの作成を捕まえる。
+# `matching` ではなく `traditional` を使うのは、`matching` が ignore パターンに一致した
+# ディレクトリを1エントリへ畳み、**既に存在する ignored ディレクトリの中に作られた
+# ファイルを検出できない**ため（エントリが実行前後で変わらず差分に現れない）。
+# `traditional` は `-uall` と組み合わせるとファイル単位まで展開する。
+# 巨大な ignored ツリーがあっても、照合は実行前後の**差分**なので実行前から在るパスは
+# 相殺され、誤検知にはならない。実測（6000ファイルの node_modules 相当）: 出力は 6000 行に
+# なるが差分は新規1件のみで、20回平均 約10ms/回（`--ignored` 無しは約4.5ms/回）。
+# 同条件で `matching` の差分は 0 件＝取りこぼす。
 working_tree_paths() {
   local repo="$1"
-  git -C "$repo" -c core.quotePath=false status --porcelain -uall --ignored=matching 2>/dev/null \
+  git -C "$repo" -c core.quotePath=false status --porcelain -uall --ignored=traditional 2>/dev/null \
     | sed -e 's/^...//' -e 's/^.* -> //' -e 's/^"//' -e 's/"$//' -e 's|^\./||' -e 's|/$||' \
     | sed -e '/^$/d' \
     | sort -u
+}
+
+# パス集合を1行の診断文字列へ畳む。ignored ツリーへ書き込む chore（依存の導入・生成物）
+# では未申告パスが大量に出るため、全件を並べず件数を添えて切り詰める
+# （診断が出力予算を食い潰すと、肝心のタスク結果が読めなくなる）。
+summarize_paths() {
+  local paths="$1" limit=10 total shown remaining
+  if [ -z "$paths" ]; then
+    printf 'none'
+    return
+  fi
+  total="$(printf '%s\n' "$paths" | wc -l | tr -d ' ')"
+  shown="$(printf '%s\n' "$paths" | head -n "$limit" | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [ "$total" -gt "$limit" ]; then
+    remaining=$((total - limit))
+    printf '%s (+%s more)' "$shown" "$remaining"
+  else
+    printf '%s' "$shown"
+  fi
 }
 
 head_sha() {
@@ -526,10 +548,8 @@ main() {
       <(comm -13 <(printf '%s\n' "$baseline_paths") <(printf '%s\n' "$after_paths")) \
       <(printf '%s\n' "$claimed_paths"))"
     fabricated="$(comm -23 <(printf '%s\n' "$claimed_paths") <(printf '%s\n' "$after_paths"))"
-    unreported="$(printf '%s' "$unreported" | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
-    fabricated="$(printf '%s' "$fabricated" | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
     if [ -n "$unreported" ] || [ -n "$fabricated" ]; then
-      add_error "changes_mismatch" "reported changes do not match the working tree (unreported: ${unreported:-none} | not present in working tree: ${fabricated:-none})"
+      add_error "changes_mismatch" "reported changes do not match the working tree (unreported: $(summarize_paths "$unreported") | not present in working tree: $(summarize_paths "$fabricated"))"
     fi
 
     after_head="$(head_sha "$repo")"

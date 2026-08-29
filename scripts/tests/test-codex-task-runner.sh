@@ -365,9 +365,24 @@ RC=$?
 assert_eq "ignoredファイルの申告一致はexit 0" "0" "$RC"
 assert_eq "申告一致ならerrorsは空" "0" "$(jq -r '.errors | length' <<<"$OUT")"
 
-echo "=== test: 巨大な ignored ツリーは差分に載せない（常時 partial にしない） ==="
-# node_modules/ のような ignored ディレクトリを1エントリに畳まないと、正当な作業でも
-# 数百件の未申告パスが出て changes_mismatch が常時発火し、検査そのものが無意味になる。
+echo "=== test: 既存 ignored ディレクトリ内への隠れた書き込みも検出 ==="
+# ignored ディレクトリを1エントリへ畳む照合（--ignored=matching）だと、実行前から在る
+# ignored ディレクトリの中に作られたファイルはエントリが変わらず差分に現れない。
+reset_target_repo
+mkdir -p "${TARGET_REPO}/ignored-dir/pkg"
+printf 'x\n' >"${TARGET_REPO}/ignored-dir/pkg/existing.js"
+write_result "$CHORE_RESULT" complete '[]' '[{"path":"normal.txt","action":"created","reason":"r"}]'
+export FAKE_CODEX_FINAL="$CHORE_RESULT"
+export FAKE_CODEX_TOUCH="normal.txt ignored-dir/pkg/sneaked.js"
+OUT="$(run_runner --mode chore --repo "$TARGET_REPO" --brief-file "$BRIEF_FILE")"
+RC=$?
+assert_eq "既存ignoredディレクトリ内の隠れた書き込みはexit 3" "3" "$RC"
+assert_contains "隠れた書き込みを不一致として検出" "changes_mismatch" "$(jq -r '[.errors[].code] | join(",")' <<<"$OUT")"
+assert_contains "隠れたパスを診断へ含める" "ignored-dir/pkg/sneaked.js" "$(jq -r '[.errors[].message] | join(" ")' <<<"$OUT")"
+
+echo "=== test: 実行前から在る ignored ツリーは差分で相殺される（常時 partial にしない） ==="
+# 照合は実行前後の差分なので、実行前から在るファイルは何件あっても両スナップショットに
+# 現れて相殺される。絶対集合で比較する実装へ退行すると、ここが落ちる。
 reset_target_repo
 mkdir -p "${TARGET_REPO}/ignored-dir/pkg"
 for i in 1 2 3 4 5 6 7 8 9 10; do printf 'x\n' >"${TARGET_REPO}/ignored-dir/pkg/f${i}.js"; done
@@ -376,9 +391,26 @@ export FAKE_CODEX_FINAL="$CHORE_RESULT"
 export FAKE_CODEX_TOUCH="normal.txt"
 OUT="$(run_runner --mode chore --repo "$TARGET_REPO" --brief-file "$BRIEF_FILE")"
 RC=$?
-assert_eq "実行前から在る巨大ignoredツリーは不一致にしない" "0" "$RC"
+assert_eq "実行前から在るignoredツリーは不一致にしない" "0" "$RC"
 assert_eq "ignoredツリーでerrorsを増やさない" "0" "$(jq -r '.errors | length' <<<"$OUT")"
+
+echo "=== test: 大量の未申告パスでも診断を切り詰める ==="
+# ignored ツリーへ書き込む chore（npm install 等）では未申告パスが大量に出る。
+# 全件を診断へ並べると出力予算を食い潰すため、件数を添えて切り詰める。
 reset_target_repo
+write_result "$CHORE_RESULT" complete '[]' '[{"path":"normal.txt","action":"created","reason":"r"}]'
+export FAKE_CODEX_FINAL="$CHORE_RESULT"
+MANY=""
+for i in $(seq 1 40); do MANY="$MANY generated/f${i}.txt"; done
+export FAKE_CODEX_TOUCH="normal.txt $MANY"
+OUT="$(run_runner --mode chore --repo "$TARGET_REPO" --brief-file "$BRIEF_FILE")"
+RC=$?
+MSG="$(jq -r '[.errors[] | select(.code == "changes_mismatch") | .message] | join(" ")' <<<"$OUT")"
+assert_eq "大量の未申告はexit 3" "3" "$RC"
+assert_contains "省略した件数を示す" "more" "$MSG"
+assert_eq "診断の長さを抑える" "true" "$([ "${#MSG}" -lt 1200 ] && echo true || echo false)"
+reset_target_repo
+export FAKE_CODEX_TOUCH=""
 
 echo "=== test: chore で commit したら検出 ==="
 reset_target_repo

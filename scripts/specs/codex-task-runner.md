@@ -129,7 +129,7 @@ outerの`result`はこれらとタスク自己申告`status`から**ランナー
 
 ### `changes_mismatch`の照合範囲（実行前から汚れていた作業ツリー）
 
-パス照合は`git status --porcelain -uall --ignored=matching`（`core.quotePath=false`）の集合演算で行い、rename は宛先側を採用する。**実行前から汚れていたパスは、Codexが触ったかどうかをgit statusから区別できない**ため、照合は区別できる2方向だけに絞る。
+パス照合は`git status --porcelain -uall --ignored=traditional`（`core.quotePath=false`）の集合演算で行い、rename は宛先側を採用する。**実行前から汚れていたパスは、Codexが触ったかどうかをgit statusから区別できない**ため、照合は区別できる2方向だけに絞る。
 
 | 方向 | 意味 |
 |---|---|
@@ -138,15 +138,17 @@ outerの`result`はこれらとタスク自己申告`status`から**ランナー
 
 区別できない分（実行前から汚れていて申告もされたパス）を不一致に数えると、汚れた作業ツリーでは常に`partial`になり検査が意味を失う。この分は照合対象から外し、代わりに呼び出し元が`chore`実行前に作業ツリーの清浄を確認する（`skills/codex-task/SKILL.md` Step 2）。
 
-#### ignoredファイルを照合対象に含める（`--ignored=matching`）
+#### ignoredファイルを照合対象に含める（`--ignored=traditional`）
 
 `git status --porcelain`は既定でignoredファイルを出力しない。含めないと、`.env`のような`.gitignore`対象パスへの書き込みが**照合を素通りして`complete`になる**。
 
-`traditional`ではなく`matching`を選ぶ。`traditional`は`-uall`と組み合わさるとignoredディレクトリを**ファイル単位へ展開する**ため、`node_modules/`のような巨大なignoredツリーがあると数百件の未申告パスが出て、正当な作業でも常時`changes_mismatch`になり検査自体が無意味になる。`matching`はignoreパターンに一致したディレクトリを1エントリへ畳む。
+`matching`ではなく`traditional`を選ぶ。`matching`はignoreパターンに一致したディレクトリを1エントリへ畳むため、**既に存在するignoredディレクトリの中に作られたファイルを検出できない**（ディレクトリのエントリが実行前後で変わらず差分に現れない）。`traditional`は`-uall`と組み合わせるとファイル単位まで展開する。
 
-> **実測**: 600ファイルを含む`node_modules/`相当のツリーで、`--ignored=traditional -uall`は600行、`--ignored=matching -uall`は1行（`!! node_modules/`）。同条件で、新規作成した`.env`・`debug.log`は`matching`でも個別に検出される。
+巨大なignoredツリーがあっても誤検知にはならない。照合は絶対集合ではなく実行**前後の差分**であり、実行前から在るパスは両スナップショットに現れて相殺されるためである。
 
-**残余（塞げていない穴）**: **既に存在するignoredディレクトリの中に新しいファイルが作られても検出できない**——ディレクトリのエントリが実行前後で変わらないため差分に現れない（実測で確認）。これを塞ぐには`traditional`が要るが、上記のとおり検査が常時発火して無意味になるため採らない。`chore`の委譲先が既存のignoredディレクトリ内へ成果物を隠す可能性は、この検査では担保しない。
+> **実測**（6000ファイルを含む`node_modules/`相当のツリー）: `--ignored=traditional -uall`の出力は6000行になるが、**差分は新規1件のみ**。実行コストは20回平均で約10ms/回（`--ignored`無しは約4.5ms/回）。同条件で`--ignored=matching`の差分は**0件**——既存ignoredディレクトリ内への書き込みを取りこぼす。
+
+**残余（塞げていない穴）**: `chore`のタスク自身がignoredツリーへ正当に書き込む場合（依存の導入・生成物の出力）、その全ファイルが未申告パスとして出て`changes_mismatch`＝`partial`になる。結果は破棄されないため作業は失われないが、呼び出し元は`git status`で実体を確認する必要がある。診断メッセージは先頭10件＋残件数へ切り詰める（全件を並べると出力予算を食い潰し、肝心のタスク結果が読めなくなる）。
 
 `metrics.output_bytes`は、Codexが返した最終JSONを**compact化した**バイト数で測る（整形の差で結果が揺れないようにするため）。
 
