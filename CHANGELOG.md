@@ -8,6 +8,30 @@
 
 ---
 
+## 4.2.0
+
+### 破壊的変更
+
+- **`/self-review` の収束条件が「指摘ゼロ」から severity しきい値へ変わった。** `converged: true` は**残指摘が無いことを意味しなくなった**（修正しきい値未満の指摘は残りうる）。呼び出し元が `converged` だけを見て残指摘の受け渡しを分岐していた場合は、**`residualFindings` を必ず読むように直すこと**（空でなければ全件が報告・転記される）。severity の順序と 2 つのしきい値（検証しきい値 = high / 修正しきい値 = medium 以上）は `skills/self-review/SKILL.md` の `convergence-canon` ブロック 1 箇所が正本。未知・欠落の severity は high として扱う（fail-closed）。決定と根拠: [ADR 0004 — self-review の収束を severity で切る](docs/adr/0004-self-review-convergence-by-severity.md)
+- **`/self-review` から Codex shadow review（Step 2.5）を除去した。** 4.1.0 で追加した Phase 0/1 の比較運用は、21 実行の検証で「別モデルなら別の欠陥を見つける」という前提が支持されず終了した（固有の発見は 1 クラスのみ）。**`/codex-review` 単体は引き続き利用できる**が、`/self-review` から自動で併走することは無くなった。回収した収穫はレビュー観点として `agents/code-reviewer.md` へ統合済み。
+
+### 追加
+
+- **`/self-review sweep`（掃引モード）を追加。** 欠陥クラスのカタログで差分全体を 1 クラス 1 体で並列掃引し、検出 → 反証 → 報告までを行う（修正ループは回さない）。標準モードとは別手順で、共通で使うのは diff 収集・hunk 抽出・severity 語彙のみ。
+- **`claude-harness-run doctor` を追加。** 導入先プロジェクトが本プラグインの現行版を使うための前提（PATH 上のランチャー／`.claude/settings.json` の allow ／`CLAUDE.md` の節・プレースホルダ・ドキュメントマップ）を診断する。**検出と提示のみで書き換えは行わない。** `/init-project` の Step 1 からも呼ばれる。stdout に JSON 1 個、exit `0`=ok/warn・`1`=blocking あり・`2`=実行前提の欠落。
+- `agents/code-reviewer.md` の観点 D にテスト品質の 4 観点を統合した（組み込みの `/code-review` はテスト・fixture のハンクをスキップするため、テスト品質はここでのみ担保される）。
+
+### 修正
+
+- `/self-review` 標準モードの `residualFindings` の重複除去が `claim` を先頭 64 文字に切り詰めていた。先頭が同じで後半が異なる別々の残指摘が 1 件に潰れて消えるため、**`claim` 全文照合へ修正**した（掃引モード側は既に修正済みだった）。切り詰めの再導入は否定検査で塞いである。
+
+### 利用者が取る操作
+
+- `converged` を残指摘の有無の判定に使っている呼び出し側があれば、`residualFindings` を読む形へ直す（上記の破壊的変更）。
+- 既に導入済みのプロジェクトでは `claude-harness-run doctor --project <dir>` を一度実行し、blocking の指摘（ランチャー不在・`Bash(claude-harness-run:*)` の allow 欠落）が出ないことを確認する。出た場合の是正コマンドは診断結果に含まれる。
+
+---
+
 ## 4.1.0
 
 ### 追加
