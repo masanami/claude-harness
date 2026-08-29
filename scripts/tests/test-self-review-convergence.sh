@@ -24,6 +24,14 @@
 #         「`converged` の値に関わらず全件を転記する」を規定していること／`residualFindings`
 #         を持つ実行時ファイルの集合が下記の登録表と一致すること（新しい消費側が登録されずに
 #         増えると、そこだけ残指摘を落とす）
+#   (C-7) **残指摘の重複除去キーが `claim` を切り詰めないこと**。先頭 N 文字での照合は、先頭が
+#         同じで後半が異なる別々の残指摘を1件へ潰し、報告から消す（要素が消える＝失敗が危険側）。
+#         特定の数値（`64`）だけを禁じると `先頭128文字` で復活するため、**桁数によらない
+#         正規表現**で止める。あわせて「全文を使う」規定の存在も見る（禁止規定が正本と掃引側の
+#         両方から同時に消える対称削除は、片側だけを見る否定検査では素通りするため）。
+#         Step 3 の「重複検証の回避」だけは切り詰めを**意図的に残している**——そちらは誤って
+#         一致した側も `needs_human_judgment` として残指摘に残る（失敗が安全側に倒れる）ため。
+#         例外は行番号を正本から算出して1行に限定し、他の行への切り詰めの混入を止める。
 #
 # 消費側の登録表（新しい消費側を足すときは、この表と CONSUMERS 配列の両方に追加する）:
 #
@@ -314,6 +322,43 @@ EXPECTED_HOLDERS="$(printf '%s\n' "$CANON_FILE" "${CONSUMERS[@]}" | sort -u)"
 ACTUAL_HOLDERS="$(grep -rlF -- 'residualFindings' skills agents | sort -u)"
 assert_eq "(C-6) residualFindings を持つ実行時ファイルの集合が登録表と一致する" \
   "$EXPECTED_HOLDERS" "$ACTUAL_HOLDERS"
+
+echo ""
+echo "=== (C-7) 残指摘の重複除去キーが claim を切り詰めない（別々の残指摘が1件に潰れない） ==="
+
+# 抽出の自己検査: Step 5 の `residualFindings` 定義行がちょうど1本在ること。0本のまま
+# 「切り詰めが見つからなかった」を pass にしない。
+RESIDUAL_DEF="$(grep -F -- '- `residualFindings` = ' "$CANON_FILE")"
+assert_eq "(C-7) Step 5 の residualFindings 定義行が正本にちょうど1本" "1" \
+  "$(printf '%s' "$RESIDUAL_DEF" | grep -c .)"
+
+# 定義行そのものに桁数によらない切り詰めが無いこと（`先頭64文字` を `先頭128文字` へ
+# 書き換えた復活も止める）。
+RESIDUAL_TRUNC="false"
+printf '%s\n' "$RESIDUAL_DEF" | grep -qE '先頭[0-9]+文字' && RESIDUAL_TRUNC="true"
+assert_eq "(C-7) 残指摘の重複除去に文字数での切り詰めが無い" "false" "$RESIDUAL_TRUNC"
+
+# 「全文を使う」規定の存在（可変部を含まない一文まるごと）。掃引モード側
+# （skills/self-review/references/defect-sweep.md）と同一の文言を使い、両側から同時に
+# 消える対称削除を、両側の存在検査で受け止める。
+assert_file_contains "(C-7) 残指摘の重複除去が claim の全文を使うと明記している" "$CANON_FILE" \
+  '**claim の全文を使い、先頭 N 文字への切り詰めをしない**'
+
+# 例外の所在: 切り詰めが残ってよいのは Step 3 の「重複検証の回避」の1行だけ。行番号は
+# 正本から算出し、テストに数値を置かない（正本を動かすとテストだけが古い行を守り続けるため）。
+DEDUP_AVOID_LINE="$(grep -nF -- '**重複検証の回避**:' "$CANON_FILE" | cut -d: -f1)"
+assert_eq "(C-7) 「重複検証の回避」の見出し行が正本にちょうど1本" "1" \
+  "$(printf '%s' "$DEDUP_AVOID_LINE" | grep -c .)"
+UNEXPECTED_TRUNC=""
+for ln in $(grep -nE '先頭[0-9]+文字' "$CANON_FILE" | cut -d: -f1); do
+  [ "$ln" = "$DEDUP_AVOID_LINE" ] || UNEXPECTED_TRUNC="${UNEXPECTED_TRUNC}${ln} "
+done
+assert_eq "(C-7) 正本で文字数の切り詰めが「重複検証の回避」以外の行に無い" "" \
+  "$(trim "$UNEXPECTED_TRUNC")"
+
+# 例外が安全側である根拠（この一文が消えると、切り詰めを他所へ横展開してよい読みが復活する）。
+assert_file_contains "(C-7) 例外が安全側に倒れる根拠と横展開の禁止が正本に在る" "$CANON_FILE" \
+  '要素が報告から消える重複除去（Step 5 の `residualFindings`）へこの切り詰めを持ち込まないこと。'
 
 echo ""
 echo "=== summary === pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"
