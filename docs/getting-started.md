@@ -75,16 +75,25 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 ランチャーは実行のたびにインストール済みプラグインの現行版を解決するため、プラグインを更新してもコピーを置き直す必要はありません。詳細・トラブルシューティングは [スクリプトランチャー](./script-launcher.md) を参照してください。
 
-### Codex shadow reviewを使う場合
+### Codexへの委譲（`/codex-review` / `/codex-task`）を使う場合
 
-`/codex-review` には、認証済みのCodex CLIと`jq`が必要です。
+`/codex-review` と `/codex-task` には、認証済みのCodex CLIと`jq`が必要です。
 
 ```bash
 codex --version
 jq --version
 ```
 
-Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。`codex` / `jq` / 同梱schemaの未導入は実行前提エラー（`result: "failed"`、exit 69）、Codexの実行失敗・認証失敗はレビュー失敗（`result: "failed"`、`errors[].code: "codex_failed"`、exit 4）、laneの部分失敗は`result: "partial"`（exit 3）として区別されます。いずれもレビュー完了・指摘ゼロとしては扱われず、独立に報告されます。
+Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。`codex` / `jq` / 同梱schemaの未導入は実行前提エラー（`result: "failed"`、exit 69）、Codexの実行失敗・認証失敗は実行失敗（`result: "failed"`、`errors[].code: "codex_failed"`、exit 4）、部分失敗は`result: "partial"`（exit 3）として区別されます。いずれも完了・指摘ゼロとしては扱われず、独立に報告されます。
+
+`/codex-task` は調査・雑務の委譲用で、モードでsandboxが切り替わります。
+
+| モード | sandbox | 用途 |
+|---|---|---|
+| `investigate`（既定） | read-only | ログ・差分・大量ファイルの掃引と結論抽出、呼び出し元の追跡、依存・設定の棚卸し |
+| `chore` | workspace-write | 対象リポジトリ内で完結する定型生成・機械的な一括修正 |
+
+`chore` は**commit・push・PR作成を行わず、成果を作業ツリーに残します**。commit以降は呼び出し元（あなた、または `/commit`）が判断します。`chore` は実行前に作業ツリーが清浄であること（`git status --porcelain` が空）を前提とします——実行前から変更のあるパスは、Codexの変更申告との突き合わせから外れるためです。
 
 ---
 
@@ -151,6 +160,7 @@ Codex CLIのmodel・認証・利用上限は実行者環境の設定を使いま
 /quality-check → 品質ゲートチェック
 /para-impl 123 → Issue #123 の実装を開始
 /codex-review 123 → 現在の差分をCodexのread-only capsuleでshadow review
+/codex-task investigate この設定値の消費者を全部洗い出して → Codexへ調査を委譲し結論だけ受け取る
 ```
 
 ---
