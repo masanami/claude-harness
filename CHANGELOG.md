@@ -17,7 +17,9 @@
 - **`/codex-task` を追加。** 区切られた1タスク（調査・雑務）を Codex へ委譲し、**結論だけ**を JSON で受け取る汎用の委譲経路。用途別スキルを増やすのではなく**汎用1本＋共通ランナー**の形をとる（スキルの `description` は全スキル分が常時ロードされるため、スキルを増やすこと自体が固定のコンテキスト費用になり、削減という目的と逆行する）。節約の実体は出力契約にある——入力は本文でなくパスで渡し、stdout は JSON 1 個に限定し、exit code で complete / partial / failed を分け、非信頼データを shell へ連結しない。
 - 分ける軸は**権限（sandbox）**。`investigate` は `codex exec --sandbox read-only`、`chore` は `--sandbox workspace-write`。`danger-full-access` は使わない。`--mode` 未指定は `investigate` へ倒すが、**未知の値は倒さず拒否**する（綴り違いを黙って広い権限へ寄せないため）。
 - **`chore` は commit・push・PR 作成を行わず、成果を作業ツリーに残す。** 「本番に影響する不可逆な操作の承認ゲートは委譲先へ渡さない」という規律を、ランナー側で機械的に担保する。commit を検出した場合は `commit_detected` を付けて `partial` に落とす。
-- `codex-task-runner` を追加。Codex の自己申告を信用せず、schema 適合（required / 型 / enum / 追加 field 禁止）を local `jq` でも検証し、`investigate` での変更申告（`failed`）、空の `complete`（`failed`）、作業ツリーと変更申告の食い違い（`changes_mismatch` → `partial`）、commit の発生（`commit_detected` → `partial`）、出力サイズ予算超過（`output_budget_exceeded` → `partial`。結果は破棄しない）を決定的に検査する。仕様の正本は [`scripts/specs/codex-task-runner.md`](scripts/specs/codex-task-runner.md)。
+- `codex-task-runner` を追加。Codex の自己申告を信用せず、schema 適合（required / 型 / enum / 追加 field 禁止）を local `jq` でも検証し、`investigate` での変更申告（`failed`）、空の `complete`（`failed`）、作業ツリーと変更申告の食い違い（`changes_mismatch` → `partial`）、commit の発生（`commit_detected` → `partial`）、出力サイズ予算超過（`output_budget_exceeded` → `partial`。結果は破棄しない）を決定的に検査する。作業ツリーの照合には ignored ファイルも含める（`.gitignore` 対象パスへの書き込みが照合を素通りしないため）。仕様の正本は [`scripts/specs/codex-task-runner.md`](scripts/specs/codex-task-runner.md)。
+- **sandbox の実効権限を起動引数で固定する。** `workspace-write` の権限は利用者の `~/.codex/config.toml` から読まれるため、`sandbox_workspace_write.network_access=false` と `sandbox_workspace_write.writable_roots=[]` を `-c` で固定し、外部接続と対象リポジトリ外への書き込みを禁じる。`chore` の安全性がローカル設定次第で崩れる状態にしない。
+- `--output-schema` は**同梱 schema と互換な schema 専用**。制約を狭める差し替え（`pattern` / `minLength` の追加、enum の絞り込み）は通し、契約を広げる差し替え（必須 field の増減・追加 field の許可・enum の拡張）は**起動前に exit 64 で拒否**する。固定契約の検査は変えないため、広げた schema をそのまま実行すると原因不明の `invalid_task_contract` になる。
 
 ### 利用者が取る操作
 

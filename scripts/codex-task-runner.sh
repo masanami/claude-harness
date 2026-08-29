@@ -93,9 +93,17 @@ read_codex_diagnostic() {
 # 非ASCIIパスのクォートを避けるため core.quotePath=false、未追跡ディレクトリを
 # 1行に畳まないため -uall を使う（畳まれるとファイル単位の申告と比較できない）。
 # rename は宛先側を採用する。
+#
+# `--ignored=matching` が要る理由: 既定では ignored ファイルが出力されないため、
+# `.env` のような .gitignore 対象パスへの書き込みが照合を素通りして complete になる。
+# `matching` を選ぶのは、`traditional` が `-uall` と組み合わさると ignored ディレクトリを
+# ファイル単位へ展開してしまうため（実測: 600ファイルの node_modules 相当で 600 行）。
+# それだけの未申告パスが出れば正当な作業でも常時 changes_mismatch になり、検査自体が
+# 無意味になる。`matching` は ignore パターンに一致したディレクトリを1エントリへ畳むので
+# （同実測で 1 行）、巨大な ignored ツリーを差分に載せずに ignored ファイルの作成を捕まえる。
 working_tree_paths() {
   local repo="$1"
-  git -C "$repo" -c core.quotePath=false status --porcelain -uall 2>/dev/null \
+  git -C "$repo" -c core.quotePath=false status --porcelain -uall --ignored=matching 2>/dev/null \
     | sed -e 's/^...//' -e 's/^.* -> //' -e 's/^"//' -e 's/"$//' -e 's|^\./||' -e 's|/$||' \
     | sed -e '/^$/d' \
     | sort -u
@@ -120,7 +128,7 @@ validate_task() {
       and has("question") and has("answer") and has("evidence")
       and (.question | type == "string" and length > 0)
       and (.answer | type == "string" and length > 0)
-      and (.evidence | type == "string");
+      and (.evidence | type == "string" and length > 0);
     def valid_change:
       type == "object"
       and only(["path", "action", "reason"])
@@ -146,6 +154,49 @@ validate_task() {
     and (if $mode == "investigate" then (.changes | length) == 0 else true end)
     and (if .status == "complete" then ((.answers | length) > 0 or (.changes | length) > 0) else true end)
   ' "$final_file" >/dev/null 2>&1
+}
+
+# `--output-schema` で渡された schema が、固定のタスク契約と互換かを起動前に検査する。
+#
+# validate_task が検査する契約は固定であり、差し替え schema が必須fieldを増やすと、
+# Codex がその schema に適合したJSONを返しても invalid_task_contract で拒否される。
+# 任意 schema の汎用バリデータをシェルで実装する道は取らない（決定的検査の正本が2つに
+# 割れる）。代わりに `--output-schema` を「固定契約と互換な schema 専用」と定め、
+# 契約を**広げる**差し替えを起動前に弾く。**狭める**方向（pattern・minLength の追加、
+# enum の絞り込み）は互換として通すので、差し替えの用途は残る。
+validate_output_schema() {
+  local schema_file="$1"
+
+  jq -e '
+    def subset($a; $b): (($a - $b) | length) == 0;
+    def sameset($a; $b): subset($a; $b) and subset($b; $a);
+    def keyset($o): ($o // {} | if type == "object" then keys else [] end);
+    ["status", "summary", "answers", "changes", "assumptions", "unverified", "followups"] as $top
+    | ["question", "answer", "evidence"] as $answer_keys
+    | ["path", "action", "reason"] as $change_keys
+    | . as $s
+    | ($s | type == "object")
+      and ($s.type == "object")
+      and ($s.additionalProperties == false)
+      and sameset(($s.required // []); $top)
+      and subset(keyset($s.properties); $top)
+      and (($s.properties.status.enum // null) != null
+           and subset($s.properties.status.enum; ["complete", "partial", "failed"]))
+      and (($s.properties.answers.items) as $a
+           | ($a | type == "object")
+             and ($a.additionalProperties == false)
+             and sameset(($a.required // []); $answer_keys)
+             and subset(keyset($a.properties); $answer_keys))
+      and (($s.properties.changes.items) as $c
+           | ($c | type == "object")
+             and ($c.additionalProperties == false)
+             and sameset(($c.required // []); $change_keys)
+             and subset(keyset($c.properties); $change_keys)
+             and (($c.properties.action.enum // null) != null
+                  and subset($c.properties.action.enum; ["created", "modified", "deleted"])))
+      and (["assumptions", "unverified", "followups"]
+           | all(. as $k | ($s.properties[$k].type // null) == "array"))
+  ' "$schema_file" >/dev/null 2>&1
 }
 
 # モード別の権限規則。bash 3.2 は `$( )` の中に直接書いた heredoc を解析できないため、
@@ -305,6 +356,7 @@ main() {
     normalized_inputs+=("$(cd "$(dirname "$input")" 2>/dev/null && pwd)/$(basename "$input")")
   done
 
+  local schema_overridden="no"
   if [ -z "$schema" ]; then
     schema="$CODEX_TASK_DEFAULT_SCHEMA"
   elif [ ! -f "$schema" ]; then
@@ -312,11 +364,19 @@ main() {
     exit "$CODEX_TASK_EX_NOINPUT"
   else
     schema="$(cd "$(dirname "$schema")" 2>/dev/null && pwd)/$(basename "$schema")"
+    schema_overridden="yes"
   fi
 
   if ! command -v jq >/dev/null 2>&1; then
     printf '%s\n' '{"result":"failed","mode":"'"$mode"'","task":null,"metrics":{"duration_seconds":0,"codex_exit_code":null,"usage":null,"capsule_calls":1,"retry_count":0,"schema_valid":false,"output_bytes":0,"terminal_failure":false},"errors":[{"code":"jq_unavailable","message":"jq is required"}]}'
     exit "$CODEX_TASK_EX_UNAVAILABLE"
+  fi
+  # jq が要るためここまで遅らせるが、判定自体は引数の妥当性なので exit 64 で返す。
+  if [ "$schema_overridden" = "yes" ] && ! validate_output_schema "$schema"; then
+    task_err "--output-schema is not compatible with the fixed task contract: $schema"
+    task_err "it may only tighten the bundled schema (add pattern/minLength, narrow enums);"
+    task_err "adding or removing required fields, allowing extra properties, or widening enums is rejected"
+    exit "$CODEX_TASK_EX_USAGE"
   fi
   if ! command -v codex >/dev/null 2>&1; then
     emit_failure "codex_unavailable" "codex CLI is not available in PATH" "$mode" 0 null
@@ -356,7 +416,17 @@ main() {
     sandbox="workspace-write"
   fi
 
+  # sandbox の実効権限は利用者の ~/.codex/config.toml から読まれる。chore の安全性は
+  # 「workspace-write が対象repoの外を触らない」という前提に全面的に乗っているため、
+  # その前提をローカル設定が黙って緩められないよう起動引数で固定する。
+  # network_access=false で外部接続を、writable_roots=[] で対象repo外への書き込みを禁じる
+  # （writable_roots は既定の書き込み先＝作業ディレクトリへ「追加する」設定なので、
+  # 空にしても対象repo自身への書き込みは残る）。
+  # mode によらず常に固定する: read-only では効果を持たないが、モード依存の分岐を作らない
+  # ことで、将来 mode が増えたときに固定が外れる経路を残さない。
   local codex_args=(exec --sandbox "$sandbox" -C "$repo" --output-schema "$schema" --json -o "$final_file")
+  codex_args+=(--config "sandbox_workspace_write.network_access=false")
+  codex_args+=(--config "sandbox_workspace_write.writable_roots=[]")
   if [ -n "$model" ]; then
     codex_args+=(--model "$model")
   fi
