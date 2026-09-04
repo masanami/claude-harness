@@ -60,3 +60,4 @@
 
 - 特定スクリプトが参照する設定の正本（例: sensitive パスパターン）は `scripts/config/` 配下に置く
   - `scripts/config/sensitive-paths.txt`: `pr-merge-preflight.sh` の risk 判定（`touches_sensitive`）が参照する glob パターン一覧。1行1パターン、`#` はコメント行。欠損時の挙動は `scripts/specs/pr-merge-preflight.md` を参照
+  - `scripts/config/command-allowlist.txt`: `quality-check-runner.sh` / `mutation-run.sh` が実行してよいコマンドの一覧（argv 先頭トークン列の前置一致）。**欠損時は fail-closed**（何も実行しない）。これらのランナーは受け取ったコマンドを**シェルへ渡さず** argv として直接実行するため、`Bash(claude-harness-run:*)` の allow が利用側 `settings.json` の deny を迂回する経路にならない（Issue #223）。判定ロジックの実体は `scripts/lib/command-spec.sh`、背景と契約は `docs/script-launcher.md`「6. このランチャーを allow することの意味」

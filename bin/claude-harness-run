@@ -28,6 +28,22 @@ chr_err() {
   printf '%s: %s\n' "$CHR_SELF_NAME" "$*" >&2
 }
 
+# --env で渡すことを禁じる環境変数（Issue #223）。
+# 対象スクリプト側で実行系を allowlist に限っても、**実行系の解決や暗黙のコード読み込みを
+# 差し替えられる環境変数**を渡せると、allowlist にある名前（npm 等）で別のバイナリ/コードを
+# 実行できてしまい、allowlist の意味が消える。ランチャー自身の解決先を差し替える変数も同様。
+# 「利便性のために1つだけ通す」を作らないため、完全一致の閉じた集合で拒否する。
+CHR_ENV_DENYLIST="PATH BASH_ENV ENV SHELLOPTS BASHOPTS IFS LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH NODE_OPTIONS RUBYOPT PERL5OPT PYTHONSTARTUP GIT_SSH_COMMAND GIT_EXTERNAL_DIFF CLAUDE_HARNESS_ROOT CLAUDE_CONFIG_DIR"
+
+# 禁止された環境変数名なら 0 を返す。
+chr_env_denied() {
+  local name="$1" denied
+  for denied in $CHR_ENV_DENYLIST; do
+    [ "$name" = "$denied" ] && return 0
+  done
+  return 1
+}
+
 chr_usage() {
   cat >&2 <<EOF
 Usage: ${CHR_SELF_NAME} [--env KEY=VALUE]... <target> [args...]
@@ -47,6 +63,9 @@ Usage: ${CHR_SELF_NAME} [--env KEY=VALUE]... <target> [args...]
                    コマンド先頭が ${CHR_SELF_NAME} でなくなる env 前置形
                    （FOO=bar ${CHR_SELF_NAME} ...）は allowlist にマッチしないため、
                    環境変数はこのフラグ経由で渡すこと。
+                   ただし実行系・プラグインルートの解決を差し替える変数
+                   （PATH / BASH_ENV / NODE_OPTIONS / LD_PRELOAD / CLAUDE_HARNESS_ROOT 等）
+                   は拒否する。
   --plugin-root    解決したプラグインルートの絶対パスを表示して終了
   --list           実行可能な target 一覧を表示して終了
   -h, --help       このヘルプを表示して終了
@@ -222,6 +241,11 @@ main() {
             exit "$CHR_EX_USAGE"
             ;;
         esac
+        if chr_env_denied "${2%%=*}"; then
+          chr_err "${2%%=*} may not be set via --env (it changes how commands or the plugin root are resolved)"
+          chr_err "  denied: ${CHR_ENV_DENYLIST}"
+          exit "$CHR_EX_USAGE"
+        fi
         env_assignments+=("$2")
         shift 2
         ;;

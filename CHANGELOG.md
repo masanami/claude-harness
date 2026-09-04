@@ -8,6 +8,25 @@
 
 ---
 
+## 未リリース
+
+### 破壊的変更（次のリリースはメジャーを上げる）
+
+- **`quality-check-runner` / `mutation-run` に渡すコマンドをシェル解釈しなくなった（Issue #223・セキュリティ）。** `Bash(claude-harness-run:*)` を allow すると、**その `settings.json` の `deny` を迂回して任意コマンドを実行できた**。両スクリプトが受け取ったコマンド文字列を `bash -c` に渡しており、permission マッチャは外側の `claude-harness-run …` しか見ないため、`Bash(rm -r:*)` / `Bash(git push --force:*)` / `Bash(sudo:*)` が素通りしていた。`doctor` の `settings_launcher_allow` はこの allow を是正として提示するため、**doctor に従うほど deny が無効化される**状態だった。
+  - コマンドは空白で argv に分解して**直接実行**する。シェル構文（`;` `&&` `|` `>` `$(…)` `` ` `` クォート グロブ）を含む指定は、**どのゲートも実行せずに exit 4** で拒否する（リテラルとして黙って実行しない）。
+  - **シェルを外すだけでは塞がらない**（`rm -rf …` を argv として実行できれば迂回は成立する）ため、実行してよいコマンドを [`scripts/config/command-allowlist.txt`](scripts/config/command-allowlist.txt) に**閉じた一覧**として列挙し、argv の先頭トークン列が前置一致しないものは同じく exit 4 で拒否する。一覧の拡張路は**同梱ファイルの編集だけ**（環境変数・CLI フラグ・利用側リポジトリのファイルからは差し替えられない。差し替え可能にすれば、それ自体が任意文字列を通す別経路になるため）。
+  - ランチャーの `--env` で、実行系やプラグインルートの解決を変える環境変数（`PATH` / `BASH_ENV` / `NODE_OPTIONS` / `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` / `CLAUDE_HARNESS_ROOT` 等）を渡せなくなった（exit 64）。通ると一覧にある名前で別のバイナリを実行できてしまうため。
+  - この allow が**何を許し・何を許さないか**は [`docs/script-launcher.md`](docs/script-launcher.md)「6. このランチャーを allow することの意味」が正本。
+
+### 利用者が取る操作
+
+- **CLAUDE.md の品質コマンドが単一コマンドになっているか確認する。** `npm run lint && npm run lint:css` のようにシェル構文で繋いだコマンドや、パイプ・リダイレクトを含むコマンドは渡せなくなった。**プロジェクト側の1コマンド**（`package.json` の `scripts` / Makefile のターゲット等）にまとめ、それを渡す。`/quality-check` は exit 4 を品質 fail ではなく呼び出し方の誤りとして扱い、書き直しを促す。
+- **同梱 allowlist に無いツールチェインを使っている場合**、そのゲートは実行できない。`make` / `just` などのタスクランナー経由（プロジェクト自身の設定ファイルで定義する形）へ寄せるか、claude-harness へツール追加の PR を出す。**黙って `pass` にはならない**（実行されないゲートは `skip` として現れ、1つも実行されなければ `result: "skip"` / exit 3）。
+- **環境変数の前置形（`FOO=bar npm test`）は使えない。** `claude-harness-run --env FOO=bar …` を使う。
+- **`.claude/settings.json` に `Bash(bash:*)` などの汎用実行系 allow がある場合、deny による統治はそもそも成立していない。** 本修正はランチャー経由の迂回を塞ぐものであり、汎用実行系の allow はそれとは別に見直す必要がある（`/init-project` が生成する既定の allow には、スクリプトのフォールバック実行形のために現在 `Bash(bash:*)` が含まれる）。
+
+---
+
 ## 4.3.0
 
 ### 追加

@@ -279,7 +279,7 @@ assert_eq "--plugin-root は解決したルートを stdout に出す" "$PLUGIN_
 echo "=== test: 実プラグイン（このリポジトリ）に対する疎通 ==="
 # =============================================================================
 
-OUT="$(CLAUDE_HARNESS_ROOT="$REPO_ROOT" "$LAUNCHER" quality-check-runner --lint "exit 0" 2>/dev/null)"
+OUT="$(CLAUDE_HARNESS_ROOT="$REPO_ROOT" "$LAUNCHER" quality-check-runner --lint "true" 2>/dev/null)"
 assert_eq "実スクリプト（quality-check-runner）をランチャー経由で実行できる" \
   "pass" "$(printf '%s' "$OUT" | jq -r '.result')"
 

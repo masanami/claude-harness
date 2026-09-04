@@ -168,7 +168,7 @@ claude-harness-run --plugin-root | --list | --help
 
 | コード | 意味 |
 |---|---|
-| 64 | 引数不正（未知フラグ・target 未指定・絶対パス／`..` を含む target・`--env` の形式不正） |
+| 64 | 引数不正（未知フラグ・target 未指定・絶対パス／`..` を含む target・`--env` の形式不正・`--env` で禁止された変数名〈§6〉） |
 | 66 | 対象スクリプトが見つからない |
 | 69 | プラグインルートを解決できない／実行系（`bash`・`node`）が PATH に無い |
 
@@ -201,7 +201,34 @@ bash "<解決済みプラグインルート>/scripts/xxx.sh" <引数>
 
 ---
 
-## 6. トラブルシューティング
+## 6. このランチャーを allow することの意味
+
+`Bash(claude-harness-run:*)` を allow に入れると、**その1行が settings.json の `deny` / `ask` より優先されるわけではない**が、permission マッチャが見るのは外側の `claude-harness-run …` だけである。つまり「ランチャーの向こう側で何が実行されるか」は permission の統治対象にならない。したがって**ランチャー配下のスクリプトが任意コマンドを実行できてはならない**。
+
+以前はこれが成立していなかった（Issue #223）。`quality-check-runner` と `mutation-run` は受け取ったコマンド文字列を `bash -c` に渡していたため、`claude-harness-run quality-check-runner --lint "<任意のコマンド>"` で `Bash(rm -r:*)` / `Bash(git push --force:*)` / `Bash(sudo:*)` といった deny を素通りできた。`doctor` の `settings_launcher_allow` はこの allow を是正として提示するため、**doctor に従うほど deny が無効化される**状態だった。
+
+### 現在の契約
+
+- **コマンド文字列をシェルへ渡さない。** `--lint` / `--typecheck` / `--test` / `--auto-fix`（`quality-check-runner`）と `test_command`（`mutation-run`）は、空白で argv に分解して**直接実行**する。`;` `&&` `|` `>` `$(…)` `` ` `` クォート グロブ といったシェル構文は解釈されず、**含まれていればコマンドを1つも実行せずに exit 4 で拒否**する（黙って別物をリテラルとして実行しない）
+- **実行してよいコマンドは同梱の閉じた一覧に限る。** argv の先頭トークン列が [`scripts/config/command-allowlist.txt`](../scripts/config/command-allowlist.txt) のエントリに前置一致しなければ拒否する。シェルを外すだけでは不十分で、`rm -rf …` を argv として実行できれば迂回は成立するため、**統制の主体はこの一覧**である
+- **一覧の拡張路は同梱ファイルの編集だけ。** 環境変数・CLI フラグ・利用側リポジトリのファイルからは差し替えられない（差し替えられるなら、それが「任意文字列を通す別経路」になる）
+- **`--env` で実行系の解決を差し替えられない。** `PATH` / `BASH_ENV` / `NODE_OPTIONS` / `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` / `CLAUDE_HARNESS_ROOT` など、実行系やプラグインルートの解決を変える変数は `--env` で拒否する（exit 64）。これが通ると、一覧にある名前（`npm` 等）で別のバイナリを実行できてしまう
+
+### この allow が与える権限（正直な範囲）
+
+**与える**: 対象プロジェクト自身の設定に書かれた品質手続きを起動する権限。`npm run lint` / `make test` / `cargo clippy` などが、**そのリポジトリの `package.json` / `Makefile` / `Cargo.toml` が定めるとおりに**動く。それらの中身が何をするかはリポジトリの内容が決めるものであり、呼び出し側が渡す文字列が決めるものではない。
+
+**与えない**: 一覧に無いコマンドの実行。`rm` / `mv` / `chmod` / `curl` / `wget` / `ssh` / `git` / `sudo` / `bash` / `sh` / `env` / `xargs` はランチャー経由では実行できないため、これらに対する `deny` は**引き続き有効**である。ネットワークからパッケージを取得して実行する形（素の `npx` / `bunx` / `uvx` / `pnpm dlx`）も同様に実行できない（`npx --no` 等、ローカル導入済みのみを実行する形だけを許可している）。
+
+### 残る限界（allow する前に知っておくこと）
+
+- **プロジェクト自身の設定は信頼している。** `package.json` の `scripts.lint` や `Makefile` の中身は、書けば実行される。リポジトリへ書き込む権限（Edit / Write）とこの allow は別々に統治する必要がある
+- **`Bash(bash:*)` など汎用実行系の allow が別途あると、この統治は成立しない。** その場合 deny は最初から迂回可能であり、ランチャーの有無とは無関係である。`/init-project` が生成する既定の allow には現在 `Bash(bash:*)` が含まれる（スクリプトのフォールバック実行形〈§5〉のため）。**deny による統治を効かせたいプロジェクトでは、この行を外すかスコープを絞ることを検討する**
+- **`codex-review-runner` / `codex-task-runner` は別の性質を持つ。** これらは Codex エージェントを起動する経路であり、`chore` モードは対象リポジトリへの書き込みを伴う（ネットワークと書き込み範囲は起動引数で固定しているが、「決められた品質コマンドを起動するだけ」ではない）。ランチャーを allow するとこの経路も使える
+
+---
+
+## 7. トラブルシューティング
 
 | 症状 | 原因と対処 |
 |---|---|

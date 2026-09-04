@@ -11,14 +11,23 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
   exit 1
 }
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/command-spec.sh" || {
+  echo "Error: failed to source lib/command-spec.sh" >&2
+  exit 1
+}
+
 print_usage() {
   local prog
   prog="$(basename "$0")"
   cat >&2 <<EOF
 Usage: ${prog} <test_command> <mutated_file_1> [<mutated_file_2> ...]
 
-  test_command      Shell command string (run via bash -c) that exercises the
-                     already-mutated working tree and exits non-zero on failure.
+  test_command      Command that exercises the already-mutated working tree and
+                     exits non-zero on failure. It is executed **without a shell**:
+                     shell syntax (; && | > \$() \` quotes globs) is rejected, and the
+                     leading tokens must match scripts/config/command-allowlist.txt.
+                     A rejected command exits 4 without running anything (Issue #223).
   mutated_file_*     One or more file paths already edited (mutation injected)
                      by the caller before invoking this script. Used both to
                      scope the pre-flight dirty-tree check and to restore
@@ -144,9 +153,18 @@ CURRENT_TEST_PID=""
 run_test_command() {
   local cmd="$1"
   echo "--- test: ${cmd} ---" >&2
+  # シェルを介さず argv を直接実行する（Issue #223）。検証は main() で済ませてあり、
+  # ここへ到達する時点で合格している（再パース失敗時は実行せず 126 = fail-closed）。
+  if ! cmdspec_parse "$cmd"; then
+    LAST_OUTPUT="rejected command: ${CMDSPEC_ERROR}"
+    LAST_EXIT_CODE=126
+    printf '%s\n' "$LAST_OUTPUT" >&2
+    echo "--- test exit: ${LAST_EXIT_CODE} ---" >&2
+    return
+  fi
   local tmp_out
   tmp_out="$(mktemp)" || { LAST_OUTPUT=""; LAST_EXIT_CODE=1; return; }
-  bash -c "$cmd" >"$tmp_out" 2>&1 &
+  "${CMDSPEC_ARGV[@]}" >"$tmp_out" 2>&1 &
   CURRENT_TEST_PID=$!
   wait "$CURRENT_TEST_PID"
   LAST_EXIT_CODE=$?
@@ -202,6 +220,15 @@ main() {
   trap restore_on_exit EXIT
   trap 'terminate_on_signal 143' TERM
   trap 'terminate_on_signal 130' INT
+
+  # test_command の検証（Issue #223）。テスト実行より前に行い、拒否された場合は
+  # 何も実行せず exit 4 で終える（EXIT トラップは登録済みのため、注入済みの変異は
+  # 安全網で復元される）。0/1/2/130/143 のいずれとも重ならない値を使い、
+  # 呼び出し側が「テストが落ちた」と誤読できないようにする。
+  if ! cmdspec_parse "$test_command"; then
+    cmdspec_reject_message "test_command" "$test_command"
+    exit 4
+  fi
 
   if ! check_jq; then
     exit 2

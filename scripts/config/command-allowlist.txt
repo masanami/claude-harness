@@ -1,0 +1,199 @@
+# command-allowlist.txt
+# quality-check-runner.sh / mutation-run.sh が実行してよいコマンドの正本（Issue #223）。
+#
+# ■ これは何を守るためのものか
+# 両ランナーは呼び出し側（LLM）から「lint / 型チェック / テストのコマンド」を受け取る。
+# 以前はその文字列を `bash -c` に渡していたため、`Bash(claude-harness-run:*)` を allow した
+# 利用側では、**その settings.json の deny を迂回して任意コマンドを実行できた**
+# （permission マッチャは外側の `claude-harness-run ...` しか見ないため）。
+# 現在の実装はシェルを介さず argv を直接実行するが、**それだけでは不十分**である——
+# シェルを外しても `rm -rf ...` を argv として実行できてしまえば迂回は成立する。
+# したがって「何を実行してよいか」を閉じた集合として列挙するのが本ファイルの役割であり、
+# ここが実質的な統制点になる。
+#
+# ■ 書式
+#   1行1エントリ。エントリは **argv の先頭トークン列（前置）** として照合する。
+#     npm run        -> `npm run lint`      ✅ / `npm exec rm`        ❌
+#     cargo          -> `cargo clippy ...`  ✅
+#     python3 -m     -> `python3 -m pytest` ✅ / `python3 -c ...`     ❌
+#   '#' 以降はコメント。空行は無視する（空エントリは何にも一致しない）。
+#
+# ■ 追加するには
+# **このファイル（プラグイン同梱）を編集する以外の拡張路は用意していない**。
+# 環境変数・CLI フラグ・利用側リポジトリのファイルから差し替えられるようにすると、
+# それ自体が「任意文字列を通す別経路」になり、本ファイルの目的を失う。
+# 未対応のツールチェインは claude-harness へ PR を出すか、`make` / `just` などの
+# タスクランナー経由（プロジェクト自身の設定ファイルで定義する形）にする。
+#
+# ■ ここに載せる基準（と、載せないもの）
+# 載せるのは「**プロジェクト自身の設定（package.json / Makefile / Cargo.toml 等）に
+# 書かれた手続きを起動する**ツール」に限る。それらが何を実行するかは対象リポジトリの
+# 中身が決めるものであり、呼び出し側の文字列が決めるものではない（この境界の意味は
+# docs/script-launcher.md 「6. このランチャーを allow することの意味」を参照）。
+# 次のものは**意図的に載せていない**:
+#   - シェル・汎用実行系: bash / sh / zsh / env / xargs / find -exec / eval 相当
+#   - 汎用ファイル操作・ネットワーク: rm / mv / cp / chmod / curl / wget / ssh / scp
+#   - VCS・特権: git / sudo / doas   （deny の典型的な対象そのもの）
+#   - ネットワークから取得して実行するパッケージランナー: 素の npx / bunx / uvx /
+#     `pnpm dlx` / `yarn dlx`（`npx rimraf ...` のように、公開パッケージ経由で
+#     deny 対象と同じ操作に到達できるため）。npx はローカル導入済みのみを実行する
+#     `--no` / `--no-install` / `--offline` 形だけを許可する
+#
+# ■ インタプリタの扱い（例外として明示する）
+# `node` はプロジェクトのテストファイルを直接起動する形（`node --test`・`node x.test.js`）が
+# 正当な品質ゲートとして広く使われるため許可する。`ruby -e` / `perl -e` のように、
+# 引数で受け取ったコードを実行する形が主用途のものは載せない。`python` は `-m <module>` と
+# `manage.py`（Django）の形だけを許可する。
+# なお `-e` / `-c` に意味のあるコードを渡すには、クォート・括弧・`$`・バッククォート・`;` の
+# いずれかがほぼ必ず要る。これらはシェル解釈を要求する文字として argv 変換の段階で拒否される
+# ため、この経路は実質的に塞がっている（**多層防御としての観測であり、統制の主体は
+# 本ファイルの列挙である**——ここに載っていないものは実行されない）。
+
+# --- 疎通確認・no-op（引数を出力するだけ／終了コードを返すだけで副作用が無い） ---
+true
+false
+echo
+printf
+
+# --- JavaScript / TypeScript ---
+npm run
+npm test
+pnpm run
+pnpm test
+yarn run
+yarn test
+bun run
+bun test
+deno task
+deno test
+deno lint
+deno check
+deno fmt
+node
+npx --no
+npx --no-install
+npx --offline
+tsc
+eslint
+oxlint
+biome
+prettier
+stylelint
+vitest
+jest
+mocha
+ava
+playwright
+cypress
+tsd
+knip
+madge
+depcheck
+
+# --- Python ---
+python -m
+python3 -m
+python manage.py
+python3 manage.py
+uv run
+uvx --offline
+poetry run
+pipenv run
+hatch run
+tox
+nox
+pytest
+ruff
+mypy
+pyright
+flake8
+pylint
+black
+isort
+bandit
+coverage
+
+# --- Rust ---
+cargo
+
+# --- Go ---
+go
+gofmt
+goimports
+golangci-lint
+staticcheck
+
+# --- Ruby ---
+bundle exec
+bundler exec
+rake
+rspec
+rubocop
+standardrb
+srb
+
+# --- JVM / Kotlin / Scala ---
+mvn
+./mvnw
+gradle
+./gradlew
+sbt
+ktlint
+detekt
+
+# --- .NET / Swift / Dart ---
+dotnet
+swift
+swiftlint
+flutter
+dart
+melos
+
+# --- PHP ---
+composer run
+composer test
+./vendor/bin/phpunit
+./vendor/bin/phpstan
+./vendor/bin/psalm
+./vendor/bin/php-cs-fixer
+./vendor/bin/pest
+phpunit
+phpstan
+psalm
+pint
+
+# --- Elixir / Erlang / Gleam / Zig / Haskell ---
+mix
+rebar3
+gleam
+zig
+stack
+cabal
+
+# --- インフラ・設定言語 ---
+terraform
+tflint
+tofu
+ansible-lint
+helm
+kubeconform
+hadolint
+yamllint
+actionlint
+shellcheck
+shfmt
+markdownlint
+markdownlint-cli2
+vale
+cspell
+
+# --- 汎用タスクランナー（実行内容はプロジェクト自身の設定ファイルが定める） ---
+make
+just
+task
+mise run
+nx
+turbo
+bazel
+buck2
+earthly

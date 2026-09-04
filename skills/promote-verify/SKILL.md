@@ -62,6 +62,7 @@ $ARGUMENTS
 プロジェクトの `CLAUDE.md` や `package.json` 等を読み、以下を特定する（意味理解が必要なためあなた自身が判断する。新たなサブエージェント委譲や集約エージェントは起動しない）:
 
 - lint / 型チェック / テストコマンド（Step 6 で `quality-check-runner.sh` に渡す `--lint`/`--typecheck`/`--test` の値）
+  - **シェル構文を含まない単一コマンドであること**（`;` `&&` `|` `>` `$(…)` クォート グロブ は使えない）。実行できるのはプラグイン同梱 allowlist（`scripts/config/command-allowlist.txt`）に載っている実行系だけで、契約に反すると `quality-check-runner.sh` は**どのゲートも実行せず exit 4** を返す（品質 fail ではない。正本は `scripts/specs/quality-check-runner.md`。Read する場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/quality-check-runner.md` として解決する）
 - 全E2Eテストを実行するコマンド（headless実行を想定。`/demo` のような人間観察前提のHeaded実行は対象外）
 
 特定できないコマンドがあれば、その値は控えない。Step 6 の品質フェーズで該当ステージ（QCまたはE2E）を明示的にスキップし、結果に理由を残す（暗黙にpass/trueにはならない）。
