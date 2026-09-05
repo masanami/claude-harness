@@ -38,10 +38,18 @@
 #   - cmdspec_reject_message <label> <str>  拒否時に stderr へ出す複数行メッセージ
 
 # source 時に無条件で決定する（環境変数の値を引き継がない＝注入されない）。
-CMDSPEC_ALLOWLIST_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../config" 2>/dev/null && pwd)/command-allowlist.txt"
+# `dirname` ではなくパラメータ展開と組み込みの cd/pwd だけで解決するのは、**PATH に依存させない**
+# ため（このライブラリ自身が PATH 由来の実行系を検証する側であり、その解決が PATH 上の外部
+# コマンドに依存していると、PATH が壊れた環境で allowlist の場所を見失う）。
+CMDSPEC_LIB_DIR="${BASH_SOURCE[0]%/*}"
+if [ "$CMDSPEC_LIB_DIR" = "${BASH_SOURCE[0]}" ]; then
+  CMDSPEC_LIB_DIR="."
+fi
+CMDSPEC_ALLOWLIST_FILE="$(cd "${CMDSPEC_LIB_DIR}/../config" 2>/dev/null && pwd)/command-allowlist.txt"
 
 CMDSPEC_ARGV=()
 CMDSPEC_ERROR=""
+CMDSPEC_RESOLVED=""
 
 # シェル解釈を要求する文字が含まれていれば、その最初の1文字を出力して 0 を返す。
 # 含まれていなければ何も出力せず 1 を返す。
@@ -174,6 +182,55 @@ cmdspec_allowed() {
   return 1
 }
 
+# 検証した実体と実行する実体を一致させるため、argv[0] を PATH 解決した**絶対パス**へ固定する。
+# 成功時は CMDSPEC_RESOLVED に解決結果（組み込み・未検出の場合は空）を入れる。
+#
+# ■ この関数が担うこと / 担わないこと（PR #224 再レビュー指摘1）
+# allowlist が照合するのは**コマンド名**であり、名前から実体への写像は PATH が行う。
+# したがって「一覧に載っている名前だから安全」とは言えない。ここで固定できるのは:
+#   - 検証時に解決した実体と、実際に起動する実体が同じであること（解決と実行の間に
+#     PATH が変わっても影響を受けない）
+#   - **相対パスへ解決された場合は拒否する**こと。PATH に相対エントリ（`.` や
+#     `node_modules/.bin` のような cwd 相対）があると、**作業ツリー内へ書き込めるだけで**
+#     許可名を別バイナリへ差し替えられる。作業ツリーへの書き込みは通常の編集権限で行えるため、
+#     この経路だけは塞ぐ価値がある
+# 一方、**PATH 全体の汚染は防げない**。信頼済み PATH を固定する案は採らなかった——
+# このランナーの目的は**開発者のツールチェインを起動すること**であり、nvm / asdf / rbenv /
+# venv / Homebrew / node_modules/.bin に置かれた実体を解決できなくなれば機能自体が成立しない。
+# 保証の範囲は docs/script-launcher.md §6「保証しないこと」に明記してある。
+cmdspec_pin_program() {
+  CMDSPEC_RESOLVED=""
+
+  case "${CMDSPEC_ARGV[0]}" in
+    */*)
+      # 明示パス（`./gradlew` 等、allowlist に literal で載っているもの）。PATH 解決を経ない。
+      return 0
+      ;;
+  esac
+
+  local resolved
+  resolved="$(command -v -- "${CMDSPEC_ARGV[0]}" 2>/dev/null)" || resolved=""
+
+  case "$resolved" in
+    /*)
+      CMDSPEC_RESOLVED="$resolved"
+      CMDSPEC_ARGV[0]="$resolved"
+      return 0
+      ;;
+    */*)
+      # PATH に相対エントリがある場合にのみ起こる。cwd 次第で別物が動く。
+      CMDSPEC_ERROR="'${CMDSPEC_ARGV[0]}' resolved to a relative path ('${resolved}'); PATH must not contain relative entries"
+      return 1
+      ;;
+    *)
+      # シェル組み込み（true / echo / printf）か、PATH 上に存在しない。
+      # 組み込みは PATH 解決を経ないため差し替え不能。未検出はここでは拒否せず、
+      # 実行して 127 にさせる（「ツール未導入」は契約違反ではなく当該ゲートの失敗として扱う）。
+      return 0
+      ;;
+  esac
+}
+
 # コマンド文字列を検証し、成功時は CMDSPEC_ARGV に argv を設定して 0 を返す。
 # 失敗時は CMDSPEC_ERROR に理由を設定して 1 を返す（CMDSPEC_ARGV は空）。
 cmdspec_parse() {
@@ -199,6 +256,11 @@ cmdspec_parse() {
     else
       CMDSPEC_ERROR="'${CMDSPEC_ARGV[0]}' is not in the command allowlist"
     fi
+    CMDSPEC_ARGV=()
+    return 1
+  fi
+
+  if ! cmdspec_pin_program; then
     CMDSPEC_ARGV=()
     return 1
   fi

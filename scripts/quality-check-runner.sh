@@ -199,6 +199,11 @@ run_command() {
     echo "--- ${label} exit: ${LAST_EXIT_CODE} ---" >&2
     return
   fi
+  # どの実体が動いたかを後から追えるようにする（allowlist が照合するのは名前であり、
+  # 名前から実体への写像は PATH が行うため。docs/script-launcher.md §6 参照）。
+  if [ -n "$CMDSPEC_RESOLVED" ]; then
+    echo "--- ${label} resolved: ${CMDSPEC_RESOLVED} ---" >&2
+  fi
   LAST_OUTPUT="$("${CMDSPEC_ARGV[@]}" 2>&1)"
   LAST_EXIT_CODE=$?
   printf '%s\n' "$LAST_OUTPUT" >&2

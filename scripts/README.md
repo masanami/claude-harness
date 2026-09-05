@@ -63,4 +63,4 @@
   - `scripts/config/command-allowlist.txt`: `quality-check-runner.sh` / `mutation-run.sh` が実行してよいコマンドの一覧。**欠損時は fail-closed**（何も実行しない）。判定ロジックの実体は `scripts/lib/command-spec.sh`、背景と契約の正本は `docs/script-launcher.md`「6. このランチャーを allow することの意味」。この仕組みが担うのは次の2つで、**それ以外は保証しない**（Issue #223）:
     1. **シェル構文の排除**: 受け取ったコマンドを `bash -c` に渡さず argv として直接実行する。`;` `&&` `|` `>` `$(…)` を書いてもコマンド注入にならない（含まれていれば exit 4 で拒否する）
     2. **実行系の限定**: argv の先頭トークン列が一覧のエントリに一致しなければ実行しない。次のトークンが実行対象になるエントリ（`bundle exec` / `uv run` / `python3 -m` / `npx --no` 等）は「ラッパー」として扱い、残りの argv も一覧に載っていることを要求する（`bundle exec rm -rf /` を通さないため）
-    - **保証しないこと**: 許可コマンドが起動する子プロセス（`npm run` が `package.json` の指示で呼ぶもの、`make` のレシピ等）や、ランナー自身が呼ぶ `git`（`mutation-run` の復元処理）には Claude の permission 判定が適用されない。`Bash(claude-harness-run:*)` の allow が守るのは**ランチャーへの直接入力**であって、プロセスツリー全体ではない
+    - **保証しないこと**: 許可コマンドが起動する子プロセス（`npm run` が `package.json` の指示で呼ぶもの、`make` のレシピ等）や、ランナー自身が呼ぶ `git`（`mutation-run` の復元処理）には Claude の permission 判定が適用されない。**許可名がどの実体へ解決されるか**も保証しない（照合対象はコマンド名。argv[0] は検証時に解決した絶対パスへ固定し相対解決は拒否するが、`PATH` 汚染そのものは防げない）。`Bash(claude-harness-run:*)` の allow が守るのは**ランチャーへの直接入力**であって、プロセスツリー全体ではない

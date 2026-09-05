@@ -113,7 +113,8 @@ echo "=== test: cmdspec_parse（許可されるコマンド） ==="
 cmdspec_parse 'npm run lint'
 assert_eq "'npm run lint' は許可される" "0" "$?"
 assert_eq "argv に分解される（トークン数）" "3" "${#CMDSPEC_ARGV[@]}"
-assert_eq "argv[0]" "npm" "${CMDSPEC_ARGV[0]}"
+assert_eq "argv[0]（PATH 解決済みの場合は絶対パスへ固定されるため basename で比較）" \
+  "npm" "${CMDSPEC_ARGV[0]##*/}"
 assert_eq "argv[2]" "lint" "${CMDSPEC_ARGV[2]}"
 
 for allowed in \
@@ -273,6 +274,60 @@ assert_contains "拒否理由に metachar が示される" "$CMDSPEC_ERROR" "she
 
 cmdspec_parse 'rm -rf /tmp/x'
 assert_contains "拒否理由に allowlist が示される" "$CMDSPEC_ERROR" "not in the command allowlist"
+
+# =============================================================================
+echo "=== test: argv[0] の PATH 解決（PR #224 再レビュー指摘1） ==="
+# =============================================================================
+# allowlist が照合するのは**コマンド名**であり、名前から実体への解決は PATH が行う。
+# したがって「一覧に載っている名前だから安全」とは言えない。ここで固定するのは:
+#   (1) 検証した実体と実行する実体が同じであること（argv[0] を解決済み絶対パスへ固定する）
+#   (2) **相対パスへ解決された場合は拒否**すること（PATH に相対エントリがあると、
+#       作業ツリー内へ書き込めるだけで許可名を差し替えられてしまうため）
+#   (3) シェル組み込み（true/echo/printf）は PATH 解決を経ないのでそのまま通すこと
+# **PATH 全体の汚染は防げない**（それは docs/script-launcher.md §6 の「保証しないこと」）。
+
+RESOLVE_BIN="${WORK_DIR}/resolve-bin"
+mkdir -p "$RESOLVE_BIN"
+printf '#!/bin/bash\nexit 0\n' >"${RESOLVE_BIN}/jest"
+chmod +x "${RESOLVE_BIN}/jest"
+
+SAVED_PATH="$PATH"
+PATH="${RESOLVE_BIN}:${PATH}"
+cmdspec_parse 'jest --ci'
+assert_eq "PATH 上のツールは許可される" "0" "$?"
+assert_eq "argv[0] が解決済みの絶対パスへ固定される（検証した実体＝実行する実体）" \
+  "${RESOLVE_BIN}/jest" "${CMDSPEC_ARGV[0]}"
+assert_eq "引数は変わらない" "--ci" "${CMDSPEC_ARGV[1]}"
+PATH="$SAVED_PATH"
+
+cmdspec_parse 'true'
+assert_eq "シェル組み込みは許可される" "0" "$?"
+assert_eq "シェル組み込みは書き換えない（PATH 解決を経ないため差し替え不能）" \
+  "true" "${CMDSPEC_ARGV[0]}"
+
+# PATH に相対エントリがあると、cwd 配下へ書き込めるだけで許可名を差し替えられる。
+# これは「作業ツリー内への書き込み」だけで成立してしまうため拒否する。
+REL_DIR="${WORK_DIR}/relpath"
+mkdir -p "${REL_DIR}/sub"
+printf '#!/bin/bash\nexit 0\n' >"${REL_DIR}/sub/jest"
+chmod +x "${REL_DIR}/sub/jest"
+# PATH を差し替えて起動するため、bash 自身は絶対パスで指定する（PATH から探せなくなるため）。
+BASH_BIN="$(command -v bash)"
+REL_RESULT="$(cd "$REL_DIR" && PATH="sub:/usr/bin:/bin" "$BASH_BIN" -c "source '${REPO_ROOT}/scripts/lib/command-spec.sh'; if cmdspec_parse 'jest'; then echo allowed; else printf 'rejected:%s' \"\$CMDSPEC_ERROR\"; fi")"
+assert_contains "相対パスへ解決される場合は拒否する" "$REL_RESULT" "rejected:"
+assert_contains "拒否理由に相対解決である旨が出る" "$REL_RESULT" "resolved to a relative path"
+
+# 見つからないコマンドは「契約違反」ではなく「ツール未導入」なので、ここでは拒否しない
+# （実行して 127 になり、当該ゲートの fail として呼び出し側に届く。従来どおりの扱い）。
+NOTFOUND_RESULT="$(PATH=/nonexistent-dir-for-test "$BASH_BIN" -c "source '${REPO_ROOT}/scripts/lib/command-spec.sh'; if cmdspec_parse 'jest'; then echo allowed; else echo rejected; fi")"
+assert_eq "PATH 上に無いだけのコマンドは契約違反にしない（実行して 127 にさせる）" \
+  "allowed" "$NOTFOUND_RESULT"
+
+# allowlist に literal で載っている明示パス（./gradlew 等）は PATH 解決を経ない。
+cmdspec_parse './gradlew test'
+assert_eq "明示パスのエントリは許可される" "0" "$?"
+assert_eq "明示パスは書き換えない" "./gradlew" "${CMDSPEC_ARGV[0]}"
+
 
 # =============================================================================
 echo "=== test: allowlist ファイルが読めない場合は fail-closed ==="

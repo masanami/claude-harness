@@ -162,6 +162,9 @@ run_test_command() {
     echo "--- test exit: ${LAST_EXIT_CODE} ---" >&2
     return
   fi
+  if [ -n "$CMDSPEC_RESOLVED" ]; then
+    echo "--- test resolved: ${CMDSPEC_RESOLVED} ---" >&2
+  fi
   local tmp_out
   tmp_out="$(mktemp)" || { LAST_OUTPUT=""; LAST_EXIT_CODE=1; return; }
   "${CMDSPEC_ARGV[@]}" >"$tmp_out" 2>&1 &
