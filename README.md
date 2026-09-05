@@ -151,6 +151,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 - [変更履歴](CHANGELOG.md) — 破壊的変更と移行手順（4.0.0 以降）
 - [セットアップガイド](docs/getting-started.md) — インストールからCLAUDE.md整備、動作確認まで
 - [スクリプトランチャー](docs/script-launcher.md) — `claude-harness-run` の導入手順、allowlist の書き方、permission マッチャの実測記録
+- [許可設定の統治](docs/settings-governance.md) — ユーザー設定 / プロジェクト settings / `settings.local.json` の 3 層の役割分担（プロジェクト settings は deny 専用）、プロジェクト settings が保証しない範囲、worktree・trust・権限モードごとの実測記録
 - [欠陥クラスのカタログ](docs/defect-class-catalog.md) — `/self-review sweep`（掃引モード）が使う欠陥クラスの正本。カタログの粒度と増やし方の運用規約、掃引の規律、適用先と例外
 - [プラグイン内ファイル参照のパス規約](docs/plugin-path-conventions.md) — スキル・エージェントを書くときの規約。パス解決、`SKILL.md` と `references/` の線引き、**実行時テキストと docs の書き分け（(h)）**
 - [カスタマイズ方法](docs/customization.md) — エージェント/スキルのオーバーライド、フック追加
