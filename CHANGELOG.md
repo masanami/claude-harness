@@ -12,6 +12,9 @@
 
 ### 破壊的変更（次のリリースはメジャーを上げる）
 
+- **`/init-project` が生成するプロジェクト `.claude/settings.json` を deny 専用にした（Issue #227 / #226）。** 運用上の allow（`Bash(claude-harness-run:*)`・git / gh・`cd`・パッケージマネージャ・テストランナー・infra）は tracked に書かず、**ユーザー設定 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` 向けのスニペット**（stdout の `user_settings_snippet`）として提示する。`Bash(bash:*)` はどの層にも出力しない（在ると deny がその層から迂回可能になる）。割当と根拠は [`docs/settings-governance.md`](docs/settings-governance.md)。
+  - **既存の導入済みプロジェクトは触らない。** 冪等マージは既存の allow を削らないため、再実行しても tracked の allow は残る（動作は変わらない）。deny 専用にしたければ、そのリポジトリの判断で手で外す。
+  - `doctor` の `settings_launcher_allow` / `settings_base_allow` は、ユーザー設定または `.claude/settings.local.json` に在る allow を要件を満たすものとして受理する（Issue #222）。期待 allow はスニペットから導出する。
 - **`quality-check-runner` / `mutation-run` に渡すコマンドをシェル解釈しなくなった（Issue #223・セキュリティ）。** `Bash(claude-harness-run:*)` を allow すると、**その `settings.json` の `deny` を迂回して任意コマンドを実行できた**。両スクリプトが受け取ったコマンド文字列を `bash -c` に渡しており、permission マッチャは外側の `claude-harness-run …` しか見ないため、`Bash(rm -r:*)` / `Bash(git push --force:*)` / `Bash(sudo:*)` が素通りしていた。`doctor` の `settings_launcher_allow` はこの allow を是正として提示するため、**doctor に従うほど deny が無効化される**状態だった。
   - コマンドは空白で argv に分解して**直接実行**する。シェル構文（`;` `&&` `|` `>` `$(…)` `` ` `` クォート グロブ）を含む指定は、**どのゲートも実行せずに exit 4** で拒否する（リテラルとして黙って実行しない）。
   - **シェルを外すだけでは塞がらない**（`rm -rf …` を argv として実行できれば迂回は成立する）ため、実行してよいコマンドを [`scripts/config/command-allowlist.txt`](scripts/config/command-allowlist.txt) に**閉じた一覧**として列挙し、一致しないものは同じく exit 4 で拒否する。一覧の拡張路は**同梱ファイルの編集だけ**（環境変数・CLI フラグ・利用側リポジトリのファイルからは差し替えられない。差し替え可能にすれば、それ自体が任意文字列を通す別経路になるため）。
@@ -22,6 +25,7 @@
 
 ### 利用者が取る操作
 
+- **新規に `/init-project` を実行したプロジェクトでは、完了報告に出るスニペットをユーザー設定に追記する。** 追記しないと headless 実行（`claude -p`）でスキルのスクリプト起動が permission 拒否される。チームで揃えたい場合は tracked の `.claude/settings.json` に手で追記してもよいが、その allow は各人が各クローンで trust を承認するまで効かない。
 - **CLAUDE.md の品質コマンドが単一コマンドになっているか確認する。** `npm run lint && npm run lint:css` のようにシェル構文で繋いだコマンドや、パイプ・リダイレクトを含むコマンドは渡せなくなった。**プロジェクト側の1コマンド**（`package.json` の `scripts` / Makefile のターゲット等）にまとめ、それを渡す。`/quality-check` は exit 4 を品質 fail ではなく呼び出し方の誤りとして扱い、書き直しを促す。
 - **同梱 allowlist に無いツールチェインを使っている場合**、そのコマンドは渡せない。`make` / `just` などのタスクランナー経由（プロジェクト自身の設定ファイルで定義する形）へ寄せるか、claude-harness へツール追加の PR を出す。**いずれの場合も黙って `pass` にはならない**が、2つの状態は別物なので混同しないこと:
   - **allowlist に無いコマンドを渡した** → **どのゲートも実行せずに exit 4**（stdout に JSON は出ない）。品質失敗でも未検証でもなく、**呼び出し方が契約に反している**状態。コマンドを書き直して再実行する

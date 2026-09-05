@@ -208,17 +208,42 @@ assert_true "pm/stack省略でもvalid" "$(gs_validate_analyze_input_schema '{}'
 # ============================================================
 # gs_build_generated_settings_json: 合成結果
 # ============================================================
-echo "=== test: gs_build_generated_settings_json ==="
+echo "=== test: gs_build_generated_settings_json（プロジェクト settings は deny 専用） ==="
 BASE_DENY='["Bash(rm -rf:*)","Bash(rm -r:*)"]'
 GENERATED="$(gs_build_generated_settings_json npm playwright docker "$BASE_DENY")"
-assert_true "生成結果に共通権限 Bash(git commit:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(git commit:*)')"
+assert_eq "生成するプロジェクト settings の allow は空（pm/test/infra を渡しても）" "[]" "$(jq -c '.permissions.allow' <<<"$GENERATED")"
+assert_eq "deny はベースdenyがそのまま入る" "$(jq -c 'sort' <<<"$BASE_DENY")" "$(jq -c '.permissions.deny | sort' <<<"$GENERATED")"
+assert_true "生成結果は settings スキーマを満たす" "$(gs_validate_settings_schema "$GENERATED" && echo true || echo false)"
+
+# 否定検査: 汎用実行系・PM・テストランナー・infra の allow が生成物（JSON 全体）に現れない。
+# どれか 1 つでも在ると、プロジェクト settings の deny はその層から迂回可能になる
+# （docs/script-launcher.md §6「残る限界」）。
+for forbidden in 'Bash(bash:*)' 'Bash(sh:*)' 'Bash(zsh:*)' 'Bash(env:*)' 'Bash(xargs:*)' \
+                 'Bash(npm:*)' 'Bash(npx playwright:*)' 'Bash(pytest:*)' 'Bash(docker:*)' 'Bash(claude-harness-run:*)'; do
+  assert_true "生成物のどこにも ${forbidden} が現れない（否定検査）" \
+    "$(jq -e --arg f "$forbidden" '[.. | strings | select(. == $f)] | length == 0' >/dev/null <<<"$GENERATED" && echo true || echo false)"
+done
+
+# ============================================================
+# gs_build_user_settings_snippet_json: ユーザー設定向けスニペット（運用 allow の出力先）
+# ============================================================
+echo "=== test: gs_build_user_settings_snippet_json ==="
+SNIPPET="$(gs_build_user_settings_snippet_json npm playwright docker)"
+SNIPPET_ALLOW="$(jq -c '.permissions.allow' <<<"$SNIPPET")"
+assert_true "スニペットに共通権限 Bash(git commit:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(git commit:*)')"
 # プラグイン同梱スクリプトのランチャー権限（Issue #154）。この1行が無いと headless 実行で
 # スキルがスクリプトを起動できず permission 拒否になる。
-assert_true "生成結果にランチャー権限 Bash(claude-harness-run:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(claude-harness-run:*)')"
-assert_true "生成結果に pm 権限 Bash(npm:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(npm:*)')"
-assert_true "生成結果に test 権限 Bash(npx playwright:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(npx playwright:*)')"
-assert_true "生成結果に infra 権限 Bash(docker:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$GENERATED")" 'Bash(docker:*)')"
-assert_eq "deny はベースdenyがそのまま入る" "$(jq -c 'sort' <<<"$BASE_DENY")" "$(jq -c '.permissions.deny | sort' <<<"$GENERATED")"
+assert_true "スニペットにランチャー権限 Bash(claude-harness-run:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(claude-harness-run:*)')"
+assert_true "スニペットに cd 権限 Bash(cd:*) が入る（worktree 起点の複合コマンド用）" "$(json_contains "$SNIPPET_ALLOW" 'Bash(cd:*)')"
+assert_true "スニペットに pm 権限 Bash(npm:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(npm:*)')"
+assert_true "スニペットに test 権限 Bash(npx playwright:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(npx playwright:*)')"
+assert_true "スニペットに infra 権限 Bash(docker:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(docker:*)')"
+assert_true "スニペットは deny を持たない（deny はプロジェクト settings の層）" "$(jq -e '.permissions | has("deny") | not' >/dev/null <<<"$SNIPPET" && echo true || echo false)"
+for forbidden in 'Bash(bash:*)' 'Bash(sh:*)' 'Bash(zsh:*)' 'Bash(env:*)' 'Bash(xargs:*)'; do
+  assert_true "スニペットにも汎用実行系 ${forbidden} が現れない（否定検査）" \
+    "$(jq -e --arg f "$forbidden" '[.. | strings | select(. == $f)] | length == 0' >/dev/null <<<"$SNIPPET" && echo true || echo false)"
+done
+assert_eq "pm/test/infra 無しでは共通権限のみ" "$(gs_base_allow_json | jq -c 'unique')" "$(gs_build_user_settings_snippet_json "" "" "" | jq -c '.permissions.allow')"
 
 # ============================================================
 # gs_merge_settings_json: 既存ファイルとの冪等マージ
@@ -228,7 +253,8 @@ EXISTING='{"permissions":{"allow":["Bash(custom-cmd:*)","Bash(git commit:*)"],"d
 MERGED="$(gs_merge_settings_json "$EXISTING" "$GENERATED")"
 assert_true "マージ結果に既存の独自allowが保持される" "$(json_contains "$(jq -c '.permissions.allow' <<<"$MERGED")" 'Bash(custom-cmd:*)')"
 assert_true "マージ結果に既存の独自denyが保持される" "$(json_contains "$(jq -c '.permissions.deny' <<<"$MERGED")" 'Bash(custom-deny:*)')"
-assert_true "マージ結果に生成側のallowも入る" "$(json_contains "$(jq -c '.permissions.allow' <<<"$MERGED")" 'Bash(npm:*)')"
+assert_eq "マージ結果の allow は既存のまま（生成側は allow を足さない）" \
+  "$(jq -cS '.permissions.allow' <<<"$EXISTING")" "$(jq -cS '.permissions.allow' <<<"$MERGED")"
 assert_true "マージ結果に生成側のdenyも入る" "$(json_contains "$(jq -c '.permissions.deny' <<<"$MERGED")" 'Bash(rm -rf:*)')"
 
 MERGED_TWICE="$(gs_merge_settings_json "$MERGED" "$GENERATED")"
@@ -265,7 +291,13 @@ EOF
 CASE_A_EXIT=$?
 assert_eq "CLI: (a) exit code 0" "0" "$CASE_A_EXIT"
 assert_true "CLI: (a) 既存の独自allowエントリが保持される" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET1")" 'Bash(custom-cmd:*)')"
-assert_true "CLI: (a) 生成されたpm権限も追加される" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET1")" 'Bash(npm:*)')"
+assert_eq "CLI: (a) pm 権限はプロジェクト settings に追加されない（deny 専用）" "false" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET1")" 'Bash(npm:*)')"
+assert_true "CLI: (a) 生成側の deny は追加される" "$(json_contains "$(jq -c '.permissions.deny' "$TGS_TARGET1")" 'Bash(rm -rf:*)')"
+assert_true "CLI: (a) stdout の user_settings_snippet に pm 権限が出る" "$(json_contains "$(jq -c '.user_settings_snippet.permissions.allow' "${TGS_TMP_DIR}/case-a-stdout.json")" 'Bash(npm:*)')"
+assert_true "CLI: (a) stdout の user_settings_snippet にランチャー権限が出る" "$(json_contains "$(jq -c '.user_settings_snippet.permissions.allow' "${TGS_TMP_DIR}/case-a-stdout.json")" 'Bash(claude-harness-run:*)')"
+assert_eq "CLI: (a) stdout の user_settings_path は CLAUDE_CONFIG_DIR 配下（環境を汚さず値だけ確認）" "${TGS_TMP_DIR}/cfg/settings.json" \
+  "$(CLAUDE_CONFIG_DIR="${TGS_TMP_DIR}/cfg" "$TGS_TARGET_SCRIPT" --pm npm --target "$TGS_TARGET1" 2>/dev/null | jq -r '.user_settings_path')"
+assert_eq "CLI: (a) allow_count はプロジェクト settings の allow 件数（既存 1 件のみ）" "1" "$(jq -r '.allow_count' "${TGS_TMP_DIR}/case-a-stdout.json")"
 
 # --- (b) 同じ引数で2回連続実行しても差分が出ない(冪等) ---
 TGS_TARGET2="${TGS_TMP_DIR}/case-b/.claude/settings.json"
@@ -275,11 +307,14 @@ FIRST_RUN="$(jq -cS '.' "$TGS_TARGET2")"
 SECOND_RUN="$(jq -cS '.' "$TGS_TARGET2")"
 assert_eq "CLI: (b) 2回連続実行しても内容が完全に同じ(冪等)" "$FIRST_RUN" "$SECOND_RUN"
 
-# --- pm/test/infra別の条件付き権限が正しく合成される ---
-assert_true "CLI: --pm npm で Bash(npm:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET2")" 'Bash(npm:*)')"
-assert_true "CLI: --test playwright --pm npm で Bash(npx playwright:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET2")" 'Bash(npx playwright:*)')"
-assert_true "CLI: --infra docker で Bash(docker:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET2")" 'Bash(docker:*)')"
-assert_true "CLI: --infra docker で Bash(docker compose:*) が入る" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET2")" 'Bash(docker compose:*)')"
+# --- pm/test/infra別の条件付き権限はプロジェクト settings ではなくスニペットに合成される ---
+assert_eq "CLI: 新規生成したプロジェクト settings の allow は空" "[]" "$(jq -c '.permissions.allow' "$TGS_TARGET2")"
+"$TGS_TARGET_SCRIPT" --pm npm --test playwright --infra docker --target "$TGS_TARGET2" >"${TGS_TMP_DIR}/case-b-stdout.json" 2>/dev/null
+TGS_SNIPPET_B="$(jq -c '.user_settings_snippet.permissions.allow' "${TGS_TMP_DIR}/case-b-stdout.json")"
+assert_true "CLI: --pm npm でスニペットに Bash(npm:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(npm:*)')"
+assert_true "CLI: --test playwright --pm npm でスニペットに Bash(npx playwright:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(npx playwright:*)')"
+assert_true "CLI: --infra docker でスニペットに Bash(docker:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(docker:*)')"
+assert_true "CLI: --infra docker でスニペットに Bash(docker compose:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(docker compose:*)')"
 
 # --- --input で analyze-project.sh 形式のJSONを渡した場合に同等の結果になる ---
 TGS_TARGET3="${TGS_TMP_DIR}/case-c/.claude/settings.json"
@@ -287,9 +322,11 @@ TGS_INPUT_FILE="${TGS_TMP_DIR}/analyze-output.json"
 cat > "$TGS_INPUT_FILE" <<'EOF'
 {"status":"ok","pm":"npm","stack":{"test":["playwright"],"infra":["Dockerfile"]}}
 EOF
-"$TGS_TARGET_SCRIPT" --input "$TGS_INPUT_FILE" --target "$TGS_TARGET3" >/dev/null 2>"${TGS_TMP_DIR}/case-c-stderr.log"
-assert_eq "CLI: --input 経由でも --pm/--test/--infra 相当の結果になる(allow一致)" \
-  "$(jq -cS '.permissions.allow' "$TGS_TARGET2")" "$(jq -cS '.permissions.allow' "$TGS_TARGET3")"
+"$TGS_TARGET_SCRIPT" --input "$TGS_INPUT_FILE" --target "$TGS_TARGET3" >"${TGS_TMP_DIR}/case-c-stdout.json" 2>"${TGS_TMP_DIR}/case-c-stderr.log"
+assert_eq "CLI: --input 経由でも --pm/--test/--infra 相当の結果になる(生成物一致)" \
+  "$(jq -cS '.' "$TGS_TARGET2")" "$(jq -cS '.' "$TGS_TARGET3")"
+assert_eq "CLI: --input 経由でも --pm/--test/--infra 相当の結果になる(スニペット一致)" \
+  "$(jq -cS '.user_settings_snippet' "${TGS_TMP_DIR}/case-b-stdout.json")" "$(jq -cS '.user_settings_snippet' "${TGS_TMP_DIR}/case-c-stdout.json")"
 
 # --- .claude/ ディレクトリが無ければ作成される ---
 assert_true "CLI: .claude/ ディレクトリが存在しなくても作成される" "$([ -d "$(dirname "$TGS_TARGET3")" ] && echo true || echo false)"
@@ -394,8 +431,8 @@ assert_true "symlink先の元ファイルは書き換えられない" \
   "$(jq -e '.untouched == true' "$TGS_SYMLINK_REAL_FILE" >/dev/null 2>&1 && echo true || echo false)"
 assert_true "targetのsymlinkは通常ファイルに置き換わる" \
   "$([ ! -L "$TGS_SYMLINK_TARGET" ] && echo true || echo false)"
-assert_true "置き換え後のtargetにpm権限が入る" \
-  "$(json_contains "$(jq -c '.permissions.allow' "$TGS_SYMLINK_TARGET")" 'Bash(npm:*)')"
+assert_true "置き換え後のtargetに生成した deny が入る（allow は deny 専用のため増えない）" \
+  "$(json_contains "$(jq -c '.permissions.deny' "$TGS_SYMLINK_TARGET")" 'Bash(rm -rf:*)')"
 
 # 書き込み失敗時: status:okを返さずexit非0になることを確認する。
 # chmod 555 によるパーミッション依存は root 実行(コンテナ等)では書き込みが

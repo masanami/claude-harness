@@ -19,14 +19,19 @@
 #   --target <path> 出力先の .claude/settings.json パス（既定: ./.claude/settings.json）。
 #
 # 出力（stdout にJSON1個。scripts/README.md の出力規約に従う）:
-#   {"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M}
+#   {"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M,
+#    "user_settings_path":"...","user_settings_snippet":{"permissions":{"allow":[...]}}}
 #
 # 挙動:
+#   - 生成するプロジェクト settings は **deny 専用**（allow は空）。deny の正本は base-deny.json。
+#     運用上の allow（ランチャー・git/gh・pm別/testFW別/infra別）はプロジェクト settings へ
+#     書かず、ユーザー設定 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` 向けの
+#     スニペット `user_settings_snippet` として stdout に出す（書き込みは人間が行う）。
+#     割当の正本と根拠は docs/settings-governance.md
 #   - `--target` が既存ファイルの場合、既存の permissions.allow/deny を保持しつつ
-#     生成した allow/deny の非重複分のみ追加する（冪等マージ。同じ入力で再実行しても差分なし）
+#     生成した deny の非重複分のみ追加する（冪等マージ。同じ入力で再実行しても差分なし。
+#     **既存の allow は削らない**——既に導入済みのプロジェクトは触らない）
 #   - `--target` が存在しない場合は新規作成する（親ディレクトリも作成する）
-#   - ベース allow（共通権限）・ベース deny（single source of truth = base-deny.json）・
-#     pm別/testFW別/infra別の条件付き allow を合成する
 #   - jq 必須。jq 不在時は stderr にエラーメッセージ + エラーJSONを出し exit 非0（stdoutには何も出さない）
 #
 # テスト容易性のため、外部（ファイルシステム）を読み書きする main 相当の処理と、
@@ -56,10 +61,14 @@ gs_union_unique_json() {
 }
 
 # ------------------------------------------------------------------
-# ベース allow / deny（single source of truth）
+# allow / deny の割当（single source of truth。正本は docs/settings-governance.md）
 # ------------------------------------------------------------------
-
-# 共通権限（常に含める。約27項目）
+#
+# プロジェクト settings（tracked）に書くのは deny だけ。allow は「誰が・どのマシンで・どの
+# 権限モードで動かすか」＝オペレータの性質であり、tracked に置いても trust 未承認のクローンや
+# bypassPermissions 起動では評価されない。deny は trust 不要・全モードで効く唯一の層である。
+# 以下の allow 群はユーザー設定向けスニペットの材料であり、プロジェクト settings には入れない。
+#
 # Bash(claude-harness-run:*) は本プラグイン同梱スクリプトのランチャー（bin/claude-harness-run）用。
 # パス・バージョンを含まない呼び出し形にすることで、この1行だけでプラグイン更新に追随できる。
 # この allow が何を許すか（＝ deny の適用範囲がどう変わるか）は docs/script-launcher.md
@@ -69,9 +78,20 @@ gs_union_unique_json() {
 # ただし **deny はプロセスツリーには適用されない** —— 許可コマンドが起動する子プロセス
 # （npm run が package.json の指示で呼ぶもの、make のレシピ等）や、ランナー自身が呼ぶ
 # git（mutation-run の復元処理）は permission 判定を受けない。
-# 一方 Bash(bash:*) は汎用実行系の allow であり、これが在ると deny は迂回可能になる
-# （現状はスクリプトのフォールバック実行形のために含めている。docs/script-launcher.md §6 の
-# 「残る限界」を参照）。
+#
+# Bash(bash:*) のような汎用実行系はどの層にも出力しない。どの層に在っても deny を迂回可能に
+# するため（docs/script-launcher.md §6「残る限界」）。ランチャー未導入時のフォールバック実行形
+# （bash "<プラグインルート>/scripts/…"）は対話セッションでの承認を前提にした縮退経路であり、
+# allow で常時開けておくものではない。
+
+# プロジェクト settings に生成する allow。deny 専用のため常に空。
+# 「ここに何を足すか」の判断基準は、リポジトリの性質と言えるか（誰が動かしても変わらないか）。
+# 運用上の都合（ツールの起動）は下のオペレータ allow へ。
+gs_project_allow_json() {
+  jq -n '[]'
+}
+
+# オペレータ層（ユーザー設定）の共通 allow。git / gh の操作・cd・ランチャー。
 gs_base_allow_json() {
   jq -n '[
     "Bash(git add:*)",
@@ -99,7 +119,6 @@ gs_base_allow_json() {
     "Bash(gh api:*)",
     "Bash(gh repo view:*)",
     "Bash(cd:*)",
-    "Bash(bash:*)",
     "Bash(claude-harness-run:*)"
   ]'
 }
@@ -256,11 +275,12 @@ gs_infra_allow_json() {
 # 合成 / マージ（純粋関数、jqのみ使用）
 # ------------------------------------------------------------------
 
-# 引数: pm, testFWカンマ区切り, infraカンマ区切り, base_deny_json
-# 戻り値: {"permissions":{"allow":[...],"deny":[...]}} の完全な settings JSON
-gs_build_generated_settings_json() {
-  local pm="$1" test_csv="$2" infra_csv="$3" base_deny_json="$4"
-  local base_allow pm_allow test_allow infra_allow allow_all deny_all
+# 引数: pm, testFWカンマ区切り, infraカンマ区切り
+# 戻り値: ユーザー設定向けスニペット {"permissions":{"allow":[...]}}
+#   （オペレータ共通 allow ＋ pm別/testFW別/infra別の条件付き allow。deny は含めない）
+gs_build_user_settings_snippet_json() {
+  local pm="$1" test_csv="$2" infra_csv="$3"
+  local base_allow pm_allow test_allow infra_allow allow_all
 
   base_allow="$(gs_base_allow_json)"
   pm_allow="$(gs_pm_allow_json "$pm")"
@@ -271,6 +291,19 @@ gs_build_generated_settings_json() {
     --argjson a "$base_allow" --argjson b "$pm_allow" \
     --argjson c "$test_allow" --argjson d "$infra_allow" \
     '($a + $b + $c + $d) | unique')
+
+  jq -n --argjson allow "$allow_all" '{permissions: {allow: $allow}}'
+}
+
+# 引数: pm, testFWカンマ区切り, infraカンマ区切り, base_deny_json
+# 戻り値: {"permissions":{"allow":[],"deny":[...]}} の完全な settings JSON（プロジェクト settings。deny 専用）
+# pm / test / infra はプロジェクト settings の内容には影響しない（スニペット側で使う）。
+# 引数を残しているのは、呼び出し側（doctor.sh 等）の契約を変えないため。
+gs_build_generated_settings_json() {
+  local pm="$1" test_csv="$2" infra_csv="$3" base_deny_json="$4"
+  local allow_all deny_all
+
+  allow_all="$(gs_project_allow_json)"
   deny_all=$(jq -n --argjson d "$base_deny_json" '$d | unique')
 
   jq -n --argjson allow "$allow_all" --argjson deny "$deny_all" \
@@ -491,10 +524,14 @@ main() {
   fi
   trap - EXIT
 
-  local allow_count deny_count created merged
+  local allow_count deny_count created merged snippet_json user_settings_path
   allow_count=$(jq '.permissions.allow | length' <<<"$final_json")
   deny_count=$(jq '.permissions.deny | length' <<<"$final_json")
   if [ "$existed" = "true" ]; then created="false"; merged="true"; else created="true"; merged="false"; fi
+  # ユーザー設定向けスニペット。ここでは提示するだけで、ユーザー設定には書き込まない
+  # （書き込みは人間が行う。docs/settings-governance.md §4）。
+  snippet_json="$(gs_build_user_settings_snippet_json "$pm" "$test_csv" "$infra_csv")"
+  user_settings_path="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json"
 
   jq -n \
     --arg target "$target" \
@@ -502,7 +539,10 @@ main() {
     --argjson merged "$merged" \
     --argjson allow_count "$allow_count" \
     --argjson deny_count "$deny_count" \
-    '{status:"ok", target:$target, created:$created, merged:$merged, allow_count:$allow_count, deny_count:$deny_count}'
+    --arg user_settings_path "$user_settings_path" \
+    --argjson snippet "$snippet_json" \
+    '{status:"ok", target:$target, created:$created, merged:$merged, allow_count:$allow_count, deny_count:$deny_count,
+      user_settings_path:$user_settings_path, user_settings_snippet:$snippet}'
 }
 
 # `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）
