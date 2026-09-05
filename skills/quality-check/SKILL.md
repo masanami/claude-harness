@@ -28,10 +28,10 @@ CLAUDE.md および `package.json` 等から、以下のコマンドを特定す
 - 型チェックコマンド
 - テストコマンド
 
-**渡せるコマンドの形（重要）**: 手順2のスクリプトはコマンドを**シェルに渡さず直接実行する**（Issue #223。`Bash(claude-harness-run:*)` の allow が settings.json の deny を迂回する経路にならないようにするため）。したがって:
+**渡せるコマンドの形（重要）**: 手順2のスクリプトはコマンドを**シェルに渡さず直接実行する**（Issue #223。`Bash(claude-harness-run:*)` の allow が、**ランチャーへ直接渡す文字列**で settings.json の deny を迂回する経路にならないようにするため）。したがって:
 
 - **シェル構文を含めない**（`;` `&&` `||` `|` `>` `$(…)` `` ` `` クォート グロブ）。CLAUDE.md に `npm run lint && npm run lint:css` のように書かれていても**そのまま渡さない**。プロジェクト側の1コマンド（`package.json` の scripts / Makefile のターゲット）に該当するものがあればそれを渡し、無ければそのゲートは省略して**未実行として報告する**（繋げるために自分でシェル構文を組み立てない）
-- **実行できるのは同梱 allowlist（`scripts/config/command-allowlist.txt`）に載っている実行系だけ**。`npm run …` / `pytest` / `cargo …` などは通り、`rm` / `curl` / `bash` などは通らない
+- **実行できるのは同梱 allowlist（`scripts/config/command-allowlist.txt`）に載っている実行系だけ**。`npm run …` / `pytest` / `cargo test` などは通り、`rm` / `curl` / `bash` は通らない。`bundle exec` / `uv run` / `python3 -m` / `npx --no` は**実行対象も一覧に載っている必要がある**（`bundle exec rspec` は可、`bundle exec rm -rf /` は不可）。`cargo run` / `go run` / `node <ファイル>` / `cargo install` のように**呼び出し側が実行対象を指名する形**も通らない
 - 環境変数が要る場合は `claude-harness-run --env KEY=VALUE …` で渡す（`KEY=V cmd` の前置形は使えない）
 
 契約に反するコマンドを渡すと、手順2は**どのゲートも実行せずに exit 4** で拒否し、理由と書き直し方を stderr に出す。

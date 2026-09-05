@@ -161,7 +161,11 @@ Step 2 で lint/typecheck/test のいずれも特定できなかった場合、�
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run quality-check-runner <Step2で組み立てたCLIフラグ列>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/quality-check-runner.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/quality-check-runner.sh" <Step2で組み立てたCLIフラグ列>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-Bash で上記コマンドを実行し、標準出力の JSON（`{result, auto_fix, gates}`）を `qualityCheck` とする。標準出力が解析可能な JSON にならなかった場合は `qualityCheck = { skipped: false, result: 'fail', error: "..." }` として扱う（fail扱い。暗黙にpassにしない）。`result` が `'skip'`（ゲート未実行）の場合も**そのまま格納し、`pass` にも `skipped: true` にも読み替えない**。
+Bash で上記コマンドを実行し、標準出力の JSON（`{result, auto_fix, gates}`）を `qualityCheck` とする。判定は次の順で行う:
+
+1. **exit code が 4（コマンドの形が契約に反する）** → **JSON 解析より先にこれを判定する**。`quality-check-runner` は**何も実行していない**ため、これは品質失敗ではない。stderr の指示に従い、Step 2 で特定したコマンドを**シェル構文を含まない単一の許可コマンド**（`package.json` の scripts / Makefile のターゲット等）へ書き直して再実行する。書き直せない場合は `qualityCheck = { skipped: false, result: 'skip', reason: "..." }` として**未実行**を記録する（`reason` に契約違反だった旨とコマンドを残す）。**`result: 'fail'` にしない**——検査して落ちたわけではないものを品質失敗として記録すると、存在しない lint エラーを探させることになる（`skip` も `quality_not_verified` を積んで昇格をブロックするため、安全性は変わらない）
+2. **標準出力が解析可能な JSON にならなかった**（exit 2 = jq 不在、exit 1 + 空 stdout = CLI 引数不正、ランチャー段階の失敗等） → `qualityCheck = { skipped: false, result: 'fail', error: "..." }` として扱う（fail扱い。暗黙にpassにしない）
+3. **解析可能な JSON** → そのまま `qualityCheck` とする。`result` が `'skip'`（ゲート未実行）の場合も**そのまま格納し、`pass` にも `skipped: true` にも読み替えない**
 
 #### 6-2. E2E
 

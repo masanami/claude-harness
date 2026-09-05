@@ -11,12 +11,30 @@
 # したがって「何を実行してよいか」を閉じた集合として列挙するのが本ファイルの役割であり、
 # ここが実質的な統制点になる。
 #
-# ■ 書式
-#   1行1エントリ。エントリは **argv の先頭トークン列（前置）** として照合する。
-#     npm run        -> `npm run lint`      ✅ / `npm exec rm`        ❌
-#     cargo          -> `cargo clippy ...`  ✅
-#     python3 -m     -> `python3 -m pytest` ✅ / `python3 -c ...`     ❌
-#   '#' 以降はコメント。空行は無視する（空エントリは何にも一致しない）。
+# ■ 書式（2種類）
+#   1行1エントリ。'#' 以降はコメント、空行は無視する（空エントリは何にも一致しない）。
+#
+#   (a) 通常エントリ: argv の **先頭トークン列（前置）** として照合する。
+#         npm run      -> `npm run lint`      ✅ / `npm exec rm`  ❌
+#         cargo test   -> `cargo test --all`  ✅ / `cargo install` ❌
+#       以降のトークン（スクリプト名・フラグ・パス）は自由でよい。**実行されるプログラムは
+#       エントリ側で固定されている**ため、呼び出し側は「何を実行するか」を選べない。
+#
+#   (b) ラッパーエントリ（`> ` で始まる）: 前置一致に加えて、**残りの argv がそれ自体
+#       このファイルに載っていること**を要求する。
+#         > bundle exec -> `bundle exec rspec` ✅ / `bundle exec rm -rf /` ❌
+#         > python3 -m  -> `python3 -m pytest` ✅ / `python3 -m pip install` ❌
+#
+# ■ (a) と (b) を分ける基準（**この境界がこのファイルの本体**）
+#   呼び出し側が **実行されるプログラムそのものを指名できるか** で分ける。
+#   - 指名できない（プロジェクト自身の設定ファイルが実行内容を決める）→ (a)
+#       `npm run <script>` は package.json に、`make <target>` は Makefile に、
+#       `cargo test` は Cargo.toml に書かれた手続きを起動する。呼び出し側が渡すのは
+#       **名前**であって、プログラムのパスではない。
+#   - 指名できる（次のトークンが実行対象）→ (b) にするか、載せない
+#       `bundle exec <cmd>` / `uv run <cmd>` / `poetry run <cmd>` / `python -m <module>` /
+#       `npx <pkg>` は、次のトークンで任意のプログラムを起動できる。前置一致だけで許すと
+#       `bundle exec rm -rf /` が通る（PR #224 のレビュー指摘。修正前の実装で実測確認済み）。
 #
 # ■ 追加するには
 # **このファイル（プラグイン同梱）を編集する以外の拡張路は用意していない**。
@@ -25,29 +43,28 @@
 # 未対応のツールチェインは claude-harness へ PR を出すか、`make` / `just` などの
 # タスクランナー経由（プロジェクト自身の設定ファイルで定義する形）にする。
 #
-# ■ ここに載せる基準（と、載せないもの）
-# 載せるのは「**プロジェクト自身の設定（package.json / Makefile / Cargo.toml 等）に
-# 書かれた手続きを起動する**ツール」に限る。それらが何を実行するかは対象リポジトリの
-# 中身が決めるものであり、呼び出し側の文字列が決めるものではない（この境界の意味は
-# docs/script-launcher.md 「6. このランチャーを allow することの意味」を参照）。
-# 次のものは**意図的に載せていない**:
-#   - シェル・汎用実行系: bash / sh / zsh / env / xargs / find -exec / eval 相当
+# ■ 意図的に載せていないもの
+#   - シェル・汎用実行系: bash / sh / zsh / env / xargs / find / eval 相当
 #   - 汎用ファイル操作・ネットワーク: rm / mv / cp / chmod / curl / wget / ssh / scp
 #   - VCS・特権: git / sudo / doas   （deny の典型的な対象そのもの）
-#   - ネットワークから取得して実行するパッケージランナー: 素の npx / bunx / uvx /
-#     `pnpm dlx` / `yarn dlx`（`npx rimraf ...` のように、公開パッケージ経由で
-#     deny 対象と同じ操作に到達できるため）。npx はローカル導入済みのみを実行する
-#     `--no` / `--no-install` / `--offline` 形だけを許可する
+#   - 取得したコードを実行する形: `cargo install` / `go install` / `dotnet tool install` /
+#     素の `npx` / `bunx` / `uvx` / `pnpm dlx` / `yarn dlx`
+#     （`npx` と `uvx` は、ローカル導入済みのみを実行する `--no` / `--no-install` /
+#      `--offline` 形を**ラッパーとして**許可する＝実行対象も一覧に在る必要がある）
+#   - 呼び出し側がパスを指名して実行する形: `node <file>` / `cargo run` / `go run` /
+#     `swift run` / `dart run` / `mix run` / `dotnet exec`
+#   - 任意コードを引数で受け取る形: `node -e` / `python -c` / `ruby -e` / `perl -e`
+#   - 環境を変更する副作用が主目的のもの: `terraform apply` / `helm install` /
+#     `playwright install`（検査系のサブコマンドだけを (a) で個別に許可する）
 #
-# ■ インタプリタの扱い（例外として明示する）
-# `node` はプロジェクトのテストファイルを直接起動する形（`node --test`・`node x.test.js`）が
-# 正当な品質ゲートとして広く使われるため許可する。`ruby -e` / `perl -e` のように、
-# 引数で受け取ったコードを実行する形が主用途のものは載せない。`python` は `-m <module>` と
-# `manage.py`（Django）の形だけを許可する。
-# なお `-e` / `-c` に意味のあるコードを渡すには、クォート・括弧・`$`・バッククォート・`;` の
-# いずれかがほぼ必ず要る。これらはシェル解釈を要求する文字として argv 変換の段階で拒否される
-# ため、この経路は実質的に塞がっている（**多層防御としての観測であり、統制の主体は
-# 本ファイルの列挙である**——ここに載っていないものは実行されない）。
+# ■ 残る限界（**保証しないこと**。docs/script-launcher.md §6 が正本）
+# (a) のエントリが起動するのは**プロジェクト自身の設定が定めた手続き**であり、その中身が
+# 何を実行するかはリポジトリの内容が決める。またビルドツールには一般に脱出口がある
+# （`make -f <別ファイル>`、`mvn exec:exec`、`gradle -b <別ファイル>`、
+#  `node --test --require <ファイル>`、`mocha --require <ファイル>` 等）。
+# **これらはリポジトリに書き込める主体には塞げない**——このファイルが保証するのは
+# 「呼び出し側の1つの文字列だけで、事前準備なしに deny 対象コマンドへ到達できないこと」
+# であって、「プロジェクトのツールチェインが安全であること」ではない。
 
 # --- 疎通確認・no-op（引数を出力するだけ／終了コードを返すだけで副作用が無い） ---
 true
@@ -69,10 +86,10 @@ deno test
 deno lint
 deno check
 deno fmt
-node
-npx --no
-npx --no-install
-npx --offline
+node --test
+> npx --no
+> npx --no-install
+> npx --offline
 tsc
 eslint
 oxlint
@@ -83,26 +100,33 @@ vitest
 jest
 mocha
 ava
-playwright
-cypress
+playwright test
+cypress run
 tsd
 knip
 madge
 depcheck
 
 # --- Python ---
-python -m
-python3 -m
-python manage.py
-python3 manage.py
-uv run
-uvx --offline
-poetry run
-pipenv run
-hatch run
+# `-m` の後ろはモジュール名だが、実行対象そのものであるためラッパーとして扱う
+# （`python3 -m pip install <pkg>` は取得したコードを実行しうる）。
+> python -m
+> python3 -m
+python manage.py test
+python3 manage.py test
+> uv run
+> uvx --offline
+> poetry run
+> pipenv run
+> hatch run
+> coverage run -m
+coverage report
+coverage xml
+coverage html
 tox
 nox
 pytest
+unittest
 ruff
 mypy
 pyright
@@ -111,26 +135,35 @@ pylint
 black
 isort
 bandit
-coverage
 
 # --- Rust ---
-cargo
+cargo test
+cargo nextest
+cargo clippy
+cargo fmt
+cargo check
+cargo build
+cargo bench
+cargo doc
 
 # --- Go ---
-go
+go test
+go vet
+go build
+go fmt
 gofmt
 goimports
 golangci-lint
 staticcheck
 
 # --- Ruby ---
-bundle exec
-bundler exec
+> bundle exec
+> bundler exec
 rake
 rspec
 rubocop
 standardrb
-srb
+srb tc
 
 # --- JVM / Kotlin / Scala ---
 mvn
@@ -142,16 +175,24 @@ ktlint
 detekt
 
 # --- .NET / Swift / Dart ---
-dotnet
-swift
+dotnet test
+dotnet build
+dotnet format
+dotnet restore
+swift test
+swift build
 swiftlint
-flutter
-dart
-melos
+flutter test
+flutter analyze
+dart test
+dart analyze
+dart format
+melos run
 
 # --- PHP ---
 composer run
 composer test
+composer validate
 ./vendor/bin/phpunit
 ./vendor/bin/phpstan
 ./vendor/bin/psalm
@@ -163,19 +204,35 @@ psalm
 pint
 
 # --- Elixir / Erlang / Gleam / Zig / Haskell ---
-mix
-rebar3
-gleam
-zig
-stack
-cabal
+mix test
+mix format
+mix credo
+mix dialyzer
+mix compile
+rebar3 eunit
+rebar3 ct
+rebar3 dialyzer
+rebar3 compile
+gleam test
+gleam format
+gleam check
+zig build
+zig test
+zig fmt
+stack test
+stack build
+cabal test
+cabal build
 
-# --- インフラ・設定言語 ---
-terraform
+# --- インフラ・設定言語（環境を変更するサブコマンドは載せない） ---
+terraform fmt
+terraform validate
+tofu fmt
+tofu validate
 tflint
-tofu
 ansible-lint
-helm
+helm lint
+helm template
 kubeconform
 hadolint
 yamllint
@@ -192,8 +249,11 @@ make
 just
 task
 mise run
-nx
-turbo
-bazel
-buck2
+nx run
+nx affected
+turbo run
+bazel test
+bazel build
+buck2 test
+buck2 build
 earthly

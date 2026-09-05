@@ -117,20 +117,59 @@ cmdspec_prefix_matches() {
   return 0
 }
 
-# argv が allowlist のいずれかのエントリに前置一致するかを判定する。
+# エントリ（空白区切りのトークン列）のトークン数を返す。
+cmdspec_token_count() {
+  local toks=()
+  read -r -a toks <<<"$1" || true
+  printf '%s' "${#toks[@]}"
+}
+
+# argv が allowlist のいずれかのエントリに一致するかを判定する。
+#
+# エントリには2種類ある:
+#   - 通常エントリ（例: `npm run`）: argv の**先頭トークン列**に前置一致すれば可。
+#     以降のトークン（スクリプト名・フラグ・パス）は自由。**実行されるプログラムは
+#     エントリ側で固定されている**ため、呼び出し側は「何を実行するか」を選べない。
+#   - ラッパーエントリ（`> ` で始まる。例: `> bundle exec`）: 前置一致に加えて、
+#     **残りの argv がそれ自体 allowlist に載っていること**を要求する（再帰）。
+#
+# ラッパーを分けるのは、`bundle exec` / `uv run` / `python3 -m` / `npx --no` のように
+# **次のトークンが実行対象そのもの**になるエントリを、前置一致だけで許すと
+# `bundle exec rm -rf /` が通ってしまうため（PR #224 のレビュー指摘。実測で確認済み）。
+# 「実行系を閉じた集合に限る」という統制は、この区別が無いと成立しない。
+# 再帰は毎回 argv を2トークン以上消費するため必ず停止する
+# （`bundle exec bundle exec rm` は最終的に `rm` で不一致になり拒否される）。
+#
 # allowlist ファイルが読めない場合は **fail-closed**（何も実行させない）。
 # 「一覧が壊れていたら全部通す」は、統制が消えたことに気付けない最悪の失敗形になる。
 cmdspec_allowed() {
   [ "$#" -gt 0 ] || return 1
   [ -f "$CMDSPEC_ALLOWLIST_FILE" ] || return 1
 
-  local line
+  local line entry n rest
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%%#*}"
     [ -n "$line" ] || continue
-    if cmdspec_prefix_matches "$line" "$@"; then
-      return 0
-    fi
+    case "$line" in
+      '>'*)
+        entry="${line#>}"
+        n="$(cmdspec_token_count "$entry")"
+        [ "$n" -gt 0 ] || continue
+        # ラッパー自身で終わる呼び出し（`bundle exec` のみ）は実行対象が無いので不可。
+        [ "$#" -gt "$n" ] || continue
+        if cmdspec_prefix_matches "$entry" "$@"; then
+          rest=("${@:$((n + 1))}")
+          if cmdspec_allowed "${rest[@]}"; then
+            return 0
+          fi
+        fi
+        ;;
+      *)
+        if cmdspec_prefix_matches "$line" "$@"; then
+          return 0
+        fi
+        ;;
+    esac
   done <"$CMDSPEC_ALLOWLIST_FILE"
   return 1
 }

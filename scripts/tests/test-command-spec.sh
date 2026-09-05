@@ -159,6 +159,114 @@ for denied in \
   assert_eq "拒否: [${denied}]" "1" "$?"
 done
 
+# =============================================================================
+echo "=== test: 汎用ラッパーが実行対象を自由に選ばせない（PR #224 レビュー指摘1の回帰） ==="
+# =============================================================================
+# 先頭トークン列だけを見る前置一致では、`bundle exec rm -rf /` のように
+# **呼び出し側が実行対象そのものを指定できる**エントリが素通りする。それでは
+# 「実行系を閉じた集合に限る」という統制が成立しない（塞いだはずの穴が一段ずれて残る）。
+# ラッパーの次のトークンは、それ自体が allowlist に載っていなければならない。
+
+for wrapper_denied in \
+  'bundle exec rm -rf /tmp/x' \
+  'bundler exec rm -rf /tmp/x' \
+  'uv run rm -rf /tmp/x' \
+  'poetry run rm -rf /tmp/x' \
+  'pipenv run rm -rf /tmp/x' \
+  'hatch run rm -rf /tmp/x' \
+  'python3 -m pip install setuptools' \
+  'python -m pip install setuptools' \
+  'npx --no rimraf /tmp/x' \
+  'npx --no-install rimraf /tmp/x' \
+  'npx --offline rimraf /tmp/x' \
+  'uvx --offline evil-package' \
+  'coverage run /tmp/evil.py' \
+  'bundle exec bundle exec rm -rf /tmp/x'; do
+  cmdspec_parse "$wrapper_denied"
+  assert_eq "ラッパー経由の任意実行を拒否: ${wrapper_denied}" "1" "$?"
+done
+
+for wrapper_allowed in \
+  'bundle exec rspec' \
+  'bundle exec rubocop --parallel' \
+  'uv run pytest tests' \
+  'poetry run mypy src' \
+  'pipenv run pytest' \
+  'hatch run ruff check' \
+  'python3 -m pytest tests' \
+  'python -m mypy src' \
+  'npx --no tsc --noEmit' \
+  'npx --no eslint .' \
+  'uvx --offline ruff check' \
+  'coverage run -m pytest'; do
+  cmdspec_parse "$wrapper_allowed"
+  assert_eq "ラッパー経由でも許可ツールなら可: ${wrapper_allowed}" "0" "$?"
+done
+
+# =============================================================================
+echo "=== test: 汎用サブコマンドで任意のバイナリ／ネットワーク取得を起動できない ==="
+# =============================================================================
+# `cargo install` / `go install` は取得したコードをビルド時に実行し、
+# `cargo run` / `go run` / `dotnet exec` / `node <file>` は呼び出し側が実行対象を選べる。
+# 「プロジェクト自身の設定が定める手続きを起動する」形（`cargo test` 等）だけを許可する。
+
+for subcmd_denied in \
+  'cargo install evil-crate' \
+  'cargo run' \
+  'go install evil@latest' \
+  'go run ./cmd/tool' \
+  'dotnet exec /tmp/tool.dll' \
+  'dotnet tool install evil' \
+  'node /tmp/evil.js' \
+  'node --require /tmp/evil.js --test' \
+  'swift run' \
+  'dart run /tmp/x.dart' \
+  'mix run' \
+  'terraform apply' \
+  'helm install evil ./chart' \
+  'playwright install' \
+  'zig run /tmp/x.zig'; do
+  cmdspec_parse "$subcmd_denied"
+  assert_eq "汎用サブコマンドを拒否: ${subcmd_denied}" "1" "$?"
+done
+
+for subcmd_allowed in \
+  'cargo test' \
+  'cargo clippy --all-targets' \
+  'go test ./...' \
+  'go vet ./...' \
+  'dotnet test' \
+  'dotnet format' \
+  'node --test tests' \
+  'swift test' \
+  'dart analyze' \
+  'mix test' \
+  'terraform validate' \
+  'helm lint ./chart' \
+  'playwright test' \
+  'zig build test'; do
+  cmdspec_parse "$subcmd_allowed"
+  assert_eq "プロジェクト定義の手続き起動は可: ${subcmd_allowed}" "0" "$?"
+done
+
+# プロジェクト自身の設定が実行内容を定める形は従来どおり通す（後方互換）。
+for project_defined in \
+  'npm run lint' \
+  'npm test' \
+  'pnpm run typecheck' \
+  'yarn run lint' \
+  'bun run lint' \
+  'deno task test' \
+  'make test' \
+  'just check' \
+  'rake spec' \
+  'tox' \
+  './gradlew test' \
+  'composer run test'; do
+  cmdspec_parse "$project_defined"
+  assert_eq "プロジェクト設定が定める手続き: ${project_defined}" "0" "$?"
+done
+
 cmdspec_parse 'npm run lint; touch /tmp/x'
 assert_eq "metachar を含む形は拒否" "1" "$?"
 assert_contains "拒否理由に metachar が示される" "$CMDSPEC_ERROR" "shell metacharacter"
@@ -296,21 +404,45 @@ echo "=== test: ランチャーの --env で実行系解決を差し替えられ
 # PATH を差し替えられると allowlist にある名前（npm 等）で任意のバイナリを実行できるため、
 # 実行系解決に影響する環境変数はランチャー側で拒否する。
 
+# denylist 方式では同種の変数（NODE_PATH / PYTHONPATH / GEM_PATH …）を取りこぼすため、
+# **allowlist 方式**にしてある（PR #224 レビュー指摘2）。ここでは「取りこぼしがちな
+# 検索パス系」を含めて、許可した名前以外がすべて拒否されることを固定する。
 for evil_env in \
   'PATH=/tmp/evil' \
   'BASH_ENV=/tmp/evil.sh' \
   'NODE_OPTIONS=--require=/tmp/evil.js' \
+  'NODE_PATH=/tmp/evil' \
+  'PYTHONPATH=/tmp/evil' \
+  'PYTHONHOME=/tmp/evil' \
+  'GEM_PATH=/tmp/evil' \
+  'RUBYLIB=/tmp/evil' \
+  'PERL5LIB=/tmp/evil' \
+  'CLASSPATH=/tmp/evil' \
+  'JAVA_TOOL_OPTIONS=-javaagent:/tmp/evil.jar' \
+  'DOTNET_STARTUP_HOOKS=/tmp/evil.dll' \
+  'GRADLE_OPTS=-Dx=y' \
+  'MAVEN_OPTS=-Dx=y' \
   'LD_PRELOAD=/tmp/evil.so' \
   'DYLD_INSERT_LIBRARIES=/tmp/evil.dylib' \
-  'CLAUDE_HARNESS_ROOT=/tmp/evil'; do
+  'CLAUDE_HARNESS_ROOT=/tmp/evil' \
+  'FOO=bar'; do
   LAUNCHER_OUT="$("$LAUNCHER" --env "$evil_env" --plugin-root 2>&1)"
   assert_eq "--env ${evil_env%%=*} は拒否される（exit 64）" "64" "$?"
   assert_contains "--env ${evil_env%%=*} の拒否理由が出る" "$LAUNCHER_OUT" "may not be set via --env"
 done
 
-LAUNCHER_OK_OUT="$(CLAUDE_HARNESS_ROOT="$REPO_ROOT" "$LAUNCHER" --env FOO=bar --plugin-root 2>&1)"
-assert_eq "実行系解決に関係しない --env は従来どおり通る" "0" "$?"
-assert_eq "--plugin-root は解決結果を返す" "$REPO_ROOT" "$LAUNCHER_OK_OUT"
+# 許可されているのは、スキルが実際に使う（実行系の解決に影響しない）変数だけ。
+for ok_env in \
+  'WALKTHROUGH_PROJECT_ROOT=/abs/project' \
+  'WALKTHROUGH_OUT=/abs/out' \
+  'WALKTHROUGH_SLOWMO=1500' \
+  'WALKTHROUGH_PAUSE_MS=5000' \
+  'WALKTHROUGH_HEADED=1' \
+  'BASE_URL=http://localhost:3000'; do
+  LAUNCHER_OK_OUT="$(CLAUDE_HARNESS_ROOT="$REPO_ROOT" "$LAUNCHER" --env "$ok_env" --plugin-root 2>&1)"
+  assert_eq "--env ${ok_env%%=*} は通る" "0" "$?"
+  assert_eq "--env ${ok_env%%=*} でも --plugin-root は解決結果を返す" "$REPO_ROOT" "$LAUNCHER_OK_OUT"
+done
 
 # =============================================================================
 echo "=== test: 迂回不能であることが仕様・ドキュメントに固定されている ==="
