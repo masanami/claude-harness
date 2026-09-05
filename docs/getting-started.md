@@ -63,7 +63,11 @@ claude-harness-run --plugin-root   # プラグインルートの絶対パスが�
 claude-harness-run --list          # 実行可能なスクリプト一覧が表示される
 ```
 
-`.claude/settings.json`（`/init-project` が生成する場合は自動で含まれます）:
+ランチャーは実行のたびにインストール済みプラグインの現行版を解決するため、プラグインを更新してもコピーを置き直す必要はありません。詳細・トラブルシューティングは [スクリプトランチャー](./script-launcher.md) を参照してください。
+
+### 許可設定をどこに置くか
+
+ランチャーの allow は**ユーザー設定** `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` に置きます。プロジェクトの `.claude/settings.json` は deny 専用（リポジトリの性質）で、`/init-project` は運用上の allow をそこへ書き込みません（ユーザー設定向けのスニペットを提示します）。
 
 ```json
 {
@@ -73,7 +77,12 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 }
 ```
 
-ランチャーは実行のたびにインストール済みプラグインの現行版を解決するため、プラグインを更新してもコピーを置き直す必要はありません。詳細・トラブルシューティングは [スクリプトランチャー](./script-launcher.md) を参照してください。
+| 構成 | 置き場 |
+|---|---|
+| **単独オペレータ**（1 人・1 マシン。自走委譲・`/para-impl` の worktree もこれで動く） | ユーザー設定に上の 1 行で足ります。すべてのプロジェクト・worktree に効き、trust 承認に依存しません |
+| **チーム・複数マシン・CI** | 各人のユーザー設定に置くか、揃えたい場合は tracked の `.claude/settings.json` に手で追記します。tracked の allow は**各人が各クローンで trust を承認するまで効かず**、headless 実行（`claude -p`）は trust ダイアログを出さないため、人間の承認を伴わない環境では効きません |
+
+3 層（ユーザー設定 / プロジェクト settings / `settings.local.json`）の役割分担と、プロジェクト settings が**保証しない範囲**（deny は子プロセスに効かない、bypassPermissions では allow が評価されない等）は [許可設定の統治](./settings-governance.md) を参照してください。
 
 ### Codexへの委譲（`/codex-review` / `/codex-task`）を使う場合
 
