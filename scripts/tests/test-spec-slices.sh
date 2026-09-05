@@ -137,8 +137,16 @@ assert_text_contains "(S-1) スライス表の列名が固定（呼び出し側�
   '| スライス | 内容 | 触るファイル数（概算） | 出荷条件 |'
 assert_text_contains "(S-1) S1（最小）の行が在る" "$SLICE_SECTION" '| S1（最小） |'
 assert_text_contains "(S-1) S2 の出荷条件は前スライスのマージ後" "$SLICE_SECTION" 'S1 がマージされてから'
-assert_eq "(S-1) 実装対象行が S1 を既定とする形で在る" "1" \
-  "$(printf '%s\n' "$SLICE_SECTION" | grep -cE '^実装対象: S1$')"
+assert_eq "(S-1) 実装対象行がちょうど1行在る" "1" \
+  "$(printf '%s\n' "$SLICE_SECTION" | grep -cE '^実装対象: ')"
+TARGET_ID="$(printf '%s\n' "$SLICE_SECTION" | grep -E '^実装対象: ' | head -1 | sed -E 's/^実装対象: *//; s/[[:space:]]+$//')"
+assert_eq "(S-1) 実装対象 ID が単一の ID 形式（S＋数字）である" "true" \
+  "$(if printf '%s' "$TARGET_ID" | grep -qE '^S[0-9]+$'; then echo true; else echo false; fi)"
+assert_eq "(S-1) 実装対象 ID がスライス表の行に存在する（S1 固定ではなく表との整合を見る）" "true" \
+  "$(if printf '%s\n' "$SLICE_SECTION" | grep -qE "^\| ${TARGET_ID}[^|]* \|"; then echo true; else echo false; fi)"
+assert_eq "(S-1) テンプレート（初期作成時）の実装対象は既定値 S1" "S1" "$TARGET_ID"
+assert_text_contains "(S-1) 実装対象は表に在る ID を1つ書く（後続で書き換える）" "$SLICE_SECTION" \
+  '表に在るスライス ID を1つ書く（初期作成時は S1。後続スライスへ進めるときに書き換える）'
 assert_text_contains "(S-1) スライス節は必須節（削除しない）" "$SLICE_SECTION" '必須節。削除しない'
 assert_text_contains "(S-1) 触るファイル数の書式が固定（単一値か範囲）" "$SLICE_SECTION" '半角数字の単一値か `下限-上限` の範囲'
 
@@ -169,7 +177,10 @@ STEP6="$(extract_section "$DEFINE_SKILL_FILE" '### 6. 機能仕様ドキュメ�
 assert_eq "(S-2) 手順 6 の節を切り出せる" "true" "$(nonempty "$STEP6")"
 assert_text_contains "(S-2) 手順 6 の記述ルールに必須節の削除禁止が在る" "$STEP6" \
   '**例外として `## スライス（出荷の単位）` と `## やらないこと` は必須節であり削除しない**'
-assert_text_contains "(S-2) 手順 6 で実装対象行を要求する" "$STEP6" '`実装対象: S1` の行を必ず持ち'
+assert_text_contains "(S-2) 手順 6 は実装対象行を ID 可変の形で要求する（S1 は初期既定値）" "$STEP6" \
+  '`実装対象: {スライス ID}` の行（表に在る ID を1つ。初期作成時は S1）を必ず持ち'
+assert_eq "(S-2) 手順 6 は実装対象を S1 に固定していない" "0" \
+  "$(printf '%s\n' "$STEP6" | grep -cF -- '`実装対象: S1` の行')"
 
 STEP65="$(extract_section "$DEFINE_SKILL_FILE" '### 6.5 仕様クリティーク' '^### ')"
 assert_eq "(S-2) 手順 6.5 の節を切り出せる" "true" "$(nonempty "$STEP65")"
@@ -184,7 +195,10 @@ echo "=== (S-3) spec-critic: internal-consistency レンズの節内にスコー
 IC_SECTION="$(extract_section "$CRITIC_FILE" '### `internal-consistency`' '^### |^## ')"
 assert_eq "(S-3) internal-consistency の節を切り出せる" "true" "$(nonempty "$IC_SECTION")"
 assert_text_contains "(S-3) 受入基準が実装対象スライスの内容に収まっているかを照合する" "$IC_SECTION" \
-  '「## 受入基準」の各項目が `実装対象:` 行のスライス（既定 S1）の「内容」に収まっているか'
+  '「## 受入基準」の各項目が `実装対象:` 行のスライスの「内容」に収まっているか'
+assert_text_contains "(S-3) 実装対象 ID を S1 に固定しない（後続スライスの仕様を needs_user_input にしない）" "$IC_SECTION" \
+  '**`実装対象:` の ID は S1 に固定しない**'
+assert_text_contains "(S-3) 表に無い ID は blocker 候補" "$IC_SECTION" '**スライス表に無い ID** なら blocker 候補'
 assert_text_contains "(S-3) 後続スライス・範囲外を検証する受入基準は blocker 候補" "$IC_SECTION" \
   '「やらないこと」に挙げた範囲外を検証する受入基準は blocker 候補'
 assert_text_contains "(S-3) 必須節の欠落・空の列挙は needs_user_input" "$IC_SECTION" \
@@ -198,7 +212,11 @@ REQ_STEP1="$(extract_section "$REQ_MODE_FILE" '### Step 1: 機能仕様ドキュ
 assert_eq "(S-4) Step 1 の節を切り出せる" "true" "$(nonempty "$REQ_STEP1")"
 assert_text_contains "(S-4) Step 1 が必須節（スライス）を前提に含める" "$REQ_STEP1" '**スライス（出荷の単位）**'
 assert_text_contains "(S-4) Step 1 が必須節（やらないこと）を前提に含める" "$REQ_STEP1" '**やらないこと**'
-assert_text_contains '(S-4) 実装対象は `実装対象:` 行のスライス（既定 S1）' "$REQ_STEP1" '`実装対象:` 行のスライス ID（既定 `S1`）'
+assert_text_contains '(S-4) 実装対象は `実装対象:` 行のスライス（S1 固定ではない）' "$REQ_STEP1" \
+  'ID は S1 に固定しない。初期作成時の既定が S1 で、後続スライスへ進めた仕様では S2 以降になる'
+assert_text_contains "(S-4) 表に無い ID は推測で起票せず差し戻す" "$REQ_STEP1" 'ID がスライス表に無い場合は推測で起票せず'
+assert_text_contains "(S-4) 必須節の欠如は不足判定の対象外（旧テンプレートを差し戻さない）" "$REQ_STEP1" \
+  '**ただし「スライス（出荷の単位）」「やらないこと」の欠如は不足として扱わない**'
 assert_text_contains "(S-4) 起票は実装対象スライスの1件のみ" "$REQ_STEP1" '**起票するのは実装対象スライスの要件チケット1件のみ**'
 assert_text_contains "(S-4) 後続スライスは起票しない" "$REQ_STEP1" '後続スライス（S2 以降）のチケットは起票しない'
 assert_text_contains "(S-4) 後続の起票トリガーは前スライスの PR マージ後" "$REQ_STEP1" \
