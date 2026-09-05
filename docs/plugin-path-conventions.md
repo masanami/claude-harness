@@ -64,7 +64,7 @@ bash "<解決済みプラグインルート>/scripts/xxx.sh" <引数>
 | `SKILL.md` 本体 | **届く**（Skill ツールがコンテキストへ注入する） |
 | `references/*.md`・`templates/*`（Read ツール） | **既定では届かない**（プラグイン配下＝作業ディレクトリ外の Read として拒否される） |
 | 同上（利用側設定に `Read(~/.claude/plugins/**)` を追加した場合） | 届く |
-| `claude-harness-run read-plugin-doc <plugin相対パス>` | **ランチャー導入済み＋利用側 settings に `Bash(claude-harness-run:*)` が在れば届く**（`/init-project` の生成設定には最初から含まれる。ランチャー未導入の既存プロジェクトでは注記のフォールバックで Read へ落ち、そこでは拒否されうる — この経路は「無条件に効く」わけではない） |
+| `claude-harness-run read-plugin-doc <plugin相対パス>` | **ランチャー導入済み＋利用側の settings（ユーザー設定または tracked）に `Bash(claude-harness-run:*)` が在れば届く**（`/init-project` はこの行をユーザー設定向けスニペットとして提示する。ランチャー未導入の既存プロジェクトでは注記のフォールバックで Read へ落ち、そこでは拒否されうる — この経路は「無条件に効く」わけではない） |
 
 対話セッションなら人間が都度許可できるが、**headless 委譲には許可する相手がいない**ため拒否がそのまま「読めない」で確定する。
 

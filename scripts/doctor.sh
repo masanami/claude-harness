@@ -107,11 +107,14 @@ doctor_lines_to_json_array() {
 # ------------------------------------------------------------------
 
 # 引数: pm, testFWカンマ区切り, infraカンマ区切り
-# deny の正本（base-deny.json）は渡さない。診断は allow しか見ないため、
+# 期待 allow はユーザー設定向けスニペット（生成器がプロジェクト settings には書かず、
+# 人間に提示する運用 allow）から導出する。プロジェクト settings の生成 allow は deny 専用で
+# 常に空のため、そちらから導出すると診断が空虚に ok になる。
+# deny の正本（base-deny.json）は使わない。診断は allow しか見ないため、
 # base-deny.json の欠損で診断そのものが落ちて allow の検査まで巻き添えになるのを避ける。
 doctor_expected_allow_json() {
   local pm="$1" test_csv="$2" infra_csv="$3"
-  gs_build_generated_settings_json "$pm" "$test_csv" "$infra_csv" '[]' | jq -c '.permissions.allow'
+  gs_build_user_settings_snippet_json "$pm" "$test_csv" "$infra_csv" | jq -c '.permissions.allow'
 }
 
 # 引数: 期待 allow(JSON配列), 実際の allow(JSON配列) → 不足分(JSON配列)

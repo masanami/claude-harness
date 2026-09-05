@@ -314,14 +314,17 @@ td_make_launcher_stub_dir "$TD_STUB_BIN"
 TD_MIN_BIN="${TD_TMP_DIR}/minbin"
 td_make_minimal_bin_dir "$TD_MIN_BIN"
 
-# 健全なプロジェクトのフィクスチャを作る。settings.json は**実際の生成器の出力**に
+# 健全なプロジェクトのフィクスチャを作る。settings.json は**実際の生成器の出力**（deny 専用）に、
+# チームが tracked に置くことを選んだ運用 allow（生成器がスニペットとして提示するもの）と
 # 人間の追記（プロジェクト固有の allow / deny / 独自トップレベルキー）を混ぜたもの。
 td_make_project() {
   local dir="$1"
   mkdir -p "${dir}/.claude" "${dir}/docs"
   bash "$TD_GENERATE_SETTINGS" --pm npm --target "${dir}/.claude/settings.json" >/dev/null 2>&1
   local tmp="${dir}/.claude/settings.merged.json"
-  jq '.permissions.allow += ["Bash(terraform plan:*)"]
+  jq --argjson op "$(gs_build_user_settings_snippet_json npm "" "" | jq -c '.permissions.allow')" \
+     '.permissions.allow = ((.permissions.allow + $op) | unique)
+      | .permissions.allow += ["Bash(terraform plan:*)"]
       | .permissions.deny += ["Bash(terraform destroy:*)"]
       | .hooks = {"PostToolUse": []}' \
     "${dir}/.claude/settings.json" > "$tmp" && mv "$tmp" "${dir}/.claude/settings.json"
@@ -565,7 +568,8 @@ assert_eq "書き込む doctor は非破壊の検算に落とされる（検算�
 # ------------------------------------------------------------------
 echo "== (P)(Q) 是正コマンドの非破壊性 =="
 
-# doctor が提示する是正は generate-settings.sh の再実行である。それが**人間の記述を
+# doctor が提示する是正コマンドの一つは generate-settings.sh の再実行である（deny の不足を
+# マージし、運用 allow はユーザー設定向けスニペットとして提示する）。それが**人間の記述を
 # 消さない**ことを、既存要素の多重集合の差で検算する（削除範囲を比較対象から除外しない）。
 td_lost_entries_count() {
   local before="$1" after="$2" field="$3"
@@ -581,7 +585,8 @@ TD_ALLOW_BEFORE="$(jq -c '.permissions.allow' "$TD_SETTINGS")"
 TD_DENY_BEFORE="$(jq -c '.permissions.deny' "$TD_SETTINGS")"
 TD_HOOKS_BEFORE="$(jq -c '.hooks' "$TD_SETTINGS")"
 
-bash "$TD_GENERATE_SETTINGS" --pm npm --target "$TD_SETTINGS" >/dev/null 2>&1
+TD_GS_STDOUT="${TD_TMP_DIR}/gs-stdout.json"
+bash "$TD_GENERATE_SETTINGS" --pm npm --target "$TD_SETTINGS" >"$TD_GS_STDOUT" 2>/dev/null
 TD_ALLOW_AFTER="$(jq -c '.permissions.allow' "$TD_SETTINGS")"
 TD_DENY_AFTER="$(jq -c '.permissions.deny' "$TD_SETTINGS")"
 
@@ -592,8 +597,12 @@ assert_eq "既存 deny が1件も減っていない" "0" \
 assert_eq "permissions 以外の既存キー（hooks）が保持される" "$TD_HOOKS_BEFORE" "$(jq -c '.hooks' "$TD_SETTINGS")"
 assert_eq "人間が足した allow（terraform plan）が残る" "true" \
   "$(jq -r 'index("Bash(terraform plan:*)") != null' <<<"$TD_ALLOW_AFTER")"
-assert_eq "是正後はランチャー allow が入る" "true" \
+# 生成器はプロジェクト settings（deny 専用）へランチャー allow を足さない。不足は
+# ユーザー設定向けスニペットとして stdout に提示される（書き込みは人間）。
+assert_eq "是正コマンドはプロジェクト settings にランチャー allow を足さない（deny 専用）" "false" \
   "$(jq -r --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" 'index($r) != null' <<<"$TD_ALLOW_AFTER")"
+assert_eq "是正コマンドの stdout にユーザー設定向けスニペットが出て、ランチャー allow を含む" "true" \
+  "$(jq -r --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" '.user_settings_snippet.permissions.allow | index($r) != null' "$TD_GS_STDOUT")"
 
 TD_GS_MUTANT="$(mktemp "${TD_REPO_ROOT}/skills/init-project/scripts/.generate-settings.mutant.XXXXXX")"
 TD_MUTANTS+=("$TD_GS_MUTANT")

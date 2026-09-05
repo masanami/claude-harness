@@ -49,7 +49,7 @@ Issue 数が **5件以上**の場合のみ、直列化の判断材料として `
 
 ### worktree・ブランチ準備
 
-**事前確認（permission 拒否の予防）**: allow 権限は **git tracked の `.claude/settings.json`** に置く（`/init-project` のステップ 6 参照）。gitignore された `.claude/settings.local.json` は worktree にコピーされず、サブエージェントへの適用も環境依存のため当てにしない。worker を spawn する前に必要な権限（`cd` / `git` / `gh` 系・`bash`（`scripts/worktree-setup.sh` 等のスクリプト実行））が揃っているかを確認し、不足があればユーザーに案内する。
+**事前確認（permission 拒否の予防）**: 運用 allow は**ユーザー設定 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json`** に置く（`/init-project` のステップ 6 が提示するスニペット）。ユーザー設定の allow はすべての worktree に効き、trust 承認に依存しない。tracked の `.claude/settings.json` に置いた allow は trust 承認済みのクローンでしか効かず、`.claude/settings.local.json` はマシン限定で、サブエージェントへの適用も環境依存のため当てにしない。worker を spawn する前に必要な権限（`cd` / `git` / `gh` 系・`claude-harness-run`（`worktree-setup` 等のスクリプト実行））が揃っているかを確認し、不足があればユーザーに案内する。
 
 リードが並列化対象の各 Issue について `scripts/worktree-setup.sh` を呼び、worktree と作業ブランチを作成する（Phase 3 に相当）:
 
