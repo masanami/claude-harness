@@ -46,6 +46,10 @@ if ! TD_TMP_DIR="$(mktemp -d)"; then
   echo "Failed to create test temporary directory" >&2
   exit 1
 fi
+# ユーザー設定は実行者のものを読まない。空の CLAUDE_CONFIG_DIR を既定にし、
+# ユーザー設定を使う検査だけが個別のディレクトリを指す（環境を汚さない・環境に依存しない）。
+export CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-empty"
+mkdir -p "$CLAUDE_CONFIG_DIR"
 TD_MUTANTS=()
 td_cleanup() {
   local m
@@ -149,6 +153,32 @@ assert_eq "両方に在れば両方" '["deny","ask"]' "$(doctor_shadowed_by_json
 # 意味論の実測記録が無いため推測で実装しない、という仕様上の決定をここで固定する。
 assert_eq "前置きが同じだけの別ルールは shadowing として検出しない（仕様上の明示的な仮定）" "[]" \
   "$(doctor_shadowed_by_json "$TD_RULE" '["Bash(claude-harness-run doctor)"]' '[]' | jq -c .)"
+
+# ------------------------------------------------------------------
+# (E2) doctor_rule_locations_json（3 層のどこに在るかを返す。空集合ケースと順序を含む）
+# ------------------------------------------------------------------
+echo "== (E2) doctor_rule_locations_json =="
+
+assert_eq "検査対象の層は project / user / local の 3 つ（仕様と一致）" "project user local" "$DOCTOR_ALLOW_SCOPES"
+TD_SCOPE_PROJ="${TD_TMP_DIR}/scopes"
+mkdir -p "${TD_SCOPE_PROJ}/.claude" "${TD_TMP_DIR}/config-scopes"
+assert_eq "user の置き場は CLAUDE_CONFIG_DIR 配下の settings.json" "${TD_TMP_DIR}/config-scopes/settings.json" \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes" doctor_scope_path user "$TD_SCOPE_PROJ")"
+assert_eq "local の置き場はプロジェクトの .claude/settings.local.json" "${TD_SCOPE_PROJ}/.claude/settings.local.json" \
+  "$(doctor_scope_path local "$TD_SCOPE_PROJ")"
+assert_eq "未知の scope は非0で返る" "false" "$(doctor_scope_path managed "$TD_SCOPE_PROJ" >/dev/null 2>&1 && echo true || echo false)"
+assert_eq "どこにも無ければ空（空集合ケース）" "[]" \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes" doctor_rule_locations_json "$TD_RULE" "$TD_SCOPE_PROJ" '[]' | jq -c .)"
+assert_eq "project の allow に在れば project" '["project"]' \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes" doctor_rule_locations_json "$TD_RULE" "$TD_SCOPE_PROJ" "[\"$TD_RULE\"]" | jq -c '[.[].scope]')"
+printf '{"permissions":{"allow":["%s"]}}\n' "$TD_RULE" > "${TD_TMP_DIR}/config-scopes/settings.json"
+printf '{"permissions":{"allow":["%s"]}}\n' "$TD_RULE" > "${TD_SCOPE_PROJ}/.claude/settings.local.json"
+assert_eq "user と local に在れば順序どおり両方" '["user","local"]' \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes" doctor_rule_locations_json "$TD_RULE" "$TD_SCOPE_PROJ" '[]' | jq -c '[.[].scope]')"
+assert_eq "path はその層のファイルを指す" "${TD_TMP_DIR}/config-scopes/settings.json" \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes" doctor_rule_locations_json "$TD_RULE" "$TD_SCOPE_PROJ" '[]' | jq -r '.[0].path')"
+assert_eq "別のルールは拾わない（否定検査）" "[]" \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes" doctor_rule_locations_json 'Bash(other:*)' "$TD_SCOPE_PROJ" '[]' | jq -c .)"
 
 # ------------------------------------------------------------------
 # (F) CLAUDE.md の節・プレースホルダ（空集合ケースを含む）
@@ -332,6 +362,10 @@ assert_eq "各 check の severity が表と一致する" "0" \
 assert_eq "findings は空" "0" "$(jq -r '.findings | length' "$TD_OUT")"
 assert_eq "counts.checks は checks の件数と一致" "true" \
   "$(jq -r '.counts.checks == (.checks | length)' "$TD_OUT")"
+assert_eq "tracked で満たされたランチャー allow は satisfied_by が project" '["project"]' \
+  "$(jq -c '.checks[] | select(.id == "settings_launcher_allow") | .satisfied_by' "$TD_OUT")"
+assert_eq "tracked で満たされたベース allow は satisfied_by が project" '["project"]' \
+  "$(jq -c '.checks[] | select(.id == "settings_base_allow") | .satisfied_by' "$TD_OUT")"
 
 # ------------------------------------------------------------------
 # (K) CLI: blocking（ランチャー allow 欠落・ランチャー不在・shadowing）
@@ -352,6 +386,12 @@ assert_eq "settings_launcher_allow が finding" "finding" \
   "$(jq -r '.checks[] | select(.id == "settings_launcher_allow") | .result' "$TD_OUT")"
 assert_eq "remediation に generate-settings.sh の再実行が出る" "true" \
   "$(jq -r '[.findings[] | select(.check == "settings_launcher_allow") | .remediation | contains("generate-settings.sh")] | all' "$TD_OUT")"
+assert_eq "remediation はユーザー設定への追記を第一候補にする（チーム共有が不要ならユーザー設定でよい）" "true" \
+  "$(jq -r '[.findings[] | select(.check == "settings_launcher_allow") | .remediation | (contains("ユーザー設定") and contains("チーム共有が不要なら"))] | all' "$TD_OUT")"
+assert_eq "remediation が示すユーザー設定のパスは CLAUDE_CONFIG_DIR 配下" "true" \
+  "$(jq -r --arg p "${CLAUDE_CONFIG_DIR}/settings.json" '[.findings[] | select(.check == "settings_launcher_allow") | .remediation | contains($p)] | all' "$TD_OUT")"
+assert_eq "どこにも無いときの items.found_in は空" "[]" \
+  "$(jq -c '.findings[] | select(.check == "settings_launcher_allow") | .items[0].found_in' "$TD_OUT")"
 
 TD_PROJ_SHADOW="${TD_TMP_DIR}/shadow"
 td_make_project "$TD_PROJ_SHADOW"
@@ -386,16 +426,67 @@ assert_eq "是正コマンドに --infra が載る" "true" \
 assert_eq "是正コマンドに --pm が載る" "true" \
   "$(jq -r '[.findings[] | select(.check == "settings_base_allow") | .remediation | contains("--pm \"npm\"")] | all' "$TD_OUT")"
 
-# found_elsewhere: 要件を満たさない置き場に在った事実を出す
+# ------------------------------------------------------------------
+# (K2) CLI: オペレータ層（ユーザー設定 / settings.local.json）の allow を受理する
+# ------------------------------------------------------------------
+echo "== (K2) CLI（オペレータ層の allow） =="
+
+# ユーザー設定にだけ在る → 要件を満たす（blocking にしない）。satisfied_by に user が出る。
+TD_PROJ_USER="${TD_TMP_DIR}/useronly"
+td_make_project "$TD_PROJ_USER"
+jq --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" '.permissions.allow |= map(select(. != $r))' \
+  "${TD_PROJ_USER}/.claude/settings.json" > "$TD_TMPJSON" && mv "$TD_TMPJSON" "${TD_PROJ_USER}/.claude/settings.json"
+TD_CONFIG_USER="${TD_TMP_DIR}/config-user"
+mkdir -p "$TD_CONFIG_USER"
+printf '{"permissions":{"allow":["%s"]}}\n' "$DOCTOR_LAUNCHER_ALLOW_RULE" > "${TD_CONFIG_USER}/settings.json"
+CLAUDE_CONFIG_DIR="$TD_CONFIG_USER" PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_USER" --pm npm > "$TD_OUT" 2>/dev/null
+TD_EXIT=$?
+assert_eq "ユーザー設定にだけ在るランチャー allow は要件を満たす（exit 0）" "0" "$TD_EXIT"
+assert_eq "status は ok" "ok" "$(jq -r '.status' "$TD_OUT")"
+assert_eq "settings_launcher_allow は ok で satisfied_by が user" '["user"]' \
+  "$(jq -c '.checks[] | select(.id == "settings_launcher_allow") | .satisfied_by' "$TD_OUT")"
+# 同じプロジェクトを空のユーザー設定で診断すると fail（ユーザー設定を読んだから ok になった、の対照）
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_USER" --pm npm > "$TD_OUT" 2>/dev/null
+assert_eq "対照: ユーザー設定が空なら同じプロジェクトは fail" "fail" "$(jq -r '.status' "$TD_OUT")"
+
+# settings.local.json にだけ在る → 要件を満たす（main checkout ルートの local は worktree からも読まれる。
+# docs/settings-governance.md §2 実験 3）。
 TD_PROJ_LOCAL="${TD_TMP_DIR}/localonly"
 td_make_project "$TD_PROJ_LOCAL"
 jq --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" '.permissions.allow |= map(select(. != $r))' \
   "${TD_PROJ_LOCAL}/.claude/settings.json" > "$TD_TMPJSON" && mv "$TD_TMPJSON" "${TD_PROJ_LOCAL}/.claude/settings.json"
 printf '{"permissions":{"allow":["%s"]}}\n' "$DOCTOR_LAUNCHER_ALLOW_RULE" > "${TD_PROJ_LOCAL}/.claude/settings.local.json"
 PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_LOCAL" --pm npm > "$TD_OUT" 2>/dev/null
-assert_eq "settings.local.json に在った事実は found_elsewhere に出る" "true" \
-  "$(jq -r '[.findings[] | select(.check == "settings_launcher_allow") | .items[0].found_elsewhere[] | contains("settings.local.json")] | any' "$TD_OUT")"
-assert_eq "found_elsewhere に在っても要件は満たさない（status は fail のまま）" "fail" "$(jq -r '.status' "$TD_OUT")"
+assert_eq "settings.local.json にだけ在るランチャー allow も要件を満たす" "ok" "$(jq -r '.status' "$TD_OUT")"
+assert_eq "satisfied_by は local" '["local"]' \
+  "$(jq -c '.checks[] | select(.id == "settings_launcher_allow") | .satisfied_by' "$TD_OUT")"
+
+# ユーザー設定に allow が在っても project の deny が同一ルールなら打ち消される（deny はどの層でも勝つ）
+TD_PROJ_USER_SHADOW="${TD_TMP_DIR}/usershadow"
+td_make_project "$TD_PROJ_USER_SHADOW"
+jq --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" '.permissions.allow |= map(select(. != $r)) | .permissions.deny += [$r]' \
+  "${TD_PROJ_USER_SHADOW}/.claude/settings.json" > "$TD_TMPJSON" && mv "$TD_TMPJSON" "${TD_PROJ_USER_SHADOW}/.claude/settings.json"
+CLAUDE_CONFIG_DIR="$TD_CONFIG_USER" PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_USER_SHADOW" --pm npm > "$TD_OUT" 2>/dev/null
+assert_eq "ユーザー設定の allow が project の deny で打ち消されていれば fail" "fail" "$(jq -r '.status' "$TD_OUT")"
+assert_eq "finding の found_in にユーザー設定が出る（allow の所在は隠さない）" '["user"]' \
+  "$(jq -c '.findings[] | select(.check == "settings_launcher_allow") | [.items[0].found_in[].scope]' "$TD_OUT")"
+
+# settings_base_allow: project に無い pm 権限がユーザー設定に在れば不足としない
+TD_PROJ_USER_BASE="${TD_TMP_DIR}/userbase"
+td_make_project "$TD_PROJ_USER_BASE"
+jq '.permissions.allow |= map(select(. != "Bash(npm:*)"))' \
+  "${TD_PROJ_USER_BASE}/.claude/settings.json" > "$TD_TMPJSON" && mv "$TD_TMPJSON" "${TD_PROJ_USER_BASE}/.claude/settings.json"
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_USER_BASE" --pm npm > "$TD_OUT" 2>/dev/null
+assert_eq "対照: npm 権限がどこにも無ければ settings_base_allow は finding" "finding" \
+  "$(jq -r '.checks[] | select(.id == "settings_base_allow") | .result' "$TD_OUT")"
+TD_CONFIG_NPM="${TD_TMP_DIR}/config-npm"
+mkdir -p "$TD_CONFIG_NPM"
+printf '{"permissions":{"allow":["Bash(npm:*)"]}}\n' > "${TD_CONFIG_NPM}/settings.json"
+CLAUDE_CONFIG_DIR="$TD_CONFIG_NPM" PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_USER_BASE" --pm npm > "$TD_OUT" 2>/dev/null
+assert_eq "npm 権限がユーザー設定に在れば settings_base_allow は ok" "ok" \
+  "$(jq -r '.checks[] | select(.id == "settings_base_allow") | .result' "$TD_OUT")"
+assert_eq "satisfied_by は project と user の両方（残りは tracked にある）" '["project","user"]' \
+  "$(jq -c '.checks[] | select(.id == "settings_base_allow") | .satisfied_by' "$TD_OUT")"
 
 # ------------------------------------------------------------------
 # (L)(M) CLI: skipped と実行前提の欠落

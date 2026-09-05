@@ -56,8 +56,10 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 
 #### `settings_launcher_allow` / `settings_base_allow`
 
-- 要件を満たす置き場は**プロジェクトの `.claude/settings.json`（git tracked）だけ**である。`.claude/settings.local.json` は gitignored で worktree へ持って行かれず、ユーザー設定はチームに共有されない。並列実装の worker は worktree 隔離環境で動くため、そこに効かない設定は要件を満たさない。
-- ただし `.claude/settings.local.json` とユーザー設定（`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json`）に同じルールが在った事実は `found_elsewhere` として出す。「対話セッションでは効いているのに missing と言われた」を、検出漏れと区別できるようにするため。
+- 要件を満たす置き場は 3 つ: **プロジェクトの `.claude/settings.json`（git tracked。`--target` で差し替え可）**、**ユーザー設定 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json`**、**プロジェクトの `.claude/settings.local.json`**（スクリプト内の `DOCTOR_ALLOW_SCOPES` = `project user local`）。いずれかにルールが在れば要件を満たし、3 つのどこにも無いときだけ finding にする。根拠は `docs/settings-governance.md` §2 の実測（2026-09-05 / Claude Code 2.1.261）: ユーザー設定の allow は worktree 内の headless 起動でも効き、`settings.local.json` は main checkout ルートのファイルが worktree からも読まれる（v2.1.211 以降）。並列実装の worker が動く worktree 隔離環境でも、この 3 層はいずれも効く。
+- ユーザー設定と `settings.local.json` は**チームに共有されない**（オペレータ層）。この事実は blocking の理由にはしないが、隠さない: `checks[]` の当該項目が `ok` のとき **`satisfied_by`**（`"project"` / `"user"` / `"local"` の配列）にどの層で満たされたかを出す。finding の `items[].found_in` は同じ情報を `[{scope, path}]` で持つ（shadowing で finding になった場合に、allow 自体はどこに在ったかを示す）。
+- `remediation` は**ユーザー設定への追記を第一候補**とし（「チーム共有が不要ならユーザー設定でよい」）、生成器 `generate-settings.sh` の再実行コマンド（診断条件つき）を併記する。プロジェクト settings を deny 専用にする割当（`docs/settings-governance.md` §1）に従い、allow の不足を「tracked に足せ」だけで是正させない。
+- **`DOCTOR_ALLOW_SCOPES` から外した層に在るルールは要件を満たさない**（例: `--settings` で渡す一時ファイル、managed settings）。検査対象の層を増やすときは、実測記録を `docs/settings-governance.md` に残してから表を変える。
 - **shadowing は完全一致のみ検出する**（`deny` / `ask` に allow と同一の文字列が在る場合）。優先順は deny > ask > allow。**前置き一致どうしの打ち消し（例: `Bash(claude-harness-run:*)` に対する `Bash(claude-harness-run doctor)` 等）の意味論は本リポジトリに実測記録が無いため、検出対象外**とする（明示的な仮定。実測できた時点で拡張する）。
 - **`Read(~/.claude/plugins/**)` は意図的に検査対象外**。生成設定へ加える案は「採らない」と決定済みである（理由 3 点は `docs/skill-note-inventory.md` 6 節の表: 権限拡大が広い／`CLAUDE_CONFIG_DIR` 利用環境・ローカルチェックアウトを 1 つの静的パターンで覆えない／既存の導入済みプロジェクトには効かない）。ランチャー不在時の正しい是正は**ランチャーを導入すること**（`docs/script-launcher.md` §2）であり、Read 許可の追加ではない。
 
@@ -105,7 +107,7 @@ severity は**この表で固定**であり、実行時の状況で変えない�
   "checks": [
     { "id": "launcher_on_path", "severity": "blocking", "result": "ok" },
     { "id": "launcher_plugin_root", "severity": "blocking", "result": "ok" },
-    { "id": "settings_launcher_allow", "severity": "blocking", "result": "ok" },
+    { "id": "settings_launcher_allow", "severity": "blocking", "result": "ok", "satisfied_by": ["user"] },
     { "id": "settings_base_allow", "severity": "advisory", "result": "finding" },
     { "id": "claude_md_sections", "severity": "advisory", "result": "ok" },
     { "id": "claude_md_placeholders", "severity": "advisory", "result": "ok" },
@@ -115,16 +117,17 @@ severity は**この表で固定**であり、実行時の状況で変えない�
     {
       "check": "settings_base_allow",
       "severity": "advisory",
-      "summary": "期待される allow のうち 1 件が settings に無い",
-      "items": [ { "rule": "Bash(npm:*)", "found_elsewhere": ["settings.local.json"] } ],
-      "remediation": "claude-harness-run skills/init-project/scripts/generate-settings.sh --target \"/path/to/project/.claude/settings.json\""
+      "summary": "期待される allow のうち 1 件がプロジェクト settings・ユーザー設定・settings.local.json のいずれにも無い",
+      "items": [ { "rule": "Bash(npm:*)", "found_in": [] } ],
+      "remediation": "ユーザー設定 /Users/me/.claude/settings.json の permissions.allow に不足しているルールを追記する（チーム共有が不要ならユーザー設定でよい）。tracked の settings に揃える場合: claude-harness-run skills/init-project/scripts/generate-settings.sh --target \"/path/to/project/.claude/settings.json\""
     }
   ]
 }
 ```
 
 - `checks` は**全 7 件を必ず出す**。`skipped` を出さずに黙って落とすと「未検査」と「調べた結果の 0 件」が区別できなくなる。`skipped` には必ず `reason` を付ける。
-- `findings` の各要素は `check` / `severity` / `summary` / `items` / `remediation` を持つ。`items` の形は検査ごとに異なる（allow 系は `{rule, found_elsewhere}`、doc map は `{path, state, kind}`、節は `{section}` 等）。
+- `findings` の各要素は `check` / `severity` / `summary` / `items` / `remediation` を持つ。`items` の形は検査ごとに異なる（allow 系は `{rule, found_in}`（ランチャーは加えて `shadowed_by`）、doc map は `{path, state, kind}`、節は `{section}` 等）。
+- `checks[]` の `settings_launcher_allow` / `settings_base_allow` が `ok` のときは `satisfied_by`（層名の配列）を持つ。
 - `status` は `findings` から決まる: blocking が 1 件以上あれば `fail`、findings があり blocking が 0 件なら `warn`、findings が 0 件なら `ok`。
 - `skipped` が blocking の検査を隠すことはない。`launcher_plugin_root` が skipped になるのは `launcher_on_path` が finding のとき（＝既に `fail`）だけである。
 

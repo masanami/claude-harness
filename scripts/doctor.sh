@@ -36,6 +36,12 @@ DOCTOR_LAUNCHER_NAME="claude-harness-run"
 # 唯一の blocking な allow ルール。この文字列が generate-settings.sh のベース allow に
 # 含まれ続けることを test-doctor.sh が検査する（片方だけ変わると落ちる）。
 DOCTOR_LAUNCHER_ALLOW_RULE="Bash(claude-harness-run:*)"
+# 運用 allow の要件を満たす置き場。project（tracked の .claude/settings.json）に加え、
+# オペレータ層（ユーザー設定 / settings.local.json）に在る allow も要件を満たすとみなす。
+# 根拠は docs/settings-governance.md §2 の実測: ユーザー設定の allow は worktree 内の
+# headless 起動でも効き、settings.local.json は main checkout ルートのファイルが worktree
+# からも読まれる（Claude Code v2.1.211 以降）。ここから外した層に在っても blocking のまま。
+DOCTOR_ALLOW_SCOPES="project user local"
 DOCTOR_DOC_MAP_HEADING="## ドキュメントマップ"
 # 「宣言どおりまだ無い」を表す状態語。skills/init-project/SKILL.md ステップ4 が書き込む語彙。
 DOCTOR_DOC_MAP_PENDING_STATE="作成予定"
@@ -138,22 +144,35 @@ doctor_shadowed_by_json() {
       (if ($ask  | index($rule)) != null then "ask"  else empty end) ]'
 }
 
-# 引数: ルール文字列, プロジェクトルート
-# 要件を満たさない置き場（settings.local.json / ユーザー設定）に同じルールが在った事実を返す。
-# 「対話セッションでは効いているのに missing と言われた」を検出漏れと区別できるようにするため。
-doctor_found_elsewhere_json() {
-  local rule="$1" project="$2"
-  local local_file="${project}/.claude/settings.local.json"
-  local user_file="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json"
-  local result='[]' allow
-  allow="$(doctor_settings_field_json "$local_file" allow)"
-  if [ "$(jq -r --arg r "$rule" 'index($r) != null' <<<"$allow")" = "true" ]; then
-    result="$(jq -c --arg p "$local_file" '. + [$p]' <<<"$result")"
-  fi
-  allow="$(doctor_settings_field_json "$user_file" allow)"
-  if [ "$(jq -r --arg r "$rule" 'index($r) != null' <<<"$allow")" = "true" ]; then
-    result="$(jq -c --arg p "$user_file" '. + [$p]' <<<"$result")"
-  fi
+# 引数: scope 名, プロジェクトルート → その scope の settings ファイルパス
+doctor_scope_path() {
+  local scope="$1" project="$2"
+  case "$scope" in
+    project) printf '%s' "${project}/.claude/settings.json" ;;
+    user) printf '%s' "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json" ;;
+    local) printf '%s' "${project}/.claude/settings.local.json" ;;
+    *) return 1 ;;
+  esac
+}
+
+# 引数: ルール文字列, プロジェクトルート, project の allow(JSON配列; --target で差し替え可能なため渡す)
+# 戻り値: ルールが在る置き場の一覧 [{scope, path}]。DOCTOR_ALLOW_SCOPES の順。
+# どの層で満たされたかを出力に残すのは、「対話セッションでは効いているのに missing と
+# 言われた」と「チームに共有されていない」を、利用者が区別できるようにするため。
+doctor_rule_locations_json() {
+  local rule="$1" project="$2" project_allow="$3"
+  local result='[]' scope path allow
+  for scope in $DOCTOR_ALLOW_SCOPES; do
+    path="$(doctor_scope_path "$scope" "$project")"
+    if [ "$scope" = "project" ]; then
+      allow="$project_allow"
+    else
+      allow="$(doctor_settings_field_json "$path" allow)"
+    fi
+    if [ "$(jq -r --arg r "$rule" 'index($r) != null' <<<"$allow")" = "true" ]; then
+      result="$(jq -c --arg s "$scope" --arg p "$path" '. + [{scope: $s, path: $p}]' <<<"$result")"
+    fi
+  done
   printf '%s\n' "$result"
 }
 
@@ -437,7 +456,7 @@ doctor_main() {
   fi
 
   # --- settings_launcher_allow / settings_base_allow ---
-  local actual_allow actual_deny actual_ask expected_allow missing_rules
+  local actual_allow actual_deny actual_ask expected_allow
   actual_allow="$(doctor_settings_field_json "$target" allow)"
   actual_deny="$(doctor_settings_field_json "$target" deny)"
   actual_ask="$(doctor_settings_field_json "$target" ask)"
@@ -465,52 +484,68 @@ $(printf '%s' "$infra_csv" | tr ',' '\n')
 EOF
   fi
 
-  local has_launcher_allow shadowed_by
-  has_launcher_allow="$(jq -r --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" 'index($r) != null' <<<"$actual_allow")"
+  # 是正の第一候補はユーザー設定への追記（チーム共有が不要ならそれで足りる。
+  # docs/settings-governance.md §4）。tracked に揃えたい場合の再生成コマンドを併記する。
+  local user_settings_path allow_remediation
+  user_settings_path="$(doctor_scope_path user "$project")"
+  allow_remediation="ユーザー設定 ${user_settings_path} の permissions.allow に不足しているルールを追記する（チーム共有が不要ならユーザー設定でよい）。生成器を再実行する場合（deny の不足をマージし、既存の allow は削らない）: ${regenerate_cmd}"
+
+  local launcher_found_in shadowed_by
+  launcher_found_in="$(doctor_rule_locations_json "$DOCTOR_LAUNCHER_ALLOW_RULE" "$project" "$actual_allow")"
   shadowed_by="$(doctor_shadowed_by_json "$DOCTOR_LAUNCHER_ALLOW_RULE" "$actual_deny" "$actual_ask")"
-  if [ "$has_launcher_allow" = "true" ] && [ "$(jq -r 'length' <<<"$shadowed_by")" = "0" ]; then
+  if [ "$(jq -r 'length' <<<"$launcher_found_in")" != "0" ] && [ "$(jq -r 'length' <<<"$shadowed_by")" = "0" ]; then
     checks="$(jq -c --arg id settings_launcher_allow --arg sev "$(doctor_severity_of settings_launcher_allow)" \
-      '. + [{id: $id, severity: $sev, result: "ok"}]' <<<"$checks")"
+      --argjson found "$launcher_found_in" \
+      '. + [{id: $id, severity: $sev, result: "ok", satisfied_by: [$found[].scope]}]' <<<"$checks")"
   else
-    local elsewhere summary
-    elsewhere="$(doctor_found_elsewhere_json "$DOCTOR_LAUNCHER_ALLOW_RULE" "$project")"
-    if [ "$has_launcher_allow" = "true" ]; then
+    local summary
+    if [ "$(jq -r 'length' <<<"$launcher_found_in")" != "0" ]; then
       summary="ランチャーの allow が deny / ask の同一ルールで打ち消されている"
     elif [ "$settings_exists" = "true" ]; then
-      summary="ランチャーの allow が settings に無い。headless 委譲でスクリプト実行が拒否される"
+      summary="ランチャーの allow がプロジェクト settings・ユーザー設定・settings.local.json のいずれにも無い。headless 委譲でスクリプト実行が拒否される"
     else
-      summary="settings ファイルが存在しない。headless 委譲でスクリプト実行が拒否される"
+      summary="プロジェクト settings が存在せず、ランチャーの allow がユーザー設定・settings.local.json にも無い。headless 委譲でスクリプト実行が拒否される"
     fi
     checks="$(jq -c --arg id settings_launcher_allow --arg sev "$(doctor_severity_of settings_launcher_allow)" \
       '. + [{id: $id, severity: $sev, result: "finding"}]' <<<"$checks")"
     findings="$(jq -c --arg sev "$(doctor_severity_of settings_launcher_allow)" --arg sum "$summary" \
-      --arg rule "$DOCTOR_LAUNCHER_ALLOW_RULE" --argjson elsewhere "$elsewhere" \
-      --argjson shadowed "$shadowed_by" --arg cmd "$regenerate_cmd" \
+      --arg rule "$DOCTOR_LAUNCHER_ALLOW_RULE" --argjson found "$launcher_found_in" \
+      --argjson shadowed "$shadowed_by" --arg cmd "$allow_remediation" \
       '. + [{check: "settings_launcher_allow", severity: $sev, summary: $sum,
-             items: [{rule: $rule, found_elsewhere: $elsewhere, shadowed_by: $shadowed}],
+             items: [{rule: $rule, found_in: $found, shadowed_by: $shadowed}],
              remediation: $cmd}]' <<<"$findings")"
   fi
 
-  missing_rules="$(jq -c --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" 'map(select(. != $r))' \
-    <<<"$(doctor_missing_rules_json "$expected_allow" "$actual_allow")")"
-  if [ "$(jq -r 'length' <<<"$missing_rules")" = "0" ]; then
-    checks="$(jq -c --arg id settings_base_allow --arg sev "$(doctor_severity_of settings_base_allow)" \
-      '. + [{id: $id, severity: $sev, result: "ok"}]' <<<"$checks")"
-  else
-    local items='[]' rule elsewhere
-    while IFS= read -r rule; do
-      [ -z "$rule" ] && continue
-      elsewhere="$(doctor_found_elsewhere_json "$rule" "$project")"
-      items="$(jq -c --arg r "$rule" --argjson e "$elsewhere" '. + [{rule: $r, found_elsewhere: $e}]' <<<"$items")"
-    done <<EOF
-$(jq -r '.[]' <<<"$missing_rules")
+  # project に無いルールでも、オペレータ層に在れば不足としない（satisfied_by に層を残す）。
+  local expected_base project_missing base_missing='[]' base_satisfied_by='[]' rule found_in
+  expected_base="$(jq -c --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" 'map(select(. != $r))' <<<"$expected_allow")"
+  project_missing="$(doctor_missing_rules_json "$expected_base" "$actual_allow" | jq -c .)"
+  if [ "$(jq -r 'length' <<<"$expected_base")" -gt "$(jq -r 'length' <<<"$project_missing")" ]; then
+    base_satisfied_by='["project"]'
+  fi
+  while IFS= read -r rule; do
+    [ -z "$rule" ] && continue
+    found_in="$(doctor_rule_locations_json "$rule" "$project" '[]')"
+    if [ "$(jq -r 'length' <<<"$found_in")" = "0" ]; then
+      base_missing="$(jq -c --arg r "$rule" '. + [{rule: $r, found_in: []}]' <<<"$base_missing")"
+    else
+      base_satisfied_by="$(jq -c --argjson f "$found_in" '. + [$f[].scope]' <<<"$base_satisfied_by")"
+    fi
+  done <<EOF
+$(jq -r '.[]' <<<"$project_missing")
 EOF
+  base_satisfied_by="$(jq -c 'unique' <<<"$base_satisfied_by")"
+  if [ "$(jq -r 'length' <<<"$base_missing")" = "0" ]; then
+    checks="$(jq -c --arg id settings_base_allow --arg sev "$(doctor_severity_of settings_base_allow)" \
+      --argjson sat "$base_satisfied_by" \
+      '. + [{id: $id, severity: $sev, result: "ok", satisfied_by: $sat}]' <<<"$checks")"
+  else
     checks="$(jq -c --arg id settings_base_allow --arg sev "$(doctor_severity_of settings_base_allow)" \
       '. + [{id: $id, severity: $sev, result: "finding"}]' <<<"$checks")"
-    findings="$(jq -c --arg sev "$(doctor_severity_of settings_base_allow)" --argjson items "$items" \
-      --arg cmd "$regenerate_cmd" \
+    findings="$(jq -c --arg sev "$(doctor_severity_of settings_base_allow)" --argjson items "$base_missing" \
+      --arg cmd "$allow_remediation" \
       '. + [{check: "settings_base_allow", severity: $sev,
-             summary: ("期待される allow のうち " + ($items | length | tostring) + " 件が settings に無い"),
+             summary: ("期待される allow のうち " + ($items | length | tostring) + " 件がプロジェクト settings・ユーザー設定・settings.local.json のいずれにも無い"),
              items: $items, remediation: $cmd}]' <<<"$findings")"
   fi
 
