@@ -488,7 +488,7 @@ EOF
   # docs/settings-governance.md §4）。tracked に揃えたい場合の再生成コマンドを併記する。
   local user_settings_path allow_remediation
   user_settings_path="$(doctor_scope_path user "$project")"
-  allow_remediation="ユーザー設定 ${user_settings_path} の permissions.allow に不足しているルールを追記する（チーム共有が不要ならユーザー設定でよい）。tracked の settings に揃える場合: ${regenerate_cmd}"
+  allow_remediation="ユーザー設定 ${user_settings_path} の permissions.allow に不足しているルールを追記する（チーム共有が不要ならユーザー設定でよい）。生成器を再実行する場合（deny の不足をマージし、既存の allow は削らない）: ${regenerate_cmd}"
 
   local launcher_found_in shadowed_by
   launcher_found_in="$(doctor_rule_locations_json "$DOCTOR_LAUNCHER_ALLOW_RULE" "$project" "$actual_allow")"
