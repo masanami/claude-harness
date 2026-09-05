@@ -223,10 +223,33 @@ cmdspec_pin_program() {
       return 1
       ;;
     *)
-      # シェル組み込み（true / echo / printf）か、PATH 上に存在しない。
-      # 組み込みは PATH 解決を経ないため差し替え不能。未検出はここでは拒否せず、
-      # 実行して 127 にさせる（「ツール未導入」は契約違反ではなく当該ゲートの失敗として扱う）。
-      return 0
+      # `command -v` が**素の名前**を返した場合。次の3通りがあり、扱いを分ける必要がある。
+      # bash の探索順は alias → keyword → function → builtin → PATH 上のファイルであり、
+      # **関数は PATH より先に一致する**ため、名前だけを見て通すと
+      # `"${CMDSPEC_ARGV[@]}"` が実行ファイルではなく**関数本体**を実行する。
+      # 実測（PR #224 3巡目の指摘）: 継承した `BASH_ENV` と `export -f` のどちらでも成立し、
+      # しかも解決先が空のままなので `--- resolved: ---` の監査痕跡すら残らなかった。
+      # 品質コマンドがシェル関数へ解決されるのは正当な構成ではないので拒否する。
+      local kind
+      kind="$(type -t "${CMDSPEC_ARGV[0]}" 2>/dev/null)" || kind=""
+      case "$kind" in
+        builtin | "")
+          # 組み込み（true / echo / printf）は PATH 解決を経ないため差し替え不能。
+          # 未検出（空）はここでは拒否せず、実行して 127 にさせる
+          # （「ツール未導入」は契約違反ではなく当該ゲートの失敗として扱う契約）。
+          return 0
+          ;;
+        function)
+          CMDSPEC_ERROR="'${CMDSPEC_ARGV[0]}' resolves to a shell function, not an executable"
+          return 1
+          ;;
+        *)
+          # alias / keyword など。非対話 bash では alias は展開されないが、
+          # 「実行ファイルでも組み込みでもないもの」を通す理由が無いので fail-closed。
+          CMDSPEC_ERROR="'${CMDSPEC_ARGV[0]}' resolves to a shell ${kind}, not an executable"
+          return 1
+          ;;
+      esac
       ;;
   esac
 }

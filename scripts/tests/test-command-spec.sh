@@ -323,6 +323,54 @@ NOTFOUND_RESULT="$(PATH=/nonexistent-dir-for-test "$BASH_BIN" -c "source '${REPO
 assert_eq "PATH 上に無いだけのコマンドは契約違反にしない（実行して 127 にさせる）" \
   "allowed" "$NOTFOUND_RESULT"
 
+# シェル関数が許可名を影武者にできてはならない（PR #224 3巡目の指摘）。
+# `command -v` は関数に対して**名前をそのまま**返すため、素の名前を通す分岐が
+# 関数本体の実行を許してしまう。実測では `BASH_ENV` / `export -f` の継承で成立し、
+# しかも解決先が空のまま（`--- resolved: ---` が出ない）＝ 監査痕跡も残らなかった。
+# 実行系の実体は「PATH 上の実行ファイル」か「シェル組み込み」だけであるべき。
+pytest() { :; }
+cmdspec_parse 'pytest tests'
+assert_eq "許可名を影武者にするシェル関数は拒否する" "1" "$?"
+assert_contains "拒否理由にシェル関数である旨が出る" "$CMDSPEC_ERROR" "shell function"
+unset -f pytest
+
+# 上の拒否が、既存の2つの契約を壊していないこと（組み込み・未検出）を同じ流れで確認する。
+cmdspec_parse 'true'
+assert_eq "シェル組み込みは引き続き許可される（関数拒否の巻き添えにしない）" "0" "$?"
+
+# =============================================================================
+echo "=== test: 継承環境で注入したシェル関数は実行されない（end-to-end） ==="
+# =============================================================================
+# `BASH_ENV` は非対話 bash が起動時に読むため、ランナーのプロセス内に関数を定義できる。
+# `--env BASH_ENV=...` はランチャーが拒否するが、**継承した** `BASH_ENV` は素通りする
+# （PATH 汚染と同じクラス）。ここでは「関数が定義されていても実行されない」ことを固定する。
+
+FUNC_CANARY="${WORK_DIR}/shell-func-canary"
+FUNC_ENV="${WORK_DIR}/func-env.sh"
+printf 'pytest() { touch "%s"; }\n' "$FUNC_CANARY" >"$FUNC_ENV"
+
+# positive control: 同じ注入は、素の bash では実際に関数本体を実行する。
+rm -f "$FUNC_CANARY"
+BASH_ENV="$FUNC_ENV" "$BASH_BIN" -c 'argv=(pytest); "${argv[@]}"' >/dev/null 2>&1
+assert_eq "positive control: 素の bash なら注入した関数が実行される" \
+  "present" "$([ -e "$FUNC_CANARY" ] && echo present || echo absent)"
+
+rm -f "$FUNC_CANARY"
+BASH_ENV="$FUNC_ENV" "$QCR" --test "pytest" >/dev/null 2>&1
+assert_eq "ランナー経由では exit 4 で拒否される" "4" "$?"
+assert_eq "注入した関数は実行されない" \
+  "absent" "$([ -e "$FUNC_CANARY" ] && echo present || echo absent)"
+
+rm -f "$FUNC_CANARY"
+BASH_ENV="$FUNC_ENV" "$MUTATION_RUN" "pytest" "some-file.ts" >/dev/null 2>&1
+assert_eq "mutation-run でも exit 4 で拒否される" "4" "$?"
+assert_eq "mutation-run でも注入した関数は実行されない" \
+  "absent" "$([ -e "$FUNC_CANARY" ] && echo present || echo absent)"
+
+# =============================================================================
+echo "=== test: argv[0] の PATH 解決（続き） ==="
+# =============================================================================
+
 # allowlist に literal で載っている明示パス（./gradlew 等）は PATH 解決を経ない。
 cmdspec_parse './gradlew test'
 assert_eq "明示パスのエントリは許可される" "0" "$?"
