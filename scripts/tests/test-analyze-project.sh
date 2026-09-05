@@ -690,6 +690,68 @@ fetch_axes "$AXES_DIR3" "false" "$E2E_DIRS_JSON"
 assert_eq "複数候補時、LC_ALL=Cソート後の先頭(a_dir/openapi.yaml)が決定的に選ばれる(find列挙順非依存/回帰)" "true" "$(jq -r '.[5].evidence' <<<"$AXES_JSON" | grep -qF "a_dir/openapi.yaml" && echo true || echo false)"
 
 # ====================================================================
+# モノレポ（パッケージごとの node_modules）での除外。Issue #221
+# ====================================================================
+# fetch_dir_tree だけが -name 形式（任意深さ）の prune を使い、他の走査関数は
+# -path "./<name>" 形式（深さ1完全一致）を使っていたため、packages/*/node_modules の
+# ような入れ子の除外ディレクトリを刈り込めず、依存ツリー全体を走査していた。
+# prune 実装を1本（-name 形式）へ統一したことを、全走査関数について確認する。
+
+echo "=== test: fetch_test_dirs / fetch_e2e_dirs (パッケージごとのnode_modulesを除外、Issue #221) ==="
+MONOREPO_DIR="${TMP_ROOT}/monorepo-nested-node-modules"
+mkdir -p \
+  "$MONOREPO_DIR/packages/app/node_modules/dep/test" \
+  "$MONOREPO_DIR/packages/app/node_modules/dep/__tests__" \
+  "$MONOREPO_DIR/packages/app/node_modules/dep/e2e" \
+  "$MONOREPO_DIR/api/node_modules/other/spec" \
+  "$MONOREPO_DIR/packages/app/tests" \
+  "$MONOREPO_DIR/packages/app/e2e"
+fetch_test_dirs "$MONOREPO_DIR"
+fetch_e2e_dirs "$MONOREPO_DIR"
+assert_eq "入れ子のnode_modules配下のテストディレクトリをtestDirsに含めない" \
+  "false" "$(jq 'any(.[]; contains("node_modules"))' <<<"$TEST_DIRS_JSON")"
+assert_eq "入れ子のnode_modules配下のe2eディレクトリをe2eDirsに含めない" \
+  "false" "$(jq 'any(.[]; contains("node_modules"))' <<<"$E2E_DIRS_JSON")"
+assert_eq "除外対象外のpackages/app/testsは引き続き検出する" \
+  "true" "$(jq 'any(. == "packages/app/tests")' <<<"$TEST_DIRS_JSON")"
+assert_eq "除外対象外のpackages/app/e2eは引き続き検出する" \
+  "true" "$(jq 'any(. == "packages/app/e2e")' <<<"$E2E_DIRS_JSON")"
+
+echo "=== test: fetch_docs_evidence (パッケージごとのnode_modulesを除外、Issue #221) ==="
+MONOREPO_DOCS_DIR="${TMP_ROOT}/monorepo-nested-docs"
+mkdir -p "$MONOREPO_DOCS_DIR/packages/app/node_modules/dep/docs" "$MONOREPO_DOCS_DIR/docs"
+: > "$MONOREPO_DOCS_DIR/packages/app/node_modules/dep/docs/architecture.md"
+: > "$MONOREPO_DOCS_DIR/docs/architecture.md"
+fetch_docs_evidence "$MONOREPO_DOCS_DIR"
+assert_eq "入れ子のnode_modules配下の設計ドキュメントをdesignDocsに含めない" \
+  "false" "$(jq 'any(.designDocs[]; contains("node_modules"))' <<<"$DOCS_JSON")"
+assert_eq "除外対象外のdocs/architecture.mdは引き続き検出する" \
+  "true" "$(jq 'any(.designDocs[]; . == "docs/architecture.md")' <<<"$DOCS_JSON")"
+
+echo "=== test: fetch_colocated_tests (パッケージごとのnode_modulesを除外、Issue #221) ==="
+MONOREPO_COLOCATED_DIR="${TMP_ROOT}/monorepo-nested-colocated"
+mkdir -p "$MONOREPO_COLOCATED_DIR/packages/app/node_modules/dep/lib"
+: > "$MONOREPO_COLOCATED_DIR/packages/app/node_modules/dep/lib/index.test.js"
+fetch_colocated_tests "$MONOREPO_COLOCATED_DIR"
+assert_eq "入れ子のnode_modules配下のtestファイルはcolocatedTests判定に含めない" \
+  "false" "$COLOCATED_TESTS_JSON"
+
+echo "=== test: fetch_axes (パッケージごとのnode_modulesを除外、Issue #221) ==="
+MONOREPO_AXES_DIR="${TMP_ROOT}/monorepo-nested-axes"
+mkdir -p "$MONOREPO_AXES_DIR/packages/app/node_modules/dep"
+: > "$MONOREPO_AXES_DIR/packages/app/node_modules/dep/openapi.yaml"
+fetch_e2e_dirs "$MONOREPO_AXES_DIR"
+fetch_axes "$MONOREPO_AXES_DIR" "false" "$E2E_DIRS_JSON"
+assert_eq "入れ子のnode_modules配下のopenapi定義は軸6の証跡にしない" \
+  "auto-no" "$(jq -r '.[5].standing' <<<"$AXES_JSON")"
+
+echo "=== test: prune実装が1本に統一されている (2実装併存の再発防止、Issue #221) ==="
+# 深さ1版と任意深さ版が併存していたことが本欠陥の温床だった。片方だけ直しても
+# 別経路で同じ欠陥が残るため、深さ1版が復活していないことを構造として固定する。
+assert_eq "深さ1固定のprune実装(build_analyze_project_prune_path_args)が存在しない" \
+  "absent" "$(declare -f build_analyze_project_prune_path_args >/dev/null 2>&1 && echo present || echo absent)"
+
+# ====================================================================
 # CLIレベル（統合）: フルスクリプト実行での全体構造検証
 # ====================================================================
 
@@ -728,6 +790,67 @@ NONEXISTENT_OUTPUT=$("$TARGET_SCRIPT" "/nonexistent/path/should/not/exist" 2>/de
 NONEXISTENT_EXIT=$?
 assert_eq "存在しないディレクトリはexit非0" "1" "$NONEXISTENT_EXIT"
 assert_eq "statusがerror" "error" "$(jq -r '.status' <<<"$NONEXISTENT_OUTPUT")"
+
+# ====================================================================
+# 大きなJSON値をjqのコマンドライン引数に載せない（E2BIG回避）。Issue #221
+# ====================================================================
+# Linux では execve の1引数あたり上限（MAX_ARG_STRLEN、既定 128KB）を超えると E2BIG になり、
+# jq が起動できず exit 126 になる。モノレポでは testDirs 等が容易にこの長さへ達する。
+# ホストの実上限（macOS と Linux で異なる）に依存しないよう、しきい値をパラメタ化した
+# jq ラッパーを PATH の先頭に置き「1引数の最大長」そのものを検査する。
+# 除外リストの網羅性に依存しないことを示すため、フィクスチャの巨大なリストは
+# 除外対象ディレクトリの外（通常のパッケージ配下）に作る。
+echo "=== test: CLIレベル 大きなJSON値をjqの引数に載せない (E2BIG回避、Issue #221) ==="
+JQ_ARGV_LIMIT=8192          # 実上限(128KB)ではなく検査用のしきい値。テストを実行環境の上限から独立させる
+BIG_LIST_DIR_COUNT=100      # 1件あたり約120文字 => testDirs だけで JQ_ARGV_LIMIT を確実に超える
+
+BIG_LIST_DIR="${TMP_ROOT}/monorepo-large-test-dir-list"
+BIG_LIST_LEAF="deeply-named-package-directory-that-makes-each-path-long-enough-to-exceed-the-threshold"
+for i in $(seq 1 "$BIG_LIST_DIR_COUNT"); do
+  mkdir -p "${BIG_LIST_DIR}/packages/pkg-${i}/${BIG_LIST_LEAF}/tests"
+done
+
+JQ_ARGV_GUARD_DIR="${TMP_ROOT}/jq-argv-guard"
+JQ_ARGV_GUARD_LOG="${TMP_ROOT}/jq-argv-guard.log"
+mkdir -p "$JQ_ARGV_GUARD_DIR"
+: > "$JQ_ARGV_GUARD_LOG"
+REAL_JQ="$(command -v jq)"
+cat > "${JQ_ARGV_GUARD_DIR}/jq" <<GUARD
+#!/bin/bash
+# しきい値を超える単一引数での呼び出しを記録し、E2BIG と同じ exit 126 で落とす
+for guard_arg in "\$@"; do
+  if [ \${#guard_arg} -gt ${JQ_ARGV_LIMIT} ]; then
+    printf '%s\n' "\${#guard_arg}" >> "${JQ_ARGV_GUARD_LOG}"
+    echo "jq: Argument list too long (simulated: \${#guard_arg} > ${JQ_ARGV_LIMIT})" >&2
+    exit 126
+  fi
+done
+exec "${REAL_JQ}" "\$@"
+GUARD
+chmod +x "${JQ_ARGV_GUARD_DIR}/jq"
+
+BIG_LIST_OUTPUT=$(PATH="${JQ_ARGV_GUARD_DIR}:${PATH}" "$TARGET_SCRIPT" "$BIG_LIST_DIR" 2>/dev/null)
+BIG_LIST_EXIT=$?
+assert_eq "しきい値を超える引数でjqを起動しない(ラッパー記録が空)" \
+  "0" "$(wc -l < "$JQ_ARGV_GUARD_LOG" | tr -d ' ')"
+assert_eq "大きなtestDirsでもexit 0" "0" "$BIG_LIST_EXIT"
+assert_eq "大きなtestDirsでもstatusがok" "ok" "$(jq -r '.status' <<<"$BIG_LIST_OUTPUT")"
+assert_eq "検出したtestDirsが件数どおり出力される(引数経由をやめても内容が欠けない)" \
+  "$BIG_LIST_DIR_COUNT" "$(jq '.testDirs | length' <<<"$BIG_LIST_OUTPUT")"
+
+echo "=== test: build_axes_json 長い証跡文字列をjqの引数に載せない (E2BIG回避、Issue #221) ==="
+# 軸9の証跡は検出したE2Eディレクトリの列挙なので、対象プロジェクト次第で長さの上限が無い。
+: > "$JQ_ARGV_GUARD_LOG"
+BIG_EVIDENCE="E2Eディレクトリを検出: $(seq 1 500 | sed 's|^|packages/pkg-|; s|$|/e2e|' | paste -sd, -)"
+BIG_AXES_JSON=$(PATH="${JQ_ARGV_GUARD_DIR}:${PATH}" bash -c '
+  source "$1" >/dev/null 2>&1
+  build_axes_json "auto-no" "ORM設定を検出せず" "auto-no" "OpenAPI/Swagger定義を検出せず" "auto-yes" "$2"
+' _ "$TARGET_SCRIPT" "$BIG_EVIDENCE" 2>/dev/null)
+assert_eq "長い証跡でもしきい値を超える引数でjqを起動しない(ラッパー記録が空)" \
+  "0" "$(wc -l < "$JQ_ARGV_GUARD_LOG" | tr -d ' ')"
+assert_eq "長い証跡でも軸9のevidenceが欠けずに渡る" \
+  "$BIG_EVIDENCE" "$(jq -r '.[8].evidence' <<<"$BIG_AXES_JSON")"
+assert_eq "長い証跡でも軸9のstandingが渡る" "auto-yes" "$(jq -r '.[8].standing' <<<"$BIG_AXES_JSON")"
 
 # ====================================================================
 # check_jq（analyze-project.sh 独自のエラーJSON上書き。lib/common.sh 集約後の回帰。Issue #128）

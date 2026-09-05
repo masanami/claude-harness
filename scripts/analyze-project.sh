@@ -28,8 +28,12 @@
 # 「特定できなかった」は暗黙の空文字/空配列ではなく明示フィールド（pmStatus, nameSource 等）で表現する。
 # jq 必須。jq 不在時は stderr にエラーメッセージ + エラーJSONを出し exit 非0。
 #
+# 大きな値（走査結果のリスト等）は jq へコマンドライン引数ではなく一時ファイル経由で渡すため、
+# 書き込み可能な TMPDIR（既定 /tmp）を必要とする。確保できない場合は stderr にエラーを出す。
+#
 # テスト容易性のため、外部（filesystem/git）を読む fetch_*/scan_* 系関数と、
-# 入力値だけから判定する純粋な classify_*/pick_*/build_*/project_name_fallback 系関数を分離している。
+# 入力値だけから判定する純粋な classify_*/pick_*/build_*/project_name_fallback 系関数を分離している
+# （build_axes_json は判定こそ入力値のみに依存するが、jq への受け渡しに一時ファイルを使う）。
 # このファイルを `source` すれば、両方の関数を直接呼び出してテストできる
 # （BASH_SOURCE ガードにより source 時は main が自動実行されない）。
 
@@ -496,21 +500,24 @@ fetch_test_prereqs() {
 }
 
 # ------------------------------------------------------------------
-# 共通: 走査から除外するディレクトリ名（find -prune 節の一本化。Issue #128）
+# 共通: 走査から除外するディレクトリ名（find -prune 節の一本化。Issue #128 / #221）
 # ------------------------------------------------------------------
 
 # fetch_dir_tree / fetch_docs_evidence / fetch_named_dirs / fetch_colocated_tests / fetch_axes
 # が共通して除外するディレクトリ「名」の一覧の単一の正本。除外を1つ追加/削除する場合は
-# ここだけを直せばよい。ただし元実装では2種類の異なるマッチ深さの prune 節が使われていた
-# （fetch_dir_tree のみ任意の深さ、他4関数はトップレベルのみ）ため、この一覧から実際に
-# find 引数配列を組み立てる際は用途に応じて build_analyze_project_prune_name_args
-# （任意深さ）/ build_analyze_project_prune_path_args（トップレベルのみ）を使い分ける
-# （下記コメント参照。挙動変更ゼロの原則によりこの差は統一しない）。
+# ここだけを直せばよい。
 ANALYZE_PROJECT_EXCLUDE_DIR_NAMES=(.git node_modules dist .next target __pycache__ .venv vendor)
 
-# -name 形式のprune用find引数配列を構築し、グローバル配列 ANALYZE_PROJECT_PRUNE_NAME_ARGS に
-# 格納する（basenameの一致なので任意の深さで除外される。元実装の fetch_dir_tree の挙動）。
-# fetch_dir_tree が呼び出し時に都度呼ぶ。
+# prune用find引数配列を構築し、グローバル配列 ANALYZE_PROJECT_PRUNE_NAME_ARGS に格納する。
+# basename の一致なので任意の深さで除外される（packages/*/node_modules のように
+# パッケージごとに除外対象を持つモノレポでも刈り込める）。
+#
+# 以前は -path "./<name>"（深さ1完全一致）で組む2つ目の実装が併存し、fetch_dir_tree 以外の
+# 4関数がそちらを使っていた。モノレポでは入れ子の node_modules を刈り込めず、依存ツリー全体を
+# 走査した結果 testDirs が数百KBに達して jq 起動時に E2BIG（exit 126）になっていた（Issue #221）。
+# 2実装の併存自体が「片方だけ直る」欠陥の温床のため、任意深さ版1本へ統一した。
+# 走査関数はすべて、呼び出し時にこの関数を呼んでから
+# `\( -type d \( "${ANALYZE_PROJECT_PRUNE_NAME_ARGS[@]}" \) \) -prune` の形で使う。
 build_analyze_project_prune_name_args() {
   ANALYZE_PROJECT_PRUNE_NAME_ARGS=()
   local name
@@ -520,17 +527,61 @@ build_analyze_project_prune_name_args() {
   done
 }
 
-# -path "./name" 形式のprune用find引数配列を構築し、グローバル配列
-# ANALYZE_PROJECT_PRUNE_PATH_ARGS に格納する（find のパスは "./" 始まりのため cwd直下の
-# パスにのみ一致=トップレベルのみ除外。元実装の他4関数の挙動をそのまま維持する）。
-# fetch_docs_evidence / fetch_named_dirs / fetch_colocated_tests / fetch_axes が呼び出し時に都度呼ぶ。
-build_analyze_project_prune_path_args() {
-  ANALYZE_PROJECT_PRUNE_PATH_ARGS=()
-  local name
-  for name in "${ANALYZE_PROJECT_EXCLUDE_DIR_NAMES[@]}"; do
-    [ ${#ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]} -gt 0 ] && ANALYZE_PROJECT_PRUNE_PATH_ARGS+=(-o)
-    ANALYZE_PROJECT_PRUNE_PATH_ARGS+=(-path "./${name}")
-  done
+# ------------------------------------------------------------------
+# 共通: 大きなJSON値・文字列を jq へ一時ファイル経由で渡す（E2BIG回避。Issue #221）
+# ------------------------------------------------------------------
+
+# jq へ値を渡す既定手段の --argjson/--arg はコマンドライン引数なので、Linux では
+# 1引数あたりの上限（MAX_ARG_STRLEN、既定128KB）を超えると execve が E2BIG で失敗し、
+# jq が起動できないまま exit 126 になる。走査結果（testDirs / dirTree.entries /
+# docs.designDocs など）は対象プロジェクトの構造次第でいくらでも大きくなるため、
+# 除外リストの網羅性に依存しないよう --slurpfile / --rawfile でファイル経由に渡す
+# （ファイル内容は引数長の上限を受けない）。
+#
+# 使い方（init〜cleanup を入れ子にしないこと。グローバル1組を使い回すため）:
+#   jq_file_args_init
+#   jq_file_args_add_json entries "$entries_json"   # jq側では $entries[0] で参照
+#   jq_file_args_add_raw  evidence "$evidence"      # jq側では $evidence で参照
+#   RESULT=$(jq -n "${JQ_FILE_ARGS[@]}" --arg small "$small" '...')
+#   jq_file_args_cleanup
+JQ_FILE_ARGS=()
+JQ_FILE_ARGS_DIR=""
+
+jq_file_args_init() {
+  JQ_FILE_ARGS=()
+  JQ_FILE_ARGS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/analyze-project-jqargs.XXXXXX") || {
+    echo "Error: failed to create a temporary directory for jq arguments (TMPDIR=${TMPDIR:-/tmp})" >&2
+    return 1
+  }
+}
+
+# 引数: jq変数名 JSON値。--slurpfile はJSON列を配列で受けるため、jq側の参照は $名[0]。
+jq_file_args_add_json() {
+  local name="$1" value="$2"
+  local file="${JQ_FILE_ARGS_DIR}/${name}.json"
+  printf '%s\n' "$value" > "$file" || {
+    echo "Error: failed to write jq argument file: ${file}" >&2
+    return 1
+  }
+  JQ_FILE_ARGS+=(--slurpfile "$name" "$file")
+}
+
+# 引数: jq変数名 文字列。--rawfile はファイル内容をそのまま文字列にする（改行を足さない）ため、
+# 書き出しも末尾改行なしにして --arg と同じ値になるようにする。jq側の参照は $名。
+jq_file_args_add_raw() {
+  local name="$1" value="$2"
+  local file="${JQ_FILE_ARGS_DIR}/${name}.txt"
+  printf '%s' "$value" > "$file" || {
+    echo "Error: failed to write jq argument file: ${file}" >&2
+    return 1
+  }
+  JQ_FILE_ARGS+=(--rawfile "$name" "$file")
+}
+
+jq_file_args_cleanup() {
+  [ -n "$JQ_FILE_ARGS_DIR" ] && rm -rf "$JQ_FILE_ARGS_DIR"
+  JQ_FILE_ARGS_DIR=""
+  JQ_FILE_ARGS=()
 }
 
 # ------------------------------------------------------------------
@@ -561,9 +612,13 @@ fetch_dir_tree() {
   local entries_json
   entries_json=$(printf '%s\n' "$entries" | awk 'NF' | jq -R -s 'split("\n") | map(select(length>0))')
 
-  DIR_TREE_JSON=$(jq -n --argjson entries "$entries_json" --argjson depthLimit "$max_depth" \
+  # entries は走査結果そのもの（最大 maxEntries 件だがパスは任意長）なので引数ではなくファイル経由
+  jq_file_args_init
+  jq_file_args_add_json entries "$entries_json"
+  DIR_TREE_JSON=$(jq -n "${JQ_FILE_ARGS[@]}" --argjson depthLimit "$max_depth" \
     --argjson maxEntries "$max_entries" --argjson truncated "$truncated" \
-    '{entries:$entries, depthLimit:$depthLimit, maxEntries:$maxEntries, truncated:$truncated}')
+    '{entries:$entries[0], depthLimit:$depthLimit, maxEntries:$maxEntries, truncated:$truncated}')
+  jq_file_args_cleanup
 }
 
 # ------------------------------------------------------------------
@@ -600,12 +655,12 @@ fetch_docs_evidence() {
   [ -d "$dir/docs" ] && docs_dir='"docs"'
 
   local -a results=()
-  build_analyze_project_prune_path_args
+  build_analyze_project_prune_name_args
   build_analyze_project_iname_or_args "${DESIGN_DOC_PATTERNS[@]}"
   while IFS= read -r f; do
     [ -n "$f" ] && results+=("$f")
   done < <(cd "$dir" 2>/dev/null && find . \
-    \( "${ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]}" \) -prune \
+    \( -type d \( "${ANALYZE_PROJECT_PRUNE_NAME_ARGS[@]}" \) \) -prune \
     -o -type f \( "${ANALYZE_PROJECT_INAME_OR_ARGS[@]}" \) -print 2>/dev/null \
     | sed 's|^\./||' \
     | grep -Ei "$DESIGN_DOC_EXTENSIONS_REGEX")
@@ -621,9 +676,13 @@ fetch_docs_evidence() {
     adr_dir='"docs/adr"'
   fi
 
-  DOCS_JSON=$(jq -n --argjson docsDir "$docs_dir" --argjson designDocs "$design_docs_json" \
+  # designDocs は走査結果そのもの（件数上限が無い）なので引数ではなくファイル経由
+  jq_file_args_init
+  jq_file_args_add_json designDocs "$design_docs_json"
+  DOCS_JSON=$(jq -n "${JQ_FILE_ARGS[@]}" --argjson docsDir "$docs_dir" \
     --argjson adrDir "$adr_dir" \
-    '{docsDir:$docsDir, designDocs:$designDocs, adrDir:$adrDir}')
+    '{docsDir:$docsDir, designDocs:$designDocs[0], adrDir:$adrDir}')
+  jq_file_args_cleanup
 }
 
 fetch_named_dirs() {
@@ -632,12 +691,12 @@ fetch_named_dirs() {
   local -a names=("$@")
   local -a results=()
   local name
-  build_analyze_project_prune_path_args
+  build_analyze_project_prune_name_args
   for name in "${names[@]}"; do
     while IFS= read -r f; do
       [ -n "$f" ] && results+=("$f")
     done < <(cd "$dir" 2>/dev/null && find . \
-      \( "${ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]}" \) -prune \
+      \( -type d \( "${ANALYZE_PROJECT_PRUNE_NAME_ARGS[@]}" \) \) -prune \
       -o -type d -name "$name" -print 2>/dev/null | sed 's|^\./||')
   done
   printf '%s\n' "${results[@]:-}" | awk 'NF' | sort -u | jq -R -s 'split("\n") | map(select(length>0))'
@@ -662,9 +721,9 @@ fetch_colocated_tests() {
   # fetch_test_dirs が検出する専用テストディレクトリ（__tests__/test/tests/spec）配下の
   # *.test.*/*.spec.* は「co-located」ではなく通常のテスト配置なので除外する
   # （(^|/)(name)/ でパス区切り境界を厳密化し、"latest/" 等の部分一致誤検出を防ぐ）
-  build_analyze_project_prune_path_args
+  build_analyze_project_prune_name_args
   hit=$(cd "$dir" 2>/dev/null && find . \
-    \( "${ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]}" \) -prune \
+    \( -type d \( "${ANALYZE_PROJECT_PRUNE_NAME_ARGS[@]}" \) \) -prune \
     -o -type f \( -iname "*.test.*" -o -iname "*.spec.*" \) -print 2>/dev/null \
     | sed 's|^\./||' \
     | grep -Ev '(^|/)(__tests__|test|tests|spec)/' \
@@ -744,10 +803,16 @@ build_axes_json() {
   local api_standing="$3" api_evidence="$4"
   local e2e_standing="$5" e2e_evidence="$6"
 
-  jq -n \
-    --arg db_standing "$db_standing" --arg db_evidence "$db_evidence" \
-    --arg api_standing "$api_standing" --arg api_evidence "$api_evidence" \
-    --arg e2e_standing "$e2e_standing" --arg e2e_evidence "$e2e_evidence" \
+  # standing は固定の列挙値だが、evidence は走査結果（検出したE2Eディレクトリの列挙など）を
+  # 含むため長さの上限が無い。引数に載せると E2BIG になり得るのでファイル経由で渡す。
+  jq_file_args_init
+  jq_file_args_add_raw db_evidence "$db_evidence"
+  jq_file_args_add_raw api_evidence "$api_evidence"
+  jq_file_args_add_raw e2e_evidence "$e2e_evidence"
+  jq -n "${JQ_FILE_ARGS[@]}" \
+    --arg db_standing "$db_standing" \
+    --arg api_standing "$api_standing" \
+    --arg e2e_standing "$e2e_standing" \
     --arg ask "$ASK_USER_EVIDENCE" \
     '[
       {axis:1, name:"規模・複雑度", standing:"ask-user", evidence:$ask},
@@ -760,6 +825,7 @@ build_axes_json() {
       {axis:8, name:"規制・コンプライアンス", standing:"ask-user", evidence:$ask},
       {axis:9, name:"テスト戦略の複雑度", standing:$e2e_standing, evidence:$e2e_evidence}
     ]'
+  jq_file_args_cleanup
 }
 
 fetch_axes() {
@@ -778,9 +844,9 @@ fetch_axes() {
 
   local has_openapi="false"
   local openapi_hit
-  build_analyze_project_prune_path_args
+  build_analyze_project_prune_name_args
   openapi_hit=$(cd "$dir" 2>/dev/null && find . \
-    \( "${ANALYZE_PROJECT_PRUNE_PATH_ARGS[@]}" \) -prune \
+    \( -type d \( "${ANALYZE_PROJECT_PRUNE_NAME_ARGS[@]}" \) \) -prune \
     -o -iname "openapi*" -print -o -iname "swagger*" -print 2>/dev/null | LC_ALL=C sort | head -1)
   [ -n "$openapi_hit" ] && has_openapi="true"
 
@@ -822,6 +888,9 @@ main() {
     exit 1
   fi
 
+  # 途中で中断された場合も jq 引数用の一時ディレクトリを残さない
+  trap jq_file_args_cleanup EXIT
+
   local target_dir="${1:-.}"
   if [ ! -d "$target_dir" ]; then
     echo "Error: directory not found: ${target_dir}" >&2
@@ -850,41 +919,48 @@ main() {
   local language_json="null"
   [ -n "$LANGUAGE_RESULT" ] && language_json=$(jq -n --arg v "$LANGUAGE_RESULT" '$v')
 
-  jq -n \
+  # 各セクションのJSONはすべてファイル経由で渡す（--argjson だと testDirs 等が
+  # 1引数の長さ上限を超えて jq が E2BIG で起動できなくなる。Issue #221）。
+  # --slurpfile はJSON列を配列で受けるため、参照は $名[0]。
+  jq_file_args_init
+  jq_file_args_add_json pm "$pm_json"
+  jq_file_args_add_json language "$language_json"
+  jq_file_args_add_json stack "$STACK_JSON"
+  jq_file_args_add_json commands "$COMMANDS_JSON"
+  jq_file_args_add_json testPrereqs "$TEST_PREREQS_JSON"
+  jq_file_args_add_json dirTree "$DIR_TREE_JSON"
+  jq_file_args_add_json docs "$DOCS_JSON"
+  jq_file_args_add_json testDirs "$TEST_DIRS_JSON"
+  jq_file_args_add_json e2eDirs "$E2E_DIRS_JSON"
+  jq_file_args_add_json colocatedTests "$COLOCATED_TESTS_JSON"
+  jq_file_args_add_json branchEvidence "$BRANCH_EVIDENCE_JSON"
+  jq_file_args_add_json axes "$AXES_JSON"
+  jq -n "${JQ_FILE_ARGS[@]}" \
     --arg status "ok" \
     --arg targetDir "$abs_dir" \
-    --argjson pm "$pm_json" \
-    --argjson language "$language_json" \
     --arg name "$NAME_RESULT" \
     --arg nameSource "$NAME_SOURCE_RESULT" \
-    --argjson stack "$STACK_JSON" \
-    --argjson commands "$COMMANDS_JSON" \
-    --argjson testPrereqs "$TEST_PREREQS_JSON" \
-    --argjson dirTree "$DIR_TREE_JSON" \
-    --argjson docs "$DOCS_JSON" \
-    --argjson testDirs "$TEST_DIRS_JSON" \
-    --argjson e2eDirs "$E2E_DIRS_JSON" \
-    --argjson colocatedTests "$COLOCATED_TESTS_JSON" \
-    --argjson branchEvidence "$BRANCH_EVIDENCE_JSON" \
-    --argjson axes "$AXES_JSON" \
     '{
       status: $status,
       targetDir: $targetDir,
-      pm: $pm,
-      language: $language,
+      pm: $pm[0],
+      language: $language[0],
       name: $name,
       nameSource: $nameSource,
-      stack: $stack,
-      commands: $commands,
-      testPrereqs: $testPrereqs,
-      dirTree: $dirTree,
-      docs: $docs,
-      testDirs: $testDirs,
-      e2eDirs: $e2eDirs,
-      colocatedTests: $colocatedTests,
-      branchEvidence: $branchEvidence,
-      axes: $axes
+      stack: $stack[0],
+      commands: $commands[0],
+      testPrereqs: $testPrereqs[0],
+      dirTree: $dirTree[0],
+      docs: $docs[0],
+      testDirs: $testDirs[0],
+      e2eDirs: $e2eDirs[0],
+      colocatedTests: $colocatedTests[0],
+      branchEvidence: $branchEvidence[0],
+      axes: $axes[0]
     }'
+  local jq_status=$?
+  jq_file_args_cleanup
+  return "$jq_status"
 }
 
 # `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）
