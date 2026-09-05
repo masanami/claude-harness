@@ -81,7 +81,7 @@ EOF
 #!/bin/bash
 echo "version=$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$(dirname "$0")/../.claude-plugin/plugin.json")"
 echo "cwd=$(pwd)"
-echo "env=${TEST_LAUNCHER_ENV:-UNSET}"
+echo "env=${WALKTHROUGH_OUT:-UNSET}"
 for a in "$@"; do echo "arg=${a}"; done
 EOF
   cat >"${root}/scripts/exit-with.sh" <<'EOF'
@@ -151,11 +151,15 @@ assert_contains "stdin を透過する" "stdin=line1" "$OUT"
 # =============================================================================
 echo "=== test: --env ==="
 # =============================================================================
+# --env は allowlist 方式（bin/claude-harness-run の CHR_ENV_ALLOWLIST）。実行系の解決を
+# 変える変数（PATH / NODE_PATH / PYTHONPATH …）を渡せると、コマンド allowlist にある名前で
+# 別のバイナリを実行できてしまうため。許可されていない名前の拒否は
+# scripts/tests/test-command-spec.sh が網羅的に固定する。ここでは許可名の透過を確認する。
 
-OUT="$(CLAUDE_HARNESS_ROOT="$PLUGIN_ROOT" "$LAUNCHER" --env TEST_LAUNCHER_ENV=hello echo-args 2>&1)"
+OUT="$(CLAUDE_HARNESS_ROOT="$PLUGIN_ROOT" "$LAUNCHER" --env WALKTHROUGH_OUT=hello echo-args 2>&1)"
 assert_contains "--env で環境変数を渡せる" "env=hello" "$OUT"
 
-OUT="$(CLAUDE_HARNESS_ROOT="$PLUGIN_ROOT" "$LAUNCHER" --env TEST_LAUNCHER_ENV="a b" echo-args 2>&1)"
+OUT="$(CLAUDE_HARNESS_ROOT="$PLUGIN_ROOT" "$LAUNCHER" --env WALKTHROUGH_OUT="a b" echo-args 2>&1)"
 assert_contains "--env の値に空白を含められる" "env=a b" "$OUT"
 
 CLAUDE_HARNESS_ROOT="$PLUGIN_ROOT" "$LAUNCHER" --env NOT_AN_ASSIGNMENT echo-args >/dev/null 2>&1
@@ -279,7 +283,7 @@ assert_eq "--plugin-root は解決したルートを stdout に出す" "$PLUGIN_
 echo "=== test: 実プラグイン（このリポジトリ）に対する疎通 ==="
 # =============================================================================
 
-OUT="$(CLAUDE_HARNESS_ROOT="$REPO_ROOT" "$LAUNCHER" quality-check-runner --lint "exit 0" 2>/dev/null)"
+OUT="$(CLAUDE_HARNESS_ROOT="$REPO_ROOT" "$LAUNCHER" quality-check-runner --lint "true" 2>/dev/null)"
 assert_eq "実スクリプト（quality-check-runner）をランチャー経由で実行できる" \
   "pass" "$(printf '%s' "$OUT" | jq -r '.result')"
 

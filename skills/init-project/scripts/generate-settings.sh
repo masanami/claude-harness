@@ -62,6 +62,16 @@ gs_union_unique_json() {
 # 共通権限（常に含める。約27項目）
 # Bash(claude-harness-run:*) は本プラグイン同梱スクリプトのランチャー（bin/claude-harness-run）用。
 # パス・バージョンを含まない呼び出し形にすることで、この1行だけでプラグイン更新に追随できる。
+# この allow が何を許すか（＝ deny の適用範囲がどう変わるか）は docs/script-launcher.md
+# 「6. このランチャーを allow することの意味」が正本。ランチャー配下のスクリプトへ
+# **直接渡した**コマンドは、シェルへ渡さず同梱 allowlist に限って実行される（Issue #223）
+# ため、`--lint "rm -rf ..."` のような一次経路で deny 対象へ到達することはできない。
+# ただし **deny はプロセスツリーには適用されない** —— 許可コマンドが起動する子プロセス
+# （npm run が package.json の指示で呼ぶもの、make のレシピ等）や、ランナー自身が呼ぶ
+# git（mutation-run の復元処理）は permission 判定を受けない。
+# 一方 Bash(bash:*) は汎用実行系の allow であり、これが在ると deny は迂回可能になる
+# （現状はスクリプトのフォールバック実行形のために含めている。docs/script-launcher.md §6 の
+# 「残る限界」を参照）。
 gs_base_allow_json() {
   jq -n '[
     "Bash(git add:*)",

@@ -1,0 +1,312 @@
+#!/bin/bash
+# scripts/lib/command-spec.sh
+# 呼び出し側（LLM）から受け取った「コマンド文字列」を、**シェルを介さずに実行できる
+# argv 配列**へ変換し、実行してよいコマンドかどうかを判定するライブラリ（Issue #223）。
+#
+# 各スクリプトはスクリプト自身の位置起点で source する（呼び出し元の cwd に依存させないため）:
+#   source "$(dirname "${BASH_SOURCE[0]}")/lib/command-spec.sh"
+#
+# ■ 背景（何を塞いでいるか）
+# `quality-check-runner.sh` / `mutation-run.sh` は受け取った文字列を `bash -c "$cmd"` で
+# 実行していた。Claude Code の Bash permission マッチャは外側の `claude-harness-run ...` しか
+# 見ないため、`Bash(claude-harness-run:*)` を allow した利用側では **その settings.json の
+# deny（`Bash(rm -r:*)` 等）を迂回して任意コマンドを実行できた**。doctor の
+# `settings_launcher_allow` はこの allow を是正として提示するため、doctor に従うほど
+# deny が無効化される状態だった。
+#
+# ■ 2段の防御（片方だけでは塞がらない）
+#   1. **シェルを介さない**: `bash -c` を廃し、argv 配列をそのまま実行する。`;` `|` `>` `$(...)`
+#      といったシェル構文は解釈されない。ただし解釈されないだけでは不十分で、`rm -rf /` を
+#      argv として実行できれば迂回は成立する。よって——
+#   2. **実行系を閉じた集合に限る**: argv の先頭トークン列を `scripts/config/command-allowlist.txt`
+#      と前置一致で照合し、一致しなければ実行前に拒否する。**これが実質的な統制点**。
+#
+# ■ 拡張路を用意しない
+# allowlist ファイルのパスは本ファイルの位置から**無条件に**決める（環境変数・CLI フラグを
+# 見ない）。ランチャーは `--env KEY=VALUE` で子プロセスへ任意の環境変数を渡せるため、
+# 環境変数で差し替え可能にすると allowlist 自体を注入できてしまい、本ライブラリの目的が
+# 失われる（「設定できると便利」を理由に抜け道を残さない）。
+#
+# ■ 提供する関数・変数
+#   - CMDSPEC_ALLOWLIST_FILE  allowlist の絶対パス（source 時に無条件で決定）
+#   - CMDSPEC_ARGV            cmdspec_parse が成功した場合の argv 配列
+#   - CMDSPEC_ERROR           cmdspec_parse が失敗した場合の理由（人間/LLM 向け1行）
+#   - cmdspec_first_metachar <str>   シェル解釈を要求する最初の文字を出力（無ければ空）
+#   - cmdspec_prefix_matches <entry> <argv...>  allowlist エントリが argv に前置一致するか
+#   - cmdspec_allowed <argv...>      argv が allowlist のいずれかに一致するか
+#   - cmdspec_parse <str>            検証して CMDSPEC_ARGV を設定（失敗時は非0＋CMDSPEC_ERROR）
+#   - cmdspec_reject_message <label> <str>  拒否時に stderr へ出す複数行メッセージ
+
+# source 時に無条件で決定する（環境変数の値を引き継がない＝注入されない）。
+# `dirname` ではなくパラメータ展開と組み込みの cd/pwd だけで解決するのは、**PATH に依存させない**
+# ため（このライブラリ自身が PATH 由来の実行系を検証する側であり、その解決が PATH 上の外部
+# コマンドに依存していると、PATH が壊れた環境で allowlist の場所を見失う）。
+CMDSPEC_LIB_DIR="${BASH_SOURCE[0]%/*}"
+if [ "$CMDSPEC_LIB_DIR" = "${BASH_SOURCE[0]}" ]; then
+  CMDSPEC_LIB_DIR="."
+fi
+CMDSPEC_ALLOWLIST_FILE="$(cd "${CMDSPEC_LIB_DIR}/../config" 2>/dev/null && pwd)/command-allowlist.txt"
+
+CMDSPEC_ARGV=()
+CMDSPEC_ERROR=""
+CMDSPEC_RESOLVED=""
+
+# シェル解釈を要求する文字が含まれていれば、その最初の1文字を出力して 0 を返す。
+# 含まれていなければ何も出力せず 1 を返す。
+#
+# シェルを介さない実装ではこれらの文字は「ただのリテラル」になるため、素通しすると
+# 呼び出し側が意図した意味（`a; b` は2コマンド）と実際の挙動（`;` を含む1引数）が黙って
+# 食い違う。**黙って別物を実行するより、その場で落として呼び出し側に書き直させる**。
+# セキュリティ上の統制点は allowlist 側であり、この検査は意味の食い違いを防ぐためのもの。
+#
+# 非ASCII文字は対象にしない（日本語を含むテストファイル名などは正当な引数であり、
+# シェル解釈とは無関係のため）。
+cmdspec_first_metachar() {
+  local s="$1"
+  # 1文字ずつ足すのは、この集合を1つのリテラルで書くと引用が読めなくなるため
+  # （バックスラッシュ・両クォートを含む）。
+  local metachars=';&|<>$(){}[]*?!#~'
+  metachars="${metachars}"'`'  # バッククォート（コマンド置換）
+  metachars="${metachars}"'\'  # バックスラッシュ（エスケープ）
+  metachars="${metachars}"'"'  # ダブルクォート
+  metachars="${metachars}'"    # シングルクォート
+
+  case "$s" in
+    *$'\n'*)
+      printf '\\n'
+      return 0
+      ;;
+  esac
+  case "$s" in
+    *$'\r'*)
+      printf '\\r'
+      return 0
+      ;;
+  esac
+
+  local i=0 len="${#s}" ch
+  while [ "$i" -lt "$len" ]; do
+    ch="${s:$i:1}"
+    case "$metachars" in
+      *"$ch"*)
+        printf '%s' "$ch"
+        return 0
+        ;;
+    esac
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# allowlist の1エントリ（空白区切りのトークン列）が argv に前置一致するかを判定する。
+# 引数: entry, argv...
+# 空エントリは何にも一致させない（allowlist の空行・コメント行が「全許可」にならないため）。
+cmdspec_prefix_matches() {
+  local entry="$1"
+  shift
+
+  local want=()
+  # read -a はグロブ展開を行わないため、`*` を含むトークンも安全に分解できる。
+  # 末尾に改行が無い here-string では read が非0を返すが、配列は設定されるため無視する。
+  read -r -a want <<<"$entry" || true
+
+  local n="${#want[@]}"
+  [ "$n" -gt 0 ] || return 1
+  [ "$#" -ge "$n" ] || return 1
+
+  local got=("$@")
+  local i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ "${want[$i]}" != "${got[$i]}" ]; then
+      return 1
+    fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# エントリ（空白区切りのトークン列）のトークン数を返す。
+cmdspec_token_count() {
+  local toks=()
+  read -r -a toks <<<"$1" || true
+  printf '%s' "${#toks[@]}"
+}
+
+# argv が allowlist のいずれかのエントリに一致するかを判定する。
+#
+# エントリには2種類ある:
+#   - 通常エントリ（例: `npm run`）: argv の**先頭トークン列**に前置一致すれば可。
+#     以降のトークン（スクリプト名・フラグ・パス）は自由。**実行されるプログラムは
+#     エントリ側で固定されている**ため、呼び出し側は「何を実行するか」を選べない。
+#   - ラッパーエントリ（`> ` で始まる。例: `> bundle exec`）: 前置一致に加えて、
+#     **残りの argv がそれ自体 allowlist に載っていること**を要求する（再帰）。
+#
+# ラッパーを分けるのは、`bundle exec` / `uv run` / `python3 -m` / `npx --no` のように
+# **次のトークンが実行対象そのもの**になるエントリを、前置一致だけで許すと
+# `bundle exec rm -rf /` が通ってしまうため（PR #224 のレビュー指摘。実測で確認済み）。
+# 「実行系を閉じた集合に限る」という統制は、この区別が無いと成立しない。
+# 再帰は毎回 argv を2トークン以上消費するため必ず停止する
+# （`bundle exec bundle exec rm` は最終的に `rm` で不一致になり拒否される）。
+#
+# allowlist ファイルが読めない場合は **fail-closed**（何も実行させない）。
+# 「一覧が壊れていたら全部通す」は、統制が消えたことに気付けない最悪の失敗形になる。
+cmdspec_allowed() {
+  [ "$#" -gt 0 ] || return 1
+  [ -f "$CMDSPEC_ALLOWLIST_FILE" ] || return 1
+
+  local line entry n rest
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    [ -n "$line" ] || continue
+    case "$line" in
+      '>'*)
+        entry="${line#>}"
+        n="$(cmdspec_token_count "$entry")"
+        [ "$n" -gt 0 ] || continue
+        # ラッパー自身で終わる呼び出し（`bundle exec` のみ）は実行対象が無いので不可。
+        [ "$#" -gt "$n" ] || continue
+        if cmdspec_prefix_matches "$entry" "$@"; then
+          rest=("${@:$((n + 1))}")
+          if cmdspec_allowed "${rest[@]}"; then
+            return 0
+          fi
+        fi
+        ;;
+      *)
+        if cmdspec_prefix_matches "$line" "$@"; then
+          return 0
+        fi
+        ;;
+    esac
+  done <"$CMDSPEC_ALLOWLIST_FILE"
+  return 1
+}
+
+# 検証した実体と実行する実体を一致させるため、argv[0] を PATH 解決した**絶対パス**へ固定する。
+# 成功時は CMDSPEC_RESOLVED に解決結果（組み込み・未検出の場合は空）を入れる。
+#
+# ■ この関数が担うこと / 担わないこと（PR #224 再レビュー指摘1）
+# allowlist が照合するのは**コマンド名**であり、名前から実体への写像は PATH が行う。
+# したがって「一覧に載っている名前だから安全」とは言えない。ここで固定できるのは:
+#   - 検証時に解決した実体と、実際に起動する実体が同じであること（解決と実行の間に
+#     PATH が変わっても影響を受けない）
+#   - **相対パスへ解決された場合は拒否する**こと。PATH に相対エントリ（`.` や
+#     `node_modules/.bin` のような cwd 相対）があると、**作業ツリー内へ書き込めるだけで**
+#     許可名を別バイナリへ差し替えられる。作業ツリーへの書き込みは通常の編集権限で行えるため、
+#     この経路だけは塞ぐ価値がある
+# 一方、**PATH 全体の汚染は防げない**。信頼済み PATH を固定する案は採らなかった——
+# このランナーの目的は**開発者のツールチェインを起動すること**であり、nvm / asdf / rbenv /
+# venv / Homebrew / node_modules/.bin に置かれた実体を解決できなくなれば機能自体が成立しない。
+# 保証の範囲は docs/script-launcher.md §6「保証しないこと」に明記してある。
+cmdspec_pin_program() {
+  CMDSPEC_RESOLVED=""
+
+  case "${CMDSPEC_ARGV[0]}" in
+    */*)
+      # 明示パス（`./gradlew` 等、allowlist に literal で載っているもの）。PATH 解決を経ない。
+      return 0
+      ;;
+  esac
+
+  local resolved
+  resolved="$(command -v -- "${CMDSPEC_ARGV[0]}" 2>/dev/null)" || resolved=""
+
+  case "$resolved" in
+    /*)
+      CMDSPEC_RESOLVED="$resolved"
+      CMDSPEC_ARGV[0]="$resolved"
+      return 0
+      ;;
+    */*)
+      # PATH に相対エントリがある場合にのみ起こる。cwd 次第で別物が動く。
+      CMDSPEC_ERROR="'${CMDSPEC_ARGV[0]}' resolved to a relative path ('${resolved}'); PATH must not contain relative entries"
+      return 1
+      ;;
+    *)
+      # `command -v` が**素の名前**を返した場合。次の3通りがあり、扱いを分ける必要がある。
+      # bash の探索順は alias → keyword → function → builtin → PATH 上のファイルであり、
+      # **関数は PATH より先に一致する**ため、名前だけを見て通すと
+      # `"${CMDSPEC_ARGV[@]}"` が実行ファイルではなく**関数本体**を実行する。
+      # 実測（PR #224 3巡目の指摘）: 継承した `BASH_ENV` と `export -f` のどちらでも成立し、
+      # しかも解決先が空のままなので `--- resolved: ---` の監査痕跡すら残らなかった。
+      # 品質コマンドがシェル関数へ解決されるのは正当な構成ではないので拒否する。
+      local kind
+      kind="$(type -t "${CMDSPEC_ARGV[0]}" 2>/dev/null)" || kind=""
+      case "$kind" in
+        builtin | "")
+          # 組み込み（true / echo / printf）は PATH 解決を経ないため差し替え不能。
+          # 未検出（空）はここでは拒否せず、実行して 127 にさせる
+          # （「ツール未導入」は契約違反ではなく当該ゲートの失敗として扱う契約）。
+          return 0
+          ;;
+        function)
+          CMDSPEC_ERROR="'${CMDSPEC_ARGV[0]}' resolves to a shell function, not an executable"
+          return 1
+          ;;
+        *)
+          # alias / keyword など。非対話 bash では alias は展開されないが、
+          # 「実行ファイルでも組み込みでもないもの」を通す理由が無いので fail-closed。
+          CMDSPEC_ERROR="'${CMDSPEC_ARGV[0]}' resolves to a shell ${kind}, not an executable"
+          return 1
+          ;;
+      esac
+      ;;
+  esac
+}
+
+# コマンド文字列を検証し、成功時は CMDSPEC_ARGV に argv を設定して 0 を返す。
+# 失敗時は CMDSPEC_ERROR に理由を設定して 1 を返す（CMDSPEC_ARGV は空）。
+cmdspec_parse() {
+  local cmd="$1"
+  CMDSPEC_ARGV=()
+  CMDSPEC_ERROR=""
+
+  local bad
+  if bad="$(cmdspec_first_metachar "$cmd")"; then
+    CMDSPEC_ERROR="shell metacharacter '${bad}' is not allowed (the command is executed without a shell)"
+    return 1
+  fi
+
+  read -r -a CMDSPEC_ARGV <<<"$cmd" || true
+  if [ "${#CMDSPEC_ARGV[@]}" -eq 0 ]; then
+    CMDSPEC_ERROR="empty command"
+    return 1
+  fi
+
+  if ! cmdspec_allowed "${CMDSPEC_ARGV[@]}"; then
+    if [ ! -f "$CMDSPEC_ALLOWLIST_FILE" ]; then
+      CMDSPEC_ERROR="command allowlist not found: ${CMDSPEC_ALLOWLIST_FILE} (refusing to run anything)"
+    else
+      CMDSPEC_ERROR="'${CMDSPEC_ARGV[0]}' is not in the command allowlist"
+    fi
+    CMDSPEC_ARGV=()
+    return 1
+  fi
+
+  if ! cmdspec_pin_program; then
+    CMDSPEC_ARGV=()
+    return 1
+  fi
+
+  return 0
+}
+
+# 拒否時に stderr へ出す説明。呼び出し側（LLM）がその場で書き直せるよう、
+# 何が拒否されたか・どう書けばよいか・正本はどこかまでを含める。
+cmdspec_reject_message() {
+  local label="$1" cmd="$2"
+  cat >&2 <<EOF
+Error: rejected ${label} command: ${cmd}
+       reason: ${CMDSPEC_ERROR}
+       This runner executes the command directly (no shell), and only commands whose
+       leading tokens match the bundled allowlist may run. This is what makes
+       'Bash(claude-harness-run:*)' safe to allow: it must not become a way to run
+       arbitrary commands and bypass the project's deny rules.
+       - Do not use shell syntax (; && | > \$() \` quotes globs). Chain steps in the
+         project's own script instead (e.g. a package.json script or a Makefile target),
+         and pass that single command here.
+       - Pass environment variables via 'claude-harness-run --env KEY=VALUE', not 'KEY=V cmd'.
+       - Allowed commands: ${CMDSPEC_ALLOWLIST_FILE}
+       - Rationale: docs/script-launcher.md「6. このランチャーを allow することの意味」
+EOF
+}

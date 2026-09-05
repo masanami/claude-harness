@@ -82,11 +82,33 @@ assert_eq "repo_rootが空文字列(取得失敗)の場合は絶対パスをそ�
 
 # --- 一時gitリポジトリでの統合テスト（main() 経由） ---
 REPO_DIR="$(mktemp -d)"
+FIXTURE_BIN="$(mktemp -d)"
 
 cleanup() {
-  rm -rf "$REPO_DIR"
+  rm -rf "$REPO_DIR" "$FIXTURE_BIN"
 }
 trap cleanup EXIT
+
+# test_command は allowlist に載っている実行系でなければ実行されない（Issue #223）。
+# 素の `node <file>` は「呼び出し側が実行対象のパスを指名する形」であり載せていないため、
+# allowlist にある名前（jest）でスタブを作り PATH の先頭へ置く。現在の契約を迂回せずに
+# 「テストを実行するコマンド」を用意できる形はこれである。
+#
+# **この手法自体が、文書化済みの限界の実演でもある**（PR #224 再レビュー指摘1）: allowlist が
+# 照合するのは**コマンド名**であり、名前から実体への写像は PATH が行う。したがって PATH 上へ
+# 実行ファイルを置ける主体は、許可名を別バイナリへ差し替えられる。ランナーは検証時に解決した
+# **絶対パス**へ argv[0] を固定し（検証した実体＝実行する実体）、相対パスへの解決は拒否するが、
+# **PATH 全体の汚染は防げない**（信頼済み PATH を固定すると nvm / venv / node_modules/.bin 上の
+# 実体を解決できず、開発者のツールチェインを起動するという目的自体が成立しないため）。
+# 保証の範囲は docs/script-launcher.md §6「残る限界」が正本。ここではテスト自身が信頼された
+# 呼び出し側であり、PATH を意図的に構成している。
+cat >"${FIXTURE_BIN}/jest" <<'FIXTURE'
+#!/bin/bash
+exec node impl.test.js
+FIXTURE
+chmod +x "${FIXTURE_BIN}/jest"
+PATH="${FIXTURE_BIN}:${PATH}"
+export PATH
 
 (
   cd "$REPO_DIR" || exit 1
@@ -111,7 +133,7 @@ EOF
 
 cd "$REPO_DIR" || exit 1
 
-TEST_CMD="node impl.test.js"
+TEST_CMD="jest"
 
 echo "=== test: CLI — 引数不足はexit 1（stdoutにJSONを出さない） ==="
 OUT_MISSING_ARGS=$("$TARGET_SCRIPT" 2>/dev/null)

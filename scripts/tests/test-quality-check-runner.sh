@@ -229,17 +229,49 @@ assert_eq "複数要素を ' → ' で連結" "cmd1 → cmd2 → cmd3" "$(join_b
 echo "=== test: CLI（全ゲートpass。件数抽出込み） ==="
 # =============================================================================
 
+# CLI レベルのテストは、実プロジェクトのツールチェインに依存せずゲーティングロジック
+# だけを検証する。従来はモックとしてシェル構文を含む文字列（"printf ...; exit 1"）を
+# 渡していたが、ランナーはコマンドをシェルへ渡さなくなった（Issue #223）ため使えない。
+# 代わりに **allowlist に載っている実行系の名前**でスタブ実行ファイルを一時ディレクトリに
+# 作り、PATH の先頭に置く。現在の契約（allowlist に無い実行系は実行しない／シェル構文は
+# 拒否する）を迂回せずにモックできる形はこれだけである。
+FIXTURE_BIN="$(mktemp -d "${TMPDIR:-/tmp}/qcr-fixture.XXXXXX")"
+qcr_fixture_cleanup() {
+  rm -rf "$FIXTURE_BIN"
+}
+trap qcr_fixture_cleanup EXIT
+PATH="${FIXTURE_BIN}:${PATH}"
+export PATH
+
+# スタブを作る。引数: 実行ファイル名, 終了コード, 標準出力に出す本文
+make_tool() {
+  local name="$1" code="$2" output="$3"
+  {
+    printf '#!/bin/bash\n'
+    printf "cat <<'QCR_FIXTURE_EOF'\n"
+    printf '%s\n' "$output"
+    printf 'QCR_FIXTURE_EOF\n'
+    printf 'exit %s\n' "$code"
+  } >"${FIXTURE_BIN}/${name}"
+  chmod +x "${FIXTURE_BIN}/${name}"
+}
+
+make_tool prettier 0 'fixed'
+make_tool eslint 0 '0 problems (0 errors, 0 warnings)'
+make_tool tsc 0 'Found 0 errors.'
+make_tool jest 0 'Tests: 0 failed, 3 passed, 0 skipped, 3 total'
+
 OUT_ALL_PASS="$("$TARGET_SCRIPT" \
-  --auto-fix "printf 'fixed\n'" \
-  --lint "printf '0 problems (0 errors, 0 warnings)\n'" \
-  --typecheck "printf 'Found 0 errors.\n'" \
-  --test "printf 'Tests: 0 failed, 3 passed, 0 skipped, 3 total\n'")"
+  --auto-fix "prettier --write ." \
+  --lint "eslint ." \
+  --typecheck "tsc --noEmit" \
+  --test "jest" 2>/dev/null)"
 EXIT_ALL_PASS=$?
 
 assert_eq "全ゲートpass時の result" "pass" "$(jq -r '.result' <<<"$OUT_ALL_PASS")"
 assert_eq "全ゲートpass時の exit code" "0" "$EXIT_ALL_PASS"
 assert_eq "auto_fix.applied が true" "true" "$(jq -r '.auto_fix.applied' <<<"$OUT_ALL_PASS")"
-assert_eq "auto_fix.summary にコマンドが記録される" "printf 'fixed\n'" "$(jq -r '.auto_fix.summary' <<<"$OUT_ALL_PASS")"
+assert_eq "auto_fix.summary にコマンドが記録される" "prettier --write ." "$(jq -r '.auto_fix.summary' <<<"$OUT_ALL_PASS")"
 assert_eq "lintゲートのstatus" "pass" "$(jq -r '.gates.lint.status' <<<"$OUT_ALL_PASS")"
 assert_eq "lintゲートのerrors件数" "0" "$(jq -r '.gates.lint.errors' <<<"$OUT_ALL_PASS")"
 assert_eq "typecheckゲートのstatus" "pass" "$(jq -r '.gates.typecheck.status' <<<"$OUT_ALL_PASS")"
@@ -250,7 +282,8 @@ assert_eq "testゲートのpassed件数" "3" "$(jq -r '.gates.test.passed' <<<"$
 echo "=== test: CLI（lintのみfail。他はskip。exit codeで判定しwarningsは無視） ==="
 # =============================================================================
 
-OUT_LINT_FAIL="$("$TARGET_SCRIPT" --lint "printf '0 errors, 5 warnings\n'; exit 1")"
+make_tool eslint 1 '0 errors, 5 warnings'
+OUT_LINT_FAIL="$("$TARGET_SCRIPT" --lint "eslint ." 2>/dev/null)"
 EXIT_LINT_FAIL=$?
 
 assert_eq "lintのみ指定時、他ゲートはskip" "skip" "$(jq -r '.gates.typecheck.status' <<<"$OUT_LINT_FAIL")"
@@ -264,10 +297,13 @@ assert_eq "auto-fix未指定時 applied は false" "false" "$(jq -r '.auto_fix.a
 echo "=== test: CLI（typecheckのみfail） ==="
 # =============================================================================
 
+make_tool eslint 0 '0 problems (0 errors, 0 warnings)'
+make_tool tsc 1 'Found 2 errors.'
+make_tool jest 0 'Tests: 0 failed, 1 passed, 0 skipped, 1 total'
 OUT_TYPECHECK_FAIL="$("$TARGET_SCRIPT" \
-  --lint "exit 0" \
-  --typecheck "printf 'Found 2 errors.\n'; exit 1" \
-  --test "exit 0")"
+  --lint "eslint ." \
+  --typecheck "tsc --noEmit" \
+  --test "jest" 2>/dev/null)"
 
 assert_eq "typecheck fail時 result は fail" "fail" "$(jq -r '.result' <<<"$OUT_TYPECHECK_FAIL")"
 assert_eq "typecheckゲートのstatus" "fail" "$(jq -r '.gates.typecheck.status' <<<"$OUT_TYPECHECK_FAIL")"
@@ -278,7 +314,8 @@ assert_eq "他ゲートがpassでも1つのfailでresultはfail" "pass" "$(jq -r
 echo "=== test: CLI（testのみfail） ==="
 # =============================================================================
 
-OUT_TEST_FAIL="$("$TARGET_SCRIPT" --test "printf 'Tests: 1 failed, 4 passed, 0 skipped, 5 total\n'; exit 1")"
+make_tool jest 1 'Tests: 1 failed, 4 passed, 0 skipped, 5 total'
+OUT_TEST_FAIL="$("$TARGET_SCRIPT" --test "jest" 2>/dev/null)"
 
 assert_eq "test fail時 result は fail" "fail" "$(jq -r '.result' <<<"$OUT_TEST_FAIL")"
 assert_eq "testゲートのstatus" "fail" "$(jq -r '.gates.test.status' <<<"$OUT_TEST_FAIL")"
@@ -308,7 +345,7 @@ ERR_ALL_SKIP="$("$TARGET_SCRIPT" 2>&1 >/dev/null)"
 assert_contains "ゲート未実行の事実が stderr に明示される" "$ERR_ALL_SKIP" "no quality gate was executed"
 
 # --auto-fix は「直す」手続きであって検査ではないため、指定されていてもゲート実行数には数えない。
-OUT_AUTOFIX_ONLY="$("$TARGET_SCRIPT" --auto-fix "printf 'fixed\n'" 2>/dev/null)"
+OUT_AUTOFIX_ONLY="$("$TARGET_SCRIPT" --auto-fix "prettier --write ." 2>/dev/null)"
 EXIT_AUTOFIX_ONLY=$?
 
 assert_eq "--auto-fix のみ指定でも result は skip（auto-fix は検査ではない）" \
@@ -331,7 +368,8 @@ echo "=== test: CLI（ゲートを1つでも実行していれば従来どおり
 # 一部ゲートのみを指定する呼び出し（型チェックの無いプロジェクト等）は正当な既存経路。
 # 「1つも実行していない」場合だけを skip とし、部分実行の pass は変えない。
 
-OUT_PARTIAL_PASS="$("$TARGET_SCRIPT" --test "printf 'Tests: 0 failed, 3 passed, 0 skipped, 3 total\n'" 2>/dev/null)"
+make_tool jest 0 'Tests: 0 failed, 3 passed, 0 skipped, 3 total'
+OUT_PARTIAL_PASS="$("$TARGET_SCRIPT" --test "jest" 2>/dev/null)"
 EXIT_PARTIAL_PASS=$?
 
 assert_eq "testゲートのみ実行して成功なら result は pass" "pass" "$(jq -r '.result' <<<"$OUT_PARTIAL_PASS")"
@@ -342,13 +380,15 @@ assert_eq "未指定のlintゲートは skip のまま" "skip" "$(jq -r '.gates.
 echo "=== test: CLI（複数auto-fixコマンドを検出順に実行しsummaryへ連結） ==="
 # =============================================================================
 
+make_tool prettier 0 'step1'
+make_tool eslint 0 'step2'
 OUT_MULTI_AUTOFIX="$("$TARGET_SCRIPT" \
-  --auto-fix "printf 'step1\n'" \
-  --auto-fix "printf 'step2\n'" \
-  --lint "exit 0")"
+  --auto-fix "prettier --write ." \
+  --auto-fix "eslint --fix ." \
+  --lint "true" 2>/dev/null)"
 
 assert_eq "複数auto-fixのsummaryが検出順に連結される" \
-  "printf 'step1\n' → printf 'step2\n'" "$(jq -r '.auto_fix.summary' <<<"$OUT_MULTI_AUTOFIX")"
+  "prettier --write . → eslint --fix ." "$(jq -r '.auto_fix.summary' <<<"$OUT_MULTI_AUTOFIX")"
 
 # =============================================================================
 echo "=== test: CLI（引数バリデーション） ==="
@@ -360,17 +400,27 @@ assert_eq "--lint に値が無い場合はexit 1" "1" "$?"
 "$TARGET_SCRIPT" --unknown-flag >/dev/null 2>&1
 assert_eq "未知のフラグはexit 1" "1" "$?"
 
-"$TARGET_SCRIPT" --lint "exit 0" --lint "exit 0" >/dev/null 2>&1
+"$TARGET_SCRIPT" --lint "true" --lint "true" >/dev/null 2>&1
 assert_eq "--lint を2回指定した場合はexit 1（無言の上書きを許さない）" "1" "$?"
 
-"$TARGET_SCRIPT" --typecheck "exit 0" --typecheck "exit 0" >/dev/null 2>&1
+"$TARGET_SCRIPT" --typecheck "true" --typecheck "true" >/dev/null 2>&1
 assert_eq "--typecheck を2回指定した場合はexit 1" "1" "$?"
 
-"$TARGET_SCRIPT" --test "exit 0" --test "exit 0" >/dev/null 2>&1
+"$TARGET_SCRIPT" --test "true" --test "true" >/dev/null 2>&1
 assert_eq "--test を2回指定した場合はexit 1" "1" "$?"
 
-"$TARGET_SCRIPT" --lint "" --lint "exit 0" >/dev/null 2>&1
+"$TARGET_SCRIPT" --lint "" --lint "true" >/dev/null 2>&1
 assert_eq "1回目が空文字でも2回目の--lintはexit 1（値の中身でなくフラグ指定回数で重複判定）" "1" "$?"
+
+# =============================================================================
+echo "=== test: CLI（シェル解釈を挟まない契約。詳細は test-command-spec.sh） ==="
+# =============================================================================
+# 迂回不能性そのものの固定は scripts/tests/test-command-spec.sh が担う。ここでは
+# ランナーの CLI 契約として「拒否は exit 4／stdout に JSON を出さない」ことだけを確認する。
+
+QCR_REJECT_STDOUT="$("$TARGET_SCRIPT" --lint "eslint .; touch /dev/null" 2>/dev/null)"
+assert_eq "シェル構文を含むコマンドは exit 4" "4" "$?"
+assert_eq "拒否時は stdout に JSON を出さない" "" "$QCR_REJECT_STDOUT"
 
 # =============================================================================
 echo "=== test: skip 契約が仕様・呼び出し側ドキュメントへ伝播しているか（Issue #192） ==="

@@ -1,0 +1,266 @@
+# command-allowlist.txt
+# quality-check-runner.sh / mutation-run.sh が実行してよいコマンドの正本（Issue #223）。
+#
+# ■ これは何を守るためのものか
+# 両ランナーは呼び出し側（LLM）から「lint / 型チェック / テストのコマンド」を受け取る。
+# 以前はその文字列を `bash -c` に渡していたため、`Bash(claude-harness-run:*)` を allow した
+# 利用側では、**その settings.json の deny を迂回して任意コマンドを実行できた**
+# （permission マッチャは外側の `claude-harness-run ...` しか見ないため）。
+# 現在の実装はシェルを介さず argv を直接実行するが、**それだけでは不十分**である——
+# シェルを外しても `rm -rf ...` を argv として実行できてしまえば迂回は成立する。
+# したがって「何を実行してよいか」を閉じた集合として列挙するのが本ファイルの役割であり、
+# ここが実質的な統制点になる。
+#
+# ■ 書式（2種類）
+#   1行1エントリ。'#' 以降はコメント、空行は無視する（空エントリは何にも一致しない）。
+#
+#   (a) 通常エントリ: argv の **先頭トークン列（前置）** として照合する。
+#         npm run      -> `npm run lint`      ✅ / `npm exec rm`  ❌
+#         cargo test   -> `cargo test --all`  ✅ / `cargo install` ❌
+#       以降のトークン（スクリプト名・フラグ・パス）は自由でよい。**実行されるプログラムは
+#       エントリ側で固定されている**ため、呼び出し側は「何を実行するか」を選べない。
+#
+#   (b) ラッパーエントリ（`> ` で始まる）: 前置一致に加えて、**残りの argv がそれ自体
+#       このファイルに載っていること**を要求する。
+#         > bundle exec -> `bundle exec rspec` ✅ / `bundle exec rm -rf /` ❌
+#         > python3 -m  -> `python3 -m pytest` ✅ / `python3 -m pip install` ❌
+#
+# ■ (a) と (b) を分ける基準（**この境界がこのファイルの本体**）
+#   呼び出し側が **実行されるプログラムそのものを指名できるか** で分ける。
+#   - 指名できない（プロジェクト自身の設定ファイルが実行内容を決める）→ (a)
+#       `npm run <script>` は package.json に、`make <target>` は Makefile に、
+#       `cargo test` は Cargo.toml に書かれた手続きを起動する。呼び出し側が渡すのは
+#       **名前**であって、プログラムのパスではない。
+#   - 指名できる（次のトークンが実行対象）→ (b) にするか、載せない
+#       `bundle exec <cmd>` / `uv run <cmd>` / `poetry run <cmd>` / `python -m <module>` /
+#       `npx <pkg>` は、次のトークンで任意のプログラムを起動できる。前置一致だけで許すと
+#       `bundle exec rm -rf /` が通る（PR #224 のレビュー指摘。修正前の実装で実測確認済み）。
+#
+# ■ 追加するには
+# **このファイル（プラグイン同梱）を編集する以外の拡張路は用意していない**。
+# 環境変数・CLI フラグ・利用側リポジトリのファイルから差し替えられるようにすると、
+# それ自体が「任意文字列を通す別経路」になり、本ファイルの目的を失う。
+# 未対応のツールチェインは claude-harness へ PR を出すか、`make` / `just` などの
+# タスクランナー経由（プロジェクト自身の設定ファイルで定義する形）にする。
+#
+# ■ 意図的に載せていないもの
+#   - シェル・汎用実行系: bash / sh / zsh / env / xargs / find / eval 相当
+#   - 汎用ファイル操作・ネットワーク: rm / mv / cp / chmod / curl / wget / ssh / scp
+#   - VCS・特権: git / sudo / doas   （deny の典型的な対象そのもの）
+#   - 取得したコードを実行する形: `cargo install` / `go install` / `dotnet tool install` /
+#     素の `npx` / `bunx` / `uvx` / `pnpm dlx` / `yarn dlx`
+#     （`npx` と `uvx` は、ローカル導入済みのみを実行する `--no` / `--no-install` /
+#      `--offline` 形を**ラッパーとして**許可する＝実行対象も一覧に在る必要がある）
+#   - 呼び出し側がパスを指名して実行する形: `node <file>` / `cargo run` / `go run` /
+#     `swift run` / `dart run` / `mix run` / `dotnet exec`
+#   - 任意コードを引数で受け取る形: `node -e` / `python -c` / `ruby -e` / `perl -e`
+#   - 環境を変更する副作用が主目的のもの: `terraform apply` / `helm install` /
+#     `playwright install`（検査系のサブコマンドだけを (a) で個別に許可する）
+#
+# ■ 残る限界（**保証しないこと**。docs/script-launcher.md §6 が正本）
+# (a) のエントリが起動するのは**プロジェクト自身の設定が定めた手続き**であり、その中身が
+# 何を実行するかはリポジトリの内容が決める。またビルドツールには一般に脱出口がある
+# （`make -f <別ファイル>`、`mvn exec:exec`、`gradle -b <別ファイル>`、
+#  `node --test --require <ファイル>`、`mocha --require <ファイル>` 等）。
+# **これらはリポジトリに書き込める主体には塞げない**。
+# さらに、**このファイルが照合するのはコマンド名**であり、名前から実体への写像は PATH が行う。
+# ランナーは検証時に解決した絶対パスを起動時にも使い（起動時に PATH を引き直さない）、
+# 相対パスへの解決とシェル関数への解決は拒否するが、**検証後のファイル置換（完全性）は
+# 保証せず、PATH 上へ実行ファイルを置ける主体による差し替えも防げない**
+# （信頼済み PATH を固定すると nvm / venv / node_modules/.bin 上の実体を解決できず、
+#  開発者のツールチェインを起動するという目的自体が成立しないため）。
+# したがってこのファイルが保証するのは
+# 「呼び出し側の1つの文字列だけで、事前準備なしに deny 対象コマンドへ到達できないこと」
+# であって、「プロジェクトのツールチェインが安全であること」ではない。
+
+# --- 疎通確認・no-op（引数を出力するだけ／終了コードを返すだけで副作用が無い） ---
+true
+false
+echo
+printf
+
+# --- JavaScript / TypeScript ---
+npm run
+npm test
+pnpm run
+pnpm test
+yarn run
+yarn test
+bun run
+bun test
+deno task
+deno test
+deno lint
+deno check
+deno fmt
+node --test
+> npx --no
+> npx --no-install
+> npx --offline
+tsc
+eslint
+oxlint
+biome
+prettier
+stylelint
+vitest
+jest
+mocha
+ava
+playwright test
+cypress run
+tsd
+knip
+madge
+depcheck
+
+# --- Python ---
+# `-m` の後ろはモジュール名だが、実行対象そのものであるためラッパーとして扱う
+# （`python3 -m pip install <pkg>` は取得したコードを実行しうる）。
+> python -m
+> python3 -m
+python manage.py test
+python3 manage.py test
+> uv run
+> uvx --offline
+> poetry run
+> pipenv run
+> hatch run
+> coverage run -m
+coverage report
+coverage xml
+coverage html
+tox
+nox
+pytest
+unittest
+ruff
+mypy
+pyright
+flake8
+pylint
+black
+isort
+bandit
+
+# --- Rust ---
+cargo test
+cargo nextest
+cargo clippy
+cargo fmt
+cargo check
+cargo build
+cargo bench
+cargo doc
+
+# --- Go ---
+go test
+go vet
+go build
+go fmt
+gofmt
+goimports
+golangci-lint
+staticcheck
+
+# --- Ruby ---
+> bundle exec
+> bundler exec
+rake
+rspec
+rubocop
+standardrb
+srb tc
+
+# --- JVM / Kotlin / Scala ---
+mvn
+./mvnw
+gradle
+./gradlew
+sbt
+ktlint
+detekt
+
+# --- .NET / Swift / Dart ---
+dotnet test
+dotnet build
+dotnet format
+dotnet restore
+swift test
+swift build
+swiftlint
+flutter test
+flutter analyze
+dart test
+dart analyze
+dart format
+melos run
+
+# --- PHP ---
+composer run
+composer test
+composer validate
+./vendor/bin/phpunit
+./vendor/bin/phpstan
+./vendor/bin/psalm
+./vendor/bin/php-cs-fixer
+./vendor/bin/pest
+phpunit
+phpstan
+psalm
+pint
+
+# --- Elixir / Erlang / Gleam / Zig / Haskell ---
+mix test
+mix format
+mix credo
+mix dialyzer
+mix compile
+rebar3 eunit
+rebar3 ct
+rebar3 dialyzer
+rebar3 compile
+gleam test
+gleam format
+gleam check
+zig build
+zig test
+zig fmt
+stack test
+stack build
+cabal test
+cabal build
+
+# --- インフラ・設定言語（環境を変更するサブコマンドは載せない） ---
+terraform fmt
+terraform validate
+tofu fmt
+tofu validate
+tflint
+ansible-lint
+helm lint
+helm template
+kubeconform
+hadolint
+yamllint
+actionlint
+shellcheck
+shfmt
+markdownlint
+markdownlint-cli2
+vale
+cspell
+
+# --- 汎用タスクランナー（実行内容はプロジェクト自身の設定ファイルが定める） ---
+make
+just
+task
+mise run
+nx run
+nx affected
+turbo run
+bazel test
+bazel build
+buck2 test
+buck2 build
+earthly

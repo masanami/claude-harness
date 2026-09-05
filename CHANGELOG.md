@@ -8,6 +8,30 @@
 
 ---
 
+## 未リリース
+
+### 破壊的変更（次のリリースはメジャーを上げる）
+
+- **`quality-check-runner` / `mutation-run` に渡すコマンドをシェル解釈しなくなった（Issue #223・セキュリティ）。** `Bash(claude-harness-run:*)` を allow すると、**その `settings.json` の `deny` を迂回して任意コマンドを実行できた**。両スクリプトが受け取ったコマンド文字列を `bash -c` に渡しており、permission マッチャは外側の `claude-harness-run …` しか見ないため、`Bash(rm -r:*)` / `Bash(git push --force:*)` / `Bash(sudo:*)` が素通りしていた。`doctor` の `settings_launcher_allow` はこの allow を是正として提示するため、**doctor に従うほど deny が無効化される**状態だった。
+  - コマンドは空白で argv に分解して**直接実行**する。シェル構文（`;` `&&` `|` `>` `$(…)` `` ` `` クォート グロブ）を含む指定は、**どのゲートも実行せずに exit 4** で拒否する（リテラルとして黙って実行しない）。
+  - **シェルを外すだけでは塞がらない**（`rm -rf …` を argv として実行できれば迂回は成立する）ため、実行してよいコマンドを [`scripts/config/command-allowlist.txt`](scripts/config/command-allowlist.txt) に**閉じた一覧**として列挙し、一致しないものは同じく exit 4 で拒否する。一覧の拡張路は**同梱ファイルの編集だけ**（環境変数・CLI フラグ・利用側リポジトリのファイルからは差し替えられない。差し替え可能にすれば、それ自体が任意文字列を通す別経路になるため）。
+  - 一覧は**実行されるコマンドを固定する**。`npm run <script>` / `make <target>` / `cargo test` のように**プロジェクト自身の設定ファイルが実行内容を決める**形は許可し、`bundle exec <cmd>` / `uv run <cmd>` / `python3 -m <module>` / `npx --no <pkg>` のように**次のトークンが実行対象そのもの**になる形は「ラッパー」として扱って、**実行対象も一覧に載っていること**を要求する（`bundle exec rspec` ✅ / `bundle exec rm -rf /` ❌）。`cargo run` / `go run` / `cargo install` / `go install` / `dotnet exec` / 素の `node <ファイル>` のように**呼び出し側が実行対象を指名する形**は載せていない。
+  - `--env` は **allowlist 方式**。渡せるのは**列挙された6つの変数名だけ**（`WALKTHROUGH_PROJECT_ROOT` / `WALKTHROUGH_OUT` / `WALKTHROUGH_SLOWMO` / `WALKTHROUGH_PAUSE_MS` / `WALKTHROUGH_HEADED` / `BASE_URL`）で、接頭辞一致ではない——`WALKTHROUGH_` で始まる未知の名前も拒否される。`PATH` / `NODE_PATH` / `PYTHONPATH` / `GEM_PATH` / `CLASSPATH` のような「どのプログラムが実際に走るかを変える」変数は処理系ごとに際限なくあり、禁止列挙では取りこぼすため。
+  - **実行する実体は、検証時に `command -v` で解決した絶対パスを使う**（起動時に `PATH` を引き直さない）。`PATH` に相対エントリがある場合の解決と、**シェル関数への解決**は拒否する（`bash` の探索順では関数が `PATH` より先に一致するため、継承した `BASH_ENV` や `export -f` で許可名と同名の関数を注入されると実行ファイルではなく関数本体が動く）。シェル組み込み（`true` / `echo` / `printf`）と「`PATH` 上に無いだけのコマンド」は従来どおり通す（後者はツール未導入であり、当該ゲートの失敗として扱う）。
+  - この allow が**何を許し・何を許さないか**は [`docs/script-launcher.md`](docs/script-launcher.md)「6. このランチャーを allow することの意味」が正本。
+
+### 利用者が取る操作
+
+- **CLAUDE.md の品質コマンドが単一コマンドになっているか確認する。** `npm run lint && npm run lint:css` のようにシェル構文で繋いだコマンドや、パイプ・リダイレクトを含むコマンドは渡せなくなった。**プロジェクト側の1コマンド**（`package.json` の `scripts` / Makefile のターゲット等）にまとめ、それを渡す。`/quality-check` は exit 4 を品質 fail ではなく呼び出し方の誤りとして扱い、書き直しを促す。
+- **同梱 allowlist に無いツールチェインを使っている場合**、そのコマンドは渡せない。`make` / `just` などのタスクランナー経由（プロジェクト自身の設定ファイルで定義する形）へ寄せるか、claude-harness へツール追加の PR を出す。**いずれの場合も黙って `pass` にはならない**が、2つの状態は別物なので混同しないこと:
+  - **allowlist に無いコマンドを渡した** → **どのゲートも実行せずに exit 4**（stdout に JSON は出ない）。品質失敗でも未検証でもなく、**呼び出し方が契約に反している**状態。コマンドを書き直して再実行する
+  - **そのゲートのフラグごと省略した** → そのゲートは `status: "skip"` になる。ゲートが1つも実行されなければ `result: "skip"` / exit 3（Issue #192 の安全網。`pass` に読み替えない）
+- **環境変数の前置形（`FOO=bar npm test`）は使えない。** `claude-harness-run --env KEY=VALUE …` を使う。ただし `--env` で渡せるのは allowlist に列挙された変数だけになった（`WALKTHROUGH_PROJECT_ROOT` / `WALKTHROUGH_OUT` / `WALKTHROUGH_SLOWMO` / `WALKTHROUGH_PAUSE_MS` / `WALKTHROUGH_HEADED` / `BASE_URL`）。それ以外は exit 64 で拒否される。
+- **`deny` の効く範囲を取り違えないこと。** この allow が保証するのは「**ランチャーへ直接渡した1つの文字列**で deny 対象コマンドへ到達できないこと」であり、許可コマンドが起動する子プロセス（`npm run` が `package.json` の指示で呼ぶもの、`make` のレシピ等）や、`mutation-run` 自身が復元に使う `git` には permission 判定が適用されない。**許可名がどの実体へ解決されるかも保証しない**——一覧が照合するのはコマンド名であり、`PATH` 上へ実行ファイルを置ける主体は `npm` / `jest` を別のバイナリへ差し替えられる（`PATH` の相対エントリ経由の差し替えと、シェル関数への解決だけは拒否する。検証後のファイル置換＝完全性は保証しない）。
+- **`.claude/settings.json` に `Bash(bash:*)` などの汎用実行系 allow がある場合、deny による統治はそもそも成立していない。** 本修正はランチャー経由の迂回を塞ぐものであり、汎用実行系の allow はそれとは別に見直す必要がある（`/init-project` が生成する既定の allow には、スクリプトのフォールバック実行形のために現在 `Bash(bash:*)` が含まれる）。
+
+---
+
 ## 4.3.0
 
 ### 追加

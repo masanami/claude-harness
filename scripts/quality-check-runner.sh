@@ -11,6 +11,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
   exit 1
 }
 
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/lib/command-spec.sh" || {
+  echo "Error: failed to source lib/command-spec.sh" >&2
+  exit 1
+}
+
 # ---------------------------------------------------------------------------
 # 純粋関数（外部コマンドを起動しない。source して直接テスト可能）
 # ---------------------------------------------------------------------------
@@ -171,10 +177,34 @@ join_by() {
 # LAST_OUTPUT / LAST_EXIT_CODE に格納する。
 # 生の出力は stderr にも転記する（出力規約: stdout にはJSONのみ。人間/LLMが
 # 失敗内容を分析できるよう、件数抽出で捨てられる詳細を stderr 側に残す）。
+#
+# **シェルを介さない**（Issue #223）。以前は `bash -c "$cmd"` だったため、
+# `Bash(claude-harness-run:*)` を allow した利用側で settings.json の deny を迂回して
+# 任意コマンドを実行できた。ここでは argv を直接実行し、実行系は allowlist に限る
+# （検証は main() の引数解析時に済ませてあり、ここへ到達する時点で合格している。
+# 再パースが失敗した場合は実行せず 126 を返す＝ fail-closed）。
 run_command() {
   local label="$1" cmd="$2"
+  # 空文字は「指定なし」と同義の no-op（従来の `bash -c ""` と同じく exit 0）。
+  if [ -z "$cmd" ]; then
+    LAST_OUTPUT=""
+    LAST_EXIT_CODE=0
+    return
+  fi
   echo "--- ${label}: ${cmd} ---" >&2
-  LAST_OUTPUT="$(bash -c "$cmd" 2>&1)"
+  if ! cmdspec_parse "$cmd"; then
+    LAST_OUTPUT="rejected command: ${CMDSPEC_ERROR}"
+    LAST_EXIT_CODE=126
+    printf '%s\n' "$LAST_OUTPUT" >&2
+    echo "--- ${label} exit: ${LAST_EXIT_CODE} ---" >&2
+    return
+  fi
+  # どの実体が動いたかを後から追えるようにする（allowlist が照合するのは名前であり、
+  # 名前から実体への写像は PATH が行うため。docs/script-launcher.md §6 参照）。
+  if [ -n "$CMDSPEC_RESOLVED" ]; then
+    echo "--- ${label} resolved: ${CMDSPEC_RESOLVED} ---" >&2
+  fi
+  LAST_OUTPUT="$("${CMDSPEC_ARGV[@]}" 2>&1)"
   LAST_EXIT_CODE=$?
   printf '%s\n' "$LAST_OUTPUT" >&2
   echo "--- ${label} exit: ${LAST_EXIT_CODE} ---" >&2
@@ -272,9 +302,39 @@ Usage: ${prog} [--auto-fix CMD]... [--lint CMD] [--typecheck CMD] [--test CMD]
 特定した上で渡す。このスクリプトはコマンドの意味を解釈せず、実行してexit codeで
 判定するだけ。
 
+CMD は**シェルを介さずに実行される**（Issue #223）。したがって:
+  - シェル構文（; && | > \$() \` クォート グロブ）は使えない。複数手順を繋げたい場合は
+    プロジェクト自身のスクリプト（package.json の scripts / Makefile 等）にまとめ、
+    その1コマンドを渡す
+  - 実行してよいコマンドは scripts/config/command-allowlist.txt に列挙されたものだけ
+  - 環境変数は 'claude-harness-run --env KEY=VALUE' で渡す（'KEY=V cmd' 形は使えない）
+これに反する CMD は**どのゲートも実行する前に** exit 4 で拒否する（stdout に JSON は
+出力しない）。理由は docs/script-launcher.md「6. このランチャーを allow することの意味」。
+
 --lint / --typecheck / --test をすべて省略（または空文字を指定）した場合は、
 何も検査されないため result は "pass" ではなく "skip"、exit code は 3 を返す。
 EOF
+}
+
+# 受け取った全コマンドを**実行前に**検証する。1つでも拒否対象があれば何も実行せずに
+# exit 4 する（1ゲートでも走らせてから落とすと、拒否されたはずの副作用が残る）。
+# exit code 4 は pass(0) / fail(1) / jq不在(2) / skip(3) のいずれとも重ならない値であり、
+# 呼び出し側が「品質が落ちた」と誤読できないようにするために分けている。
+validate_commands_or_exit() {
+  local label cmd rejected="false"
+  while [ "$#" -gt 0 ]; do
+    label="$1"
+    cmd="$2"
+    shift 2
+    [ -n "$cmd" ] || continue
+    if ! cmdspec_parse "$cmd"; then
+      cmdspec_reject_message "$label" "$cmd"
+      rejected="true"
+    fi
+  done
+  if [ "$rejected" = "true" ]; then
+    exit 4
+  fi
 }
 
 main() {
@@ -352,6 +412,15 @@ main() {
         ;;
     esac
   done
+
+  # 実行前の検証（Issue #223）。jq の有無より先に行う——「何も実行させない」判断は
+  # 環境の不備より優先する。
+  local auto_fix_cmd labeled_cmds=()
+  for auto_fix_cmd in ${auto_fix_cmds[@]+"${auto_fix_cmds[@]}"}; do
+    labeled_cmds+=("--auto-fix" "$auto_fix_cmd")
+  done
+  labeled_cmds+=("--lint" "$lint_cmd" "--typecheck" "$typecheck_cmd" "--test" "$test_cmd")
+  validate_commands_or_exit "${labeled_cmds[@]}"
 
   if ! check_jq; then
     exit 2
