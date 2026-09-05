@@ -105,8 +105,8 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 | スキル | 使い方 | 説明 |
 |--------|--------|------|
-| `/define-feature` | `/define-feature [テーマ]` | 対話から機能仕様ドキュメント(`docs/features/{slug}.md`)を作成。要件＋クリティカル設計決定＋(必要なら)機能全体の設計を1ドキュメントに集約 |
-| `/create-ticket` | `/create-ticket <機能specパス or 親Issue番号>` | 機能仕様→親要件チケット、または親Issue→実装チケット群に分解（GitHub Issue 作成専用） |
+| `/define-feature` | `/define-feature [テーマ]` | 対話から機能仕様ドキュメント(`docs/features/{slug}.md`)を作成。要件＋クリティカル設計決定＋スライス（出荷の単位・既定は最小の S1）＋やらないこと＋(必要なら)機能全体の設計を1ドキュメントに集約 |
+| `/create-ticket` | `/create-ticket <機能specパス or 親Issue番号>` | 機能仕様→親要件チケット（実装対象スライスのみ。1スライス=1チケット）、または親Issue→実装チケット群に分解（GitHub Issue 作成専用） |
 | `/para-impl` | `/para-impl {Issue番号...}` | Issueを分析→実装→PR作成（複数Issue時は star 型並列実装） |
 | `/pr-review-respond` | `/pr-review-respond [PR番号]` | PRレビューコメントへの対応 |
 | `/pr-merge` | `/pr-merge [PR番号]` | PRのレビューとマージ |
