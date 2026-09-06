@@ -238,7 +238,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 | 要求 | 機械検査 | 強制する主体 |
 |---|---|---|
-| 実行時テキストに行動を変えない補足が混ざっていないこと | **検査できない**（「行動を変えるか」は文の意味に依存する） | `agents/feature-implementer.md` Phase 3-1（書く時点）／`agents/code-reviewer.md` 観点G（レビュー時点）／PR レビュー（人間・自動レビューツール） |
+| 実行時テキストに行動を変えない補足が混ざっていないこと | **検査できない**（「行動を変えるか」は文の意味に依存する） | `agents/feature-implementer.md` Step c-1（書く時点）／`agents/code-reviewer.md` 観点G（レビュー時点）／PR レビュー（人間・自動レビューツール） |
 | 実行時ファイルから `docs/` 配下の設計文書を参照していないこと | **検査できる** | `scripts/tests/test-path-conventions.sh` (ii) |
 | 本節と観点Gのコピーが一致し、適用先・例外が実在すること | **検査できる** | `scripts/tests/test-runtime-text-conventions.sh` |
 

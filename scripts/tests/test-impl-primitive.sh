@@ -12,7 +12,7 @@
 # 本テストが固定する不変条件は4系統。**散文仕様は型検査が効かない**ため、
 # 「正準文の逐語照合」＋「構造（節スコープ）」＋「集合の双方向一致」＋「真理値表」で守る:
 #
-#   (A) 正本の単一性: 実装フロー（Phase 3〜9）の手順は `skills/impl/SKILL.md` **だけ**が持つ。
+#   (A) 正本の単一性: 実装フロー（Phase 3〜8）の手順は `skills/impl/SKILL.md` **だけ**が持つ。
 #       各 Phase 見出しの出現ファイル集合を**双方向**で照合し、削除（集合が空）と
 #       他ファイルへの移設（集合に余分）の両方を検出する。
 #   (B) `/impl` が通常のスキルであること: frontmatter のキー集合を**許可リストとの完全一致**で
@@ -157,17 +157,17 @@ assert_not_contains "(0) 次の同レベル見出し以降は含まれない" "$
 assert_eq "(0) 存在しない見出しは空を返す（移設を pass にしない）" "" "$(section_body "$SELFCHECK_TMP" '## 丙')"
 
 echo ""
-echo "=== (A) 実装フロー（Phase 3〜9）の正本が skills/impl/SKILL.md ちょうど1本 ==="
+echo "=== (A) 実装フロー（Phase 3〜8）の正本が skills/impl/SKILL.md ちょうど1本 ==="
 
 # 各 Phase 見出しを持つ実行時ファイルの集合が {IMPL_FILE} と一致すること。
 # 集合の**双方向**一致なので、規定の削除（空集合）も他ファイルへの移設（余分）も落ちる。
 PHASE_HEADINGS=(
   '### Phase 3: ブランチ準備'
-  '### Phase 4-5: 設計＋TDD実装＋必須ゲート＋セルフレビュー（一気通貫）'
-  '### Phase 6: コミット'
-  '### Phase 7: E2E実装と独立検証（E2E対象の場合）'
-  '### Phase 8: プッシュ・PR作成'
-  '### Phase 9: CI確認（必須ゲート）'
+  '### Phase 4: 設計＋TDD実装＋必須ゲート＋セルフレビュー（一気通貫）'
+  '### Phase 5: コミット'
+  '### Phase 6: E2E実装と独立検証（E2E対象の場合）'
+  '### Phase 7: プッシュ・PR作成'
+  '### Phase 8: CI確認（必須ゲート）'
 )
 for heading in "${PHASE_HEADINGS[@]}"; do
   holders="$(grep -rlF -- "$heading" skills agents | LC_ALL=C sort | tr '\n' ',' | sed 's/,$//')"
@@ -180,7 +180,7 @@ done
 
 # para-impl 側は手順を1つも持たない（切り出したら片方から消す）
 PARA_ALL="$(cat "$PARA_FILE")"
-assert_not_contains "(A) para-impl は Phase 4-5 の手順見出しを持たない" "$PARA_ALL" '### Phase 4-5:'
+assert_not_contains "(A) para-impl は Phase 4 の手順見出しを持たない" "$PARA_ALL" '### Phase 4:'
 assert_not_contains "(A) para-impl は feature-implementer の委譲手順を持たない" "$PARA_ALL" \
   '`feature-implementer` エージェントを **一度だけ呼び出し**'
 assert_not_contains "(A) para-impl は PR 作成コマンドの手順を持たない" "$PARA_ALL" 'gh pr create --title'
@@ -240,8 +240,8 @@ assert_contains "(C) 経路の分岐は --worktree の有無ただ1つ" "$IMPL_C
   '**経路の分岐は `--worktree` の有無ただ1つで決まる**'
 
 # ticket-worker / star-parallel が手順注入をやめていること（否定検査）
-assert_not_contains "(C) star-parallel の spawn 必須項目が Phase 4-5〜9 の手順注入を求めていない" \
-  "$(cat "$STAR_FILE")" 'の Phase 4-5〜9 の手順（Phase 3 はリードが worktree 作成で実施済み'
+assert_not_contains "(C) star-parallel の spawn 必須項目が Phase 4〜8 の手順注入を求めていない" \
+  "$(cat "$STAR_FILE")" 'の Phase 4〜8 の手順（Phase 3 はリードが worktree 作成で実施済み'
 assert_contains "(C) star-parallel の spawn 必須項目が /impl の呼び出し形を渡す形になっている" \
   "$(section_body "$STAR_FILE" '### worker への委譲')" \
   '実装フローの手順そのものは**注入しない**'
@@ -329,12 +329,12 @@ for phrase in '上位層に問い合わせ' '上位層へ問い合わせて' '�
   assert_not_contains "(D) 退行語彙が Phase 2 節に無い: ${phrase}" "$PARA_P2" "$phrase"
 done
 
-# 報告義務が完了報告（Phase 10）まで接続されていること。規律を書いても
+# 報告義務が完了報告（Phase 9）まで接続されていること。規律を書いても
 # 報告面に接続されていなければ上位層には届かない（次周の実行計画の入力が欠ける）。
-PARA_P10="$(section_body "$PARA_FILE" '## Phase 10: 完了報告')"
-assert_contains "(D) 完了報告に追加直列化の報告項目が接続されている" "$PARA_P10" \
+PARA_P9="$(section_body "$PARA_FILE" '## Phase 9: 完了報告')"
+assert_contains "(D) 完了報告に追加直列化の報告項目が接続されている" "$PARA_P9" \
   '内側で追加直列化した場合は、その事実と理由'
-assert_contains "(D) 追加直列化 0 件でも明記させる（黙らせない）" "$PARA_P10" \
+assert_contains "(D) 追加直列化 0 件でも明記させる（黙らせない）" "$PARA_P9" \
   '追加直列化が0件だった場合も「追加直列化なし」と明記する'
 assert_contains "(D) star 型の完了報告にも天井・直列化の出所と追加直列化が在る" \
   "$(section_body "$STAR_FILE" '### 複数Issueの場合（star 型並列実装完了後）')" \

@@ -13,7 +13,7 @@
 #   - 正準文（固定文字列）の逐語存在検査（手順のドリフト・緩和の機械検出）
 #   - 構造不変条件: ゲート定義が SKILL.md にちょうど1箇所であり参照ファイルが
 #     独自定義を持たないこと（同じ規律を2つの正本で読まない）・決定表の状態空間の
-#     完全性（行の列挙とリテラル件数一致）・下流（Phase 10 / star 型の返却処理表）への
+#     完全性（行の列挙とリテラル件数一致）・下流（Phase 9 / star 型の返却処理表）への
 #     接続検査（未合流状態が判定経路に接続されていること）
 #   - 決定表の参照実装による真理値表（空集合＝起動0件を正常経路とするケースを必須で含む。
 #     検査不能（台帳突き合わせ不能）を0件に丸めないこと・部分合流を全合流と
@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 SKILL_FILE="${REPO_ROOT}/skills/para-impl/SKILL.md"
-# 1チケットの実装フロー（Phase 3〜9）の正本。para-impl / ticket-worker の双方がここを呼ぶ
+# 1チケットの実装フロー（Phase 3〜8）の正本。para-impl / ticket-worker の双方がここを呼ぶ
 IMPL_FILE="${REPO_ROOT}/skills/impl/SKILL.md"
 STAR_FILE="${REPO_ROOT}/skills/para-impl/references/star-parallel.md"
 JOIN_FILE="${REPO_ROOT}/skills/para-impl/references/join-gate.md"
@@ -148,7 +148,7 @@ echo ""
 echo "=== (2) 適用条件と headless の根拠（分岐の明示・モード検出に依存しない） ==="
 
 assert_join_contains "(2) 最終応答前のゲート評価を必須にしている（完了報告・中断報告を含む）" \
-  '最終応答（Phase 10 の完了報告・中断報告を含む、あらゆるテキスト応答の確定）の前に本ゲートを必ず評価する'
+  '最終応答（Phase 9 の完了報告・中断報告を含む、あらゆるテキスト応答の確定）の前に本ゲートを必ず評価する'
 assert_join_contains "(2) ゲート通過は完了報告だけの要件である" \
   '完了報告を出せるのは、決定表で「ゲート通過」に該当した場合だけである'
 assert_join_contains "(2) 決定表が指示した中断報告はゲート通過を要件としない（自己矛盾の排除）" \
@@ -158,7 +158,7 @@ assert_join_contains "(2) 通過状態を待つ永久再試行を禁じている
 assert_join_contains "(2) 手順違反は評価なしの最終応答だけである" \
   '手順違反となるのは、**ゲートを評価せずに確定する最終応答**だけである'
 assert_skill_contains "(2) SKILL.md の要点: 最終応答前の評価必須（完了報告・中断報告を含む）" \
-  '最終応答（Phase 10 の完了報告・中断報告を含む、あらゆるテキスト応答の確定）の前に合流ゲートを必ず評価する'
+  '最終応答（Phase 9 の完了報告・中断報告を含む、あらゆるテキスト応答の確定）の前に合流ゲートを必ず評価する'
 assert_skill_contains "(2) SKILL.md の要点: 通過は完了報告の要件・中断報告は評価結果として免除" \
   '完了報告を出せるのはゲート通過に該当した場合だけであり、決定表が指示した中断報告はゲートの評価結果として「ゲート通過」を要件としない'
 assert_file_not_contains "(2) 中断報告にも通過を求める旧不変条項が残っていない" "$JOIN_FILE" \
@@ -245,7 +245,7 @@ assert_join_contains "(4) 受領の見込みは実状態の確認で判定する
 assert_join_contains "(4) 取得タイムアウトを「結果がもう来ない」と同一視しない" \
   '結果取得のタイムアウトは「結果がもう来ない」ことを意味しない'
 assert_join_contains "(4) worker の長時間・多数回待機は正当な稼働であると明示している" \
-  'Phase 4〜9 を実行中の worker は長時間・多数回の待機にまたがって正当に稼働し続ける'
+  'Phase 4〜8 を実行中の worker は長時間・多数回の待機にまたがって正当に稼働し続ける'
 assert_join_contains "(4) 再試行上限は稼働確認も結果取得もできない場合の確認試行に限定する" \
   '再試行上限（**3回を目安**）は、**稼働確認も結果取得もできない場合の確認試行にだけ**適用する'
 assert_file_not_contains "(4) 取得失敗を一律に回数へ数える旧規則が残っていない" "$JOIN_FILE" \
@@ -491,9 +491,9 @@ assert_join_contains "(7) 必須項目: 回収手段（再開・差分確認の�
 echo ""
 echo "=== (8) 接続検査（ゲートが判定経路に接続されていること） ==="
 
-assert_skill_contains "(8) 単一Issueの Phase 10 が完了報告の前提としてゲートを参照している" \
+assert_skill_contains "(8) 単一Issueの Phase 9 が完了報告の前提としてゲートを参照している" \
   '**完了報告の前に「合流ゲート」（`references/join-gate.md`）を通過すること**'
-assert_skill_contains "(8) Phase 10 の前提でも起動0件を正常経路と明示している" \
+assert_skill_contains "(8) Phase 9 の前提でも起動0件を正常経路と明示している" \
   '1つも起動していない場合の0件も正常経路としてゲート通過'
 assert_star_contains "(8) star 型の spawn 後にターン維持（spawn 時手順）を課している" \
   '各 worker の返却を受領するまでツール呼び出しを続けてターンを維持する'
@@ -505,7 +505,7 @@ assert_star_contains "(8) worker 以外のサブエージェント（衝突予�
   'その他のサブエージェント（`issue-conflict-predictor` 等）'
 assert_star_contains "(8) star 型でも常駐サービスは台帳に常駐として記録し、返却を待たず停止確認で突合する" \
   '常駐サービス（dev サーバ等）を起動した場合も台帳に**常駐サービス**として記録し、同ゲートの規律に従う（**最終返却は待たず**、停止・後始末の確認をもって合流相当とする）'
-assert_star_contains "(8) star 型の Phase 10 の突き合わせ対象に常駐サービスが含まれる" \
+assert_star_contains "(8) star 型の Phase 9 の突き合わせ対象に常駐サービスが含まれる" \
   '（衝突予測・`/explain-e2e` の独立検証委譲・dev サーバ等の常駐サービスを含む）'
 
 # 返却処理表: 未合流状態が表に接続されている（要判定状態が判定式に未接続にならない）
@@ -524,11 +524,11 @@ assert_star_contains "(8) 未解消報告つき返却は合流済みとして扱
 assert_star_contains "(8) ネスト未解消行は他 worker を止めず最終応答時にゲートが中断報告へ倒す" \
   '他 worker の処理は継続する。最終応答時に合流ゲートの決定表（ネスト未解消行）が中断報告へ倒し、worker が報告した未解消の一覧・実状態を転記する'
 
-assert_star_contains "(8) star 型の Phase 10 が完了報告の前提としてゲートを参照している" \
+assert_star_contains "(8) star 型の Phase 9 が完了報告の前提としてゲートを参照している" \
   '**完了報告の前に「合流ゲート（最終応答前の未合流確認）」（`references/join-gate.md`）を通過すること**'
-assert_star_contains "(8) star 型の Phase 10 は全 worker・全サブエージェントを突き合わせ対象にする" \
+assert_star_contains "(8) star 型の Phase 9 は全 worker・全サブエージェントを突き合わせ対象にする" \
   '未合流が0件であることを起動台帳と突き合わせて確認する'
-assert_star_contains "(8) star 型の Phase 10 は未合流残・突き合わせ不能で完了報告を出さない" \
+assert_star_contains "(8) star 型の Phase 9 は未合流残・突き合わせ不能で完了報告を出さない" \
   '未合流が残る場合・突き合わせ不能の場合は完了報告を出さず'
 
 echo ""
@@ -582,15 +582,15 @@ assert_file_not_contains "(9) 正準句の定義が SKILL.md 側に複製され�
 assert_eq "(9) 「未解消報告を含まない終端返却」の文言規則が正本の含意・条項(1)・合流済み定義の3箇所で一致する" \
   "3" "$canon_rule_count"
 
-# 接続検査: 1チケットの実装フロー（Phase 4-5。正本は /impl）と star 型（spawn プロンプト
-# 必須項目）の双方から条項へ接続。**Phase 4-5 の委譲は /impl が規定する**ため、単一Issue経路の
+# 接続検査: 1チケットの実装フロー（Phase 4。正本は /impl）と star 型（spawn プロンプト
+# 必須項目）の双方から条項へ接続。**Phase 4 の委譲は /impl が規定する**ため、単一Issue経路の
 # 接続先は para-impl ではなく impl 側であり、cross-skill 参照なのでパスはプラグインルート相対。
-assert_file_contains "(9) /impl の Phase 4-5 委譲プロンプトにも条項を含める" "$IMPL_FILE" \
+assert_file_contains "(9) /impl の Phase 4 委譲プロンプトにも条項を含める" "$IMPL_FILE" \
   '委譲プロンプトには**合流ゲート伝播条項**（`skills/para-impl/references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める'
 assert_star_contains "(9) star 型の spawn プロンプト必須項目に条項の転記がある" \
   '- **合流ゲート伝播条項**（`references/join-gate.md`「ネストへの伝播」に定義された条項を**逐語で転記する**'
 assert_star_contains "(9) 条項が無い場合の喪失経路（worker のネスト spawn）を明示している" \
-  'worker は Phase 4-5 で `feature-implementer` をさらに spawn するため'
+  'worker は Phase 4 で `feature-implementer` をさらに spawn するため'
 assert_file_not_contains "(9) star-parallel.md は条項本文を複製しない（正本は SKILL.md のみ）" "$STAR_FILE" \
   '【合流ゲート伝播条項】'
 

@@ -467,9 +467,9 @@ assert_file_contains "/quality-check は skip を pass に読み替えない" \
 assert_file_contains "/promote-verify は skip をそのまま格納する（pass にも明示スキップにもしない）" \
   "${QCR_TEST_REPO_ROOT}/skills/promote-verify/SKILL.md" \
   'そのまま格納し、`pass` にも `skipped: true` にも読み替えない'
-assert_file_contains "feature-implementer に skip の扱い（4-3）がある" \
+assert_file_contains "feature-implementer に skip の扱い（d-3）がある" \
   "${QCR_TEST_REPO_ROOT}/agents/feature-implementer.md" \
-  '### 4-3. `skip`（ゲートが1つも実行されていない）場合'
+  '### d-3. `skip`（ゲートが1つも実行されていない）場合'
 assert_file_contains "/commit は skip を pass に読み替えず未検証として報告する" \
   "${QCR_TEST_REPO_ROOT}/skills/commit/SKILL.md" \
   '品質ゲート未検証であることをユーザーへの報告に明記する'

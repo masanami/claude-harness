@@ -50,6 +50,8 @@ Issue #204 は、この条件が**成果物の性質によっては構造的に�
 | `skills/para-impl/SKILL.md` | Phase 4-5 の受け取り項目に残指摘全件。Phase 8 で PR 本文への転記を必須化 |
 | `agents/ticket-worker.md` | 返却内容に `converged` と残指摘全件 |
 
+> **表記の対応（2026-09-06 追記・決定内容は変更していない）**: 上表の Phase 番号は本 ADR 決定時（2026-08-26）の表記である。その後 Issue #235 で、外側（`/para-impl` / `/impl`）の Phase を通し番号へ振り直し、`agents/feature-implementer.md` の内側を `Step a`〜`Step e` へ改めた。現在のファイルを読む際は次のように読み替える: 旧 `Phase 4-5` → **Phase 4**、旧 `Phase 8` → **Phase 7**、旧 `5-2` → **Step e-2**。
+
 **変えない箇所（意図的な例外）**:
 
 | ファイル | 変えない理由 |
