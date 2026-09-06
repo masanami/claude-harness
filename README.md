@@ -20,7 +20,7 @@ Claude Code プラグインとして、任意のリポジトリに横展開で�
 | カテゴリ | 内容 |
 |---------|------|
 | エージェント (6) | コードレビュー、設計レビュー、機能実装(設計成果物＋TDD: feature-implementer)、チケット実装worker(ticket-worker)、ドキュメント整合性検証、E2Eテスト実装(e2e-engineer) |
-| スキル | 機能定義(要件＋クリティカル設計)、チケット作成、並列実装、TDD実装、技術負債チェック、プロジェクト初期設定、E2Eテスト作成、E2Eテストシナリオ解説＋独立検証、動作確認(デモ)、PRレビュー対応、PRマージ、Conventional Commits、PRセルフレビュー、品質ゲートチェック、公開面×テスト担保の診断(surface-audit)、設計判断記録(ADR)の作成 |
+| スキル | 機能定義(要件＋クリティカル設計)、チケット作成、1チケット実装(impl)、並列実装(para-impl)、TDD実装、技術負債チェック、プロジェクト初期設定、E2Eテスト作成、E2Eテストシナリオ解説＋独立検証、動作確認(デモ)、PRレビュー対応、PRマージ、Conventional Commits、PRセルフレビュー、品質ゲートチェック、公開面×テスト担保の診断(surface-audit)、設計判断記録(ADR)の作成 |
 | フック (1) | Write/Edit後の自動フォーマット |
 | ワークフロー定義 (1) | ブランチ戦略 |
 
@@ -94,7 +94,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 1. プラグインをインストール
 2. `/init-project` で `CLAUDE.md` を自動生成（エージェントはすべて `CLAUDE.md` 経由でプロジェクト情報を取得します）
-3. `/para-impl 123` でIssue #123の実装を開始
+3. `/impl 123` でIssue #123の実装を開始（`/para-impl 123` でも同じ ── リードが `/impl` を呼ぶ）
 4. `/para-impl 123 456 789` で複数Issueを star 型で並列実装
 
 ---
@@ -107,7 +107,8 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 |--------|--------|------|
 | `/define-feature` | `/define-feature [テーマ]` | 対話から機能仕様ドキュメント(`docs/features/{slug}.md`)を作成。要件＋クリティカル設計決定＋スライス（出荷の単位・既定は最小の S1）＋やらないこと＋(必要なら)機能全体の設計を1ドキュメントに集約 |
 | `/create-ticket` | `/create-ticket <機能specパス or 親Issue番号>` | 機能仕様→親要件チケット（実装対象スライスのみ。1スライス=1チケット）、または親Issue→実装チケット群に分解（GitHub Issue 作成専用） |
-| `/para-impl` | `/para-impl {Issue番号...}` | Issueを分析→実装→PR作成（複数Issue時は star 型並列実装） |
+| `/impl` | `/impl {Issue番号} [--base B] [--worktree W]` | **1チケットの実装フローの正本**。設計→TDD実装→コミット→E2E→PR→CI確認を1件ぶん実行 |
+| `/para-impl` | `/para-impl {Issue番号...} [--max-parallel N] [--serial a,b]` | Issue を分析し `/impl` へ fan-out（複数Issue時は star 型並列実装）。並列度・直列化は上位層から受け取り、無指定時のみ自分で決める |
 | `/pr-review-respond` | `/pr-review-respond [PR番号]` | PRレビューコメントへの対応 |
 | `/pr-merge` | `/pr-merge [PR番号]` | PRのレビューとマージ |
 | `/reduce-debt` | `/reduce-debt {親Issue番号}` | 親Issueの実装範囲を技術負債スキャン→必要に応じて修正Issue起票 |

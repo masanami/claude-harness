@@ -473,8 +473,8 @@ assert_file_contains "feature-implementer に skip の扱い（4-3）がある" 
 assert_file_contains "/commit は skip を pass に読み替えず未検証として報告する" \
   "${QCR_TEST_REPO_ROOT}/skills/commit/SKILL.md" \
   '品質ゲート未検証であることをユーザーへの報告に明記する'
-assert_file_contains "/para-impl のリードが skip の返却を扱う行を持つ" \
-  "${QCR_TEST_REPO_ROOT}/skills/para-impl/SKILL.md" \
+assert_file_contains "/impl が skip の返却を扱う行を持つ" \
+  "${QCR_TEST_REPO_ROOT}/skills/impl/SKILL.md" \
   '`skip`（`/quality-check` のゲートが1つも実行されていない）'
 
 echo ""

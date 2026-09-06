@@ -30,13 +30,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 SKILL_FILE="${REPO_ROOT}/skills/para-impl/SKILL.md"
+# 1チケットの実装フロー（Phase 3〜9）の正本。para-impl / ticket-worker の双方がここを呼ぶ
+IMPL_FILE="${REPO_ROOT}/skills/impl/SKILL.md"
 STAR_FILE="${REPO_ROOT}/skills/para-impl/references/star-parallel.md"
 JOIN_FILE="${REPO_ROOT}/skills/para-impl/references/join-gate.md"
 # star 構成が spawn する Task 持ちエージェント（ネスト伝播の防御第二層を検査する）
 TW_FILE="${REPO_ROOT}/agents/ticket-worker.md"
 FI_FILE="${REPO_ROOT}/agents/feature-implementer.md"
 
-for f in "$SKILL_FILE" "$STAR_FILE" "$JOIN_FILE" "$TW_FILE" "$FI_FILE"; do
+for f in "$SKILL_FILE" "$IMPL_FILE" "$STAR_FILE" "$JOIN_FILE" "$TW_FILE" "$FI_FILE"; do
   if [ ! -r "$f" ]; then
     echo "NG - 検査対象ファイルを読めません（検査不能を pass にはしない）: ${f}" >&2
     exit 1
@@ -580,9 +582,11 @@ assert_file_not_contains "(9) 正準句の定義が SKILL.md 側に複製され�
 assert_eq "(9) 「未解消報告を含まない終端返却」の文言規則が正本の含意・条項(1)・合流済み定義の3箇所で一致する" \
   "3" "$canon_rule_count"
 
-# 接続検査: 単一Issue（Phase 4-5）と star 型（spawn プロンプト必須項目）の双方から条項へ接続
-assert_skill_contains "(9) 単一Issueの Phase 4-5 委譲プロンプトにも条項を含める" \
-  '委譲プロンプトには**合流ゲート伝播条項**（`references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める'
+# 接続検査: 1チケットの実装フロー（Phase 4-5。正本は /impl）と star 型（spawn プロンプト
+# 必須項目）の双方から条項へ接続。**Phase 4-5 の委譲は /impl が規定する**ため、単一Issue経路の
+# 接続先は para-impl ではなく impl 側であり、cross-skill 参照なのでパスはプラグインルート相対。
+assert_file_contains "(9) /impl の Phase 4-5 委譲プロンプトにも条項を含める" "$IMPL_FILE" \
+  '委譲プロンプトには**合流ゲート伝播条項**（`skills/para-impl/references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める'
 assert_star_contains "(9) star 型の spawn プロンプト必須項目に条項の転記がある" \
   '- **合流ゲート伝播条項**（`references/join-gate.md`「ネストへの伝播」に定義された条項を**逐語で転記する**'
 assert_star_contains "(9) 条項が無い場合の喪失経路（worker のネスト spawn）を明示している" \
