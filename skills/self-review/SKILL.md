@@ -116,7 +116,7 @@ Step 2 の指摘のうち、**検証しきい値以上**かつ `verdict: "PLAUSI
 - `toFix` が空の場合、その周でループを終了する（残るのは `needs_human_judgment` と `below_fix_threshold` のみ）
 - `toFix` が空でない場合、確定した指摘を修正する:
   - 呼び出し元自身（メインセッション、または `feature-implementer` 等のサブエージェント）が、既に `/self-review` を実行中の同一コンテキストのまま Edit/Write で直接対応する**インライン修正**で完結させることを基本とする。呼び出し元自身を Task で新たに spawn する必要は無い
-  - 呼び出し元以外の実装エージェントへ委譲したい場合のみ、Task ツールで `subagent_type: 'claude-harness:feature-implementer'` としてスコープ付きで呼び出す（この場合、呼び出された側は `agents/feature-implementer.md` の再入回避の注記に従い、Phase 1〜5 を再帰的に開始しない）
+  - 呼び出し元以外の実装エージェントへ委譲したい場合のみ、Task ツールで `subagent_type: 'claude-harness:feature-implementer'` としてスコープ付きで呼び出す（この場合、呼び出された側は `agents/feature-implementer.md` の再入回避の注記に従い、Step a〜e を再帰的に開始しない）
   - 修正は作業ツリーへの変更のみとし、**コミットは行わない**（Step 6/7 の報告・`/commit` の要否はこの前提の上で呼び出し元が判断する）
   - 修正完了後、Skill ツール経由で `/quality-check` を実行し、機械可読な結果（`result`/`gates`）を取得する
 - `/quality-check` が `fail` の場合、**ループを打ち切る**: 今回の `toFix` を「quality-check failed after fix (round N)」の理由付きで残指摘（`needs_human_judgment`）に追加し、再レビューは試みない

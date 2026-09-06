@@ -7,29 +7,38 @@ model: opus
 effort: high
 ---
 
-# 1チケットの実装フロー（Phase 3〜9）
+# 1チケットの実装フロー（Phase 3〜8）
 
 **あなたは1つの Issue を最後まで実装する実行主体です。**
 
 本スキルは **1チケット（= 1 Issue）の実装フローの正本**である。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CI の順で進める。**クリティカル設計の意思決定は要件チケット側で完了している前提**のため、実装フェーズには人間ゲートを置かない。**1チケット = 1ブランチ = 1PR**。
 
 ```text
+凡例: ↓ 次の Phase へ進む ／ ↺ 同じ Phase 内での反復（上限あり） ／ ✗ 反復では解消しない失敗の分岐
+
 Phase 3 ブランチ準備
    ↓
-Phase 4-5 設計 + TDD実装 + 必須ゲート + セルフレビュー（feature-implementer 一気通貫）
-   ↓（必須ゲート未通過 → 当該チケットをスキップ）
-Phase 6 コミット（safety net QC + Conventional Commits）
+Phase 4 設計 + TDD実装 + 必須ゲート + セルフレビュー（feature-implementer 一気通貫）
+   ↺ 必須ゲート（`/quality-check`）が `pass` にならない間、feature-implementer が内側で修正して再実行（最大3回）
+   ✗ 3回反復しても `pass` にならない → feature-implementer が `failure` を返却
+       → 当該チケットをスキップし、その事実を呼び出し元（並列経路ではリード）へ返す。Phase 5 以降へは進まない
+   ↓ `pass`
+Phase 5 コミット（safety net QC + Conventional Commits）
    ↓
-Phase 7 E2E実装（E2E対象の場合）─失敗→ Phase 4-5
+Phase 6 E2E実装（E2E対象の場合）
+   ✗ E2E失敗 → Phase 4 へ戻る
    ↓
-Phase 8 プッシュ・PR作成
+Phase 7 プッシュ・PR作成
    ↓
-Phase 9 CI確認（必須ゲート）
+Phase 8 CI確認（必須ゲート）
+   ✗ CI失敗 → Phase 4 へ戻る
+   ↓
+完了報告
 ```
 
 > **クリティカル設計レビューは要件チケット段階で完了済み**。要件チケットの「クリティカル設計決定」セクションに従って実装する。
 >
-> **E2Eシナリオ設計レビュー**は AI セルフレビュー（完了条件↔シナリオのトレーサビリティ確認）で完結。人間の E2E チェックは Phase 7 後の `/explain-e2e`（テストシナリオ解説 + 独立検証）で行う。
+> **E2Eシナリオ設計レビュー**は AI セルフレビュー（完了条件↔シナリオのトレーサビリティ確認）で完結。人間の E2E チェックは Phase 6 後の `/explain-e2e`（テストシナリオ解説 + 独立検証）で行う。
 
 ---
 
@@ -43,13 +52,13 @@ Phase 9 CI確認（必須ゲート）
 
 本スキルは単独でも呼べるが、定常フローでは次の経路から呼ばれる。**どの経路でも本スキルが「1チケットの実装フロー」の正本**であり、**呼び出し元は手順を再掲・注入せず本スキルを呼ぶ**（手順を2箇所に持つと必ずずれるため）。
 
-| 経路 | 呼び出し元 ＝ 本スキルの実行主体 | `--worktree` | Phase 3 | Phase 7 |
+| 経路 | 呼び出し元 ＝ 本スキルの実行主体 | `--worktree` | Phase 3 | Phase 6 |
 |---|---|---|---|---|
 | **単一 Issue 経路** | `/para-impl` のリードエージェント（メインセッション。Issue が1件のとき） | 渡されない | **本スキルが実施** | `/create-e2e` → `/explain-e2e` まで**本スキルが実施** |
 | **並列経路（star 型）** | **`ticket-worker` サブエージェント**（リードから割り当てられた worktree 内） | **渡される** | 呼び出し元（リード）が `worktree-setup` で実施済み → **スキップ** | **`/create-e2e` まで**。`/explain-e2e` は Phase 1 が対話前提のため、worker 完了後に**リードがメインセッションで実施**する |
 | **人間が直接** | メインセッション（`/impl 123`） | 渡されない | 本スキルが実施 | 単一 Issue 経路と同じ |
 
-**経路の分岐は `--worktree` の有無ただ1つで決まる**（経路名で分岐しない ── 2つ目の判定材料を持たないため。`--worktree` が在れば Phase 3 をスキップし Phase 7 を `/create-e2e` までに切る、無ければ両方を自分で実施する）。
+**経路の分岐は `--worktree` の有無ただ1つで決まる**（経路名で分岐しない ── 2つ目の判定材料を持たないため。`--worktree` が在れば Phase 3 をスキップし Phase 6 を `/create-e2e` までに切る、無ければ両方を自分で実施する）。
 
 ---
 
@@ -83,7 +92,7 @@ fi
 
 ---
 
-## Phase 1-2 相当: Issue分析（要件理解）
+## Phase 1〜2 相当: Issue分析（要件理解）
 
 ```bash
 gh issue view {番号} --json title,body,state,labels,number
@@ -109,9 +118,9 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 
 依存関係のインストールが必要であれば実施する（CLAUDE.md または package.json の構成に従う）。
 
-### Phase 4-5: 設計＋TDD実装＋必須ゲート＋セルフレビュー（一気通貫）
+### Phase 4: 設計＋TDD実装＋必須ゲート＋セルフレビュー（一気通貫）
 
-`feature-implementer` エージェントを **一度だけ呼び出し**、Phase 1〜5 を一気通貫で実行させる（実装フェーズに人間ゲートは無い。Task ツールの `subagent_type` は plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定する。prefix 無しは名称解決エラーになる）。
+`feature-implementer` エージェントを **一度だけ呼び出し**、Step a〜e を一気通貫で実行させる（実装フェーズに人間ゲートは無い。Task ツールの `subagent_type` は plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定する。prefix 無しは名称解決エラーになる）。
 
 要件チケット本文の **「クリティカル設計決定」セクション**をエージェントに渡し、その方針に従って実装するよう指示する。`--worktree` が渡されている場合は **worktree の絶対パスも必ず含め、すべての作業をその配下で行うよう指示する**。委譲プロンプトには**合流ゲート伝播条項**（`skills/para-impl/references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める。
 
@@ -120,7 +129,7 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 - **変更ファイル一覧 / 追加テスト件数 / TDDサイクルの概要**
 - **`/quality-check` の最終結果**（`pass` / `skip` / `failure`）
 - **`/self-review` の結果サマリー**（反復回数・`converged`・**残指摘（`residualFindings`）の全件**（`file:line`・`severity`・`claim`・`reason`）。完了条件達成・スコープ確認の観点も含む）
-- **E2Eシナリオ一覧と完了条件トレーサビリティ表**（E2E対象の場合、Phase 7 で使う）
+- **E2Eシナリオ一覧と完了条件トレーサビリティ表**（E2E対象の場合、Phase 6 で使う）
 
 ```text
 | 完了条件 / 受入基準 | 対応E2Eシナリオ |
@@ -133,37 +142,37 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 
 | エージェントの返却 | 本スキルの動作 |
 |---|---|
-| 通常完了 | Phase 6（コミット）へ |
+| 通常完了 | Phase 5（コミット）へ |
 | `failure`（`/quality-check` 3回反復しても通らない） | 当該チケットをスキップし、その事実を呼び出し元へ返す |
-| `skip`（`/quality-check` のゲートが1つも実行されていない） | Phase 6 へ進んでよいが、**`pass` として扱わず**、未検証である事実と対象チケットを PR 本文・完了報告に明記する |
-| クリティカル設計の逸脱検知で Phase 2 停止 | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（headless の場合は「判断待ち」として完了報告・呼び出し元への返却に明記する） |
+| `skip`（`/quality-check` のゲートが1つも実行されていない） | Phase 5 へ進んでよいが、**`pass` として扱わず**、未検証である事実と対象チケットを PR 本文・完了報告に明記する |
+| クリティカル設計の逸脱検知で Step b 停止 | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（headless の場合は「判断待ち」として完了報告・呼び出し元への返却に明記する） |
 
-### Phase 6: コミット
+### Phase 5: コミット
 
 ```text
 /commit
 ```
 
-`/commit` は **コミット規約に従ったコミット実行に責務を絞った**スキル。内部では safety net として `/quality-check` を再走させ、Conventional Commits 形式でコミットを作成する。Phase 4-5 で必須ゲート・`/self-review` を通過済みのため、ここでの `/quality-check` は通過前提で速やかに完了する。
+`/commit` は **コミット規約に従ったコミット実行に責務を絞った**スキル。内部では safety net として `/quality-check` を再走させ、Conventional Commits 形式でコミットを作成する。Phase 4 で必須ゲート・`/self-review` を通過済みのため、ここでの `/quality-check` は通過前提で速やかに完了する。
 
-> コード簡潔化が必要な場合は **`/simplify`** を Phase 6 の前に別途呼ぶ（必須ではない）。
+> コード簡潔化が必要な場合は **`/simplify`** を Phase 5 の前に別途呼ぶ（必須ではない）。
 
-### Phase 7: E2E実装と独立検証（E2E対象の場合）
+### Phase 6: E2E実装と独立検証（E2E対象の場合）
 
-E2E対象機能の場合、Phase 4-5 で feature-implementer が返した E2Eシナリオ一覧に基づき実装する:
+E2E対象機能の場合、Phase 4 で feature-implementer が返した E2Eシナリオ一覧に基づき実装する:
 
-1. `/create-e2e` — 設計（Phase 4-5 のシナリオを根拠）→ 実装 → 全テスト実行
+1. `/create-e2e` — 設計（Phase 4 のシナリオを根拠）→ 実装 → 全テスト実行
 2. `/explain-e2e` — Phase 1（テストシナリオ解説）はメインセッションで対話的に、Phase 2（独立検証）は Task ツールによる直接委譲（Verify段階のfan-out・Mutation段階の逐次処理）で実施
 
-- E2E失敗 → **Phase 4-5 に戻る**
+- E2E失敗 → **Phase 4 に戻る**
 
 > **`--worktree` が渡されている場合（並列経路）**: 本スキルは **`/create-e2e` までを実施し、`/explain-e2e` は実施しない**（Phase 1 が対話前提のため、worker 完了後にリードがメインセッションで実施する）。`/explain-e2e` に必要なシナリオ一覧・完了条件トレーサビリティ表を呼び出し元への返却に含めること。
 
 非E2E対象の場合、このフェーズはスキップする。
 
-### Phase 8: プッシュ・PR作成
+### Phase 7: プッシュ・PR作成
 
-PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4-5 で必須ゲート・セルフレビューを通過済みのため、**通常PR（非ドラフト）で開く**（AI レビューを即時起動し `/pr-review-respond` へ繋ぐ）。`/explain-e2e` は PR 作成の前提条件ではない。
+PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4 で必須ゲート・セルフレビューを通過済みのため、**通常PR（非ドラフト）で開く**（AI レビューを即時起動し `/pr-review-respond` へ繋ぐ）。`/explain-e2e` は PR 作成の前提条件ではない。
 
 feature-implementer が**残指摘（`residualFindings`）**を返した場合は、その全件をそのまま PR 本文に転記する。`converged: true` でも省略しない——`/self-review` は自動修正の対象外にした指摘を `converged: true` のまま返すため、`converged` で分岐すると引き取り手のいない指摘が PR に載らないまま消える。
 
@@ -180,7 +189,7 @@ gh pr create --title "{タイトル}" --body "{本文}" --base {base}
 >
 > **統合ブランチ方式**: base が統合ブランチの場合、この PR は既定ブランチを触らないため `/pr-merge` で自律マージできる（人間承認不要）。全サブタスク完了後の統合 → 既定ブランチ昇格が唯一の人間ゲート。
 
-### Phase 9: CI確認（必須ゲート）
+### Phase 8: CI確認（必須ゲート）
 
 PR作成後、CIの完了を確認する:
 
@@ -192,14 +201,14 @@ gh pr checks {PR番号} --watch
 >
 > **`--worktree` が渡されている場合（並列経路）**: `ticket-worker` のエージェント定義が定める `ci-wait` による CI 確認と loop-until-green（上限3回）の規律が優先する。
 
-- CI失敗 → 失敗内容を確認して **Phase 4-5 に戻る**
+- CI失敗 → 失敗内容を確認して **Phase 4 に戻る**
 - CIパス → 完了報告へ
 
 ---
 
 ## 合流ゲート（最終応答前の未合流確認）
 
-**サブエージェント・バックグラウンド処理を1つでも起動した場合（Phase 4-5 の `feature-implementer` は常に該当する）、最終応答・呼び出し元への返却の前に合流ゲートを必ず評価する。**
+**サブエージェント・バックグラウンド処理を1つでも起動した場合（Phase 4 の `feature-implementer` は常に該当する）、最終応答・呼び出し元への返却の前に合流ゲートを必ず評価する。**
 
 **定義の正本は `skills/para-impl/references/join-gate.md`**（本スキルは複製を持たない ── 同じ規律を2つの正本で読まないため）。用語（起動台帳・有限タスク／常駐サービス・終端返却・合流済み・未合流・ネスト未解消）・spawn 時手順・合流ゲート伝播条項（委譲プロンプトへ逐語転記する条項の正本）・決定表・中断報告の出力契約は、すべて参照ファイル側にある。**サブエージェント・バックグラウンド処理を起動する前に必ず後掲の配送経路で読み出すこと**（`claude-harness-run read-plugin-doc "skills/para-impl/references/join-gate.md"`。Read 直読みは後掲の注記のとおりランチャー未導入時のフォールバックに限る）。
 
@@ -236,7 +245,7 @@ gh pr checks {PR番号} --watch
 ## 禁止事項
 
 - スコープ外の機能追加
-- 設計フェーズ（Phase 4-5 の設計成果物出力）の省略
+- 設計フェーズ（Phase 4 の設計成果物出力）の省略
 - 要件チケットの「クリティカル設計決定」を無視した実装
 - テストなしでのコード追加
 - **複数 Issue を受け取って自分で並列化すること**（並列化は `/para-impl` の責務）
@@ -248,5 +257,5 @@ gh pr checks {PR番号} --watch
 - Issueの要件が不明確な場合
 - 複数の実装アプローチが考えられる場合
 - スコープの拡大が必要と判断した場合
-- **Phase 4-5: クリティカル設計の逸脱検知時**（feature-implementer の警告を受けて判断を仰ぐ）
+- **Phase 4: クリティカル設計の逸脱検知時**（feature-implementer の警告を受けて判断を仰ぐ）
 - 実装完了後のレビュー依頼時

@@ -1,6 +1,6 @@
 # worktree-setup.sh / worktree-cleanup.sh の出力仕様（正本）
 
-`skills/para-impl/SKILL.md` Phase 3（複数Issue時のworktree・作業ブランチ作成）とPhase 11（クリーンアップ）を切り出した決定的スクリプト（Issue #45）。resume時のキャッシュ安定性（固定スクリプト呼び出し）と、worktree作成・削除の冪等性をコードで保証する。gh は呼ばない（gh非依存）。
+`skills/para-impl/SKILL.md` Phase 3（複数Issue時のworktree・作業ブランチ作成）とPhase 10（クリーンアップ）を切り出した決定的スクリプト（Issue #45）。resume時のキャッシュ安定性（固定スクリプト呼び出し）と、worktree作成・削除の冪等性をコードで保証する。gh は呼ばない（gh非依存）。
 
 ## `scripts/worktree-setup.sh <issue番号> <branch名> <base> [worktree_root]`
 

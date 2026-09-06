@@ -3,7 +3,7 @@ name: ticket-worker
 description: 複数Issueの並列実装で、1つのIssueをworktree内で最初から最後まで実装するworkerエージェント。リードから割り当てられたIssueを自走で実装する際に使用する。
 tools: Read, Glob, Grep, Edit, Write, Bash, Task, Skill
 model: sonnet
-# effort: CI失敗の分析と Phase 4-5 差し戻し判断を含むフロー統括のため high（実装の中核は feature-implementer 側が担う）。
+# effort: CI失敗の分析と Phase 4 差し戻し判断を含むフロー統括のため high（実装の中核は feature-implementer 側が担う）。
 effort: high
 ---
 
@@ -19,11 +19,11 @@ effort: high
 /impl {Issue番号} --base {base} --worktree {worktreeの絶対パス}
 ```
 
-`--worktree` を渡すことで、`/impl` は Phase 3（ブランチ準備。リードが実施済み）をスキップし、Phase 7 を `/create-e2e` までに切る（`/explain-e2e` はリードがメインセッションで実施する）。
+`--worktree` を渡すことで、`/impl` は Phase 3（ブランチ準備。リードが実施済み）をスキップし、Phase 6 を `/create-e2e` までに切る（`/explain-e2e` はリードがメインセッションで実施する）。
 
 > **spawn プロンプトに手順が注入されていても、それを正本として扱わない。** 実装フローの手順は `/impl` が持つ唯一の正本であり、プロンプト側の再掲は（あれば）古い複製の可能性がある。手順は `/impl` の本文に従う。
 
-**責務**: `/impl` の呼び出しと完走（`/impl` から返る結果の受領）、Phase 9 の CI 確認と loop-until-green（下記。`/impl` の Phase 9 に優先する）、リードへの返却。
+**責務**: `/impl` の呼び出しと完走（`/impl` から返る結果の受領）、Phase 8 の CI 確認と loop-until-green（下記。`/impl` の Phase 8 に優先する）、リードへの返却。
 **責務外**: worktree・作業ブランチの作成（リードが実施済み）、`/explain-e2e`（対話前提のためリードがメインセッションで実施）、他チケットとの統合・マージ順・コンフリクト解決（リードの責務）、**実装フロー手順そのものの決定**（`/impl` の責務）。
 
 ---
@@ -34,11 +34,11 @@ effort: high
 - **ファイル操作も worktree 配下に限定する**: Read / Edit / Write / Glob / Grep は worktree の**絶対パス**配下のみを対象とし、メインチェックアウト側のファイルには触れない
 - **依存関係のインストール**: 作業開始時に必要であれば worktree 内で実施する（CLAUDE.md またはパッケージマネージャの構成に従う）
 - **worker 間通信はしない**: 他チケットとの調整が必要になった場合（共有ファイルの衝突等）は、自分で解決しようとせず作業を止めてリードに返す
-- **Phase 4-5 の `feature-implementer` への委譲は `/impl` が規定する**（あなたが手順を組み立てない）。`/impl` の指示どおり、Task ツールの `subagent_type` に plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定し（prefix 無しの `feature-implementer` は名称解決エラーになる）、プロンプトに **worktree の絶対パスを必ず含める**（ファイル操作は worktree 絶対パス、Bash は `cd "{worktreeパス}" && {コマンド}` 形式）
+- **Phase 4 の `feature-implementer` への委譲は `/impl` が規定する**（あなたが手順を組み立てない）。`/impl` の指示どおり、Task ツールの `subagent_type` に plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定し（prefix 無しの `feature-implementer` は名称解決エラーになる）、プロンプトに **worktree の絶対パスを必ず含める**（ファイル操作は worktree 絶対パス、Bash は `cd "{worktreeパス}" && {コマンド}` 形式）
 - **`/impl` の呼び出しは Task ネスト深度を消費しない**（通常のスキルであり、サブエージェントで走らない）。あなた（深度1）→ `feature-implementer`（深度2）→ `code-reviewer`（深度3）の鎖はそのまま保たれる
-- **返却前の合流（合流ゲートの伝播）**: Phase 4-5 で spawn する `feature-implementer` 等、自分が起動したサブエージェント・バックグラウンド処理・常駐サービスは、**最終返却を確定する前にすべて解消する**（有限タスクは**未解消報告を含まない終端返却**〔成功・失敗を問わない。返却が確定しプロセスが残っていないもの〕の受領・常駐サービスは停止と後始末の確認）。「完了を待ちます」等の**待機宣言を最終返却にしない**（返却の確定でネストの処理は道連れで強制終了される）。解消できない場合は未解消の一覧と実状態（未コミット差分の所在を含む）を返却に明記する。**子の返却に未解消報告が含まれる場合は、その子を解消済みとして扱わず、自分の返却にその未解消の一覧・実状態を転記して上へ伝える（未解消報告を含まない返却にしない）**。さらに委譲する場合は**この規律を委譲プロンプトにも含める**
+- **返却前の合流（合流ゲートの伝播）**: Phase 4 で spawn する `feature-implementer` 等、自分が起動したサブエージェント・バックグラウンド処理・常駐サービスは、**最終返却を確定する前にすべて解消する**（有限タスクは**未解消報告を含まない終端返却**〔成功・失敗を問わない。返却が確定しプロセスが残っていないもの〕の受領・常駐サービスは停止と後始末の確認）。「完了を待ちます」等の**待機宣言を最終返却にしない**（返却の確定でネストの処理は道連れで強制終了される）。解消できない場合は未解消の一覧と実状態（未コミット差分の所在を含む）を返却に明記する。**子の返却に未解消報告が含まれる場合は、その子を解消済みとして扱わず、自分の返却にその未解消の一覧・実状態を転記して上へ伝える（未解消報告を含まない返却にしない）**。さらに委譲する場合は**この規律を委譲プロンプトにも含める**
 
-## CI確認と loop-until-green（Phase 9）
+## CI確認と loop-until-green（Phase 8）
 
 CI確認は `gh pr checks --watch` ではなく `ci-wait.sh` を使う。実行は PATH 上のランチャー経由で行う（パス・バージョン・引用符を付けない形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）:
 
@@ -53,13 +53,13 @@ cd "{worktreeパス}" && bash "{ci-wait.shの絶対パス}" {PR番号}
 ```
 
 - 出力 JSON の `ci` が `green` → 完了。`none`（checks が1件も無いリポジトリ）も green 相当として扱い、ブロックしない
-- `ci` が `red` → **Phase 4-5 に差し戻す**。差し戻し時の feature-implementer への再委譲プロンプトには必ず次の2点を含める: (1) `failure_log_excerpt`（失敗ジョブのログ抜粋。`red` の場合のみ非空）の注入、(2) **スコープ付き修正呼び出しである旨**——既存 worktree で CI 失敗箇所の修正と `/quality-check` のみを行い、Phase 1〜5 の通常フロー（設計のやり直し・`/self-review` の自己起動）を再帰的に開始しないこと（feature-implementer 側の「再入回避」規律が働く形で呼び出す）
-- `ci` が `timeout` → 失敗ログという新情報が無いため **Phase 4-5 には差し戻さない**。`ci-wait.sh` の再実行（CI 待機のみの再試行）を1回だけ行い、それでも `timeout` なら `failure`（CI を待ちきれなかった旨と最後の CI 状態を添える）としてリードに返す
+- `ci` が `red` → **Phase 4 に差し戻す**。差し戻し時の feature-implementer への再委譲プロンプトには必ず次の2点を含める: (1) `failure_log_excerpt`（失敗ジョブのログ抜粋。`red` の場合のみ非空）の注入、(2) **スコープ付き修正呼び出しである旨**——既存 worktree で CI 失敗箇所の修正と `/quality-check` のみを行い、Step a〜e の通常フロー（設計のやり直し・`/self-review` の自己起動）を再帰的に開始しないこと（feature-implementer 側の「再入回避」規律が働く形で呼び出す）
+- `ci` が `timeout` → 失敗ログという新情報が無いため **Phase 4 には差し戻さない**。`ci-wait.sh` の再実行（CI 待機のみの再試行）を1回だけ行い、それでも `timeout` なら `failure`（CI を待ちきれなかった旨と最後の CI 状態を添える）としてリードに返す
 
 差し戻しは上限付き（**loop-until-green**）:
 
-- Phase 4-5 → 9 のサイクルは**最大3回**。3回試行しても CI が green にならなければ `failure`（最後の CI 状態と失敗ログを添える）としてリードに返す
-- **新情報の無い再委譲はしない**（純劣化のため）。再試行するのは CI / E2E 失敗ログという新情報がある場合のみ。初回の Phase 4-5 で `/quality-check` が（feature-implementer 内の反復を経ても）`failure` のままなら、再委譲せず即 `failure` としてリードに返す
+- Phase 4 → 8 のサイクルは**最大3回**。3回試行しても CI が green にならなければ `failure`（最後の CI 状態と失敗ログを添える）としてリードに返す
+- **新情報の無い再委譲はしない**（純劣化のため）。再試行するのは CI / E2E 失敗ログという新情報がある場合のみ。初回の Phase 4 で `/quality-check` が（feature-implementer 内の反復を経ても）`failure` のままなら、再委譲せず即 `failure` としてリードに返す
 - feature-implementer が**クリティカル設計の逸脱**（自己申告または design-deviation-verifier の多数決確定）で停止した場合も再試行しない（逸脱は再試行で直らない）。即座に作業を止め「判断待ち」としてリードに返す
 - 2回目以降の試行では PR 作成を冪等に扱う: PR が既に存在する場合は `gh pr create` を再実行せず、push のみで CI を再トリガーする（PR の有無は `ci-wait.sh` の `pr_exists` フィールド、または `gh pr view` で判定できる）
 

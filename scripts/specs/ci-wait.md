@@ -1,6 +1,6 @@
 # ci-wait.sh の出力仕様（正本）
 
-para-impl の star型並列実装で、`ticket-worker` が Phase 9（CI確認）でこのスクリプトを呼び出す（Issue #45 で新設）。`gh pr checks` を上限付きでポーリングし、失敗時は `gh run view --log-failed` から失敗ジョブのログ末尾を抽出する。gh を呼ぶ処理と、スナップショットの分類・ポーリング継続可否判定（`classify_checks`/`ci_wait_decision`）等の純粋関数を分離している。
+para-impl の star型並列実装で、`ticket-worker` が Phase 8（CI確認）でこのスクリプトを呼び出す（Issue #45 で新設）。`gh pr checks` を上限付きでポーリングし、失敗時は `gh run view --log-failed` から失敗ジョブのログ末尾を抽出する。gh を呼ぶ処理と、スナップショットの分類・ポーリング継続可否判定（`classify_checks`/`ci_wait_decision`）等の純粋関数を分離している。
 
 ## `scripts/ci-wait.sh <PR番号 or ブランチ名> [timeout秒（既定900。0でsingle-shot）] [poll間隔秒（既定30）]`
 
