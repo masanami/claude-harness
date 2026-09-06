@@ -167,7 +167,8 @@ Codex CLIのmodel・認証・利用上限は実行者環境の設定を使いま
 ```
 /commit → Conventional Commits形式でコミット
 /quality-check → 品質ゲートチェック
-/para-impl 123 → Issue #123 の実装を開始
+/impl 123 → Issue #123 を1件だけ実装（1チケットの実装フローの正本）
+/para-impl 123 456 → Issue を分析して /impl へ fan-out（複数指定で star 型並列実行）
 /codex-review 123 → 現在の差分をCodexのread-only capsuleでshadow review
 /codex-task investigate この設定値の消費者を全部洗い出して → Codexへ調査を委譲し結論だけ受け取る
 ```
