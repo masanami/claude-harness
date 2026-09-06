@@ -8,9 +8,9 @@
 
 ---
 
-## 未リリース
+## 4.4.0
 
-### 破壊的変更（次のリリースはメジャーを上げる）
+### 破壊的変更
 
 - **`/init-project` が生成するプロジェクト `.claude/settings.json` を deny 専用にした（Issue #227 / #226）。** 運用上の allow（`Bash(claude-harness-run:*)`・git / gh・`cd`・パッケージマネージャ・テストランナー・infra）は tracked に書かず、**ユーザー設定 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` 向けのスニペット**（stdout の `user_settings_snippet`）として提示する。`Bash(bash:*)` はどの層にも出力しない（在ると deny がその層から迂回可能になる）。割当と根拠は [`docs/settings-governance.md`](docs/settings-governance.md)。
   - **既存の導入済みプロジェクトは触らない。** 冪等マージは既存の allow を削らないため、再実行しても tracked の allow は残る（動作は変わらない）。deny 専用にしたければ、そのリポジトリの判断で手で外す。
