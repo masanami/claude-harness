@@ -38,7 +38,7 @@
 #   | ファイル | 役割 |
 #   |---|---|
 #   | `agents/feature-implementer.md` | `/self-review` の呼び出し元。残指摘を返却内容へ転記する |
-#   | `skills/para-impl/SKILL.md`     | 返却を受け取り、PR 本文へ転記する |
+#   | `skills/impl/SKILL.md`          | 1チケットの実装フローの正本。返却を受け取り、PR 本文へ転記する |
 #   | `agents/ticket-worker.md`       | 並列実装の worker。返却をリードへ転記する |
 #
 # 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする。
@@ -58,7 +58,7 @@ cd "$REPO_ROOT" || exit 1
 CANON_FILE="skills/self-review/SKILL.md"
 CONSUMERS=(
   "agents/feature-implementer.md"
-  "skills/para-impl/SKILL.md"
+  "skills/impl/SKILL.md"
   "agents/ticket-worker.md"
 )
 
@@ -313,7 +313,7 @@ done
 assert_file_contains "(C-6) 呼び出し元が converged で分岐しないと明記している" \
   "agents/feature-implementer.md" '**残指摘の受け取りは `converged` の値で分岐させない。**'
 assert_file_contains "(C-6) PR 本文への転記が converged: true でも省略されない" \
-  "skills/para-impl/SKILL.md" '`converged: true` でも省略しない'
+  "skills/impl/SKILL.md" '`converged: true` でも省略しない'
 assert_file_contains "(C-6) worker の転記が converged で分岐しない" \
   "agents/ticket-worker.md" '`converged` で分岐せず空でなければ全件転記する'
 

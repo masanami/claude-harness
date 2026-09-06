@@ -1,7 +1,7 @@
 ---
 name: para-impl
-description: "GitHub Issueを分析し、設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認の1チケットフローを実装フェーズの人間ゲートなしで実行する。複数Issue指定時は並列実行する。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
-argument-hint: "<Issue番号> [Issue番号...] [--base <統合ブランチ>]"
+description: "GitHub Issueを分析し、1チケットの実装フロー（正本は `/impl`）へ fan-out する。複数Issue指定時は star 型で並列実行する。並列度・直列化は上位層から受け取り、無指定時のみ自分で決める。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
+argument-hint: "<Issue番号> [Issue番号...] [--base <統合ブランチ>] [--max-parallel <N>] [--serial <番号,番号,...>]"
 model: opus
 # effort: 設計〜TDD実装〜PRの自走フローを担うため high。
 effort: high
@@ -11,7 +11,9 @@ effort: high
 
 **あなたは実装を統括するリードエージェントです。**
 
-GitHub Issueを分析し、1チケット実行フロー（設計→TDD実装→必須ゲート→コミット→E2E→PR→CI確認）に沿って実装を進めます。**クリティカル設計の意思決定は要件チケット側で完了している前提**のため、実装フェーズには人間ゲートを置きません。Issueが複数の場合は star 型（orchestrator-worker）で `ticket-worker` サブエージェントに並列委譲します。
+GitHub Issueを分析し、**1チケットの実装フローを `/impl` へ fan-out** します。Issueが複数の場合は star 型（orchestrator-worker）で `ticket-worker` サブエージェントに並列委譲します。
+
+**本スキルは fan-out に徹する**——実装フローの手順そのものは持たず（正本は `/impl`）、並列度・直列化の決定も上位層から受け取ったときは行いません（後述「Phase 2」）。
 
 ---
 
@@ -25,10 +27,13 @@ GitHub Issue番号（複数可）: $ARGUMENTS
 
 - **数値**: Issue番号として扱う（複数指定可）
 - **`--base <統合ブランチ>`**: 統合ブランチ方式のオプション（下記）。切り出して保持し、残りを Issue 番号として扱う
+- **`--max-parallel <N>`**: **同時に起動してよい `ticket-worker` の天井**（正の整数）。上位層＝計画層から渡される。**天井であって目標ではない**（下回る本数で走らせてよい）
+- **`--serial <番号,番号,...>`**: **直列化グループ**＝同時に走らせてはいけない Issue の組。1つの `--serial` が1グループを表し、グループ内は**記載順**に直列実行する。複数グループは `--serial` を繰り返して渡す
 - 例:
   - `1` → 単一Issue実装
-  - `1 2 3` → 3件のIssueを並列実装（star 型）
+  - `1 2 3` → 3件のIssueを並列実装（star 型。並列度は本スキルが決める＝従来どおり）
   - `1 2 3 --base feat/issue-42` → base を統合ブランチにして並列実装
+  - `1 2 3 4 --max-parallel 2 --serial 1,3` → 同時起動は最大2本。#1 と #3 は同時に走らせず #1 → #3 の順。#2 / #4 は並列可
 
 ### base 統合ブランチの決定（統合ブランチ方式）
 
@@ -56,8 +61,8 @@ fi
 
 | Issue数 | フロー |
 |---------|--------|
-| 1件 | **通常実装**: リードエージェントが「1チケットの実装フロー」を実行 |
-| 複数 | **star 型並列実装**: **`skills/para-impl/references/star-parallel.md` を後掲の配送経路で読み出し**てから Phase 3 へ（`claude-harness-run read-plugin-doc "skills/para-impl/references/star-parallel.md"`。Read 直読みは後掲の注記のとおりランチャー未導入時のフォールバックに限る）。リードがオーケストレーターとなり、各 `ticket-worker` が独立に「1チケットの実装フロー」を実行 |
+| 1件 | **直接呼び出し**: リードエージェント自身が `/impl {番号} [--base {base}]` を実行する（worktree は使わない） |
+| 複数 | **star 型並列実装**: **`skills/para-impl/references/star-parallel.md` を後掲の配送経路で読み出し**てから worktree 準備へ（`claude-harness-run read-plugin-doc "skills/para-impl/references/star-parallel.md"`。Read 直読みは後掲の注記のとおりランチャー未導入時のフォールバックに限る）。リードがオーケストレーターとなり、各 `ticket-worker` が worktree 内で `/impl {番号} --base {base} --worktree {worktree_path}` を実行 |
 
 > **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路`claude-harness-run read-plugin-doc "<読む対象のプラグインルート相対パス>"`（**本スキルは参照ファイルを複数持つ。読む箇所で指定されたパスをそのまま渡すこと — 特定の1本に決め打ちしない**）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない** — `MORE` マーカーが出ていれば示された `--from-line` で続きを取得し、END も MORE も無ければ出力が切り詰められたとみなして同様に停止すること。**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。`=== read-plugin-doc ... ===` の行と `read-plugin-doc:` で始まる行は配送の制御情報であり本文ではない（テンプレートを埋めて書き出す際に成果物へ含めない）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/<読む対象のスキル相対パス>` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
 <!-- 正本: docs/plugin-path-conventions.md -->
@@ -78,134 +83,42 @@ fi
 
 ---
 
-## Phase 2: 実行計画
+## Phase 2: 並列度と直列化 ── 決定権の所在
 
-- 依存関係のあるIssueは順序を決定
-- 独立したIssueは並列実行対象
-- 不明点があればユーザーに確認を求める
+**本スキルは fan-out の実行役であり、並列度の決定層ではない**（ADR 0001 決定4「賢い調整層は常に1つ」。調整層が2つあると、全体の並列度・予算を見ている主体が居なくなる）。
 
----
+| 起動の形 | 並列度・直列化を決めるのは | 本スキルの動作 |
+|---|---|---|
+| **`--max-parallel` が在る**（上位層＝計画層からの起動） | **上位層**（例: claude-flywheel の run-cycle 手順2【その周の実行計画】） | 受け取った天井と直列化グループの**とおりに fan-out する**。判断し直さない |
+| **`--max-parallel` が無い**（人間が対話で `/para-impl 3 4 5`） | **本スキル自身**（従来どおりの単独利用。後方互換） | Phase 1 の分析と衝突予測ヒントから自分で並列度・直列化を決める |
 
-## 1チケットの実装フロー（Phase 3〜9）
+### `--max-parallel` を受け取ったときの規律
 
-単一Issueはリードエージェントが Phase 3〜9 を実行する。複数Issueでは **Phase 3（worktree・ブランチ作成）をリードが担い**、各 `ticket-worker` が worktree で Phase 4-5〜9 を実行する（worker の Phase 7 は `/create-e2e` まで。`/explain-e2e` は worker 完了後にリードがメインセッションで実施する。**1チケット = 1ブランチ = 1PR**。詳細は `${CLAUDE_PLUGIN_ROOT}/skills/para-impl/references/star-parallel.md` 参照。解決手順は上記参照）。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CIの順で進める。**実装フェーズに人間ゲートは無い**。
-
-```text
-Phase 3 ブランチ準備
-   ↓
-Phase 4-5 設計 + TDD実装 + 必須ゲート + セルフレビュー（feature-implementer 一気通貫）
-   ↓（必須ゲート未通過 → 当該チケットをスキップ）
-Phase 6 コミット（safety net QC + Conventional Commits）
-   ↓
-Phase 7 E2E実装（E2E対象の場合）─失敗→ Phase 4-5
-   ↓
-Phase 8 プッシュ・PR作成
-   ↓
-Phase 9 CI確認（必須ゲート）
-```
-
-> **クリティカル設計レビューは要件チケット段階で完了済み**。要件チケットの「クリティカル設計決定」セクションに従って実装する。
->
-> **E2Eシナリオ設計レビュー**は AI セルフレビュー（完了条件↔シナリオのトレーサビリティ確認）で完結。人間の E2E チェックは Phase 7 後の `/explain-e2e`（テストシナリオ解説 + 独立検証）で行う。
-
-### Phase 3: ブランチ準備
-
-**単一Issueの場合**、`{base}`（「base 統合ブランチの決定」で確定した base。既定はリポジトリの既定ブランチ・通常 `main`）から作業ブランチを切る:
-
-```bash
-git fetch origin {base}
-git checkout -b {type}/issue-{番号}-{説明} origin/{base}
-```
-
-**複数Issue（star型並列実装）の場合**は `scripts/worktree-setup.sh` を使う（`skills/para-impl/references/star-parallel.md` の「worktree・ブランチ準備」参照）。
-
-依存関係のインストールが必要であれば実施する（CLAUDE.md または package.json の構成に従う）。
-
-### Phase 4-5: 設計＋TDD実装＋必須ゲート＋セルフレビュー（一気通貫）
-
-`feature-implementer` エージェントを **一度だけ呼び出し**、Phase 1〜5 を一気通貫で実行させる（実装フェーズに人間ゲートは無い）。
-
-リードは要件チケット本文の **「クリティカル設計決定」セクション**をエージェントに渡し、その方針に従って実装するよう指示する。委譲プロンプトには**合流ゲート伝播条項**（`references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める。
-
-エージェントから受け取る返却内容:
-
-- **変更ファイル一覧 / 追加テスト件数 / TDDサイクルの概要**
-- **`/quality-check` の最終結果**（`pass` / `skip` / `failure`）
-- **`/self-review` の結果サマリー**（反復回数・`converged`・**残指摘（`residualFindings`）の全件**（`file:line`・`severity`・`claim`・`reason`）。完了条件達成・スコープ確認の観点も含む）
-- **E2Eシナリオ一覧と完了条件トレーサビリティ表**（E2E対象の場合、Phase 7 で使う）
-
-```text
-| 完了条件 / 受入基準 | 対応E2Eシナリオ |
-|-------------------|---------------|
-| {完了条件1} | {シナリオ名} |
-| ... | ... |
-```
-
-#### 例外ケース
-
-| エージェントの返却 | リードの動作 |
-|---|---|
-| 通常完了 | Phase 6（コミット）へ |
-| `failure`（`/quality-check` 3回反復しても通らない） | 当該チケットをスキップ。並列モードでは他 worker は継続 |
-| `skip`（`/quality-check` のゲートが1つも実行されていない） | Phase 6 へ進んでよいが、**`pass` として扱わず**、未検証である事実と対象チケットを PR 本文・完了報告に明記する |
-| クリティカル設計の逸脱検知で Phase 2 停止 | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（headless の場合は「判断待ち」として完了報告に明記する） |
-
-### Phase 6: コミット
-
-```text
-/commit
-```
-
-`/commit` は **コミット規約に従ったコミット実行に責務を絞った**スキル。内部では safety net として `/quality-check` を再走させ、Conventional Commits 形式でコミットを作成する。Phase 4-5 で必須ゲート・`/self-review` を通過済みのため、ここでの `/quality-check` は通過前提で速やかに完了する。
-
-> コード簡潔化が必要な場合は **`/simplify`** を Phase 6 の前に別途呼ぶ（必須ではない）。
-
-### Phase 7: E2E実装と独立検証（E2E対象の場合）
-
-E2E対象機能の場合、Phase 4-5 で feature-implementer が返した E2Eシナリオ一覧に基づき実装する:
-
-1. `/create-e2e` — 設計（Phase 4-5 のシナリオを根拠）→ 実装 → 全テスト実行
-2. `/explain-e2e` — Phase 1（テストシナリオ解説）はメインセッションで対話的に、Phase 2（独立検証）は Task ツールによる直接委譲（Verify段階のfan-out・Mutation段階の逐次処理）で実施
-
-- E2E失敗 → **Phase 4-5 に戻る**
-
-> **複数Issue（star 型）の場合**: worker は `/create-e2e` までを実施し、`/explain-e2e` は Phase 1 が対話前提のため worker 完了後に**リードがメインセッションで実施**する。リードは**当該チケットの worktree（保持されている）内のテストコードを対象**に実施する（Phase 2 の `mutation-run.sh` 実行時は当該 worktree の絶対パスへ `cd` してから実行する）。独立検証で問題が見つかった場合は当該 worker を再度 spawn して Phase 4-5 から修正させる。
-
-非E2E対象の場合、このフェーズはスキップする。
-
-### Phase 8: プッシュ・PR作成
-
-PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4-5 で必須ゲート・セルフレビューを通過済みのため、**通常PR（非ドラフト）で開く**（AI レビューを即時起動し `/pr-review-respond` へ繋ぐ）。`/explain-e2e` は PR 作成の前提条件ではない——単一Issueでは Phase 7 で実施済み、複数Issue（star 型）では worker の PR 作成後にリードがメインセッションで実施する。
-
-feature-implementer が**残指摘（`residualFindings`）**を返した場合は、その全件をそのまま PR 本文に転記する。`converged: true` でも省略しない——`/self-review` は自動修正の対象外にした指摘を `converged: true` のまま返すため、`converged` で分岐すると引き取り手のいない指摘が PR に載らないまま消える。
-
-feature-implementer が**クロスリポジトリ依存の確証結果**を返した場合は、そのまま PR 本文に転記する（確証の規律・形式は feature-implementer / code-reviewer 側に定義）。
-
-**PR の base は Phase の冒頭で決定した `{base}`**（既定はリポジトリの既定ブランチ・通常 `main`、統合ブランチ方式では統合ブランチ）にする:
-
-```bash
-git push -u origin {ブランチ名}
-gh pr create --title "{タイトル}" --body "{本文}" --base {base}
-```
-
-> 「まだ詰め切れていない」状態で意図的に保留したい場合のみ `--draft` を付けるか、ラベル `hold` を活用する。
->
-> **統合ブランチ方式**: base が統合ブランチの場合、この PR は既定ブランチを触らないため `/pr-merge` で自律マージできる（人間承認不要）。全サブタスク完了後の統合 → 既定ブランチ昇格が唯一の人間ゲート。
-
-### Phase 9: CI確認（必須ゲート）
-
-PR作成後、CIの完了を確認する:
-
-```bash
-gh pr checks {PR番号} --watch
-```
-
-> CI の所要時間が長い場合、`--watch` はコマンドのタイムアウトで中断されることがある。**中断は CI 失敗ではない**ので、`gh pr checks {PR番号}` を再実行して最新状態を確認する。
-
-- CI失敗 → 失敗内容を確認して **Phase 4-5 に戻る**
-- CIパス → Phase 10（完了報告）へ
+1. **受け取った直列化グループ（`--serial`）は必ず守る**（緩めない・組み替えない・解除しない）。
+2. **同時に起動する `ticket-worker` は `--max-parallel` の値を超えない**。対象 Issue 数がこれを上回る場合は天井まで起動し、残りは先行 worker の合流後に起動する。
+3. **同一周のラウンドトリップをしない**——並列度・直列化を問い合わせるために上位層へ戻らない（上位層は同期的に応答できず、待つと周が止まる）。
+4. **予測（`issue-conflict-predictor`）が追加の衝突を見つけた場合、`--max-parallel` を下回る方向にのみ内側で追加直列化してよい**。上回る方向・受け取ったグループを解除する方向へは動かせない。**追加直列化した事実と理由（どの Issue 対を、どの予測交差を根拠に直列化したか）を完了報告に必ず含める**——上位層はこれを次周の実行計画の入力に使う。
+5. **判断に迷っても停止せず保守側（直列化する側）へ倒し**、その判断事項を完了報告に明記する。
 
 ---
+
+## 1チケットの実装フロー ── 正本は `/impl`
+
+**1チケット（= 1 Issue）の実装フロー（Phase 3〜9: ブランチ準備 → 設計・TDD実装・必須ゲート・セルフレビュー → コミット → E2E → プッシュ・PR作成 → CI確認）の正本は `/impl` スキルであり、本スキルは手順を持たない。** 同じ手順を本スキルにも置くと正本が2つになり必ずずれるため、**リードも `ticket-worker` も、手順を再掲・注入せず `/impl` を呼ぶ**。
+
+`/impl` は**通常のスキル**（サブエージェントで走らない）であり、**その呼び出しは Task ネスト深度を消費しない**。ここを守らないと `ticket-worker`（深度1）→ `feature-implementer`（深度2）→ `code-reviewer`（深度3）の現行の鎖が1段深くなり、最深段のエージェントを spawn できなくなる。
+
+### `/impl` の呼び出し元（実行主体）と呼び出し形
+
+| Issue数 | `/impl` の呼び出し元 ＝ 実行主体 | 呼び出し形 |
+|---|---|---|
+| **1件** | **リードエージェント自身**（メインセッション） | `/impl {番号} [--base {base}]` |
+| **複数** | **各 `ticket-worker` サブエージェント**（リードが割り当てた worktree 内） | `/impl {番号} --base {base} --worktree {worktree_path}` |
+
+- **1件の場合**: リードは Phase 1（Issue分析）の後、そのまま `/impl` を呼ぶ。worktree は使わず、ブランチ準備（Phase 3）も `/impl` が実施する。`/explain-e2e` まで `/impl` が実施する。
+- **複数の場合**: リードは **worktree・作業ブランチの準備（Phase 3 相当）だけを担い**、各 `ticket-worker` を spawn する。worker が worktree 内で `/impl --worktree` を呼ぶ（`--worktree` が渡ると `/impl` は Phase 3 をスキップし、Phase 7 を `/create-e2e` までに切る）。**`/explain-e2e` は Phase 1 が対話前提のため、worker 完了後にリードがメインセッションで実施する**。手順の詳細は `skills/para-impl/references/star-parallel.md`（読み出しは上記の配送経路）。
+
+> **本スキルに残る責務は fan-out とその周辺だけ**である: Issue分析（Phase 1）・受け取った計画どおりの並列度／直列化（Phase 2）・worktree 準備・worker の spawn・合流ゲート・worker 返却の集約・`/explain-e2e`・CI 結果の集約・完了報告（Phase 10）・worktree クリーンアップ（Phase 11）。**実装フローの手順そのものは1行も持たない。**
 
 ## 合流ゲート（最終応答前の未合流確認）
 
@@ -219,7 +132,13 @@ gh pr checks {PR番号} --watch
 
 **完了報告の前に「合流ゲート」（`references/join-gate.md`）を通過すること**（未合流のサブエージェント・バックグラウンド処理が0件であることの確認。1つも起動していない場合の0件も正常経路としてゲート通過）。
 
+### 全経路に共通して必須の項目
+
+- **`--max-parallel` を受け取った起動で、Phase 2 の規律4により内側で追加直列化した場合は、その事実と理由（直列化した Issue 対と、根拠にした予測交差）を必ず含める。** 追加直列化が0件だった場合も「追加直列化なし」と明記する（黙ると、上位層は次周の実行計画で同じ衝突を踏む）。
+
 ### 単一Issueの場合
+
+`/impl` の完了報告をそのまま集約する（本スキルが内容を作り直さない）:
 
 1. 実装サマリー
 2. PR URL とCIステータス
@@ -238,6 +157,8 @@ gh pr checks {PR番号} --watch
 - 設計内容（クリティカル/E2E対象時の人間レビュー記録を含む）
 - Pull Request（Issueごとに1つ、通常PR→CI緑＋AIレビュー対応→マージ）
 
+> 上記はいずれも `/impl` が1チケットごとに産出する成果物であり、本スキルはそれを Issue 数ぶん集約する。
+
 ---
 
 ## 禁止事項
@@ -246,6 +167,9 @@ gh pr checks {PR番号} --watch
 - 設計フェーズ（Phase 4-5 の設計成果物出力）の省略
 - 要件チケットの「クリティカル設計決定」を無視した実装
 - テストなしでのコード追加
+- **実装フローの手順を本スキル・spawn プロンプトへ再掲・注入すること**（正本は `/impl` ただ1つ。複製した瞬間にずれる）
+- **`--max-parallel` を受け取っておきながら、その値を超えて worker を起動すること／受け取った `--serial` グループを解除すること**
+- **並列度・直列化を問い合わせるために上位層へ戻ること**（同一周のラウンドトリップ）
 
 ---
 
@@ -254,7 +178,7 @@ gh pr checks {PR番号} --watch
 - Issueの要件が不明確な場合
 - 複数の実装アプローチが考えられる場合
 - スコープの拡大が必要と判断した場合
-- Issue間の依存関係・衝突による直列化の判断が必要な場合
+- Issue間の依存関係・衝突による直列化の判断が必要な場合（**`--max-parallel` を受け取っていない単独利用に限る**。受け取っている場合は Phase 2 の規律に従い、停止せず保守側へ倒して完了報告に書く）
 - 直列化した後続チケットの spawn 前（先行 PR の base が既定ブランチで、人間によるマージが必要な場合）
 - **Phase 4-5: クリティカル設計の逸脱検知時**（feature-implementer の警告を受けて判断を仰ぐ）
 - 実装完了後のレビュー依頼時

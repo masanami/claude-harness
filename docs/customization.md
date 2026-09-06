@@ -197,7 +197,7 @@ model: opus
 | surface-auditor | agent | `medium` | 指定ファイルの読解・分類（探索・設計判断を含まない） |
 | surface-audit | skill | `high` | 列挙・fan-out・完全性 join の統括（抽出の実務は agent 側） |
 | define-feature | skill | `xhigh` | 要件・クリティカル設計の意思決定 |
-| para-impl / tdd-impl / reduce-debt | skill | `high` | 設計〜実装・負債判断 |
+| impl / para-impl / tdd-impl / reduce-debt | skill | `high` | 設計〜実装・負債判断・fan-out 統括 |
 | create-ticket / pr-review-respond / create-e2e / explain-e2e / init-project / init-devcontainer | skill | `medium` | 分解・実装・解説・初期設定 |
 | commit / quality-check / pr-merge | skill | `low` | 定型・機械的処理 |
 | self-review / demo | skill | （無指定＝継承） | 下記参照 |
