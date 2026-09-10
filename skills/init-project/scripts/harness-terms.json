@@ -1,0 +1,24 @@
+{
+  "literals": [
+    {
+      "term": "claude-harness",
+      "why": "プラグイン名・ランチャー名（claude-harness-run）。誰がどのツールで動かすか＝オペレータの性質であり、リポジトリの性質ではない"
+    },
+    {
+      "term": "claude-flywheel",
+      "why": "上位ハーネスの名前。導入先プロジェクトの性質とは無関係"
+    },
+    {
+      "term": "read-plugin-doc",
+      "why": "プラグイン内部の参照ファイル配送経路。導入先から呼ぶものではない"
+    },
+    {
+      "term": "CLAUDE_PLUGIN_ROOT",
+      "why": "プラグインルートの表記上のプレースホルダ。導入先の CLAUDE.md に書いても解決されない"
+    },
+    {
+      "term": ".claude/plugins/",
+      "why": "プラグイン配下パス。インストール位置に依存し、導入先リポジトリの構造ではない"
+    }
+  ]
+}

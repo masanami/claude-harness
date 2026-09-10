@@ -1,27 +1,5 @@
 # {PROJECT_NAME} - Claude Code プロジェクトコンテキスト
 
-## プロジェクト概要
-
-{PROJECT_DESCRIPTION}
-
-## 開発原則
-
-- **YAGNI**: 必要になるまで機能を追加しない。「念のため」の実装をしない
-- **KISS**: シンプルで直接的なコードを書く。過度な抽象化を避ける
-- **DRY**: 共通処理は再利用可能な関数・コンポーネントに抽出
-{ADDITIONAL_PRINCIPLES}
-
-## 技術スタック
-
-| レイヤー | 技術 |
-|---------|------|
-| Frontend | {FRONTEND_STACK} |
-| Backend | {BACKEND_STACK} |
-| DB | {DB_STACK} |
-| Test | {TEST_STACK} |
-| Infra | {INFRA_STACK} |
-| Package | {PACKAGE_MANAGER} |
-
 ## 開発規約
 
 ### ブランチ・コミット
@@ -32,28 +10,14 @@
   - scope: {SCOPES}
 - **PR**: ≤{MAX_PR_LINES}行、{MERGE_STRATEGY}
 
-### 命名規則
-| 対象 | スタイル | 例 |
-|------|---------|-----|
-| ファイル名 | {FILE_NAMING} | {FILE_EXAMPLE} |
-| ディレクトリ名 | {DIR_NAMING} | {DIR_EXAMPLE} |
-| コンポーネント | {COMPONENT_NAMING} | {COMPONENT_EXAMPLE} |
-| 関数 | {FUNC_NAMING} | {FUNC_EXAMPLE} |
-| 定数 | {CONST_NAMING} | {CONST_EXAMPLE} |
+### 新規ファイルの置き場
+{NEW_FILE_PLACEMENT}
 
 ## テスト方針
 
 - {TEST_APPROACH}
 - Mock対象: {MOCK_TARGETS}
 - Mockしない: {NO_MOCK_TARGETS}
-
-## ドキュメントマップ
-
-プロジェクトで整備するドキュメント。「作成予定」は初期設定で選定したもの。
-
-| カテゴリ | パス | 状態 |
-|---------|------|------|
-{DOCUMENT_MAP}
 
 ## 品質方針
 
@@ -66,3 +30,5 @@
 ```bash
 {COMMON_COMMANDS}
 ```
+
+> このファイルは 200 行未満に保つ。肥大したらセッション内 `/doctor`（Claude Code v2.1.206 以降）の trim 提案に従い、コードベースから導ける内容（ディレクトリ構成・依存一覧・アーキテクチャ概要）を削る。

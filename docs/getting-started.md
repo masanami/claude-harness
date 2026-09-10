@@ -80,7 +80,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 | 構成 | 置き場 |
 |---|---|
 | **単独オペレータ**（1 人・1 マシン。自走委譲・`/para-impl` の worktree もこれで動く） | ユーザー設定に上の 1 行で足ります。すべてのプロジェクト・worktree に効き、trust 承認に依存しません |
-| **チーム・複数マシン・CI** | 各人のユーザー設定に置くか、揃えたい場合は tracked の `.claude/settings.json` に手で追記します。tracked の allow は**各人が各クローンで trust を承認するまで効かず**、headless 実行（`claude -p`）は trust ダイアログを出さないため、人間の承認を伴わない環境では効きません |
+| **チーム・複数マシン・CI** | **各人のユーザー設定**に置きます。揃えたい内容は settings ではなく README／オンボーディング手順で配ってください（tracked の `.claude/settings.json` への手動追記は**非推奨**）。tracked の allow は**各人が各クローンで trust を承認するまで効かず**、headless 実行（`claude -p`）は trust ダイアログを出さないため、人間の承認を伴わない環境では効きません |
 
 3 層（ユーザー設定 / プロジェクト settings / `settings.local.json`）の役割分担と、プロジェクト settings が**保証しない範囲**（deny は子プロセスに効かない、bypassPermissions では allow が評価されない等）は [許可設定の統治](./settings-governance.md) を参照してください。
 

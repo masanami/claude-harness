@@ -2,6 +2,8 @@
 
 導入先プロジェクトが **claude-harness の現行版を使うための前提**を満たしているかを決定的に診断する。gh 呼び出しは一切行わない（gh 非依存）。**何も書き換えない**（読み取り専用）。
 
+> **`/doctor`（Claude Code 本体のセッションコマンド）とは別物である。** 本スクリプト（`claude-harness-run doctor`）が見るのは、導入先プロジェクトが本プラグインを使うための前提（ランチャー・settings の allow/deny・生成物の追従）である。本体の `/doctor` はインストール全体の健康診断で、**`CLAUDE.md` が長すぎる場合の trim 提案**（コードベースから導ける内容 — ディレクトリ構成・依存一覧・アーキテクチャ概要 — を削り、pitfalls・rationale・ツール既定と異なる規約を残す）を持つ。**分量の棚卸しは本スクリプトの責務ではない**（本スクリプトは行数を見ない）。同名で役割が違うため混同しないこと。CLI の `claude doctor` は設定ファイルの health check までで trim は提案しない（`claude doctor --help` に「For a full checkup that can also fix issues, run `/doctor` in a session」と明記。2026-09-10 / CLI 2.1.267 で確認）。
+
 `/init-project` は `CLAUDE.md` と `.claude/settings.json` を生成するが、生成物の**テンプレート追従（マイグレーション）**を持たない。そのため harness 側が要求する呼び出し形を変えても、先に scaffold された既存プロジェクトは追従できない。実害は allow 漏れで headless 委譲がブロックされる形で 4 回再発している（Issue #154 / #178）。本スクリプトはその追従漏れを**検出と提示**の側で塞ぐ。
 
 ## 自動適用しない（設計の中心）
@@ -44,6 +46,7 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 | `claude_md_sections` | `CLAUDE.md` にテンプレートの節（H2 見出し）が揃っている | advisory |
 | `claude_md_placeholders` | `CLAUDE.md` にテンプレートのプレースホルダが未置換で残っていない | advisory |
 | `claude_md_doc_map` | ドキュメントマップの行と実ファイルの存在が一致する | advisory |
+| `claude_md_harness_terms` | `CLAUDE.md` に harness／プラグイン固有の語が混入していない | advisory |
 
 **blocking と advisory を分ける理由**: blocking（ランチャー不在・ランチャー allow 欠落）は headless 委譲が**実際に完走できなくなる**。advisory（ドキュメントの欠落・節の追加）は動作を止めない。両者を同じ色にすると、整備していないドキュメントで恒久的に赤になり gate として死ぬ（`scripts/specs/retirement-sweep.md` が「削除した PR が自分で恒久的な `fail` の原因を作る」として戒めている型と同型）。
 
@@ -68,9 +71,11 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 - 期待値は `skills/init-project/templates/CLAUDE.md.template` から**実行時に抽出**する（節の一覧・プレースホルダの一覧を本仕様やスクリプトへ書き写さない）。
   - 節: テンプレートの `grep '^## '` にマッチする見出し行（行頭が `##` ＋半角空白）のうち、プレースホルダ（`{...}`）を含まないもの。プロジェクト側に**同一の見出し行**が在るかを `grep -Fx` で照合する。
   - プレースホルダ: テンプレートに現れる `{...}` トークンのうち、プロジェクトの `CLAUDE.md` に残っているもの。**テンプレート由来のトークンだけ**を対象にすることで、利用者が本文中に書いた `{...}`（コード例など）を誤検出しない。
-- `CLAUDE.md` が存在しない場合、`claude_md_sections` は「ファイルが無い」ことを finding として出し、`claude_md_placeholders` と `claude_md_doc_map` は `skipped`（理由つき）とする。
+- `CLAUDE.md` が存在しない場合、`claude_md_sections` は「ファイルが無い」ことを finding として出し、`claude_md_placeholders` / `claude_md_doc_map` / `claude_md_harness_terms` は `skipped`（理由つき）とする。
 
 #### `claude_md_doc_map`
+
+**現行のテンプレートは `## ドキュメントマップ` 節を生成しない**（Issue #237 の棚卸しで削除。directory layout に相当し、かつ「作成予定」の行が未実在パスを常時ロードさせるため）。本検査は**それ以前の世代の生成物**のために残す — 生成物はテンプレート追従を持たない以上、既に節を持つプロジェクトが検査対象から静かに外れることのほうが害が大きい。節が無ければ `skipped`（理由つき）になる。
 
 正本は**導入先プロジェクト自身の `CLAUDE.md`** である。「9 軸で選定される雛形ドキュメントの欠落」を軸から判定する形は採らない — 軸とドキュメントの対応表はどこにも存在せず（`analyze-project.sh` の `build_axes_json` は軸名と `standing` しか返さない）、9 軸のうち 6 軸が `ask-user`（人間に聞かなければ立つか判定できない）ため、対応表を新設しない限り機械では評価できない。新設すればそれが同期の要る 2 つ目のリストになる。
 
@@ -84,7 +89,24 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 | `stale_pending` | 状態が「作成予定」で、パスが**実在する** | 整備したのに状態の更新漏れ |
 
 - 「作成予定」かつ実在しないのは**宣言どおりの正常**であり指摘しない（未整備のドキュメントで恒久的に warn を出し続けないため）。
-- 状態の語彙に依存するのは「作成予定」の 1 語のみ（`skills/init-project/SKILL.md` ステップ4 が書き込む語）。それ以外の状態は語彙を判定に使わず、**実在しなければ `missing`** とする（利用者が状態欄を書き換えていても検査が無効化されないようにするため）。
+- 状態の語彙に依存するのは「作成予定」の 1 語のみ（節を生成していた頃の `/init-project` が書き込んでいた語）。それ以外の状態は語彙を判定に使わず、**実在しなければ `missing`** とする（利用者が状態欄を書き換えていても検査が無効化されないようにするため）。
+
+#### `claude_md_harness_terms`
+
+生成物（導入先の `CLAUDE.md`）に **harness／プラグイン固有の語**が混入していないことを見る。混入を嫌う理由は `docs/settings-governance.md` §1 の割当と同じ切り分けである — プロジェクトの `CLAUDE.md` は「そのリポジトリの性質」を書く場所であり、harness を使うかどうかは**オペレータの性質**である。加えて生成物はテンプレート追従を持たないため、混入すると**古いスキル名・古い呼び出し形がプロジェクト側に固定化**する。生成側の規定は `skills/init-project/SKILL.md` ステップ4。
+
+検出語は 2 つの出所から実行時に合成する。**どちらも本仕様やスクリプトへ一覧を書き写さない**:
+
+| 出所 | 中身 | 決め方 |
+|---|---|---|
+| `skills/init-project/scripts/harness-terms.json` の `literals[].term` | 導出できない固定語（プラグイン名・ランチャー名の語幹・プラグイン配下パス・内部の配送経路名） | 設定ファイルが正本。各要素は `why`（なぜリポジトリの性質でないか）を持つ |
+| `skills/` 配下のディレクトリ名 | スラッシュコマンド名 `/<スキル名>` | **名前に `-` を含むものだけ**を対象にする |
+
+- **スキル名を設定ファイルへ列挙しない。** 列挙すると同期の要る 2 つ目のリストになり、スキルを増減させたときに片方だけ古くなる（ずれても誰も気付かない）。
+- **単語 1 つのスキル名（`/commit` / `/demo` / `/impl` 等）は対象外**とする。除外する語を並べるとそれ自体が 2 つ目のリストになるため、**形の制約**（`-` を含むか）で落とす（`claude_md_doc_map` が表の見出し行を語彙でなく形で落とすのと同じ規律）。単語 1 つの名前は導入先プロジェクトの語やパスと衝突しうるため、**取りこぼす代わりに誤検出を出さない**側へ倒している。
+- 一致は**リテラルの部分文字列**（`grep -F`）。`items[]` は `{term, line}`（最初に現れた行番号）。
+- **`/doctor` は検出対象ではない。** Claude Code 本体のセッションコマンドであり harness 固有語ではない（テンプレート末尾の案内が意図的にこれを含む）。`-` を含まないため上記の形の制約でも自然に外れる。
+- `harness-terms.json` が読めない・スキーマ不正のときは `skipped`（理由つき）とする。**exit 2 にしない** — `base-deny.json` を診断が読まない理由と同じで、設定ファイル 1 つの欠損で診断そのものが落ち、blocking の検査まで巻き添えにするのを避ける。
 
 ## 版マーカーは導入しない（Issue #178 提案3 への結論）
 
@@ -103,7 +125,7 @@ severity は**この表で固定**であり、実行時の状況で変えない�
   "project": "/path/to/project",
   "settings": { "path": "/path/to/project/.claude/settings.json", "exists": true },
   "claudeMd": { "path": "/path/to/project/CLAUDE.md", "exists": true },
-  "counts": { "checks": 7, "ok": 5, "finding": 1, "skipped": 1, "blocking": 0, "advisory": 1 },
+  "counts": { "checks": 8, "ok": 5, "finding": 1, "skipped": 2, "blocking": 0, "advisory": 1 },
   "checks": [
     { "id": "launcher_on_path", "severity": "blocking", "result": "ok" },
     { "id": "launcher_plugin_root", "severity": "blocking", "result": "ok" },
@@ -111,7 +133,8 @@ severity は**この表で固定**であり、実行時の状況で変えない�
     { "id": "settings_base_allow", "severity": "advisory", "result": "finding" },
     { "id": "claude_md_sections", "severity": "advisory", "result": "ok" },
     { "id": "claude_md_placeholders", "severity": "advisory", "result": "ok" },
-    { "id": "claude_md_doc_map", "severity": "advisory", "result": "skipped", "reason": "CLAUDE.md にドキュメントマップ節が無い" }
+    { "id": "claude_md_doc_map", "severity": "advisory", "result": "skipped", "reason": "CLAUDE.md にドキュメントマップ節が無い" },
+    { "id": "claude_md_harness_terms", "severity": "advisory", "result": "ok" }
   ],
   "findings": [
     {
@@ -125,8 +148,8 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 }
 ```
 
-- `checks` は**全 7 件を必ず出す**。`skipped` を出さずに黙って落とすと「未検査」と「調べた結果の 0 件」が区別できなくなる。`skipped` には必ず `reason` を付ける。
-- `findings` の各要素は `check` / `severity` / `summary` / `items` / `remediation` を持つ。`items` の形は検査ごとに異なる（allow 系は `{rule, found_in}`（ランチャーは加えて `shadowed_by`）、doc map は `{path, state, kind}`、節は `{section}` 等）。
+- `checks` は**全 8 件を必ず出す**。`skipped` を出さずに黙って落とすと「未検査」と「調べた結果の 0 件」が区別できなくなる。`skipped` には必ず `reason` を付ける。
+- `findings` の各要素は `check` / `severity` / `summary` / `items` / `remediation` を持つ。`items` の形は検査ごとに異なる（allow 系は `{rule, found_in}`（ランチャーは加えて `shadowed_by`）、doc map は `{path, state, kind}`、節は `{section}`、harness 固有語は `{term, line}` 等）。
 - `checks[]` の `settings_launcher_allow` / `settings_base_allow` が `ok` のときは `satisfied_by`（層名の配列）を持つ。
 - `status` は `findings` から決まる: blocking が 1 件以上あれば `fail`、findings があり blocking が 0 件なら `warn`、findings が 0 件なら `ok`。
 - `skipped` が blocking の検査を隠すことはない。`launcher_plugin_root` が skipped になるのは `launcher_on_path` が finding のとき（＝既に `fail`）だけである。

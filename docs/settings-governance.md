@@ -20,6 +20,17 @@ Claude Code の permission ルール（`allow` / `ask` / `deny`）は複数の s
 
 3 層のほかに `--settings <file>`（そのセッション限定）と managed settings（組織）がある。claude-harness はどちらも前提にしない。
 
+### 決定: プロジェクト settings を緩める allow は生成しない
+
+**`/init-project` は、プロジェクトの `.claude/settings.json` へ `allow` を 1 件も書かない。緩和はユーザー設定側で行う。**
+
+- **実装**: `skills/init-project/scripts/generate-settings.sh` の `gs_project_allow_json()` は常に `[]` を返す。運用 allow は `user_settings_snippet` として stdout に提示するだけで、ファイルへは書かない。
+- **回帰テスト**: `scripts/tests/test-generate-settings.sh` が「生成するプロジェクト settings の allow は空（pm/test/infra を渡しても）」「マージ結果の allow は既存のまま（生成側は allow を足さない）」「汎用実行系・PM・テストランナー・infra の allow が生成物に現れない」を固定する。
+- **再実行しても変わらない**: 冪等マージは既存の allow を削らず、新規に足す allow も無い（§5）。
+- **理由**: allow はオペレータの性質であり（下記「割当の根拠」）、tracked に置いても trust 未承認のクローンと headless では効かない（§2・§3）。「効かない allow が並んでいる」状態は、誤った安心を生むという意味で無いより悪い。
+
+この決定は生成物の**出所の規律**（`skills/init-project/SKILL.md` ステップ4「harness／プラグイン固有の語を書かない」）と対になっている。どちらも**オペレータの性質をリポジトリの成果物へ書き込まない**という同じ切り分けであり、片方だけを守っても「harness を前提にしたリポジトリ」が出来上がる。
+
 ### 割当の根拠
 
 - **allow はオペレータの性質である**: 同じ allow でも、それを「prompt なしで走らせてよい」と判断できるのは、その環境を動かしている人だけである。tracked に置くと、clone した全員の環境で trust 承認と同時にまとめて有効になる（承認ダイアログに列挙はされるが、1 行ずつ吟味されるとは限らない）。
@@ -81,8 +92,12 @@ tracked の `.claude/settings.json` に書いたルールが**効かない**状�
 | 構成 | 運用 allow の置き場 | 補足 |
 |---|---|---|
 | **単独オペレータ**（1 人・1 マシン。claude-flywheel の自走委譲もこれ） | **ユーザー設定に 1 行**（`Bash(claude-harness-run:*)`）＋必要な PM・テストランナー | 全リポジトリ・全 worktree に効く。trust に依存しない。tracked には何も足さなくてよい |
-| **チーム・複数マシン・CI** | 各人のユーザー設定、または **tracked の `.claude/settings.json` に手で追記** | tracked に置く場合は「各人が各クローンで trust を承認する」ことが前提になる（headless だけの環境では効かない）。`/init-project` は tracked に allow を足さないので、チームで揃えたい場合は明示的に追記する |
+| **チーム・複数マシン・CI** | **各人のユーザー設定**（tracked への手動追記は**非推奨**。下記） | 揃えたい内容は settings ではなく**導入手順**（README・オンボーディング）で配る。`/init-project` は tracked に allow を足さない |
 | **deny による統治を効かせたい** | ユーザー設定に `Bash(bash:*)` 等の汎用実行系 allow を置かない | 汎用実行系の allow は「どの層にあっても」deny を無効化する。ランチャー未導入時のフォールバック実行形（`bash "<プラグインルート>/scripts/…"`）は対話セッションでの承認を前提にした縮退経路であり、allow で常時開けておくものではない |
+
+> **tracked の `.claude/settings.json` へ運用 allow を手で追記するのは非推奨**（2026-09-10 決定。Issue #239）。理由は 2 つある。① **正本が 2 つになる**: deny 専用の割当（§1）と併存させると「運用 allow はどこに置くのが正か」が場所によって変わり、読み手は効いているかどうかを §3 の表を引かないと判定できない。② **効かない場面が広い**: tracked の allow は各人が各クローンで trust を承認するまで効かず、headless（`claude -p`）ではダイアログが出ないため**永久に効かない**（§2 実験 2）。チームで揃えたい場合は、リポジトリの README／オンボーディング手順で**各自のユーザー設定への追記を案内する**。
+>
+> 変わらないこと: **`/init-project` は tracked へ allow を決して書かない**（§1 の決定）。既に tracked に allow が在るリポジトリを一斉に是正することもしない（§5）。非推奨にしたのは「新たに手で足すこと」である。
 
 `docs/getting-started.md` §2「許可設定をどこに置くか」は本表の要約である。
 
@@ -113,6 +128,7 @@ tracked の `.claude/settings.json` に書いたルールが**効かない**状�
 | **既に導入済みのプロジェクト**（`allow` に `Bash(bash:*)` 等が残っている） | **触らない。一斉是正しない。** 残っていても動作は変わらない（従来どおり trust 済みの環境で prompt が減るだけ）。deny 専用にしたければ、そのリポジトリの判断で手で外す。`generate-settings.sh` の冪等マージは**既存の allow を削らない** |
 | **`doctor`** | `settings_launcher_allow` / `settings_base_allow` は、ルールがユーザー設定（オペレータ層）に在れば **blocking にしない**。tracked にも オペレータ層にも無いときだけ blocking。是正の提示は「チーム共有が不要ならユーザー設定でよい」を含む |
 | **`/init-project` の再実行** | 既存の allow は保持される（削らない）。新規に足す allow は無い。deny の不足分だけがマージされる |
+| **tracked に運用 allow を手で足しているリポジトリ** | **触らない。一斉是正しない。** 新たに足すのは非推奨（§4）だが、既に在るものを外すかはそのリポジトリの判断 |
 
 ### 変更の分割（Issue #227 / #222 / #226）
 
@@ -126,5 +142,6 @@ tracked の `.claude/settings.json` に書いたルールが**効かない**状�
 
 - `docs/script-launcher.md` §6 — `Bash(claude-harness-run:*)` の保証範囲と、`deny` がプロセスツリーに効かないことの正本
 - `scripts/specs/doctor.md` — `doctor` の判定規則の正本（オペレータ層の扱いを含む）
-- `skills/init-project/SKILL.md` §6 — 生成物の契約とスニペットの提示
+- `skills/init-project/SKILL.md` ステップ6 — 生成物の契約とスニペットの提示（本文書 §1 の決定を参照する）
+- `skills/init-project/SKILL.md` ステップ4 — 生成物へ harness／プラグイン固有の語を書かない規定（出所の規律。本文書 §1 の決定と対）
 - `docs/getting-started.md` §2 — 導入手順と「許可設定をどこに置くか」
