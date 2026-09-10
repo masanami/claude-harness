@@ -95,7 +95,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 }
 ```
 
-`/init-project` はプロジェクトの `.claude/settings.json` を deny 専用として生成し、この行を**ユーザー設定向けスニペット**として提示する（tracked には書かない）。チームで揃えたい場合は tracked の `.claude/settings.json` に手で追記してもよいが、tracked の allow は各人が各クローンで trust を承認するまで効かない（headless 実行は trust ダイアログを出さない）。3 層の割当と根拠は `docs/settings-governance.md`。
+`/init-project` はプロジェクトの `.claude/settings.json` を deny 専用として生成し、この行を**ユーザー設定向けスニペット**として提示する（tracked には書かない）。チームで揃えたい場合も **tracked の `.claude/settings.json` への手動追記は非推奨**（`docs/settings-governance.md` §4）。tracked の allow は各人が各クローンで trust を承認するまで効かない（headless 実行は trust ダイアログを出さない）ため、README／オンボーディング手順で各自のユーザー設定への追記を案内する。3 層の割当と根拠は `docs/settings-governance.md`。
 
 **先頭トークンを変える呼び方はマッチしない**（実測2のC）:
 

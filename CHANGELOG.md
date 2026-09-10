@@ -8,6 +8,27 @@
 
 ---
 
+## 未リリース
+
+> 版数は未確定。次の版を切るときにこの見出しを版数へ置き換える（`.claude-plugin/plugin.json` の `version` が正本）。
+
+### 変更
+
+- **`/init-project` が生成する `CLAUDE.md` を棚卸しした（Issue #237）。** 公式の memory ガイド（1 ファイル 200 行未満を目標／コードベースから導ける内容は削り、pitfalls・rationale・ツール既定と異なる規約を残す）に合わせ、**次の 4 節を生成しなくなった**: `## プロジェクト概要`（architecture overview）・`## 技術スタック`（dependency list）・`## ドキュメントマップ`（directory layout。かつ「作成予定」の行が未実在パスを常時ロードさせていた）・`## 開発原則`（YAGNI/KISS/DRY。ツール既定と異なる規約ではない一般論で、検証できない曖昧さの典型）。`### 命名規則` の表も落とし、既存構造から導けない `### 新規ファイルの置き場` だけを残した。
+  - 残した節は `## 開発規約`（ブランチ・コミット）・`## テスト方針`・`## 品質方針`（具体的なゲートのみ）・`## よく使うコマンド`。
+  - **実測**: 代表的なプロジェクト形状（Node/TS の Web アプリ）で置換した生成物は **42 行**（従来のテンプレートは置換前で 68 行、置換後は表が埋まるためさらに増えていた）。`scripts/tests/test-claude-md-template.sh` がこの行数と節構成を機械で固定する。
+  - 生成物の末尾に、セッション内 `/doctor`（Claude Code v2.1.206 以降）で棚卸しできる旨の案内が 1 行入る。**同梱の `claude-harness-run doctor` とは別物**（あちらは settings の allow/deny と生成物の追従を見るもので、行数は見ない）。
+- **`/init-project` の生成物へ harness／プラグイン固有の語を書かない規定を追加した（Issue #239）。** 対象はスキル名（`/para-impl` 等）・ランチャー名（`claude-harness-run`）・プラグイン配下パス・harness のフロー名。`skills/init-project/SKILL.md` ステップ4 に明記し、混入を `claude-harness-run doctor` の新しい advisory チェック **`claude_md_harness_terms`** が検出する（検出語の正本は `skills/init-project/scripts/harness-terms.json` の固定語と、`skills/` 配下から実行時に導出するスキル名）。ステップ7 の完了報告は**会話に出す案内であって生成物ではない**ため対象外である旨も線引きとして書いた。
+- **tracked の `.claude/settings.json` へ運用 allow を手で追記するのを非推奨にした（Issue #239）。** deny 専用の割当と併存させると運用 allow の置き場の正本が 2 つになり、しかも tracked の allow は trust 未承認のクローンと headless では効かない。チームで揃えたい場合は README／オンボーディング手順で各自のユーザー設定への追記を案内する。**`/init-project` が tracked へ allow を決して書かないことは変わらない**（`docs/settings-governance.md` §1 に決定事項として明文化した）。
+
+### 利用者が取る操作
+
+- **既存のプロジェクトは何もしなくてよい。** 生成物はテンプレート追従を持たないため、既に生成済みの `CLAUDE.md` は変わらない。`claude-harness-run doctor` の `claude_md_sections` は**テンプレートから実行時に節を抽出する**ため、節が減ったことで新しい指摘が出ることもない（`claude_md_doc_map` は旧世代の生成物のために残してある）。
+- **手元の `CLAUDE.md` を軽くしたい場合**は、セッション内で `/doctor` を実行すると trim 提案が得られる。上に挙げた 4 節が削る候補である。
+- **tracked の `.claude/settings.json` に運用 allow を足しているリポジトリも、一斉是正は不要**（非推奨にしたのは「新たに手で足すこと」）。
+
+---
+
 ## 4.5.0
 
 ### 追加

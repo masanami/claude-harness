@@ -104,7 +104,7 @@ assert_true "仕様側の severity 表が空でない（切り出し失敗を pa
 assert_true "スクリプト側の severity 表が空でない" \
   "$([ -n "$TD_SCRIPT_TABLE" ] && echo true || echo false)"
 assert_eq "severity 表がスクリプトと仕様で完全一致する" "$TD_SCRIPT_TABLE" "$TD_SPEC_TABLE"
-assert_eq "検査項目は7件" "7" "$(doctor_check_ids | grep -c .)"
+assert_eq "検査項目は8件" "8" "$(doctor_check_ids | grep -c .)"
 
 # ------------------------------------------------------------------
 # (B) blocking リテラルの fail-closed 連結
@@ -203,11 +203,14 @@ assert_eq "プレースホルダを含まない CLAUDE.md では残存0件（空
   "$(doctor_remaining_placeholders "$TD_TEMPLATE" "$TD_FULL_MD" | grep -c . | tr -d ' ')"
 
 TD_PARTIAL_MD="${TD_TMP_DIR}/partial.md"
-printf '# demo\n\n## プロジェクト概要\n\n{QUALITY_POLICY}\n' > "$TD_PARTIAL_MD"
+printf '# demo\n\n## テスト方針\n\n{QUALITY_POLICY}\n' > "$TD_PARTIAL_MD"
 assert_eq "欠けている節が検出される" "true" \
   "$(doctor_missing_sections "$TD_TEMPLATE" "$TD_PARTIAL_MD" | grep -Fxq '## 品質方針' && echo true || echo false)"
 assert_eq "在る節は検出されない（否定検査）" "false" \
-  "$(doctor_missing_sections "$TD_TEMPLATE" "$TD_PARTIAL_MD" | grep -Fxq '## プロジェクト概要' && echo true || echo false)"
+  "$(doctor_missing_sections "$TD_TEMPLATE" "$TD_PARTIAL_MD" | grep -Fxq '## テスト方針' && echo true || echo false)"
+# 否定検査が空虚に真でないこと: 使った見出しが実際にテンプレートの節である
+assert_eq "否定検査に使った節はテンプレートに実在する" "true" \
+  "$(doctor_template_sections "$TD_TEMPLATE" | grep -Fxq '## テスト方針' && echo true || echo false)"
 assert_eq "未置換プレースホルダが検出される" "{QUALITY_POLICY}" \
   "$(doctor_remaining_placeholders "$TD_TEMPLATE" "$TD_PARTIAL_MD")"
 
@@ -264,6 +267,85 @@ assert_eq "作成予定かつ実在 → stale_pending" "stale_pending" \
 assert_eq "作成予定かつ不在 → 指摘しない（宣言どおり・否定検査）" "0" \
   "$(jq -r '[.[] | select(.path == "docs/later.md")] | length' <<<"$TD_ITEMS")"
 assert_eq "指摘は2件のみ" "2" "$(jq -r 'length' <<<"$TD_ITEMS")"
+
+# ------------------------------------------------------------------
+# (H2) harness 固有語の混入（検出語の合成・一致・否定検査）
+# ------------------------------------------------------------------
+echo "== (H2) harness 固有語 =="
+
+TD_TERMS_FILE="${TD_REPO_ROOT}/skills/init-project/scripts/harness-terms.json"
+
+assert_true "設定ファイルから固定語を抽出できる（切り出し失敗を pass にしない）" \
+  "$([ "$(doctor_harness_literal_terms "$TD_TERMS_FILE" | grep -c .)" -gt 0 ] && echo true || echo false)"
+assert_eq "固定語にランチャー名の語幹が含まれる" "true" \
+  "$(doctor_harness_literal_terms "$TD_TERMS_FILE" | grep -Fxq 'claude-harness' && echo true || echo false)"
+assert_eq "設定ファイルが無ければ非0（欠損を空集合に丸めない）" "false" \
+  "$(doctor_harness_literal_terms "${TD_TMP_DIR}/no-such-terms.json" >/dev/null 2>&1 && echo true || echo false)"
+TD_BAD_TERMS="${TD_TMP_DIR}/bad-terms.json"
+printf '{"literals":[{"note":"term がない"}]}\n' > "$TD_BAD_TERMS"
+assert_eq "スキーマ不正なら非0" "false" \
+  "$(doctor_harness_literal_terms "$TD_BAD_TERMS" >/dev/null 2>&1 && echo true || echo false)"
+printf '{"literals":[]}\n' > "$TD_BAD_TERMS"
+assert_eq "空の literals も非0（空リストで検出0件を作らない）" "false" \
+  "$(doctor_harness_literal_terms "$TD_BAD_TERMS" >/dev/null 2>&1 && echo true || echo false)"
+
+# スキル名は設定ファイルに列挙せず skills/ から導出する（2つ目のリストを作らない）。
+TD_SKILL_TERMS="$(doctor_harness_skill_terms "${TD_REPO_ROOT}/skills")"
+assert_eq "スキル名を skills/ から導出する" "true" \
+  "$(printf '%s\n' "$TD_SKILL_TERMS" | grep -Fxq '/init-project' && echo true || echo false)"
+assert_eq "設定ファイルにスキル名を書き写していない（正本は skills/ 側だけ）" "false" \
+  "$(doctor_harness_literal_terms "$TD_TERMS_FILE" | grep -Fq 'init-project' && echo true || echo false)"
+# 形の制約（`-` を含む名前だけ）。除外語のリストを持たないことを、実在する単語1つのスキルで固定する。
+assert_eq "単語1つのスキル名は対象外（形の制約・否定検査）" "false" \
+  "$(printf '%s\n' "$TD_SKILL_TERMS" | grep -Fxq '/commit' && echo true || echo false)"
+assert_true "対照: 単語1つのスキルが実在する（否定検査が空虚でない）" \
+  "$([ -d "${TD_REPO_ROOT}/skills/commit" ] && echo true || echo false)"
+assert_eq "存在しないディレクトリでは空（空集合ケース）" "0" \
+  "$(doctor_harness_skill_terms "${TD_TMP_DIR}/no-such-skills" | grep -c . | tr -d ' ')"
+
+assert_eq "合成した検出語は固定語とスキル名の両方を含む" "true" \
+  "$(doctor_harness_terms "$TD_TERMS_FILE" "${TD_REPO_ROOT}/skills" \
+     | grep -Fxq 'claude-harness' && doctor_harness_terms "$TD_TERMS_FILE" "${TD_REPO_ROOT}/skills" \
+     | grep -Fxq '/para-impl' && echo true || echo false)"
+assert_eq "設定ファイルが読めなければ合成も非0（スキル名だけで代用しない）" "false" \
+  "$(doctor_harness_terms "${TD_TMP_DIR}/no-such-terms.json" "${TD_REPO_ROOT}/skills" >/dev/null 2>&1 && echo true || echo false)"
+
+TD_TERMS_ALL="$(doctor_harness_terms "$TD_TERMS_FILE" "${TD_REPO_ROOT}/skills")"
+
+TD_DIRTY_MD="${TD_TMP_DIR}/dirty.md"
+cat > "$TD_DIRTY_MD" <<'MD'
+# demo
+
+## よく使うコマンド
+
+品質チェックは `claude-harness-run quality-check` で実行する。
+実装は /para-impl で並列化する。
+MD
+TD_HITS="$(printf '%s\n' "$TD_TERMS_ALL" | doctor_harness_term_hits_json "$TD_DIRTY_MD")"
+assert_eq "ランチャー名の混入を検出する" "5" \
+  "$(jq -r '.[] | select(.term == "claude-harness") | .line' <<<"$TD_HITS")"
+assert_eq "スキル名の混入を検出する" "6" \
+  "$(jq -r '.[] | select(.term == "/para-impl") | .line' <<<"$TD_HITS")"
+
+TD_CLEAN_MD="${TD_TMP_DIR}/clean.md"
+cat > "$TD_CLEAN_MD" <<'MD'
+# demo
+
+## よく使うコマンド
+
+品質チェックは `npm run lint && npm test` で実行する。
+肥大したらセッション内 `/doctor` の trim 提案に従う。
+MD
+assert_eq "混入が無ければ空（空集合ケース）" "0" \
+  "$(printf '%s\n' "$TD_TERMS_ALL" | doctor_harness_term_hits_json "$TD_CLEAN_MD" | jq -r 'length')"
+# /doctor は Claude Code 本体のセッションコマンドであり harness 固有語ではない。
+# テンプレート末尾がこれを含むため、誤検出すると生成物が常に warn になる。
+assert_eq "/doctor は検出しない（否定検査）" "false" \
+  "$(printf '%s\n' "$TD_TERMS_ALL" | grep -Fxq '/doctor' && echo true || echo false)"
+
+# 同梱テンプレートそのものが規定を満たすこと（出荷物の自己検査）。
+assert_eq "CLAUDE.md.template に harness 固有語が無い" "0" \
+  "$(printf '%s\n' "$TD_TERMS_ALL" | doctor_harness_term_hits_json "$TD_TEMPLATE" | jq -r 'length')"
 
 # ------------------------------------------------------------------
 # (I) status と exit code の真理値表
@@ -334,6 +416,11 @@ td_make_project() {
     doctor_template_sections "$TD_TEMPLATE" | sed 's/$/\
 /'
     echo
+    # 現行テンプレートはこの節を生成しない。claude_md_doc_map は**旧世代の生成物**のための
+    # 検査であり、フィクスチャ側で明示的に持たせて CLI 経路の被覆を保つ
+    # （テンプレートから消えた瞬間に検査が黙って skipped になり、被覆が静かに失われるのを防ぐ）。
+    echo "## ドキュメントマップ"
+    echo
     echo "| カテゴリ | パス | 状態 |"
     echo "|---------|------|------|"
     echo "| 規約 | \`docs/guide.md\` | 整備済み |"
@@ -354,8 +441,8 @@ PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ" --pm npm > 
 TD_EXIT=$?
 assert_eq "健全なプロジェクトは exit 0" "0" "$TD_EXIT"
 assert_eq "status は ok" "ok" "$(jq -r '.status' "$TD_OUT")"
-assert_eq "checks は7件すべて出る（全称条件）" "7" "$(jq -r '.checks | length' "$TD_OUT")"
-assert_eq "checks の id は重複しない" "7" "$(jq -r '[.checks[].id] | unique | length' "$TD_OUT")"
+assert_eq "checks は8件すべて出る（全称条件）" "8" "$(jq -r '.checks | length' "$TD_OUT")"
+assert_eq "checks の id は重複しない" "8" "$(jq -r '[.checks[].id] | unique | length' "$TD_OUT")"
 assert_eq "checks の id が severity 表と一致する" \
   "$(doctor_check_ids | LC_ALL=C sort | tr '\n' ' ')" \
   "$(jq -r '.checks[].id' "$TD_OUT" | LC_ALL=C sort | tr '\n' ' ')"
@@ -492,6 +579,46 @@ assert_eq "satisfied_by は project と user の両方（残りは tracked に�
   "$(jq -c '.checks[] | select(.id == "settings_base_allow") | .satisfied_by' "$TD_OUT")"
 
 # ------------------------------------------------------------------
+# (K3) CLI: harness 固有語の混入（advisory・対照つき）
+# ------------------------------------------------------------------
+echo "== (K3) CLI（harness 固有語） =="
+
+TD_PROJ_CLEAN="${TD_TMP_DIR}/termsclean"
+td_make_project "$TD_PROJ_CLEAN"
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_CLEAN" --pm npm > "$TD_OUT" 2>/dev/null
+assert_eq "対照: 生成物どおりの CLAUDE.md では claude_md_harness_terms は ok" "ok" \
+  "$(jq -r '.checks[] | select(.id == "claude_md_harness_terms") | .result' "$TD_OUT")"
+
+TD_PROJ_TERMS="${TD_TMP_DIR}/termsdirty"
+td_make_project "$TD_PROJ_TERMS"
+printf '\n実装は /para-impl で並列化し、`claude-harness-run quality-check` を通す。\n' >> "${TD_PROJ_TERMS}/CLAUDE.md"
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_TERMS" --pm npm > "$TD_OUT" 2>/dev/null
+TD_EXIT=$?
+assert_eq "混入があれば claude_md_harness_terms は finding" "finding" \
+  "$(jq -r '.checks[] | select(.id == "claude_md_harness_terms") | .result' "$TD_OUT")"
+assert_eq "advisory なので exit 0 のまま（動作は止まらない）" "0" "$TD_EXIT"
+assert_eq "status は warn" "warn" "$(jq -r '.status' "$TD_OUT")"
+assert_eq "items に混入した語が出る" "true" \
+  "$(jq -r '[.findings[] | select(.check == "claude_md_harness_terms") | .items[].term] | index("/para-impl") != null' "$TD_OUT")"
+assert_eq "items に行番号が出る" "true" \
+  "$(jq -r '[.findings[] | select(.check == "claude_md_harness_terms") | .items[] | select(.line > 0)] | length > 0' "$TD_OUT")"
+
+# 設定ファイル（正本）が読めないときは skipped。exit 2 にして blocking の検査まで
+# 巻き添えにしない（base-deny.json を診断が読まない理由と同じ規律）。
+TD_DOCTOR_NOTERMS="$(mktemp "${TD_REPO_ROOT}/scripts/.doctor.noterms.XXXXXX")"
+TD_MUTANTS+=("$TD_DOCTOR_NOTERMS")
+sed 's#^DOCTOR_HARNESS_TERMS_FILE=.*#DOCTOR_HARNESS_TERMS_FILE="/nonexistent/harness-terms.json"#' \
+  "$TD_DOCTOR" > "$TD_DOCTOR_NOTERMS"
+assert_eq "変異注入が実際に効いている（注入失敗を pass にしない）" "1" \
+  "$(grep -c '^DOCTOR_HARNESS_TERMS_FILE="/nonexistent/harness-terms.json"$' "$TD_DOCTOR_NOTERMS" | tr -d ' ')"
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR_NOTERMS" --project "$TD_PROJ_TERMS" --pm npm > "$TD_OUT" 2>/dev/null
+TD_EXIT=$?
+assert_eq "設定ファイル欠損でも exit 2 にしない" "0" "$TD_EXIT"
+assert_eq "設定ファイル欠損なら reason 付きで skipped" "true" \
+  "$(jq -r '.checks[] | select(.id == "claude_md_harness_terms") | (.result == "skipped" and (.reason | length > 0))' "$TD_OUT")"
+assert_eq "設定ファイル欠損でも checks は8件出る" "8" "$(jq -r '.checks | length' "$TD_OUT")"
+
+# ------------------------------------------------------------------
 # (L)(M) CLI: skipped と実行前提の欠落
 # ------------------------------------------------------------------
 echo "== (L)(M) CLI（skipped / prereq） =="
@@ -501,7 +628,9 @@ td_make_project "$TD_PROJ_NOMD"
 rm -f "${TD_PROJ_NOMD}/CLAUDE.md"
 PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_NOMD" --pm npm > "$TD_OUT" 2>/dev/null
 TD_EXIT=$?
-assert_eq "CLAUDE.md 不在でも checks は7件出る（未検査を黙って落とさない）" "7" "$(jq -r '.checks | length' "$TD_OUT")"
+assert_eq "CLAUDE.md 不在でも checks は8件出る（未検査を黙って落とさない）" "8" "$(jq -r '.checks | length' "$TD_OUT")"
+assert_eq "claude_md_harness_terms も reason 付きで skipped" "true" \
+  "$(jq -r '.checks[] | select(.id == "claude_md_harness_terms") | (.result == "skipped" and (.reason | length > 0))' "$TD_OUT")"
 assert_eq "claude_md_doc_map は reason 付きで skipped" "true" \
   "$(jq -r '.checks[] | select(.id == "claude_md_doc_map") | (.result == "skipped" and (.reason | length > 0))' "$TD_OUT")"
 assert_eq "CLAUDE.md 不在は advisory なので exit 0" "0" "$TD_EXIT"

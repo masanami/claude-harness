@@ -26,6 +26,11 @@ DOCTOR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCTOR_PLUGIN_ROOT="$(cd "${DOCTOR_DIR}/.." && pwd -P)"
 DOCTOR_GENERATE_SETTINGS="${DOCTOR_PLUGIN_ROOT}/skills/init-project/scripts/generate-settings.sh"
 DOCTOR_CLAUDE_MD_TEMPLATE="${DOCTOR_PLUGIN_ROOT}/skills/init-project/templates/CLAUDE.md.template"
+# 生成物へ持ち込んではいけない harness／プラグイン固有語の正本（base-deny.json と同じ枠の
+# 設定ファイル）。スキル名は**ここに列挙しない**（skills/ 配下から実行時に導出する。
+# 一覧を書き写すと同期の要る2つ目のリストになる）。
+DOCTOR_HARNESS_TERMS_FILE="${DOCTOR_PLUGIN_ROOT}/skills/init-project/scripts/harness-terms.json"
+DOCTOR_SKILLS_DIR="${DOCTOR_PLUGIN_ROOT}/skills"
 
 # 終了コード（scripts/specs/doctor.md と一致させること）
 DOCTOR_EX_OK=0     # status が ok または warn
@@ -43,7 +48,8 @@ DOCTOR_LAUNCHER_ALLOW_RULE="Bash(claude-harness-run:*)"
 # からも読まれる（Claude Code v2.1.211 以降）。ここから外した層に在っても blocking のまま。
 DOCTOR_ALLOW_SCOPES="project user local"
 DOCTOR_DOC_MAP_HEADING="## ドキュメントマップ"
-# 「宣言どおりまだ無い」を表す状態語。skills/init-project/SKILL.md ステップ4 が書き込む語彙。
+# 「宣言どおりまだ無い」を表す状態語。ドキュメントマップ節を生成していた頃の /init-project が
+# 書き込んでいた語彙（現行テンプレートは節ごと生成しない。旧世代の生成物のために残す）。
 DOCTOR_DOC_MAP_PENDING_STATE="作成予定"
 
 # generate-settings.sh の合成関数（gs_*）を読み込む。BASH_SOURCE ガードにより main は
@@ -67,6 +73,7 @@ settings_base_allow|advisory
 claude_md_sections|advisory
 claude_md_placeholders|advisory
 claude_md_doc_map|advisory
+claude_md_harness_terms|advisory
 EOF
 }
 
@@ -293,6 +300,70 @@ doctor_doc_map_items_json() {
   done <<EOF
 $(doctor_doc_map_rows "$file")
 EOF
+  printf '%s\n' "$result"
+}
+
+# ------------------------------------------------------------------
+# harness 固有語の混入（skills/init-project/SKILL.md ステップ4 の生成規定に対応する検出）
+# ------------------------------------------------------------------
+#
+# 生成物（導入先の CLAUDE.md）は「そのリポジトリの性質」を書く場所であり、harness を使うか
+# どうかは**オペレータの性質**である（docs/settings-governance.md §1 の割当と同じ切り分け）。
+# 生成物はテンプレート追従を持たないため、混入すると古いスキル名・古い呼び出し形が
+# プロジェクト側に固定化する。
+
+# 引数: harness-terms.json のパス → literals[].term を1行ずつ。
+# ファイル不在・スキーマ不正は非0で返す（呼び出し側が skipped にする）。base-deny.json と
+# 同じ理由で、この設定ファイルの欠損が診断そのものを落とすことは避ける。
+doctor_harness_literal_terms() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  jq -e -r '
+    if (type == "object" and (.literals | type) == "array"
+        and ([.literals[] | select((type == "object") and (.term | type) == "string"
+                                   and (.term | length) > 0)] | length) == (.literals | length)
+        and (.literals | length) > 0)
+    then .literals[].term else error("invalid schema") end' "$file" 2>/dev/null
+}
+
+# 引数: skills ディレクトリ → スラッシュコマンド名（`/<スキル名>`）を1行ずつ。
+# **名前に `-` を含むスキルだけ**を対象にする。語彙の除外リスト（`/commit` は一般的だから外す
+# 等）を作ると、それが同期の要る2つ目のリストになる。代わりに**形の制約**で落とす
+# （doctor_doc_map_rows が表の見出し行を語彙でなく形で落とすのと同じ規律）。
+# 単語1つのスキル名（commit / demo / impl）は導入先プロジェクトの語やパスと衝突しうるため、
+# 混入の検出対象から外れる — 取りこぼす代わりに誤検出を出さない側に倒している。
+doctor_harness_skill_terms() {
+  local dir="$1" path name
+  [ -d "$dir" ] || return 0
+  for path in "$dir"/*/; do
+    [ -d "$path" ] || continue
+    name="$(basename "$path")"
+    case "$name" in
+      *-*) printf '/%s\n' "$name" ;;
+    esac
+  done
+}
+
+# 引数: harness-terms.json, skills ディレクトリ → 検出語の一覧（重複除去）。
+# 設定ファイルが読めなければ非0（スキル名だけで代用しない。正本の欠損を成功に見せない）。
+doctor_harness_terms() {
+  local file="$1" dir="$2" literals
+  literals="$(doctor_harness_literal_terms "$file")" || return 1
+  { printf '%s\n' "$literals"; doctor_harness_skill_terms "$dir"; } \
+    | grep -v '^$' | LC_ALL=C sort -u
+}
+
+# 引数: 対象 CLAUDE.md, 検出語（改行区切り・stdin） → [{term, line}] の JSON 配列。
+# 一致はリテラルの部分文字列（grep -F）。最初に現れた行番号だけを返す。
+doctor_harness_term_hits_json() {
+  local file="$1" term hit result='[]'
+  [ -f "$file" ] || { echo '[]'; return 0; }
+  while IFS= read -r term; do
+    [ -z "$term" ] && continue
+    hit="$(grep -Fn -- "$term" "$file" 2>/dev/null | head -1 | cut -d: -f1)"
+    [ -z "$hit" ] && continue
+    result="$(jq -c --arg t "$term" --argjson l "$hit" '. + [{term: $t, line: $l}]' <<<"$result")"
+  done
   printf '%s\n' "$result"
 }
 
@@ -566,6 +637,8 @@ EOF
       '. + [{id: "claude_md_placeholders", severity: $sev, result: "skipped", reason: $reason}]' <<<"$checks")"
     checks="$(jq -c --arg sev "$(doctor_severity_of claude_md_doc_map)" --arg reason "$reason" \
       '. + [{id: "claude_md_doc_map", severity: $sev, result: "skipped", reason: $reason}]' <<<"$checks")"
+    checks="$(jq -c --arg sev "$(doctor_severity_of claude_md_harness_terms)" --arg reason "$reason" \
+      '. + [{id: "claude_md_harness_terms", severity: $sev, result: "skipped", reason: $reason}]' <<<"$checks")"
   else
     local missing_sections_json
     missing_sections_json="$(doctor_missing_sections "$DOCTOR_CLAUDE_MD_TEMPLATE" "$claude_md" | doctor_lines_to_json_array)"
@@ -616,6 +689,27 @@ EOF
                  summary: ("ドキュメントマップの " + ($items | length | tostring) + " 行が実ファイルと一致しない"),
                  items: $items,
                  remediation: "実体を作成するか、CLAUDE.md のドキュメントマップの状態を更新する"}]' <<<"$findings")"
+      fi
+    fi
+
+    local harness_terms harness_hits
+    if ! harness_terms="$(doctor_harness_terms "$DOCTOR_HARNESS_TERMS_FILE" "$DOCTOR_SKILLS_DIR")"; then
+      checks="$(jq -c --arg sev "$(doctor_severity_of claude_md_harness_terms)" \
+        --arg reason "harness-terms.json が読めない（インストール破損）: ${DOCTOR_HARNESS_TERMS_FILE}" \
+        '. + [{id: "claude_md_harness_terms", severity: $sev, result: "skipped", reason: $reason}]' <<<"$checks")"
+    else
+      harness_hits="$(printf '%s\n' "$harness_terms" | doctor_harness_term_hits_json "$claude_md")"
+      if [ "$(jq -r 'length' <<<"$harness_hits")" = "0" ]; then
+        checks="$(jq -c --arg sev "$(doctor_severity_of claude_md_harness_terms)" \
+          '. + [{id: "claude_md_harness_terms", severity: $sev, result: "ok"}]' <<<"$checks")"
+      else
+        checks="$(jq -c --arg sev "$(doctor_severity_of claude_md_harness_terms)" \
+          '. + [{id: "claude_md_harness_terms", severity: $sev, result: "finding"}]' <<<"$checks")"
+        findings="$(jq -c --arg sev "$(doctor_severity_of claude_md_harness_terms)" --argjson items "$harness_hits" \
+          '. + [{check: "claude_md_harness_terms", severity: $sev,
+                 summary: ("CLAUDE.md に harness／プラグイン固有の語が " + ($items | length | tostring) + " 件ある"),
+                 items: $items,
+                 remediation: "該当行を、プロジェクト自身のコマンド・規約の記述に置き換えるか削除する（ハーネスの使い方はオペレータの性質であり、リポジトリの CLAUDE.md には書かない）"}]' <<<"$findings")"
       fi
     fi
   fi
