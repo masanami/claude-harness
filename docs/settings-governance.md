@@ -1,6 +1,6 @@
 # 許可設定の統治 — 3 層の役割分担と、プロジェクト settings が保証しない範囲
 
-Claude Code の permission ルール（`allow` / `ask` / `deny`）は複数の settings ファイルに分かれて置ける。本文書は claude-harness が**どの層に何を置くか**、および**プロジェクトの `.claude/settings.json` が何を保証しないか**の正本である。`/init-project` の生成物（`skills/init-project/scripts/generate-settings.sh`）と `doctor`（`scripts/specs/doctor.md`）はこの割当に従う。
+Claude Code の permission ルール（`allow` / `ask` / `deny`）は複数の settings ファイルに分かれて置ける。本文書は claude-harness が**どの層に何を置くか**、および**プロジェクトの `.claude/settings.json` が何を保証しないか**の正本である。`/init-project` の生成物（`skills/init-project/scripts/generate-settings.sh`）と `preflight`（`scripts/specs/preflight.md`）はこの割当に従う。
 
 **結論を先に書く**:
 
@@ -103,7 +103,7 @@ tracked の `.claude/settings.json` に書いたルールが**効かない**状�
 
 ### ユーザー設定向けスニペット
 
-`/init-project` は生成結果とあわせて次の形のスニペットを提示する（プロジェクトの PM・テストランナー・infra に応じて行が増減する）。**ファイルへの書き込みは人間が行う**（エージェントは `settings.json` を書き換えない。`scripts/specs/doctor.md`「自動適用しない」）。
+`/init-project` は生成結果とあわせて次の形のスニペットを提示する（プロジェクトの PM・テストランナー・infra に応じて行が増減する）。**ファイルへの書き込みは人間が行う**（エージェントは `settings.json` を書き換えない。`scripts/specs/preflight.md`「自動適用しない」）。
 
 ```json
 {
@@ -126,14 +126,14 @@ tracked の `.claude/settings.json` に書いたルールが**効かない**状�
 |---|---|
 | **新規に `/init-project` を実行するプロジェクト** | 生成する `.claude/settings.json` の `allow` は運用 allow を含まない（deny 専用）。外した allow はユーザー設定向けスニペットとして完了報告に出す |
 | **既に導入済みのプロジェクト**（`allow` に `Bash(bash:*)` 等が残っている） | **触らない。一斉是正しない。** 残っていても動作は変わらない（従来どおり trust 済みの環境で prompt が減るだけ）。deny 専用にしたければ、そのリポジトリの判断で手で外す。`generate-settings.sh` の冪等マージは**既存の allow を削らない** |
-| **`doctor`** | `settings_launcher_allow` / `settings_base_allow` は、ルールがユーザー設定（オペレータ層）に在れば **blocking にしない**。tracked にも オペレータ層にも無いときだけ blocking。是正の提示は「チーム共有が不要ならユーザー設定でよい」を含む |
+| **`preflight`** | `settings_launcher_allow` / `settings_base_allow` は、ルールがユーザー設定（オペレータ層）に在れば **blocking にしない**。tracked にも オペレータ層にも無いときだけ blocking。是正の提示は「チーム共有が不要ならユーザー設定でよい」を含む |
 | **`/init-project` の再実行** | 既存の allow は保持される（削らない）。新規に足す allow は無い。deny の不足分だけがマージされる |
 | **tracked に運用 allow を手で足しているリポジトリ** | **触らない。一斉是正しない。** 新たに足すのは非推奨（§4）だが、既に在るものを外すかはそのリポジトリの判断 |
 
 ### 変更の分割（Issue #227 / #222 / #226）
 
 1. **設計（本文書）**: 割当表・保証しない範囲・移行方針を先に確定する。
-2. **`doctor` の判定変更（#222）**: ユーザー設定に在る allow を受理して blocking を落とす。生成物の変更より先に入れることで、「生成物から allow を外したら doctor が赤になる」順序の逆転を防ぐ。
+2. **`preflight`（当時の名前は `doctor`）の判定変更（#222）**: ユーザー設定に在る allow を受理して blocking を落とす。生成物の変更より先に入れることで、「生成物から allow を外したら preflight が赤になる」順序の逆転を防ぐ。
 3. **生成物の変更（#227・#226）**: `generate-settings.sh` の `allow` から運用 allow（`Bash(bash:*)` を含む）を外し、スニペット出力を足す。#226（既定 allow の `Bash(bash:*)`）はこの変更で完了条件を満たす。
 
 ---
@@ -141,7 +141,7 @@ tracked の `.claude/settings.json` に書いたルールが**効かない**状�
 ## 6. 関連文書
 
 - `docs/script-launcher.md` §6 — `Bash(claude-harness-run:*)` の保証範囲と、`deny` がプロセスツリーに効かないことの正本
-- `scripts/specs/doctor.md` — `doctor` の判定規則の正本（オペレータ層の扱いを含む）
+- `scripts/specs/preflight.md` — `preflight` の判定規則の正本（オペレータ層の扱いを含む）
 - `skills/init-project/SKILL.md` ステップ6 — 生成物の契約とスニペットの提示（本文書 §1 の決定を参照する）
 - `skills/init-project/SKILL.md` ステップ4 — 生成物へ harness／プラグイン固有の語を書かない規定（出所の規律。本文書 §1 の決定と対）
 - `docs/getting-started.md` §2 — 導入手順と「許可設定をどこに置くか」

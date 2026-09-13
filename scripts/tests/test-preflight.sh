@@ -1,7 +1,7 @@
 #!/bin/bash
-# test-doctor.sh
-# scripts/doctor.sh の純粋関数・CLI 挙動・**非破壊性**をテストする。
-# 仕様の正本は scripts/specs/doctor.md。
+# test-preflight.sh
+# scripts/preflight.sh の純粋関数・CLI 挙動・**非破壊性**をテストする。
+# 仕様の正本は scripts/specs/preflight.md。
 #
 # 本テストが固定するもの:
 #   (A) severity 表の双方向一致（スクリプト内の表 ↔ 仕様の表）。片方だけ増減すると落ちる。
@@ -11,7 +11,7 @@
 #   (C)-(I) 純粋関数の単体テスト（空集合ケース・否定検査・真理値表を必ず含める）
 #   (J)-(M) CLI の契約（checks の全称性・status・exit code・stdout の有無）
 #   (N)(O) **非破壊性**: 実行前後でフィクスチャがバイト一致すること／その検査が
-#       「書き込む doctor」を実際に落とすこと（変異注入）
+#       「書き込む preflight」を実際に落とすこと（変異注入）
 #   (P)(Q) generate-settings.sh の冪等マージが**既存 allow を1件も減らさない**こと／
 #       その検算が「既存を捨てるマージ」を実際に落とすこと（変異注入）
 #
@@ -22,19 +22,19 @@
 # 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする。
 # scripts/README.md「テスト」節）。文字列一致は grep -F / bash の文字列比較で行う。
 #
-# 実行方法: bash scripts/tests/test-doctor.sh
+# 実行方法: bash scripts/tests/test-preflight.sh
 # 失敗時は非0 exitし、失敗したテスト名を要約として出力する。
 
 set -u
 
 TD_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TD_REPO_ROOT="$(cd "${TD_TEST_DIR}/../.." && pwd -P)"
-TD_DOCTOR="${TD_REPO_ROOT}/scripts/doctor.sh"
-TD_SPEC="${TD_REPO_ROOT}/scripts/specs/doctor.md"
+TD_DOCTOR="${TD_REPO_ROOT}/scripts/preflight.sh"
+TD_SPEC="${TD_REPO_ROOT}/scripts/specs/preflight.md"
 TD_GENERATE_SETTINGS="${TD_REPO_ROOT}/skills/init-project/scripts/generate-settings.sh"
 TD_TEMPLATE="${TD_REPO_ROOT}/skills/init-project/templates/CLAUDE.md.template"
 
-# doctor.sh を source すると generate-settings.sh の gs_* も読み込まれる（doctor 側が source するため）
+# preflight.sh を source すると generate-settings.sh の gs_* も読み込まれる（preflight 側が source するため）
 # shellcheck source=/dev/null
 source "$TD_DOCTOR"
 
@@ -152,7 +152,7 @@ assert_eq "両方に在れば両方" '["deny","ask"]' "$(doctor_shadowed_by_json
 # 明示的な仮定の固定（否定検査）: 前置き一致どうしの打ち消しは検出対象外。
 # 意味論の実測記録が無いため推測で実装しない、という仕様上の決定をここで固定する。
 assert_eq "前置きが同じだけの別ルールは shadowing として検出しない（仕様上の明示的な仮定）" "[]" \
-  "$(doctor_shadowed_by_json "$TD_RULE" '["Bash(claude-harness-run doctor)"]' '[]' | jq -c .)"
+  "$(doctor_shadowed_by_json "$TD_RULE" '["Bash(claude-harness-run preflight)"]' '[]' | jq -c .)"
 
 # ------------------------------------------------------------------
 # (E2) doctor_rule_locations_json（3 層のどこに在るかを返す。空集合ケースと順序を含む）
@@ -605,7 +605,7 @@ assert_eq "items に行番号が出る" "true" \
 
 # 設定ファイル（正本）が読めないときは skipped。exit 2 にして blocking の検査まで
 # 巻き添えにしない（base-deny.json を診断が読まない理由と同じ規律）。
-TD_DOCTOR_NOTERMS="$(mktemp "${TD_REPO_ROOT}/scripts/.doctor.noterms.XXXXXX")"
+TD_DOCTOR_NOTERMS="$(mktemp "${TD_REPO_ROOT}/scripts/.preflight.noterms.XXXXXX")"
 TD_MUTANTS+=("$TD_DOCTOR_NOTERMS")
 sed 's#^DOCTOR_HARNESS_TERMS_FILE=.*#DOCTOR_HARNESS_TERMS_FILE="/nonexistent/harness-terms.json"#' \
   "$TD_DOCTOR" > "$TD_DOCTOR_NOTERMS"
@@ -671,12 +671,12 @@ TD_SNAPSHOT="${TD_TMP_DIR}/nondestructive.snapshot"
 cp -R "$TD_PROJ_NB" "$TD_SNAPSHOT"
 
 PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_NB" --pm npm >/dev/null 2>&1
-assert_eq "doctor 実行後もフィクスチャがバイト一致（何も書き換えない）" "same" \
+assert_eq "preflight 実行後もフィクスチャがバイト一致（何も書き換えない）" "same" \
   "$(td_snapshot_diff "$TD_PROJ_NB" "$TD_SNAPSHOT")"
 
-# 変異注入: 「書き込む doctor」を作り、上の検算が実際に落ちることを確認する。
+# 変異注入: 「書き込む preflight」を作り、上の検算が実際に落ちることを確認する。
 # 原本は書き換えない（同じディレクトリにコピーを作り、コピーへ注入する）。
-TD_DOCTOR_MUTANT="$(mktemp "${TD_REPO_ROOT}/scripts/.doctor.mutant.XXXXXX")"
+TD_DOCTOR_MUTANT="$(mktemp "${TD_REPO_ROOT}/scripts/.preflight.mutant.XXXXXX")"
 TD_MUTANTS+=("$TD_DOCTOR_MUTANT")
 awk '{ print }
      /^  local checks=/ && !injected { print "  printf \"mutated\\n\" >> \"$target\""; injected = 1 }' \
@@ -689,7 +689,7 @@ td_make_project "$TD_PROJ_MUT"
 TD_SNAPSHOT_MUT="${TD_TMP_DIR}/mutated.snapshot"
 cp -R "$TD_PROJ_MUT" "$TD_SNAPSHOT_MUT"
 PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR_MUTANT" --project "$TD_PROJ_MUT" --pm npm >/dev/null 2>&1
-assert_eq "書き込む doctor は非破壊の検算に落とされる（検算が空虚に真でない）" "changed" \
+assert_eq "書き込む preflight は非破壊の検算に落とされる（検算が空虚に真でない）" "changed" \
   "$(td_snapshot_diff "$TD_PROJ_MUT" "$TD_SNAPSHOT_MUT")"
 
 # ------------------------------------------------------------------
@@ -697,7 +697,7 @@ assert_eq "書き込む doctor は非破壊の検算に落とされる（検算�
 # ------------------------------------------------------------------
 echo "== (P)(Q) 是正コマンドの非破壊性 =="
 
-# doctor が提示する是正コマンドの一つは generate-settings.sh の再実行である（deny の不足を
+# preflight が提示する是正コマンドの一つは generate-settings.sh の再実行である（deny の不足を
 # マージし、運用 allow はユーザー設定向けスニペットとして提示する）。それが**人間の記述を
 # 消さない**ことを、既存要素の多重集合の差で検算する（削除範囲を比較対象から除外しない）。
 td_lost_entries_count() {

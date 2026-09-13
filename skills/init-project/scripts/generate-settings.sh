@@ -298,7 +298,7 @@ gs_build_user_settings_snippet_json() {
 # 引数: pm, testFWカンマ区切り, infraカンマ区切り, base_deny_json
 # 戻り値: {"permissions":{"allow":[],"deny":[...]}} の完全な settings JSON（プロジェクト settings。deny 専用）
 # pm / test / infra はプロジェクト settings の内容には影響しない（スニペット側で使う）。
-# 引数を残しているのは、呼び出し側（doctor.sh 等）の契約を変えないため。
+# 引数を残しているのは、呼び出し側（preflight.sh 等）の契約を変えないため。
 gs_build_generated_settings_json() {
   local pm="$1" test_csv="$2" infra_csv="$3" base_deny_json="$4"
   local allow_all deny_all

@@ -243,7 +243,7 @@ assert_eq "末尾の行が /doctor を案内する" "true" \
 assert_eq "案内が 200 行の目標値に言及する" "true" \
   "$(printf '%s' "$TT_LAST_LINE" | grep -Fq "$TT_MAX_LINES" && echo true || echo false)"
 # 案内は Claude Code 本体のセッションコマンドを指す。同名の同梱スクリプト
-# （claude-harness-run doctor）を指してしまうと、生成物へ harness 固有語が入る。
+# （claude-harness-run preflight）を指してしまうと、生成物へ harness 固有語が入る。
 assert_eq "案内に harness 固有語（ランチャー名）が混ざっていない（否定検査）" "false" \
   "$(grep -Fq 'claude-harness' "$TT_TEMPLATE" && echo true || echo false)"
 

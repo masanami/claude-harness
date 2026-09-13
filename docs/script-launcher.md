@@ -205,7 +205,7 @@ bash "<解決済みプラグインルート>/scripts/xxx.sh" <引数>
 
 `Bash(claude-harness-run:*)` を allow に入れると、**その1行が settings.json の `deny` / `ask` より優先されるわけではない**が、permission マッチャが見るのは外側の `claude-harness-run …` だけである。つまり「ランチャーの向こう側で何が実行されるか」は permission の統治対象にならない。したがって**ランチャー配下のスクリプトが任意コマンドを実行できてはならない**。
 
-以前はこれが成立していなかった（Issue #223）。`quality-check-runner` と `mutation-run` は受け取ったコマンド文字列を `bash -c` に渡していたため、`claude-harness-run quality-check-runner --lint "<任意のコマンド>"` で `Bash(rm -r:*)` / `Bash(git push --force:*)` / `Bash(sudo:*)` といった deny を素通りできた。`doctor` の `settings_launcher_allow` はこの allow を是正として提示するため、**doctor に従うほど deny が無効化される**状態だった。
+以前はこれが成立していなかった（Issue #223）。`quality-check-runner` と `mutation-run` は受け取ったコマンド文字列を `bash -c` に渡していたため、`claude-harness-run quality-check-runner --lint "<任意のコマンド>"` で `Bash(rm -r:*)` / `Bash(git push --force:*)` / `Bash(sudo:*)` といった deny を素通りできた。`preflight`（当時の名前は `doctor`）の `settings_launcher_allow` はこの allow を是正として提示するため、**preflight に従うほど deny が無効化される**状態だった。
 
 ### 現在の契約
 
@@ -261,4 +261,4 @@ bash "<解決済みプラグインルート>/scripts/xxx.sh" <引数>
 | 意図と違うバージョンが動いている | `claude-harness-run --plugin-root` で解決先を確認する。キャッシュには旧バージョンが残るため、`installed_plugins.json` が壊れていると予備の cache 走査（最大バージョン）に落ちる |
 | `script not found: …` (exit 66) | target 名の綴り違い。`claude-harness-run --list` で一覧を確認する |
 | permission 拒否が続く | 呼び出し形の先頭トークンが `claude-harness-run` になっているか確認する（`bash` やパスの前置・環境変数の前置はマッチしない。§2 の表を参照） |
-| 導入先プロジェクトが現行版の前提を満たしているか確かめたい | `claude-harness-run doctor --project "<プロジェクトルート>"` を実行する。ランチャーの導入状況・解決先のバージョン・`.claude/settings.json` の allow 不足を診断し、是正コマンドを提示する（何も書き換えない。契約は `scripts/specs/doctor.md`） |
+| 導入先プロジェクトが現行版の前提を満たしているか確かめたい | `claude-harness-run preflight --project "<プロジェクトルート>"` を実行する。ランチャーの導入状況・解決先のバージョン・`.claude/settings.json` の allow 不足を診断し、是正コマンドを提示する（何も書き換えない。契約は `scripts/specs/preflight.md`） |
