@@ -1,10 +1,10 @@
 #!/bin/bash
-# doctor.sh
-# 使い方: doctor.sh [--project <dir>] [--target <path>] [--claude-md <path>]
+# preflight.sh
+# 使い方: preflight.sh [--project <dir>] [--target <path>] [--claude-md <path>]
 #                   [--pm <pm>] [--test <fw>]... [--infra <infra>]... [--input <file|->]
 # 導入先プロジェクトが claude-harness の現行版を使うための前提を満たしているかを診断し、
 # {status, project, settings, claudeMd, counts, checks, findings} の JSON を stdout に1個返す。
-# 仕様の正本は scripts/specs/doctor.md を参照。
+# 仕様の正本は scripts/specs/preflight.md を参照。
 #
 # なぜあるか（実装を読む人向けの注記）:
 # - /init-project は生成物のテンプレート追従を持たないため、harness が要求する呼び出し形を
@@ -18,7 +18,7 @@
 #   書き写すと2つのリストの同期が要り、ずれても誰も気付かない（生成器が allow を足しても
 #   診断が要求しなくなり、追従漏れの検出という目的が静かに失われる）。
 # - severity は下の表で固定し、実行時に判定しない。実行時に決める形にすると
-#   「赤を避けたい」方向へ静かに漂う。表と仕様の双方向一致は test-doctor.sh が固定する。
+#   「赤を避けたい」方向へ静かに漂う。表と仕様の双方向一致は test-preflight.sh が固定する。
 
 set -u
 
@@ -32,14 +32,14 @@ DOCTOR_CLAUDE_MD_TEMPLATE="${DOCTOR_PLUGIN_ROOT}/skills/init-project/templates/C
 DOCTOR_HARNESS_TERMS_FILE="${DOCTOR_PLUGIN_ROOT}/skills/init-project/scripts/harness-terms.json"
 DOCTOR_SKILLS_DIR="${DOCTOR_PLUGIN_ROOT}/skills"
 
-# 終了コード（scripts/specs/doctor.md と一致させること）
+# 終了コード（scripts/specs/preflight.md と一致させること）
 DOCTOR_EX_OK=0     # status が ok または warn
 DOCTOR_EX_FAIL=1   # blocking の finding が1件以上（status: fail）
 DOCTOR_EX_PREREQ=2 # 実行前提の欠落（stdout には何も出さない）
 
 DOCTOR_LAUNCHER_NAME="claude-harness-run"
 # 唯一の blocking な allow ルール。この文字列が generate-settings.sh のベース allow に
-# 含まれ続けることを test-doctor.sh が検査する（片方だけ変わると落ちる）。
+# 含まれ続けることを test-preflight.sh が検査する（片方だけ変わると落ちる）。
 DOCTOR_LAUNCHER_ALLOW_RULE="Bash(claude-harness-run:*)"
 # 運用 allow の要件を満たす置き場。project（tracked の .claude/settings.json）に加え、
 # オペレータ層（ユーザー設定 / settings.local.json）に在る allow も要件を満たすとみなす。
@@ -61,7 +61,7 @@ if [ -f "$DOCTOR_GENERATE_SETTINGS" ]; then
 fi
 
 # ------------------------------------------------------------------
-# 検査項目表（severity の正本はここと scripts/specs/doctor.md の表）
+# 検査項目表（severity の正本はここと scripts/specs/preflight.md の表）
 # ------------------------------------------------------------------
 
 doctor_severity_table() {
@@ -146,7 +146,7 @@ doctor_settings_field_json() {
 
 # 引数: ルール文字列, deny(JSON配列), ask(JSON配列)
 # **完全一致の shadowing のみ**を検出する。前置き一致どうしの打ち消しの意味論は
-# 本リポジトリに実測記録が無いため検出対象外（scripts/specs/doctor.md の明示的な仮定）。
+# 本リポジトリに実測記録が無いため検出対象外（scripts/specs/preflight.md の明示的な仮定）。
 doctor_shadowed_by_json() {
   local rule="$1" deny_json="$2" ask_json="$3"
   jq -n --arg rule "$rule" --argjson deny "$deny_json" --argjson ask "$ask_json" '
@@ -392,7 +392,7 @@ doctor_exit_code_of_status() {
 
 doctor_print_usage() {
   cat >&2 <<'EOF'
-使い方: doctor.sh [--project <dir>] [--target <path>] [--claude-md <path>]
+使い方: preflight.sh [--project <dir>] [--target <path>] [--claude-md <path>]
                   [--pm <pm>] [--test <fw>]... [--infra <infra>]... [--input <file|->]
 EOF
 }
@@ -747,7 +747,7 @@ EOF
   fi
   printf '%s\n' "$output"
 
-  printf 'doctor: status=%s blocking=%s advisory=%s (%s)\n' \
+  printf 'preflight: status=%s blocking=%s advisory=%s (%s)\n' \
     "$status" \
     "$(jq -r '[.[] | select(.severity == "blocking")] | length' <<<"$findings")" \
     "$(jq -r '[.[] | select(.severity == "advisory")] | length' <<<"$findings")" \

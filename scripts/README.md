@@ -21,7 +21,7 @@
 | retirement-sweep.sh | `scripts/specs/retirement-sweep.md` |
 | codex-review-runner.sh | `scripts/specs/codex-review-runner.md` |
 | codex-task-runner.sh | `scripts/specs/codex-task-runner.md` |
-| doctor.sh | `scripts/specs/doctor.md` |
+| preflight.sh | `scripts/specs/preflight.md` |
 
 プラグイン内ファイル参照（Bash実行・Read・サブエージェント受け渡し等）のパス解決規約は `docs/plugin-path-conventions.md` を参照。本ファイルは scripts/ 配下の実装規約のみを扱う。
 

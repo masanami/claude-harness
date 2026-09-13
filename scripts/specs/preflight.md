@@ -1,8 +1,8 @@
-# doctor.sh の出力仕様（正本）
+# preflight.sh の出力仕様（正本）
 
 導入先プロジェクトが **claude-harness の現行版を使うための前提**を満たしているかを決定的に診断する。gh 呼び出しは一切行わない（gh 非依存）。**何も書き換えない**（読み取り専用）。
 
-> **`/doctor`（Claude Code 本体のセッションコマンド）とは別物である。** 本スクリプト（`claude-harness-run doctor`）が見るのは、導入先プロジェクトが本プラグインを使うための前提（ランチャー・settings の allow/deny・生成物の追従）である。本体の `/doctor` はインストール全体の健康診断で、**`CLAUDE.md` が長すぎる場合の trim 提案**（コードベースから導ける内容 — ディレクトリ構成・依存一覧・アーキテクチャ概要 — を削り、pitfalls・rationale・ツール既定と異なる規約を残す）を持つ。**分量の棚卸しは本スクリプトの責務ではない**（本スクリプトは行数を見ない）。同名で役割が違うため混同しないこと。CLI の `claude doctor` は設定ファイルの health check までで trim は提案しない（`claude doctor --help` に「For a full checkup that can also fix issues, run `/doctor` in a session」と明記。2026-09-10 / CLI 2.1.267 で確認）。
+> **`/doctor`（Claude Code 本体のセッションコマンド）とは別物である。** 本スクリプト（`claude-harness-run preflight`）が見るのは、導入先プロジェクトが本プラグインを使うための前提（ランチャー・settings の allow/deny・生成物の追従）である。本体の `/doctor` はインストール全体の健康診断で、**`CLAUDE.md` が長すぎる場合の trim 提案**（コードベースから導ける内容 — ディレクトリ構成・依存一覧・アーキテクチャ概要 — を削り、pitfalls・rationale・ツール既定と異なる規約を残す）を持つ。**分量の棚卸しは本スクリプトの責務ではない**（本スクリプトは行数を見ない）。役割が違うため混同しないこと（本スクリプトの旧名は `doctor`。改名の経緯は `CHANGELOG.md`）。CLI の `claude doctor` は設定ファイルの health check までで trim は提案しない（`claude doctor --help` に「For a full checkup that can also fix issues, run `/doctor` in a session」と明記。2026-09-10 / CLI 2.1.267 で確認）。
 
 `/init-project` は `CLAUDE.md` と `.claude/settings.json` を生成するが、生成物の**テンプレート追従（マイグレーション）**を持たない。そのため harness 側が要求する呼び出し形を変えても、先に scaffold された既存プロジェクトは追従できない。実害は allow 漏れで headless 委譲がブロックされる形で 4 回再発している（Issue #154 / #178）。本スクリプトはその追従漏れを**検出と提示**の側で塞ぐ。
 
@@ -14,7 +14,7 @@
 - 読み取り専用であることは、**実行前後のバイト一致（`cmp`）で機械的に検算できる**。書き込みを持つと、非破壊性の担保が「削除範囲を比較対象から除外した検算」＝空虚に真になりうる形へ後退する（claude-flywheel PR #94 で実際に起きた欠陥）。
 - allow の追加そのものは `skills/init-project/scripts/generate-settings.sh` の**冪等マージ**が既に持っている。本スクリプトはその再実行コマンドを提示するだけでよく、2 つ目のマージ実装を作らない。
 
-## `scripts/doctor.sh [--project <dir>] [--target <path>] [--claude-md <path>] [--pm <pm>] [--test <fw>]... [--infra <infra>]... [--input <file|->]`
+## `scripts/preflight.sh [--project <dir>] [--target <path>] [--claude-md <path>] [--pm <pm>] [--test <fw>]... [--infra <infra>]... [--input <file|->]`
 
 | 引数 | 内容 |
 |---|---|
@@ -35,7 +35,7 @@ harness が要求する allow の**正本は `generate-settings.sh` の `gs_buil
 
 ## 検査項目と severity（正本。実行時に判定しない）
 
-severity は**この表で固定**であり、実行時の状況で変えない。実行時に決める形にすると「赤を避けたい」方向へ静かに漂う。`scripts/tests/test-doctor.sh` が本表とスクリプト内の表の**双方向一致**を検査する（片方だけ増減すると落ちる）。
+severity は**この表で固定**であり、実行時の状況で変えない。実行時に決める形にすると「赤を避けたい」方向へ静かに漂う。`scripts/tests/test-preflight.sh` が本表とスクリプト内の表の**双方向一致**を検査する（片方だけ増減すると落ちる）。
 
 | id | 検査内容 | severity |
 |---|---|---|
@@ -63,7 +63,7 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 - ユーザー設定と `settings.local.json` は**チームに共有されない**（オペレータ層）。この事実は blocking の理由にはしないが、隠さない: `checks[]` の当該項目が `ok` のとき **`satisfied_by`**（`"project"` / `"user"` / `"local"` の配列）にどの層で満たされたかを出す。finding の `items[].found_in` は同じ情報を `[{scope, path}]` で持つ（shadowing で finding になった場合に、allow 自体はどこに在ったかを示す）。
 - `remediation` は**ユーザー設定への追記を第一候補**とし（「チーム共有が不要ならユーザー設定でよい」）、生成器 `generate-settings.sh` の再実行コマンド（診断条件つき）を併記する。プロジェクト settings を deny 専用にする割当（`docs/settings-governance.md` §1）に従い、allow の不足を「tracked に足せ」だけで是正させない。
 - **`DOCTOR_ALLOW_SCOPES` から外した層に在るルールは要件を満たさない**（例: `--settings` で渡す一時ファイル、managed settings）。検査対象の層を増やすときは、実測記録を `docs/settings-governance.md` に残してから表を変える。
-- **shadowing は完全一致のみ検出する**（`deny` / `ask` に allow と同一の文字列が在る場合）。優先順は deny > ask > allow。**前置き一致どうしの打ち消し（例: `Bash(claude-harness-run:*)` に対する `Bash(claude-harness-run doctor)` 等）の意味論は本リポジトリに実測記録が無いため、検出対象外**とする（明示的な仮定。実測できた時点で拡張する）。
+- **shadowing は完全一致のみ検出する**（`deny` / `ask` に allow と同一の文字列が在る場合）。優先順は deny > ask > allow。**前置き一致どうしの打ち消し（例: `Bash(claude-harness-run:*)` に対する `Bash(claude-harness-run preflight)` 等）の意味論は本リポジトリに実測記録が無いため、検出対象外**とする（明示的な仮定。実測できた時点で拡張する）。
 - **`Read(~/.claude/plugins/**)` は意図的に検査対象外**。生成設定へ加える案は「採らない」と決定済みである（理由 3 点は `docs/skill-note-inventory.md` 6 節の表: 権限拡大が広い／`CLAUDE_CONFIG_DIR` 利用環境・ローカルチェックアウトを 1 つの静的パターンで覆えない／既存の導入済みプロジェクトには効かない）。ランチャー不在時の正しい是正は**ランチャーを導入すること**（`docs/script-launcher.md` §2）であり、Read 許可の追加ではない。
 
 #### `claude_md_sections` / `claude_md_placeholders`
@@ -171,4 +171,4 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 
 `skills/init-project/SKILL.md` ステップ1。既存の `CLAUDE.md` が在るとき（＝再実行）に実行し、結果を提示したうえで上書き・マージ・中止を確認する。
 
-ランチャーが未導入の環境では `claude-harness-run doctor` そのものが実行できないため、その場合に限り `bash "<プラグインルート>/scripts/doctor.sh"` で起動する（`docs/plugin-path-conventions.md` (a) のフォールバック）。この経路で起動されたとき `launcher_on_path` が finding になり、導入コマンドが `remediation` に出る。
+ランチャーが未導入の環境では `claude-harness-run preflight` そのものが実行できないため、その場合に限り `bash "<プラグインルート>/scripts/preflight.sh"` で起動する（`docs/plugin-path-conventions.md` (a) のフォールバック）。この経路で起動されたとき `launcher_on_path` が finding になり、導入コマンドが `remediation` に出る。

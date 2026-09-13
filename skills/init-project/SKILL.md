@@ -23,14 +23,14 @@ effort: medium
 
 生成物は harness の更新に自動追従しない。とくに `.claude/settings.json` の allow が現行版の呼び出し形に追従できていないと、**headless 委譲でスクリプト実行が拒否されてスキルが完走できない**。診断はその不足を検出して是正コマンドを提示する。
 
-> **スクリプトの実行形**: `doctor.sh` はプラグイン配下（`scripts/`）にある。実行は PATH 上のランチャー経由で `claude-harness-run doctor --project "<プロジェクトルート>"` を用いる。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/doctor.sh" --project "<プロジェクトルート>"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
+> **スクリプトの実行形**: `preflight.sh` はプラグイン配下（`scripts/`）にある。実行は PATH 上のランチャー経由で `claude-harness-run preflight --project "<プロジェクトルート>"` を用いる。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/preflight.sh" --project "<プロジェクトルート>"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 
 - stdout に JSON が1個返る。`status` が `fail` のときは blocking の指摘（ランチャー未導入・`Bash(claude-harness-run:*)` の欠落・deny/ask による打ち消し）がある。**この状態のまま初期設定を続けても、以降のスキル実行は拒否され続ける**。`findings[].remediation` のコマンドをそのままユーザーに提示し、実行を促すこと
 - `status` が `warn` のときは advisory の指摘のみ（`CLAUDE.md` の節・プレースホルダ・ドキュメントマップ・harness 固有語の混入）。**検出と提示にとどめ、適用はユーザーに委ねる**
 - **エージェントは `.claude/settings.json` を書き換えない**（headless ではパス保護、対話 auto mode では分類器が書き込みを拒否する）。診断結果を代わりに適用しようとしないこと
 - exit 2 の場合は診断が成立していない。stderr のメッセージを添えて報告し、診断なしで続行してよいかをユーザーに確認する（**指摘0件として扱わないこと**）
 
-> **`claude-harness-run doctor` と `/doctor` は別物**（同名だが役割が違う。混同しないこと）。ここで実行するのは前者＝本プラグイン同梱の `scripts/doctor.sh` で、見るのは**このプラグインを使うための前提**（ランチャー・settings の allow/deny・生成物の追従）である。後者の `/doctor` は **Claude Code 本体のセッション内コマンド**（v2.1.206 以降）で、`CLAUDE.md` が長すぎる場合の **trim 提案**を持つ。**分量の棚卸しは `claude-harness-run doctor` の責務ではない**（行数を見ない）。生成した `CLAUDE.md` が育ってきたら、ユーザーにセッション内で `/doctor` を実行するよう案内する。CLI の `claude doctor` は設定ファイルの health check までで trim は提案しない。
+> **`claude-harness-run preflight` と `/doctor` は別物**（役割が違う。混同しないこと）。ここで実行するのは前者＝本プラグイン同梱の `scripts/preflight.sh` で、見るのは**このプラグインを使うための前提**（ランチャー・settings の allow/deny・生成物の追従）である。後者の `/doctor` は **Claude Code 本体のセッション内コマンド**（v2.1.206 以降）で、`CLAUDE.md` が長すぎる場合の **trim 提案**を持つ。**分量の棚卸しは `claude-harness-run preflight` の責務ではない**（行数を見ない）。生成した `CLAUDE.md` が育ってきたら、ユーザーにセッション内で `/doctor` を実行するよう案内する。CLI の `claude doctor` は設定ファイルの health check までで trim は提案しない。
 
 ### 2. プロジェクト自動分析
 
@@ -119,7 +119,7 @@ effort: medium
 - **混入経路は自由記述のプレースホルダ**（`{QUALITY_POLICY}` / `{COMMON_COMMANDS}` / `{TEST_APPROACH}` / `{NEW_FILE_PLACEMENT}`）である。品質ゲートやコマンドには、**プロジェクト自身のコマンド**（`npm test` 等）だけを書く。ハーネス経由でしか実行できないコマンドは書かない。
 - **プロジェクトが日常的に harness のコマンドを使う場合でも、`CLAUDE.md` には書かない。** 置き場は各オペレータの環境（ユーザー設定・各自の手順書）か、リポジトリの `README`／オンボーディング文書である。`CLAUDE.md` に書くと、harness を使わない参加者にも常時ロードされる。
 - **線引き — ステップ7 の完了報告はこの規定の対象外**。あれは**会話に出す案内であって生成物ではない**ため、`/define-feature` `/create-ticket` のようなスキル名を含んでよい。規定が縛るのはファイルに書き出す `CLAUDE.md` と `.claude/settings.json` である。
-- 混入は `claude-harness-run doctor` の `claude_md_harness_terms`（advisory）が機械的に検出する。検出語の正本は `skills/init-project/scripts/harness-terms.json`（固定語）と `skills/` 配下のディレクトリ名（スキル名を実行時に導出）。
+- 混入は `claude-harness-run preflight` の `claude_md_harness_terms`（advisory）が機械的に検出する。検出語の正本は `skills/init-project/scripts/harness-terms.json`（固定語）と `skills/` 配下のディレクトリ名（スキル名を実行時に導出）。
 
 ### 5. 選定ドキュメントの雛形作成（任意）
 

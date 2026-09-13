@@ -10,8 +10,8 @@
 # `quality-check-runner.sh` / `mutation-run.sh` は受け取った文字列を `bash -c "$cmd"` で
 # 実行していた。Claude Code の Bash permission マッチャは外側の `claude-harness-run ...` しか
 # 見ないため、`Bash(claude-harness-run:*)` を allow した利用側では **その settings.json の
-# deny（`Bash(rm -r:*)` 等）を迂回して任意コマンドを実行できた**。doctor の
-# `settings_launcher_allow` はこの allow を是正として提示するため、doctor に従うほど
+# deny（`Bash(rm -r:*)` 等）を迂回して任意コマンドを実行できた**。preflight の
+# `settings_launcher_allow` はこの allow を是正として提示するため、preflight に従うほど
 # deny が無効化される状態だった。
 #
 # ■ 2段の防御（片方だけでは塞がらない）
