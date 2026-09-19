@@ -67,7 +67,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 ### 許可設定をどこに置くか
 
-ランチャーの allow は**ユーザー設定** `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` に置きます。プロジェクトの `.claude/settings.json` は deny 専用（リポジトリの性質）で、`/init-project` は運用上の allow をそこへ書き込みません（ユーザー設定向けのスニペットを提示します）。
+ランチャーの allow は**ユーザー設定** `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` に置きます。プロジェクトの `.claude/settings.json` は**制限専用**（`deny` と `ask` だけ＝リポジトリの性質）で、`/init-project` は運用上の allow をそこへ書き込みません（ユーザー設定向けのスニペットを提示します）。`deny` は取り返しのつかない操作、`ask` は本番へ反映されるリリース系（`git tag` / `gh workflow` / `cdk deploy` 等）に使います。
 
 ```json
 {

@@ -19,17 +19,18 @@
 #   --target <path> 出力先の .claude/settings.json パス（既定: ./.claude/settings.json）。
 #
 # 出力（stdout にJSON1個。scripts/README.md の出力規約に従う）:
-#   {"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M,
-#    "user_settings_path":"...","user_settings_snippet":{"permissions":{"allow":[...]}}}
+#   {"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"ask_count":A,
+#    "deny_count":M,"user_settings_path":"...","user_settings_snippet":{"permissions":{"allow":[...]}}}
 #
 # 挙動:
-#   - 生成するプロジェクト settings は **deny 専用**（allow は空）。deny の正本は base-deny.json。
+#   - 生成するプロジェクト settings は **制限専用**（allow は常に空で、deny と ask だけを書く）。
+#     deny の正本は base-deny.json、ask の正本は base-ask.json。
 #     運用上の allow（ランチャー・git/gh・pm別/testFW別/infra別）はプロジェクト settings へ
 #     書かず、ユーザー設定 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` 向けの
 #     スニペット `user_settings_snippet` として stdout に出す（書き込みは人間が行う）。
 #     割当の正本と根拠は docs/settings-governance.md
-#   - `--target` が既存ファイルの場合、既存の permissions.allow/deny を保持しつつ
-#     生成した deny の非重複分のみ追加する（冪等マージ。同じ入力で再実行しても差分なし。
+#   - `--target` が既存ファイルの場合、既存の permissions.allow/ask/deny を保持しつつ
+#     生成した deny / ask の非重複分のみ追加する（冪等マージ。同じ入力で再実行しても差分なし。
 #     **既存の allow は削らない**——既に導入済みのプロジェクトは触らない）
 #   - `--target` が存在しない場合は新規作成する（親ディレクトリも作成する）
 #   - jq 必須。jq 不在時は stderr にエラーメッセージ + エラーJSONを出し exit 非0（stdoutには何も出さない）
@@ -61,12 +62,13 @@ gs_union_unique_json() {
 }
 
 # ------------------------------------------------------------------
-# allow / deny の割当（single source of truth。正本は docs/settings-governance.md）
+# allow / ask / deny の割当（single source of truth。正本は docs/settings-governance.md）
 # ------------------------------------------------------------------
 #
-# プロジェクト settings（tracked）に書くのは deny だけ。allow は「誰が・どのマシンで・どの
-# 権限モードで動かすか」＝オペレータの性質であり、tracked に置いても trust 未承認のクローンや
+# プロジェクト settings（tracked）に書くのは制限（deny / ask）だけ。allow は「誰が・どのマシンで・
+# どの権限モードで動かすか」＝オペレータの性質であり、tracked に置いても trust 未承認のクローンや
 # bypassPermissions 起動では評価されない。deny は trust 不要・全モードで効く唯一の層である。
+# ask は trust 不要で効き、headless では実質 deny・対話では人間が判断できる（Issue #238）。
 # 以下の allow 群はユーザー設定向けスニペットの材料であり、プロジェクト settings には入れない。
 #
 # Bash(claude-harness-run:*) は本プラグイン同梱スクリプトのランチャー（bin/claude-harness-run）用。
@@ -79,12 +81,16 @@ gs_union_unique_json() {
 # （npm run が package.json の指示で呼ぶもの、make のレシピ等）や、ランナー自身が呼ぶ
 # git（mutation-run の復元処理）は permission 判定を受けない。
 #
+# `Bash(git push --force-with-lease:*)` は **allow に出さない**（2026-09-20 / Issue #238）。
+# `--force` / `-f` を deny しておきながら等価な履歴破壊の経路を allow で開けている状態
+# （宣言と実装の矛盾）だったため、allow から外して base-deny.json 側へ移した。
+#
 # Bash(bash:*) のような汎用実行系はどの層にも出力しない。どの層に在っても deny を迂回可能に
 # するため（docs/script-launcher.md §6「残る限界」）。ランチャー未導入時のフォールバック実行形
 # （bash "<プラグインルート>/scripts/…"）は対話セッションでの承認を前提にした縮退経路であり、
 # allow で常時開けておくものではない。
 
-# プロジェクト settings に生成する allow。deny 専用のため常に空。
+# プロジェクト settings に生成する allow。制限専用（deny / ask のみ）のため常に空。
 # 「ここに何を足すか」の判断基準は、リポジトリの性質と言えるか（誰が動かしても変わらないか）。
 # 運用上の都合（ツールの起動）は下のオペレータ allow へ。
 gs_project_allow_json() {
@@ -99,7 +105,6 @@ gs_base_allow_json() {
     "Bash(git push:*)",
     "Bash(git push origin:*)",
     "Bash(git push -u:*)",
-    "Bash(git push --force-with-lease:*)",
     "Bash(git fetch:*)",
     "Bash(git checkout:*)",
     "Bash(git switch:*)",
@@ -137,13 +142,14 @@ gs_validate_string_array_json() {
 
 # 引数: .claude/settings.json 相当のJSON文字列。
 # ルートがオブジェクトで、permissions が省略またはオブジェクト、
-# permissions.allow/deny が省略または文字列配列であることを検証する。
+# permissions.allow/ask/deny が省略または文字列配列であることを検証する。
 gs_validate_settings_schema() {
   local json="$1"
   jq -e '
     (type == "object")
     and ((.permissions == null) or (.permissions | type == "object"))
     and ((.permissions.allow == null) or ((.permissions.allow | type == "array") and (.permissions.allow | all(type == "string"))))
+    and ((.permissions.ask == null) or ((.permissions.ask | type == "array") and (.permissions.ask | all(type == "string"))))
     and ((.permissions.deny == null) or ((.permissions.deny | type == "array") and (.permissions.deny | all(type == "string"))))
   ' >/dev/null 2>&1 <<<"$json"
 }
@@ -161,39 +167,54 @@ gs_validate_analyze_input_schema() {
   ' >/dev/null 2>&1 <<<"$json"
 }
 
-# ベースdenyの正本（base-deny.json）を読み込む。
-# init-devcontainer 側もこのファイルを直接参照することで重複を排除している。
+# ベースdeny/askの正本（base-deny.json / base-ask.json）を読み込む。
+# init-devcontainer 側も base-deny.json を直接参照することで重複を排除している。
 # 配置場所は「共有 scripts/config/」ではなく本スキルのローカルscripts/配下:
 # このファイルの主たる所有者・更新者は generate-settings.sh（init-project）であり、
 # init-devcontainer は${CLAUDE_PLUGIN_ROOT}経由のパス参照で読むだけの副次的な利用者のため。
-# 引数: このスクリプトが置かれているディレクトリ（SCRIPT_DIR）
+# 引数: このスクリプトが置かれているディレクトリ（SCRIPT_DIR）, ファイル名
 #
-# base-deny.json はスクリプトと同一プラグイン内に同梱されており、欠損＝インストール破損
+# これらはスクリプトと同一プラグイン内に同梱されており、欠損＝インストール破損
 # なのでフォールバックせず、ファイル不在またはスキーマ不正の場合は stderr に
 # ファイルパスを含むエラーを出して非0 exitする（内蔵デフォルトへのフォールバックは行わない。
 # 古い内蔵コピーが黙って使われる方が deny 設定漏れとして危険なため。Issue #129）。
-gs_load_base_deny_json() {
-  local script_dir="$1"
-  local deny_file="${script_dir}/base-deny.json"
-  if [ ! -f "$deny_file" ]; then
-    echo "Error: base-deny.json not found: ${deny_file} (installation broken - this file should be bundled with the plugin)" >&2
+gs_load_rule_file_json() {
+  local script_dir="$1" filename="$2"
+  local rule_file="${script_dir}/${filename}"
+  if [ ! -f "$rule_file" ]; then
+    echo "Error: ${filename} not found: ${rule_file} (installation broken - this file should be bundled with the plugin)" >&2
     # ファイルパスをJSON文字列へ安全に埋め込むため jq --arg を使う（printf %s の直接埋め込みは
     # パスに `"` 等が含まれると不正なJSONを生成しうるため。セルフレビュー指摘: Issue #129）。
-    jq -nc --arg msg "base-deny.json not found: ${deny_file}" '{status:"error", error:$msg}' >&2
+    jq -nc --arg msg "${filename} not found: ${rule_file}" '{status:"error", error:$msg}' >&2
     return 1
   fi
   local content
-  content="$(jq -c '.' "$deny_file" 2>/dev/null)"
+  content="$(jq -c '.' "$rule_file" 2>/dev/null)"
   # 構文（valid JSON）だけでなく型契約（文字列配列）も検証する。
   # 有効なJSONでも型が違えば後続のunion/mergeでjqが失敗し、
   # 既存 .claude/settings.json の破損に繋がりうるため。
   if [ -z "$content" ] || ! gs_validate_string_array_json "$content"; then
-    echo "Error: base-deny.json is invalid or does not match expected schema (must be a JSON array of strings): ${deny_file}" >&2
-    jq -nc --arg msg "base-deny.json invalid schema: ${deny_file}" '{status:"error", error:$msg}' >&2
+    echo "Error: ${filename} is invalid or does not match expected schema (must be a JSON array of strings): ${rule_file}" >&2
+    jq -nc --arg msg "${filename} invalid schema: ${rule_file}" '{status:"error", error:$msg}' >&2
     return 1
   fi
   echo "$content"
   return 0
+}
+
+# 引数: このスクリプトが置かれているディレクトリ（SCRIPT_DIR）
+gs_load_base_deny_json() {
+  gs_load_rule_file_json "$1" base-deny.json
+}
+
+# ベース ask の正本（base-ask.json）。**deny ではなく ask に置く**のは、リリース系
+# （タグ付与・workflow dispatch・`cdk deploy` 等）が「壊れたら取り返しがつかないが、
+# 人間が意図してやることもある」操作だからである。ask は headless（`claude -p`）では
+# 拒否になり、対話セッションでは人間が判断できる — 自走委譲が単独で本番へ到達することは
+# 防ぎつつ、人間の手元での正規のリリース操作は止めない（Issue #238）。
+# 引数: このスクリプトが置かれているディレクトリ（SCRIPT_DIR）
+gs_load_base_ask_json() {
+  gs_load_rule_file_json "$1" base-ask.json
 }
 
 # ------------------------------------------------------------------
@@ -264,8 +285,14 @@ gs_infra_allow_json() {
     esac
   done
 
+  # `Bash(docker:*)` は出さない（2026-09-20 / Issue #238）。`docker run -v /:/host …` の
+  # 1 文字列でホスト FS 全域・`~/.aws` 等の認証情報へ到達できるため、サブコマンド単位へ狭める。
+  # ここに残す 3 つは「既存の compose 定義を動かす／状態を見る」もので、実行するプログラムを
+  # 呼び出し側が引数で指名する形ではない。
+  # **狭めても塞ぎ切れるわけではない**: `docker compose run <svc> <cmd>` は compose 定義さえ
+  # あれば任意のコマンドを起動できる（docs/settings-governance.md §3.1「保証の範囲」）。
   if [ "$has_docker" = "true" ]; then
-    echo '["Bash(docker:*)","Bash(docker compose:*)"]'
+    echo '["Bash(docker compose:*)","Bash(docker ps:*)","Bash(docker logs:*)"]'
   else
     echo '[]'
   fi
@@ -295,39 +322,48 @@ gs_build_user_settings_snippet_json() {
   jq -n --argjson allow "$allow_all" '{permissions: {allow: $allow}}'
 }
 
-# 引数: pm, testFWカンマ区切り, infraカンマ区切り, base_deny_json
-# 戻り値: {"permissions":{"allow":[],"deny":[...]}} の完全な settings JSON（プロジェクト settings。deny 専用）
+# 引数: pm, testFWカンマ区切り, infraカンマ区切り, base_deny_json, [base_ask_json]
+# 戻り値: {"permissions":{"allow":[],"ask":[...],"deny":[...]}} の完全な settings JSON
+#   （プロジェクト settings。allow は常に空で、制限（deny/ask）だけを書く）
 # pm / test / infra はプロジェクト settings の内容には影響しない（スニペット側で使う）。
 # 引数を残しているのは、呼び出し側（preflight.sh 等）の契約を変えないため。
+# base_ask_json は省略可（既定 `[]`）。preflight.sh は allow しか読まないため、
+# deny と同様に ask の正本を渡さずに呼べる必要がある。
 gs_build_generated_settings_json() {
-  local pm="$1" test_csv="$2" infra_csv="$3" base_deny_json="$4"
-  local allow_all deny_all
+  local pm="$1" test_csv="$2" infra_csv="$3" base_deny_json="$4" base_ask_json="${5:-[]}"
+  local allow_all ask_all deny_all
 
   allow_all="$(gs_project_allow_json)"
+  ask_all=$(jq -n --argjson a "$base_ask_json" '$a | unique')
   deny_all=$(jq -n --argjson d "$base_deny_json" '$d | unique')
 
-  jq -n --argjson allow "$allow_all" --argjson deny "$deny_all" \
-    '{permissions: {allow: $allow, deny: $deny}}'
+  jq -n --argjson allow "$allow_all" --argjson ask "$ask_all" --argjson deny "$deny_all" \
+    '{permissions: {allow: $allow, ask: $ask, deny: $deny}}'
 }
 
 # 引数: 既存settings.jsonの内容(文字列), 生成したsettings.jsonの内容(文字列)
 # 戻り値: マージ後の完全な settings JSON。
-#   - allow/deny は既存を保持しつつ生成側の非重複分を追加（union unique）
+#   - allow/ask/deny は既存を保持しつつ生成側の非重複分を追加（union unique）
 #   - permissions以外の既存トップレベルキー、permissions配下の他キーも保持する
 gs_merge_settings_json() {
   local existing="$1" generated="$2"
-  local existing_allow existing_deny gen_allow gen_deny merged_allow merged_deny
+  local existing_allow existing_ask existing_deny gen_allow gen_ask gen_deny
+  local merged_allow merged_ask merged_deny
 
   existing_allow=$(jq -c '.permissions.allow // []' <<<"$existing")
+  existing_ask=$(jq -c '.permissions.ask // []' <<<"$existing")
   existing_deny=$(jq -c '.permissions.deny // []' <<<"$existing")
   gen_allow=$(jq -c '.permissions.allow // []' <<<"$generated")
+  gen_ask=$(jq -c '.permissions.ask // []' <<<"$generated")
   gen_deny=$(jq -c '.permissions.deny // []' <<<"$generated")
 
   merged_allow=$(gs_union_unique_json "$existing_allow" "$gen_allow")
+  merged_ask=$(gs_union_unique_json "$existing_ask" "$gen_ask")
   merged_deny=$(gs_union_unique_json "$existing_deny" "$gen_deny")
 
-  jq -n --argjson existing "$existing" --argjson allow "$merged_allow" --argjson deny "$merged_deny" \
-    '$existing * {permissions: (($existing.permissions // {}) * {allow: $allow, deny: $deny})}'
+  jq -n --argjson existing "$existing" --argjson allow "$merged_allow" \
+    --argjson ask "$merged_ask" --argjson deny "$merged_deny" \
+    '$existing * {permissions: (($existing.permissions // {}) * {allow: $allow, ask: $ask, deny: $deny})}'
 }
 
 # ------------------------------------------------------------------
@@ -449,11 +485,14 @@ main() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-  local base_deny_json generated_json
+  local base_deny_json base_ask_json generated_json
   if ! base_deny_json="$(gs_load_base_deny_json "$script_dir")"; then
     exit 1
   fi
-  generated_json="$(gs_build_generated_settings_json "$pm" "$test_csv" "$infra_csv" "$base_deny_json")"
+  if ! base_ask_json="$(gs_load_base_ask_json "$script_dir")"; then
+    exit 1
+  fi
+  generated_json="$(gs_build_generated_settings_json "$pm" "$test_csv" "$infra_csv" "$base_deny_json" "$base_ask_json")"
 
   local existed="false" final_json
   if [ -f "$target" ]; then
@@ -524,8 +563,9 @@ main() {
   fi
   trap - EXIT
 
-  local allow_count deny_count created merged snippet_json user_settings_path
+  local allow_count ask_count deny_count created merged snippet_json user_settings_path
   allow_count=$(jq '.permissions.allow | length' <<<"$final_json")
+  ask_count=$(jq '.permissions.ask | length' <<<"$final_json")
   deny_count=$(jq '.permissions.deny | length' <<<"$final_json")
   if [ "$existed" = "true" ]; then created="false"; merged="true"; else created="true"; merged="false"; fi
   # ユーザー設定向けスニペット。ここでは提示するだけで、ユーザー設定には書き込まない
@@ -538,10 +578,12 @@ main() {
     --argjson created "$created" \
     --argjson merged "$merged" \
     --argjson allow_count "$allow_count" \
+    --argjson ask_count "$ask_count" \
     --argjson deny_count "$deny_count" \
     --arg user_settings_path "$user_settings_path" \
     --argjson snippet "$snippet_json" \
-    '{status:"ok", target:$target, created:$created, merged:$merged, allow_count:$allow_count, deny_count:$deny_count,
+    '{status:"ok", target:$target, created:$created, merged:$merged, allow_count:$allow_count,
+      ask_count:$ask_count, deny_count:$deny_count,
       user_settings_path:$user_settings_path, user_settings_snippet:$snippet}'
 }
 

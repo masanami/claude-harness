@@ -131,14 +131,16 @@ effort: medium
 
 ### 6. `.claude/settings.json` 生成とユーザー設定向けスニペットの提示
 
-プロジェクトの `.claude/settings.json`（git tracked）は **deny 専用**である。ここに書くのは「そのリポジトリで壊されたくないもの」＝リポジトリの性質であり、誰が動かしても変わらない。deny は trust 承認なしで即座に効き、どの権限モードでも効く。
+プロジェクトの `.claude/settings.json`（git tracked）は **制限専用**（`deny` と `ask` だけで、`allow` は 1 件も書かない）である。ここに書くのは「そのリポジトリで壊されたくないもの」＝リポジトリの性質であり、誰が動かしても変わらない。deny / ask は trust 承認なしで即座に効く（deny はどの権限モードでも効く）。
+
+`deny` と `ask` の切り分けは「人間が意図してやることがあるか」で決める。**取り返しのつかない操作は `deny`**（`rm -rf` / `git push --force` / `git push --force-with-lease` / `docker run` 等）、**本番へ反映されるリリース系は `ask`**（`git tag` / `git push --tags` / `gh workflow` / `gh release` / `cdk deploy` 等）。`ask` は headless（`claude -p`）では実質 deny として働き、対話セッションでは人間が判断できるため、自走委譲が単独で本番へ到達することだけを防げる。
 
 > **決定（変えない）**: 本スキルは**プロジェクト settings を緩める allow を 1 件も生成しない**（`generate-settings.sh` の `gs_project_allow_json()` は常に `[]` を返す）。緩和はユーザー設定側で行う。この決定は生成物の**出所の規律**（ステップ4 の「harness 固有語を書かない」）と対になっている — どちらも「オペレータの性質をリポジトリへ書き込まない」という同じ切り分けである。
 <!-- 正本: docs/settings-governance.md -->
 
 運用上の allow（ランチャー `Bash(claude-harness-run:*)`・git / gh・`cd`・パッケージマネージャ・テストランナー・infra）は**プロジェクト settings には書かない**。それは「誰が・どのマシンで・どの権限モードで動かすか」＝オペレータの性質であり、tracked に置いても trust 未承認のクローンや headless 実行（trust ダイアログが出ない）では評価されない。スクリプトはこれらを**ユーザー設定 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json` 向けのスニペット**として stdout に出すので、ステップ7 の完了報告でそのまま提示する。ユーザー設定の allow は、そのオペレータのすべてのプロジェクトと worktree（並列実装の worker が動く隔離環境を含む）に効く。**エージェントはユーザー設定を書き換えない**（書き込みは人間が行う）。
 
-権限の合成（deny の生成、スニペット＝共通権限 ＋ pm別/testFW別/infra別の条件付き権限）と、既存ファイルとの冪等マージは本スキルの `scripts/generate-settings.sh` が決定的に行う。本セクションはこのスクリプトの入出力契約と、deny の設計思想（規律文）のみを記す。
+権限の合成（deny / ask の生成、スニペット＝共通権限 ＋ pm別/testFW別/infra別の条件付き権限）と、既存ファイルとの冪等マージは本スキルの `scripts/generate-settings.sh` が決定的に行う。本セクションはこのスクリプトの入出力契約と、deny / ask の設計思想（規律文）のみを記す。
 
 > **スクリプトの実行形**: `generate-settings.sh` はプラグイン配下（`skills/init-project/scripts/`）にある。実行は PATH 上のランチャー経由で `claude-harness-run skills/init-project/scripts/generate-settings.sh <引数>` を用いる。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/skills/init-project/scripts/generate-settings.sh" <引数>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 
@@ -167,28 +169,31 @@ claude-harness-run skills/init-project/scripts/generate-settings.sh \
 | `--input <file\|->` | `analyze-project.sh` の出力JSON（`-` で stdin）。`.pm` / `.stack.test[]` / `.stack.infra[]` を抽出し、`--pm`/`--test`/`--infra` と合成する |
 | `--target <path>` | 出力先パス（既定: `./.claude/settings.json`） |
 
-**出力**: 成功時のみ stdout に `{"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"deny_count":M,"user_settings_path":"...","user_settings_snippet":{"permissions":{"allow":[...]}}}` を1個出力する。`user_settings_snippet` がユーザー設定向けスニペット、`user_settings_path` はその書き込み先（実行環境の `CLAUDE_CONFIG_DIR` を反映した絶対パス）。失敗時（jq不在・入力JSON不正・既存 `.claude/settings.json` のスキーマ不正・書き込み失敗など）は stdout を空のまま exit 非0とし、エラー内容は stderr の `{"status":"error","error":"..."}` とメッセージで確認する（設定ファイル `base-deny.json` の欠損・スキーマ不正もこの経路に含まれ、その場合はインストール破損として報告する）。
+**出力**: 成功時のみ stdout に `{"status":"ok","target":"...","created":bool,"merged":bool,"allow_count":N,"ask_count":A,"deny_count":M,"user_settings_path":"...","user_settings_snippet":{"permissions":{"allow":[...]}}}` を1個出力する。`user_settings_snippet` がユーザー設定向けスニペット、`user_settings_path` はその書き込み先（実行環境の `CLAUDE_CONFIG_DIR` を反映した絶対パス）。失敗時（jq不在・入力JSON不正・既存 `.claude/settings.json` のスキーマ不正・書き込み失敗など）は stdout を空のまま exit 非0とし、エラー内容は stderr の `{"status":"error","error":"..."}` とメッセージで確認する（設定ファイル `base-deny.json` / `base-ask.json` の欠損・スキーマ不正もこの経路に含まれ、その場合はインストール破損として報告する）。
 
-**既存ファイルとの冪等マージ**: `--target` が既に存在する場合、既存の `permissions.allow`/`permissions.deny` を保持しつつ、生成した deny の非重複分のみ追加する（配列は重複排除され、同じ入力で再実行しても差分は出ない）。**既存の allow は削らない**——以前の生成物に運用 allow が残っていても、それを外すかどうかはそのリポジトリの判断に委ねる。存在しない場合は `.claude/` ディレクトリごと新規作成する。
+**既存ファイルとの冪等マージ**: `--target` が既に存在する場合、既存の `permissions.allow`/`permissions.ask`/`permissions.deny` を保持しつつ、生成した deny / ask の非重複分のみ追加する（配列は重複排除され、同じ入力で再実行しても差分は出ない）。**既存の allow は削らない**——以前の生成物に運用 allow が残っていても、それを外すかどうかはそのリポジトリの判断に委ねる。存在しない場合は `.claude/` ディレクトリごと新規作成する。
 
-**deny の設計思想**（スクリプトが合成するベース deny の方針。プロジェクトごとの追記判断に使う規律文のためインラインに残す）:
+**deny / ask の設計思想**（スクリプトが合成するベースの方針。プロジェクトごとの追記判断に使う規律文のためインラインに残す）:
 
 - **取り返しのつく操作はベースに含めない**。`git reset --hard`（reflogで復旧可）、`git branch -D`（reflog）、`gh pr close`（再オープン可）、`chmod` / `chown` などは deny しない。文脈的な危険判断はネイティブ auto-mode の分類器に委ねる。
-- **インフラ・デプロイ系はベースに含めない**。`cdk` / `terraform` / `pulumi` / `serverless` / `kubectl` / `docker push` などはプロジェクト依存のため、必要なリポジトリで個別に追記する。
+- **インフラ・デプロイ系のうち、ベースに入れるのは `cdk` の deploy / destroy（`ask`）だけ**である。`terraform` / `pulumi` / `serverless` / `kubectl` / `docker push` はプロジェクト依存のため、必要なリポジトリで個別に追記する。`cdk` を入れているのは、`npm run cdk -- deploy` という**別名で本番へ到達する経路**が実際に報告されたため（Issue #238）。
 - **プロジェクト依存の削除系**（`gh issue delete`、`gh api -X DELETE`、`curl -X DELETE` など）も同様に、必要に応じて各リポジトリで追記する。
 
-追記が必要な場合（インフラを扱うリポジトリの `terraform destroy` 等）は、スクリプト実行後に `.claude/settings.json` の `permissions.deny` へ手動で追記する。
+追記が必要な場合（インフラを扱うリポジトリの `terraform destroy` 等）は、スクリプト実行後に `.claude/settings.json` の `permissions.deny`（取り返しのつかない操作）または `permissions.ask`（人間が意図してやることのあるリリース系）へ手動で追記する。
+
+> **保証の範囲を過大に伝えないこと。** deny / ask は**前方一致**であり、マッチャは呼び出し側が書いた 1 つの文字列しか見ない。`git -C <path> push origin v1.2.3` のような別の書き方や、`npm run` / `make` が起動する子プロセスは捉えない。保証できるのは「呼び出し側の 1 つの文字列だけで、事前準備なしに deny / ask 対象へ到達できないこと」までである。完了報告でこれを超える安心（「本番へ到達できません」等）を書かない。
+<!-- 正本: docs/settings-governance.md §3.1 -->
 
 #### `.gitignore` の確認
 
-`.gitignore` に `.claude/settings.json` が含まれていないことを確認する。含まれている場合はユーザーに警告する（deny が clone 先・worktree に届かず、リポジトリの性質として共有できなくなるため）。
+`.gitignore` に `.claude/settings.json` が含まれていないことを確認する。含まれている場合はユーザーに警告する（deny / ask が clone 先・worktree に届かず、リポジトリの性質として共有できなくなるため）。
 
 ### 7. 完了報告
 
 ```
 ## プロジェクト初期設定 完了
 
-- 生成ファイル: `CLAUDE.md`, `.claude/settings.json`（deny 専用）{生成した雛形ドキュメントがあれば列挙}
+- 生成ファイル: `CLAUDE.md`, `.claude/settings.json`（制限専用: deny {deny_count} 件 / ask {ask_count} 件）{生成した雛形ドキュメントがあれば列挙}
 - ブランチ戦略: {採用した戦略}
 - 整備を推奨したドキュメント: 雛形を作成 {N} 件 / 未作成 {M} 件（未作成分は `CLAUDE.md` には記録していません。必要なら Issue 等へ残してください）
 
@@ -206,7 +211,8 @@ claude-harness-run skills/init-project/scripts/generate-settings.sh \
 次のステップ:
 - 上のスニペットをユーザー設定に追記してください（エージェントは書き換えません）
 - `CLAUDE.md` の内容を確認し、必要に応じて手動で調整してください（**追記するときも 200 行未満に保ち、コードベースから導ける内容は書かないでください**。育ってきたらセッション内で `/doctor` を実行すると trim 提案が得られます）
-- `.claude/settings.json` の deny を確認し、リポジトリ固有の deny（`terraform destroy` 等）があれば追記してください
+- `.claude/settings.json` の deny / ask を確認し、リポジトリ固有のものがあれば追記してください（取り返しのつかない操作は `deny`、人間が意図してやるリリース系は `ask`）。**ベースの ask にはリリース系（`git tag` / `gh workflow` / `cdk deploy` 等）が入っています**。リリースを自動化しているリポジトリでは該当行を外す判断をしてください
+- これらの制限が塞ぐのは「1 つの文字列で直接到達する経路」までです。`npm run <別名>` や `gh api` 経由の間接実行は塞がりません（`claude-harness-run preflight` の `settings_allow_overreach` が、どの allow が制限を無効化しているかを指摘します）
 - 個人用の追加設定（WebSearch等）は `.claude/settings.local.json` に記載してください
 - 「作成予定」のドキュメントは `/define-feature` 等で順次整備してください
 - 機能定義を開始するには: /define-feature [テーマ]

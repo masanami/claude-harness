@@ -1,0 +1,11 @@
+[
+  "Bash(git tag:*)",
+  "Bash(git push --tags:*)",
+  "Bash(git push --follow-tags:*)",
+  "Bash(gh workflow:*)",
+  "Bash(gh release:*)",
+  "Bash(cdk deploy:*)",
+  "Bash(cdk destroy:*)",
+  "Bash(npm run cdk:*)",
+  "Bash(npx cdk:*)"
+]
