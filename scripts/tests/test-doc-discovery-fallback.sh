@@ -29,18 +29,20 @@
 #   (E)   ADR 置き場の解決が、節が無くても既定 `docs/adr/` へフォールバックして成立すること
 #   (F)   旧世代の生成物（節を持つプロジェクト）を切り捨てていないこと。フォールバックは
 #         「節が在ればそれを使う」を保ったうえでの**追加**であり、置換ではない
-#   (G)   探索の判定が**閉じたキーワード列挙ではなく「形」**で書かれていること。ファイル名の
-#         キーワード一致で選ばせると構造的に取りこぼす（実測: 本ハーネスが統治する4リポジトリの
-#         `docs/` 27 件のうち `architecture` / `system-design` / `domain-model` / `erd` /
-#         `schema` / `database` / `api-spec` / `openapi` に一致するのは 3 件だけで、
-#         `requirements.md`〔要件定義そのもの〕`settings-governance.md`〔権限設計の正本〕が落ちた）。
-#         失敗形が非対称であることが理由である——**取りこぼしは沈黙し、余分に読む費用はトークンだけ**。
-#         かつ `docs/**/*.md` は既に全件列挙しているので、キーワードは候補を減らす方向にしか働かない。
-#         本節が固定するのは列挙の中身ではなく、(G-1) 形の基準が在ること (G-2) 列挙が**網羅でないと
-#         明記**されていること (G-3) リコール優先 (G-4) キーワード絞り込みが既定ではなく逃げ道で
-#         あること (G-5) ディレクトリ名も手がかりに含むこと、および (G-6) **列挙語を書くなら
-#         非網羅の明記を伴う**という全称条件。**列挙そのものを literal で固定しない**
-#         ——固定すると、列挙をやめる変更をテストが妨げる
+#   (G)   探索の判定が**閉じた列挙ではなく「形」**で書かれていること。ファイル名のキーワード
+#         一致で選ばせると構造的に取りこぼす（実測と根拠は docs/adr/0005 — 実行時テキストには
+#         置かない。根拠は行動を変えないため → docs/plugin-path-conventions.md (h)）。
+#         本節は**列挙が実行時テキストに無いこと**を直接固定する。以前は「列挙を書くなら
+#         非網羅の明記を伴え」という条件付きだったが、それは**列挙の保存を前提にした形**で
+#         あり、打ち消しの文をもう一往復ぶん実行時テキストへ載せていた。列挙を消せば
+#         打ち消しも要らない。sentinel を使った自己検査も不要になる（列挙が無いのだから
+#         空振りが正常状態になり、自己検査自体が矛盾する）。
+#         探索先ディレクトリも同様に `docs/` 決め打ちにしない——同じ穴が一段上に開く。
+#   (H)   実行時テキストの**厚みが役割に応じて分かれている**こと。設計ドキュメントを実際に
+#         探して読む消費ステップを持つファイルだけが探索手順を持ち、持たないファイル
+#         （`code-reviewer` は Step 1 が native の方法論・観点 A〜G が CLAUDE.md と差分起点で、
+#         設計ドキュメントを読むステップが無い）は読み替え禁止のガードだけを持つ。
+#         全ファイルに同じ厚さを配らない。
 #
 # 不変コアは可変部を含まない一文で照合する（部分一致は意味を反転させても通るため）。
 # 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする。
@@ -83,8 +85,9 @@ has_literal() {
 
 # 探索フォールバックの中核。「節が無ければ探索する」と「無いことを不在と読み替えない」の2文。
 # 前者だけだと探索を飛ばして「無い」と結論づける経路が残るため、両方を必須にする。
-DDF_EXPLORE='**無ければ `docs/` 配下を探索する**'
-DDF_NO_REINTERPRET='**一覧が無いことを「設計ドキュメントが無い」と読み替えないこと**'
+DDF_EXPLORE='**無ければ探索する**'
+# 厚い版と軽量版の双方に現れる共通コア（言い回しは役割に応じて違ってよい）。
+DDF_NO_REINTERPRET='「設計ドキュメントが無い」と読み替え'
 # 節が在る旧世代の生成物を切り捨てていないこと（フォールバックは追加であって置換ではない）。
 DDF_USE_IF_PRESENT='`CLAUDE.md` に設計ドキュメントの一覧（ドキュメントマップ等）があればそれを使う。'
 # 技術スタック・ディレクトリ構成をコードベース側から得る指示。
@@ -92,29 +95,38 @@ DDF_USE_IF_PRESENT='`CLAUDE.md` に設計ドキュメントの一覧（ドキュ
 # 開発原則の実体ではない（package.json に設計原則は書かれていない）。開発原則は DDF_INTENT が扱う。
 DDF_DERIVE='技術スタック・ディレクトリ構成は `CLAUDE.md` に書かれないのが既定。'
 DDF_NO_HALT='**記載が無いことを理由に停止しない**'
-# 探索の判定を「形」で持たせる不変コア。列挙の中身は可変部であり、ここでは固定しない。
-DDF_FORM='**判定は「その文書が何を述べているか」で行い、ファイル名のキーワード一致で行わない。**'
-DDF_NOT_EXHAUSTIVE='**網羅ではない手がかりの例示**であり、**どれにも一致しないことは除外の理由にならない**'
+# 探索の判定を「形」で持たせる不変コア。
+DDF_FORM='**対象の実装が従うべきことを書いた文書**'
 DDF_RECALL='**迷ったら読む側に倒す**'
-DDF_ORDER='**この順序を逆にしない**'
-DDF_DIRNAME='ディレクトリ名も手がかりに含める'
+DDF_PATH_BOTH='**ディレクトリ名とファイル名の両方**'
 DDF_ENUMERATE_ALL='を Glob で**全件列挙**し'
-# (G-6) の起点。列挙語のうち、例示以外の文脈で現れない語を1つ選ぶ。
-DDF_ENUM_SENTINEL='`erd` / `schema`'
+# 探索先ディレクトリも形で持つ（`docs/` 決め打ちにしない）。厚い版・軽量版の双方に在る。
+DDF_DIR_FORM='`docs/` が典型だが**名前は問わない**'
+# (G-4) で実行時テキストから不在を確かめる、ファイル名パターンの列挙語。
+# バッククォート付きで照合する（surface-audit の散文中の `OpenAPI 定義` を誤検出しないため）。
+DDF_BANNED_ENUM=('`system-design`' '`domain-model`' '`api-spec`' '`openapi`' '`erd`' '`system_design`' '`swagger`')
 
 # 開発原則の節の不在に対する読み替え禁止と、意図的な設計判断の正本（docs/adr/）への導線。
 # 全実行時ファイルで逐語同一にしてあるため、1つの literal で全称条件を張れる。
 DDF_INTENT='**無いことを「原則が無い」と読み替えない**'
 DDF_INTENT_ADR='意図的な設計判断は `docs/adr/` があればそこを読み、無ければ既存コードの実装パターンから読み取る。'
 
-# 設計ドキュメントへの到達を責務に含む実行時ファイル。
+# 設計ドキュメントを実際に探して読む消費ステップを持つファイル（厚い版）。
 DDF_DISCOVERY_FILES=(
-  "agents/code-reviewer.md"
-  "agents/design-reviewer.md"
-  "agents/doc-verifier.md"
-  "agents/feature-implementer.md"
-  "skills/define-feature/SKILL.md"
+  "agents/design-reviewer.md"       # Step 1「設計ドキュメントの確認」
+  "agents/doc-verifier.md"          # Step 1「対象機能の特定」＝要件定義と設計書の突合せ
+  "agents/feature-implementer.md"   # Step a-3「既存コード・既存設計の理解」
+  "skills/define-feature/SKILL.md"  # 手順1「プロジェクト理解」＋手順3-2でパスを下流へ渡す
 )
+
+# 設計ドキュメントを読む消費ステップを持たないファイル（軽量版＝ガードのみ）。
+# 厚い版を配ると、使わない手順が毎回配送される（→ (h) の判定軸）。
+DDF_GUARD_FILES=(
+  "agents/code-reviewer.md"
+)
+
+# `CLAUDE.md` を読んで規約を把握する全ファイル（厚み分けの対象外。(A-2)(A-3) 用）。
+DDF_CLAUDE_MD_FILES=( "${DDF_DISCOVERY_FILES[@]}" "${DDF_GUARD_FILES[@]}" )
 
 # `ドキュメントマップ` に言及してよいが探索フォールバックは持たないファイル。
 # いずれも「節が無いのが既定」を前提に書かれており、節そのものを入口にしていない。
@@ -139,8 +151,15 @@ echo "== (A) 設計ドキュメントへの到達手段 =="
 
 for f in "${DDF_DISCOVERY_FILES[@]}"; do
   assert_eq "(A-1) ${f}: 探索フォールバックが在る" "true" "$(has_literal "$f" "$DDF_EXPLORE")"
+done
+
+# 読み替え禁止のガードは厚い版・軽量版の**両方**が持つ（これが最後の歯止めのため）。
+for f in "${DDF_CLAUDE_MD_FILES[@]}"; do
   assert_eq "(A-1) ${f}: 不在を「無い」と読み替えない規則が在る" "true" \
     "$(has_literal "$f" "$DDF_NO_REINTERPRET")"
+done
+
+for f in "${DDF_CLAUDE_MD_FILES[@]}"; do
   assert_eq "(A-2) ${f}: 技術スタック・ディレクトリ構成をコードベースから得る指示が在る" "true" \
     "$(has_literal "$f" "$DDF_DERIVE")"
   assert_eq "(A-2) ${f}: 記載が無いことを理由に停止しない規則が在る" "true" \
@@ -162,7 +181,8 @@ echo "== (B) ドキュメントマップに言及するファイルの全称条�
 DDF_UNCOVERED=""
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  [ "$(in_list "$f" "${DDF_DISCOVERY_FILES[@]}")" = "true" ] && continue
+  # 厚い版・ガード版のどちらも到達手段を持つ（ガード版は「読み替えるな＋辿り方」）。
+  [ "$(in_list "$f" "${DDF_CLAUDE_MD_FILES[@]}")" = "true" ] && continue
   [ "$(in_list "$f" "${DDF_DOCMAP_ALLOWLIST[@]}")" = "true" ] && continue
   DDF_UNCOVERED="${DDF_UNCOVERED}${f} "
 done < <(grep -rlF 'ドキュメントマップ' agents/ skills/ 2>/dev/null | sort)
@@ -234,40 +254,65 @@ assert_eq "(F) create-adr: 節が在る場合の追記が残っている" "true"
   "$(has_literal "$DDF_ADR" '**そのプロジェクトに既にドキュメントマップ節があり、かつ初めて ADR を作成した場合のみ**')"
 
 # ------------------------------------------------------------------
-# (G) 判定が閉じたキーワード列挙になっていない
+# (G) 判定が「形」で書かれ、閉じた列挙が実行時テキストに無い
 # ------------------------------------------------------------------
 echo "== (G) 探索の判定が「形」で書かれている =="
 
 for f in "${DDF_DISCOVERY_FILES[@]}"; do
-  assert_eq "(G-1) ${f}: 形の基準（何を述べているかで選ぶ）が在る" "true" \
+  assert_eq "(G-1) ${f}: 形の基準（従うべきことを書いた文書）が在る" "true" \
     "$(has_literal "$f" "$DDF_FORM")"
-  assert_eq "(G-2) ${f}: 列挙が網羅でないと明記されている" "true" \
-    "$(has_literal "$f" "$DDF_NOT_EXHAUSTIVE")"
-  assert_eq "(G-3) ${f}: リコール優先（迷ったら読む）が在る" "true" \
+  assert_eq "(G-2) ${f}: リコール優先（迷ったら読む）が在る" "true" \
     "$(has_literal "$f" "$DDF_RECALL")"
-  assert_eq "(G-4) ${f}: キーワード絞り込みが既定でない（順序の固定）が在る" "true" \
-    "$(has_literal "$f" "$DDF_ORDER")"
-  assert_eq "(G-5) ${f}: ディレクトリ名も手がかりに含む指示が在る" "true" \
-    "$(has_literal "$f" "$DDF_DIRNAME")"
-  assert_eq "(G-5) ${f}: 全件列挙が既定である" "true" \
+  assert_eq "(G-3) ${f}: 全件列挙が既定である" "true" \
     "$(has_literal "$f" "$DDF_ENUMERATE_ALL")"
+  assert_eq "(G-3) ${f}: パスの判断材料がディレクトリ名とファイル名の両方である" "true" \
+    "$(has_literal "$f" "$DDF_PATH_BOTH")"
 done
 
-# (G-6) 全称条件: 列挙語を書いているファイルは、非網羅の明記を必ず伴う。
-# 列挙そのものは禁じない（手がかりとして有用）。禁じるのは**網羅のように見せること**。
-DDF_BARE_ENUM=""
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  [ "$(has_literal "$f" "$DDF_NOT_EXHAUSTIVE")" = "true" ] && continue
-  DDF_BARE_ENUM="${DDF_BARE_ENUM}${f} "
-done < <(grep -rlF "$DDF_ENUM_SENTINEL" agents/ skills/ 2>/dev/null | sort)
+# 探索先ディレクトリを `docs/` 決め打ちにしない（同じ「閉じた列挙」の穴が一段上に開く）。
+for f in "${DDF_CLAUDE_MD_FILES[@]}"; do
+  assert_eq "(G-3) ${f}: 探索先ディレクトリが形で書かれている" "true" \
+    "$(has_literal "$f" "$DDF_DIR_FORM")"
+done
 
-assert_eq "(G-6) 非網羅の明記を伴わないキーワード列挙が無い" "" "$DDF_BARE_ENUM"
+# (G-4) 実行時テキストにファイル名パターンの列挙が無いこと。
+# 条件付き（「列挙を書くなら非網羅の明記を伴え」）ではなく**直接の不在**で固定する
+# ——条件付きは列挙の保存を前提にしてしまい、打ち消しの文を実行時テキストへ載せ続ける。
+DDF_ENUM_HITS=""
+for tok in "${DDF_BANNED_ENUM[@]}"; do
+  while IFS= read -r f; do
+    [ -n "$f" ] && DDF_ENUM_HITS="${DDF_ENUM_HITS}${f}:${tok} "
+  done < <(grep -rlF "$tok" agents/ skills/ 2>/dev/null | sort)
+done
+assert_eq "(G-4) ファイル名パターンの列挙が実行時テキストに無い" "" "$DDF_ENUM_HITS"
 
-# 検出器の自己検査: sentinel が実際に列挙を捕まえていること（0 件なら全称条件が空回りする）。
-assert_eq "(G-6) sentinel が列挙を捕捉している（空回りの検出）" "true" \
-  "$([ "$(grep -rlF "$DDF_ENUM_SENTINEL" agents/ skills/ 2>/dev/null | wc -l | tr -d ' ')" -ge 1 ] \
-    && echo true || echo false)"
+# 検出器の自己検査: 検出パターンが実際に列挙形を捕まえること（既知の違反形で確かめる）。
+DDF_PROBE="$(printf '%s\n' '`architecture` / `system-design` / `erd` をファイル名に含むもの')"
+DDF_PROBE_HIT=false
+for tok in "${DDF_BANNED_ENUM[@]}"; do
+  printf '%s' "$DDF_PROBE" | grep -qF "$tok" && DDF_PROBE_HIT=true
+done
+assert_eq "(G-4) 検出パターンが既知の違反形を捕捉する（自己検査）" "true" "$DDF_PROBE_HIT"
+
+# ------------------------------------------------------------------
+# (H) 厚みが役割に応じて分かれている
+# ------------------------------------------------------------------
+echo "== (H) 厚みの分離 =="
+
+# ガード側は探索手順を持たない（持つと、使わない手順が毎回配送される）。
+for f in "${DDF_GUARD_FILES[@]}"; do
+  assert_eq "(H) ${f}: 探索手順を持たない（ガードのみ）" "false" \
+    "$(has_literal "$f" "$DDF_ENUMERATE_ALL")"
+  assert_eq "(H) ${f}: リコール優先の手順を持たない（ガードのみ）" "false" \
+    "$(has_literal "$f" "$DDF_RECALL")"
+done
+
+# 2集合が素であること（同じファイルを両方に置くと (H) が自己矛盾する）。
+DDF_OVERLAP=""
+for f in "${DDF_GUARD_FILES[@]}"; do
+  [ "$(in_list "$f" "${DDF_DISCOVERY_FILES[@]}")" = "true" ] && DDF_OVERLAP="${DDF_OVERLAP}${f} "
+done
+assert_eq "(H) 厚い版とガード版の集合が素である" "" "$DDF_OVERLAP"
 
 # ------------------------------------------------------------------
 # 要約
