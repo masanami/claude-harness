@@ -1,6 +1,6 @@
 ---
 name: feature-implementer
-description: 機能の実装（新規追加・既存変更・バグ修正）を行う際に使用。「〇〇機能を実装して」「〇〇を新しく作って」「〇〇機能を追加して」「〇〇機能を修正して」「〇〇を変更して」「〇〇のバグを直して」といった実装依頼時に自動委譲される。
+description: "機能の実装（新規追加・既存変更・バグ修正）を行う。Triggers on: '〇〇機能を実装して', '〇〇を新しく作って', '〇〇機能を追加して', '〇〇機能を修正して', '〇〇を変更して', '〇〇のバグを直して'"
 tools: Read, Glob, Grep, Edit, Write, Bash, Task, Skill
 skills:
   - tdd-impl

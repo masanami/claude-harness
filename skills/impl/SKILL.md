@@ -1,6 +1,6 @@
 ---
 name: impl
-description: "単一 Issue の1チケット実装フロー（ブランチ準備→設計→TDD実装(エージェント内でQC通過まで)→コミット→E2E→PR→CI確認）を実装フェーズの人間ゲートなしで実行する。複数Issueの並列化・並列度の決定は担わない。Triggers on: '/impl', 'このIssueを実装して', 'Issueを1件実装して'"
+description: "単一 Issue の1チケット実装フローを、実装フェーズの人間ゲートなしで実行する。複数Issueの並列化・並列度の決定は担わない。Triggers on: '/impl', 'このIssueを実装して', 'Issueを1件実装して'"
 argument-hint: "<Issue番号> [--base <統合ブランチ>] [--worktree <worktreeの絶対パス>]"
 model: opus
 # effort: 設計〜TDD実装〜PRの自走フローを担うため high。

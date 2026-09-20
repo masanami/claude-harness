@@ -1,6 +1,6 @@
 ---
 name: pr-review-respond
-description: "PRに付いたレビューコメント(AI/人間)に対応する。インラインコメント取得→対応→QC通過→/commit→返信&Resolved化までを一括で行う。Triggers on: '/pr-review-respond', 'レビュー対応して', 'レビューコメントに対応'"
+description: "PRに付いたレビューコメント(AI/人間)に対応し、返信とResolved化まで行う。Triggers on: '/pr-review-respond', 'レビュー対応して', 'レビューコメントに対応'"
 argument-hint: "[PR番号]"
 model: opus
 # effort: レビューコメント対応が中心のため medium。

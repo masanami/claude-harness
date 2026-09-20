@@ -1,6 +1,6 @@
 ---
 name: cross-repo-verify
-description: "実装が他リポジトリのコードの挙動に依存する仮定を含む場合のみ使用し、依存先の実コードで確証する手順を提供する。クロスリポジトリ依存が無い場合は使用しない。Triggers on: '/cross-repo-verify', 'クロスリポジトリ依存を確認', 'クロスリポジトリの確証'"
+description: "実装が他リポジトリのコードの挙動に依存する仮定を、依存先の実コードで確証する。クロスリポジトリ依存が無い場合は使用しない。Triggers on: '/cross-repo-verify', 'クロスリポジトリ依存を確認', 'クロスリポジトリの確証'"
 model: sonnet
 # effort: 定型の確証手順（gh api実行→根拠記載）であり、判断の分岐が少ないため low。
 effort: low

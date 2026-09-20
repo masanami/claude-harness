@@ -1,6 +1,6 @@
 ---
 name: e2e-engineer
-description: E2Eテストを実装する際に使用。「E2Eテストを書いて」「E2Eテストを実装して」「E2Eテストを追加して」といったE2Eテスト実装依頼時に自動委譲される。
+description: "E2Eテストを実装する。Triggers on: 'E2Eテストを書いて', 'E2Eテストを実装して', 'E2Eテストを追加して'"
 # tools: E2Eテストの実装・実行に必要なもののみ。委譲（Task）もスキル起動（Skill）も本文に用途が無いため持たせない。
 tools: Read, Glob, Grep, Edit, Write, Bash
 skills:

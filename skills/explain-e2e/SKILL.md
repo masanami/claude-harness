@@ -1,6 +1,6 @@
 ---
 name: explain-e2e
-description: "実装済みE2Eテストの「テストシナリオ解説」を生成し、解説とコードの独立検証まで行うスキル。人間はコードを読まず、解説と検証結果だけでE2Eをレビューできる。Triggers on: '/explain-e2e', 'E2Eを解説して', 'E2Eのシナリオ解説', 'E2Eを検証して'"
+description: "実装済みE2Eテストのテストシナリオ解説を生成し、解説とコードの整合を独立に検証する。Triggers on: '/explain-e2e', 'E2Eを解説して', 'E2Eのシナリオ解説', 'E2Eを検証して'"
 argument-hint: "[テストファイル|ディレクトリ|Issue/PR番号]"
 model: sonnet
 # effort: テスト解説が中心のため medium（Phase 2 の検証ロジック自体は Task で委譲する検証・変異エージェント側に置く）。

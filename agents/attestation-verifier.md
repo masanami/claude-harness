@@ -1,6 +1,6 @@
 ---
 name: attestation-verifier
-description: クロスリポジトリ依存の確証結果（仮定・根拠）を鵜呑みにせず、依存先の実コードを独立に再取得して反証を試みる懐疑者エージェント。
+description: "クロスリポジトリ依存の確証結果（仮定・根拠）を鵜呑みにせず、依存先の実コードを独立に再取得して反証する懐疑者。Triggers on: '/cross-repo-verify からの確証結果の反証委譲'"
 # tools: 検証専用エージェントのため読み取り系のみ。ただし独立取得に gh api（Bash 経由）が必須。
 tools: Bash, Read, Grep
 model: sonnet

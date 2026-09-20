@@ -1,6 +1,6 @@
 ---
 name: issue-conflict-predictor
-description: 複数Issueの並列実装で、Issue間のファイル衝突・依存関係を予測する際に使用するエージェント。予測結果は並列実装リードの直列化判断のヒントとして使われる。
+description: "複数Issueの並列実装で、Issue間のファイル衝突・依存関係を予測する。Triggers on: '/para-impl からの衝突予測委譲'"
 tools: Read, Glob, Grep
 model: sonnet
 # effort: 1Issueあたりの予測に限定した軽量タスクのため low。

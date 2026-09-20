@@ -1,6 +1,6 @@
 ---
 name: decompose-judge
-description: ticket-decomposer が生成した複数の実装タスク分解案を採点し、最良の要素を合成した最終分解計画を作成する際に使用するエージェント。
+description: "ticket-decomposer が生成した複数の分解案を採点し、最良の要素を合成した最終分解計画を作成する。Triggers on: '/create-ticket 分解モードからの採点委譲'"
 # tools: 判断材料（3候補案・計算済みグラフ指標・網羅結果）はすべてプロンプトに注入されるため、
 # 探索系ツール（Glob/Grep）は不要と判断し持たせない。ticket-decomposer と異なり、あなた自身が
 # files フィールドを新規に創作することもない（候補案の合成に専念する）。Read のみ、候補案の

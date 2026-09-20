@@ -1,6 +1,6 @@
 ---
 name: create-adr
-description: "恒常的な設計決定を ADR（`docs/adr/NNNN-slug.md`）として記録する。決定を新規に記録するモードと、退役する機能仕様から ADR 昇格の要否を判定するモードの2モード。定常フローの必須ステップではなく、必要時に呼ぶオンデマンドスキル。Triggers on: '/create-adr', 'ADRを書いて', '設計判断を記録', 'ADR昇格を判定'"
+description: "恒常的な設計決定を ADR として記録する（退役する機能仕様から ADR 昇格の要否を判定するモードを併せ持つ）。定常フローの必須ステップではなく、必要時に呼ぶ。Triggers on: '/create-adr', 'ADRを書いて', '設計判断を記録', 'ADR昇格を判定'"
 argument-hint: "[決定のテーマ] | promote <機能仕様パス|ディレクトリ...>"
 model: opus
 # effort: 「何を恒常的な決定として残すか」の線引きが成果物の価値を決めるため high。

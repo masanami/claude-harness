@@ -1,6 +1,6 @@
 ---
 name: demo
-description: "AIがHeaded Playwrightでアプリを操作しながら動作確認を行い、ユーザーは画面を見て承認する。成功シナリオはE2Eテスト化できる。Triggers on: '/demo', '/walkthrough', '動作確認して', 'デモして'"
+description: "AIがHeaded Playwrightでアプリを操作しながら動作確認を行い、ユーザーは画面を見て承認する。Triggers on: '/demo', '/walkthrough', '動作確認して', 'デモして'"
 argument-hint: "[Issue番号|PR番号|機能名]"
 model: sonnet
 # effort: ブラウザ操作主体で深い推論を要さないため、session 継承（無指定）とする。
