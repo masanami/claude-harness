@@ -104,7 +104,7 @@ assert_true "仕様側の severity 表が空でない（切り出し失敗を pa
 assert_true "スクリプト側の severity 表が空でない" \
   "$([ -n "$TD_SCRIPT_TABLE" ] && echo true || echo false)"
 assert_eq "severity 表がスクリプトと仕様で完全一致する" "$TD_SCRIPT_TABLE" "$TD_SPEC_TABLE"
-assert_eq "検査項目は8件" "8" "$(doctor_check_ids | grep -c .)"
+assert_eq "検査項目は9件" "9" "$(doctor_check_ids | grep -c .)"
 
 # ------------------------------------------------------------------
 # (B) blocking リテラルの fail-closed 連結
@@ -179,6 +179,84 @@ assert_eq "path はその層のファイルを指す" "${TD_TMP_DIR}/config-scop
   "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes" doctor_rule_locations_json "$TD_RULE" "$TD_SCOPE_PROJ" '[]' | jq -r '.[0].path')"
 assert_eq "別のルールは拾わない（否定検査）" "[]" \
   "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes" doctor_rule_locations_json 'Bash(other:*)' "$TD_SCOPE_PROJ" '[]' | jq -c .)"
+
+# ------------------------------------------------------------------
+# (E3) allow の過剰（汎用実行系が deny / ask を無効化している状態。Issue #238）
+# ------------------------------------------------------------------
+echo "== (E3) settings_allow_overreach の部品 =="
+
+# --- doctor_rule_command_prefix: ルール文字列からコマンド前置を取る ---
+assert_eq "Bash(npm:*) の前置は npm" "npm" "$(doctor_rule_command_prefix 'Bash(npm:*)')"
+assert_eq "引数つきの前置はそのまま" "git push --force" "$(doctor_rule_command_prefix 'Bash(git push --force:*)')"
+assert_eq ":* が無い形も扱える" "npm" "$(doctor_rule_command_prefix 'Bash(npm)')"
+assert_eq "Bash( 以外のルールは非0（否定検査）" "false" \
+  "$(doctor_rule_command_prefix 'Read(~/.claude/**)' >/dev/null 2>&1 && echo true || echo false)"
+assert_eq "ツール名だけのルールも非0（否定検査）" "false" \
+  "$(doctor_rule_command_prefix 'WebFetch' >/dev/null 2>&1 && echo true || echo false)"
+
+# --- doctor_allow_permits_form: 照合の向き（allow でその呼び出し形が通るか） ---
+# ここを逆向きに実装すると「広い allow を見逃し、狭い allow を誤検出する」ため、
+# 両向きの対照を必ず置く。
+assert_eq "Bash(npm:*) は npm run を通す" "true" \
+  "$(doctor_allow_permits_form 'npm' 'npm run' && echo true || echo false)"
+assert_eq "完全一致も通す" "true" \
+  "$(doctor_allow_permits_form 'gh api' 'gh api' && echo true || echo false)"
+assert_eq "Bash(npx playwright:*) は npx を通さない（実行対象が固定されている）" "false" \
+  "$(doctor_allow_permits_form 'npx playwright' 'npx' && echo true || echo false)"
+assert_eq "Bash(docker compose:*) は docker run を通さない" "false" \
+  "$(doctor_allow_permits_form 'docker compose' 'docker run' && echo true || echo false)"
+assert_eq "Bash(docker compose:*) は docker compose run を通す" "true" \
+  "$(doctor_allow_permits_form 'docker compose' 'docker compose run' && echo true || echo false)"
+assert_eq "トークン境界をまたぐ前方一致は取らない（npm-check は npm ではない）" "false" \
+  "$(doctor_allow_permits_form 'npm-check' 'npm run' && echo true || echo false)"
+assert_eq "空の前置は通さない（空文字が全てに一致しないこと）" "false" \
+  "$(doctor_allow_permits_form '' 'npm run' && echo true || echo false)"
+
+# --- doctor_general_exec_forms: 正本の読み込みとスキーマ検証 ---
+assert_eq "正本を読むと1行以上返る" "true" \
+  "$([ "$(doctor_general_exec_forms "$DOCTOR_GENERAL_EXEC_FILE" | grep -c .)" -gt 0 ] && echo true || echo false)"
+assert_eq "各行は form<TAB>why の2列" "0" \
+  "$(doctor_general_exec_forms "$DOCTOR_GENERAL_EXEC_FILE" | grep -vc "$(printf '\t')" | tr -d ' ')"
+assert_eq "ファイル不在は非0（呼び出し側が skipped にする）" "false" \
+  "$(doctor_general_exec_forms "${TD_TMP_DIR}/nonexistent-general-exec.json" >/dev/null 2>&1 && echo true || echo false)"
+TD_BAD_GE="${TD_TMP_DIR}/bad-general-exec.json"
+echo '{"commands":[{"form":"npm"}]}' > "$TD_BAD_GE"
+assert_eq "why 欠落のスキーマ不正は非0（否定検査）" "false" \
+  "$(doctor_general_exec_forms "$TD_BAD_GE" >/dev/null 2>&1 && echo true || echo false)"
+echo '{"commands":[]}' > "$TD_BAD_GE"
+assert_eq "空の commands も非0（黙って0件扱いにしない）" "false" \
+  "$(doctor_general_exec_forms "$TD_BAD_GE" >/dev/null 2>&1 && echo true || echo false)"
+
+# --- doctor_allow_overreach_items_json: 該当 allow の抽出 ---
+TD_GE_FORMS="$(printf 'npm run\tpackage.json の script が任意のプログラムを起動する\nnpx\t取得したパッケージを実行する\n')"
+TD_OVERREACH_PROJ="${TD_TMP_DIR}/overreach"
+mkdir -p "${TD_OVERREACH_PROJ}/.claude"
+TD_OVERREACH_ITEMS="$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes-empty" \
+  doctor_allow_overreach_items_json "$TD_OVERREACH_PROJ" \
+  '["Bash(npm:*)","Bash(npx playwright:*)","Bash(git status:*)","Read(docs/**)"]' \
+  '["Bash(npm:*)","Bash(npx playwright:*)","Bash(git status:*)","Read(docs/**)"]' "$TD_GE_FORMS")"
+assert_eq "該当するのは Bash(npm:*) だけ" '["Bash(npm:*)"]' "$(jq -c '[.[].rule]' <<<"$TD_OVERREACH_ITEMS")"
+assert_eq "permits に通る呼び出し形が入る" '["npm run"]' \
+  "$(jq -c '[.[0].permits[].form]' <<<"$TD_OVERREACH_ITEMS")"
+assert_eq "permits の why は空でない（なぜ過剰かを出力に残す）" "true" \
+  "$(jq -r '[.[0].permits[] | select(.why | length > 0)] | length > 0' <<<"$TD_OVERREACH_ITEMS")"
+assert_eq "found_in にどの層で見つかったかが出る" '["project"]' \
+  "$(jq -c '[.[0].found_in[].scope]' <<<"$TD_OVERREACH_ITEMS")"
+assert_eq "該当が無ければ空配列（空集合ケース）" "[]" \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-scopes-empty" \
+     doctor_allow_overreach_items_json "$TD_OVERREACH_PROJ" '["Bash(git status:*)"]' '["Bash(git status:*)"]' "$TD_GE_FORMS")"
+
+# --- doctor_scope_field_union_json: deny / ask も 3 層の和集合で見る ---
+TD_UNION_PROJ="${TD_TMP_DIR}/union"
+mkdir -p "${TD_UNION_PROJ}/.claude" "${TD_TMP_DIR}/config-union"
+printf '{"permissions":{"deny":["Bash(user-deny:*)"]}}\n' > "${TD_TMP_DIR}/config-union/settings.json"
+printf '{"permissions":{"deny":["Bash(local-deny:*)"]}}\n' > "${TD_UNION_PROJ}/.claude/settings.local.json"
+assert_eq "project/user/local の deny が和集合になる" '["Bash(local-deny:*)","Bash(proj-deny:*)","Bash(user-deny:*)"]' \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-union" \
+     doctor_scope_field_union_json "$TD_UNION_PROJ" deny '["Bash(proj-deny:*)"]')"
+assert_eq "どこにも無ければ空配列（空集合ケース）" "[]" \
+  "$(CLAUDE_CONFIG_DIR="${TD_TMP_DIR}/config-union" \
+     doctor_scope_field_union_json "$TD_UNION_PROJ" ask '[]')"
 
 # ------------------------------------------------------------------
 # (F) CLAUDE.md の節・プレースホルダ（空集合ケースを含む）
@@ -440,16 +518,21 @@ TD_OUT="${TD_TMP_DIR}/out.json"
 PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ" --pm npm > "$TD_OUT" 2>/dev/null
 TD_EXIT=$?
 assert_eq "健全なプロジェクトは exit 0" "0" "$TD_EXIT"
-assert_eq "status は ok" "ok" "$(jq -r '.status' "$TD_OUT")"
-assert_eq "checks は8件すべて出る（全称条件）" "8" "$(jq -r '.checks | length' "$TD_OUT")"
-assert_eq "checks の id は重複しない" "8" "$(jq -r '[.checks[].id] | unique | length' "$TD_OUT")"
+# 生成器が提示する運用 allow（`Bash(npm:*)` 等）をそのまま使うと settings_allow_overreach が
+# 必ず出る。**これは意図した挙動である**（0 件にすることを目的としない検査。Issue #238）。
+# ここを ok に戻す変更は、検査を骨抜きにしたことを意味する。
+assert_eq "status は warn（allow の過剰だけが残る）" "warn" "$(jq -r '.status' "$TD_OUT")"
+assert_eq "checks は9件すべて出る（全称条件）" "9" "$(jq -r '.checks | length' "$TD_OUT")"
+assert_eq "checks の id は重複しない" "9" "$(jq -r '[.checks[].id] | unique | length' "$TD_OUT")"
 assert_eq "checks の id が severity 表と一致する" \
   "$(doctor_check_ids | LC_ALL=C sort | tr '\n' ' ')" \
   "$(jq -r '.checks[].id' "$TD_OUT" | LC_ALL=C sort | tr '\n' ' ')"
 assert_eq "各 check の severity が表と一致する" "0" \
   "$(jq -r --argjson t "$(doctor_severity_table | jq -R -s 'split("\n") | map(select(length>0)) | map(split("|")) | map({id: .[0], severity: .[1]})')" \
      '[.checks[] as $c | $t[] | select(.id == $c.id and .severity != $c.severity)] | length' "$TD_OUT")"
-assert_eq "findings は空" "0" "$(jq -r '.findings | length' "$TD_OUT")"
+assert_eq "findings は settings_allow_overreach の1件だけ" '["settings_allow_overreach"]' \
+  "$(jq -c '[.findings[].check]' "$TD_OUT")"
+assert_eq "blocking は0件（advisory のみ）" "0" "$(jq -r '.counts.blocking' "$TD_OUT")"
 assert_eq "counts.checks は checks の件数と一致" "true" \
   "$(jq -r '.counts.checks == (.checks | length)' "$TD_OUT")"
 assert_eq "tracked で満たされたランチャー allow は satisfied_by が project" '["project"]' \
@@ -532,7 +615,8 @@ printf '{"permissions":{"allow":["%s"]}}\n' "$DOCTOR_LAUNCHER_ALLOW_RULE" > "${T
 CLAUDE_CONFIG_DIR="$TD_CONFIG_USER" PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_USER" --pm npm > "$TD_OUT" 2>/dev/null
 TD_EXIT=$?
 assert_eq "ユーザー設定にだけ在るランチャー allow は要件を満たす（exit 0）" "0" "$TD_EXIT"
-assert_eq "status は ok" "ok" "$(jq -r '.status' "$TD_OUT")"
+assert_eq "blocking は0件（ランチャー allow がユーザー設定で満たされている）" "0" \
+  "$(jq -r '.counts.blocking' "$TD_OUT")"
 assert_eq "settings_launcher_allow は ok で satisfied_by が user" '["user"]' \
   "$(jq -c '.checks[] | select(.id == "settings_launcher_allow") | .satisfied_by' "$TD_OUT")"
 # 同じプロジェクトを空のユーザー設定で診断すると fail（ユーザー設定を読んだから ok になった、の対照）
@@ -547,7 +631,8 @@ jq --arg r "$DOCTOR_LAUNCHER_ALLOW_RULE" '.permissions.allow |= map(select(. != 
   "${TD_PROJ_LOCAL}/.claude/settings.json" > "$TD_TMPJSON" && mv "$TD_TMPJSON" "${TD_PROJ_LOCAL}/.claude/settings.json"
 printf '{"permissions":{"allow":["%s"]}}\n' "$DOCTOR_LAUNCHER_ALLOW_RULE" > "${TD_PROJ_LOCAL}/.claude/settings.local.json"
 PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_LOCAL" --pm npm > "$TD_OUT" 2>/dev/null
-assert_eq "settings.local.json にだけ在るランチャー allow も要件を満たす" "ok" "$(jq -r '.status' "$TD_OUT")"
+assert_eq "settings.local.json にだけ在るランチャー allow も要件を満たす（blocking 0）" "0" \
+  "$(jq -r '.counts.blocking' "$TD_OUT")"
 assert_eq "satisfied_by は local" '["local"]' \
   "$(jq -c '.checks[] | select(.id == "settings_launcher_allow") | .satisfied_by' "$TD_OUT")"
 
@@ -616,7 +701,63 @@ TD_EXIT=$?
 assert_eq "設定ファイル欠損でも exit 2 にしない" "0" "$TD_EXIT"
 assert_eq "設定ファイル欠損なら reason 付きで skipped" "true" \
   "$(jq -r '.checks[] | select(.id == "claude_md_harness_terms") | (.result == "skipped" and (.reason | length > 0))' "$TD_OUT")"
-assert_eq "設定ファイル欠損でも checks は8件出る" "8" "$(jq -r '.checks | length' "$TD_OUT")"
+assert_eq "設定ファイル欠損でも checks は9件出る" "9" "$(jq -r '.checks | length' "$TD_OUT")"
+
+# ------------------------------------------------------------------
+# (K4) CLI: settings_allow_overreach（advisory・対照つき・skipped 経路）
+# ------------------------------------------------------------------
+echo "== (K4) CLI（allow の過剰） =="
+
+# 健全なフィクスチャ（生成器のスニペットをそのまま tracked に置いたもの）では finding になる。
+TD_PROJ_OVER="${TD_TMP_DIR}/overreach-cli"
+td_make_project "$TD_PROJ_OVER"
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_OVER" --pm npm > "$TD_OUT" 2>/dev/null
+TD_EXIT=$?
+assert_eq "advisory なので exit 0（blocking にしない）" "0" "$TD_EXIT"
+assert_eq "settings_allow_overreach は finding" "finding" \
+  "$(jq -r '.checks[] | select(.id == "settings_allow_overreach") | .result' "$TD_OUT")"
+assert_eq "items に Bash(npm:*) が出る" "true" \
+  "$(jq -r '[.findings[] | select(.check == "settings_allow_overreach") | .items[].rule] | index("Bash(npm:*)") != null' "$TD_OUT")"
+assert_eq "items に通る呼び出し形（permits）が出る" "true" \
+  "$(jq -r '[.findings[] | select(.check == "settings_allow_overreach") | .items[] | select((.permits | length) > 0)] | length > 0' "$TD_OUT")"
+assert_eq "weakened に迂回されうる deny / ask が出る" "true" \
+  "$(jq -r '[.findings[] | select(.check == "settings_allow_overreach") | .weakened[]] | index("Bash(git tag:*)") != null' "$TD_OUT")"
+# 実行対象が固定されている allow を巻き込まない（誤検出の否定検査）。
+assert_eq "対照: Bash(git status:*) は items に出ない" "true" \
+  "$(jq -r '[.findings[] | select(.check == "settings_allow_overreach") | .items[].rule] | index("Bash(git status:*)") == null' "$TD_OUT")"
+
+# 対照: 汎用実行系の allow を全部落とすと ok になる（deny / ask は残したまま）。
+TD_PROJ_NARROW="${TD_TMP_DIR}/overreach-narrow"
+td_make_project "$TD_PROJ_NARROW"
+jq '.permissions.allow |= map(select(startswith("Bash(git ") or startswith("Bash(gh pr") or startswith("Bash(claude-harness-run")))' \
+  "${TD_PROJ_NARROW}/.claude/settings.json" > "$TD_TMPJSON" && mv "$TD_TMPJSON" "${TD_PROJ_NARROW}/.claude/settings.json"
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_NARROW" > "$TD_OUT" 2>/dev/null
+assert_eq "対照: 汎用実行系の allow が無ければ ok" "ok" \
+  "$(jq -r '.checks[] | select(.id == "settings_allow_overreach") | .result' "$TD_OUT")"
+
+# deny / ask が 1 件も無ければ skipped（迂回される対象が無い）。
+TD_PROJ_NORULES="${TD_TMP_DIR}/overreach-norules"
+td_make_project "$TD_PROJ_NORULES"
+jq '.permissions.deny = [] | .permissions.ask = []' \
+  "${TD_PROJ_NORULES}/.claude/settings.json" > "$TD_TMPJSON" && mv "$TD_TMPJSON" "${TD_PROJ_NORULES}/.claude/settings.json"
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_NORULES" --pm npm > "$TD_OUT" 2>/dev/null
+assert_eq "deny / ask が無ければ reason 付きで skipped" "true" \
+  "$(jq -r '.checks[] | select(.id == "settings_allow_overreach") | (.result == "skipped" and (.reason | length > 0))' "$TD_OUT")"
+
+# 正本（general-exec-allow.json）が読めないときは skipped。exit 2 にして blocking の検査まで
+# 巻き添えにしない（harness-terms.json / base-deny.json と同じ規律）。
+TD_DOCTOR_NOGE="$(mktemp "${TD_REPO_ROOT}/scripts/.preflight.noge.XXXXXX")"
+TD_MUTANTS+=("$TD_DOCTOR_NOGE")
+sed 's#^DOCTOR_GENERAL_EXEC_FILE=.*#DOCTOR_GENERAL_EXEC_FILE="/nonexistent/general-exec-allow.json"#' \
+  "$TD_DOCTOR" > "$TD_DOCTOR_NOGE"
+assert_eq "変異注入が実際に効いている（注入失敗を pass にしない）" "1" \
+  "$(grep -c '^DOCTOR_GENERAL_EXEC_FILE="/nonexistent/general-exec-allow.json"$' "$TD_DOCTOR_NOGE" | tr -d ' ')"
+PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR_NOGE" --project "$TD_PROJ_OVER" --pm npm > "$TD_OUT" 2>/dev/null
+TD_EXIT=$?
+assert_eq "正本欠損でも exit 2 にしない" "0" "$TD_EXIT"
+assert_eq "正本欠損なら reason 付きで skipped" "true" \
+  "$(jq -r '.checks[] | select(.id == "settings_allow_overreach") | (.result == "skipped" and (.reason | length > 0))' "$TD_OUT")"
+assert_eq "正本欠損でも checks は9件出る" "9" "$(jq -r '.checks | length' "$TD_OUT")"
 
 # ------------------------------------------------------------------
 # (L)(M) CLI: skipped と実行前提の欠落
@@ -628,7 +769,7 @@ td_make_project "$TD_PROJ_NOMD"
 rm -f "${TD_PROJ_NOMD}/CLAUDE.md"
 PATH="${TD_STUB_BIN}:${PATH}" bash "$TD_DOCTOR" --project "$TD_PROJ_NOMD" --pm npm > "$TD_OUT" 2>/dev/null
 TD_EXIT=$?
-assert_eq "CLAUDE.md 不在でも checks は8件出る（未検査を黙って落とさない）" "8" "$(jq -r '.checks | length' "$TD_OUT")"
+assert_eq "CLAUDE.md 不在でも checks は9件出る（未検査を黙って落とさない）" "9" "$(jq -r '.checks | length' "$TD_OUT")"
 assert_eq "claude_md_harness_terms も reason 付きで skipped" "true" \
   "$(jq -r '.checks[] | select(.id == "claude_md_harness_terms") | (.result == "skipped" and (.reason | length > 0))' "$TD_OUT")"
 assert_eq "claude_md_doc_map は reason 付きで skipped" "true" \

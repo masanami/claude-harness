@@ -31,6 +31,10 @@ DOCTOR_CLAUDE_MD_TEMPLATE="${DOCTOR_PLUGIN_ROOT}/skills/init-project/templates/C
 # 一覧を書き写すと同期の要る2つ目のリストになる）。
 DOCTOR_HARNESS_TERMS_FILE="${DOCTOR_PLUGIN_ROOT}/skills/init-project/scripts/harness-terms.json"
 DOCTOR_SKILLS_DIR="${DOCTOR_PLUGIN_ROOT}/skills"
+# 汎用実行系の呼び出し形の正本（Issue #238）。「呼び出し側が、実行されるプログラムを
+# 引数で指名できるか」という形で持つ。この一覧は**網羅ではない**（処理系ごとに際限なくあり
+# denylist は構造的に取りこぼす）。base-deny.json / harness-terms.json と同じ枠の設定ファイル。
+DOCTOR_GENERAL_EXEC_FILE="${DOCTOR_PLUGIN_ROOT}/skills/init-project/scripts/general-exec-allow.json"
 
 # 終了コード（scripts/specs/preflight.md と一致させること）
 DOCTOR_EX_OK=0     # status が ok または warn
@@ -70,6 +74,7 @@ launcher_on_path|blocking
 launcher_plugin_root|blocking
 settings_launcher_allow|blocking
 settings_base_allow|advisory
+settings_allow_overreach|advisory
 claude_md_sections|advisory
 claude_md_placeholders|advisory
 claude_md_doc_map|advisory
@@ -183,6 +188,111 @@ doctor_rule_locations_json() {
       result="$(jq -c --arg s "$scope" --arg p "$path" '. + [{scope: $s, path: $p}]' <<<"$result")"
     fi
   done
+  printf '%s\n' "$result"
+}
+
+# 引数: プロジェクトルート, フィールド名(allow/ask/deny), project scope の値(JSON配列)
+# 戻り値: DOCTOR_ALLOW_SCOPES 全層の和集合（unique）。
+# deny / ask も allow と同じ 3 層のどこに在っても効くため、「何が保護されているか」を
+# 数えるときは同じ範囲で見る。
+doctor_scope_field_union_json() {
+  local project="$1" field="$2" project_override="$3"
+  local result='[]' scope path values
+  for scope in $DOCTOR_ALLOW_SCOPES; do
+    path="$(doctor_scope_path "$scope" "$project")"
+    if [ "$scope" = "project" ]; then
+      values="$project_override"
+    else
+      values="$(doctor_settings_field_json "$path" "$field")"
+    fi
+    result="$(jq -c --argjson v "$values" '. + $v' <<<"$result")"
+  done
+  jq -c 'unique' <<<"$result"
+}
+
+# ------------------------------------------------------------------
+# allow の過剰（汎用実行系の allow が deny / ask を無効化している状態。Issue #238）
+# ------------------------------------------------------------------
+#
+# deny / ask は**前方一致**であり、permission マッチャが見るのは呼び出し側が書いた 1 つの
+# 文字列だけである。したがって「実行されるプログラムを引数で指名できる」コマンドを allow
+# すると、別名の文字列で同じ副作用へ到達できる（`npm run cdk -- deploy` は `cdk deploy` で
+# 始まらないので `Bash(cdk deploy:*)` の ask に一致しない）。
+#
+# **この検査は 0 件にすることを目的としない。** ツールチェインの allow（`Bash(npm:*)` 等）を
+# 外せば開発そのものが止まるため、多くのプロジェクトで finding は残り続ける。目的は
+# 「deny / ask が実効的でない範囲」を毎回明示することであって、赤を消させることではない
+# （保証の範囲は docs/settings-governance.md §3.1 が正本）。
+# blocking にしないのもこのためである。
+
+# 引数: general-exec-allow.json のパス → "form<TAB>why" を1行ずつ。
+# ファイル不在・スキーマ不正は非0で返す（呼び出し側が skipped にする）。harness-terms.json と
+# 同じ理由で、この設定ファイルの欠損が診断そのものを落とすことは避ける。
+doctor_general_exec_forms() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  jq -e -r '
+    if (type == "object" and (.commands | type) == "array"
+        and ([.commands[] | select((type == "object")
+                                   and (.form | type) == "string" and (.form | length) > 0
+                                   and (.why | type) == "string" and (.why | length) > 0)]
+             | length) == (.commands | length)
+        and (.commands | length) > 0)
+    then .commands[] | "\(.form)\t\(.why)" else error("invalid schema") end' "$file" 2>/dev/null
+}
+
+# 引数: permission ルール文字列 → `Bash(...)` の中のコマンド前置。
+# `Bash(` 始まりでないルール（`Read(...)` / `WebFetch` 等）は非0で返す。
+doctor_rule_command_prefix() {
+  local rule="$1" inner
+  case "$rule" in
+    'Bash('*')') inner="${rule#Bash(}"; inner="${inner%)}" ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "${inner%:*}"
+}
+
+# 引数: allow ルールのコマンド前置, 汎用実行系の呼び出し形
+# **前置一致の向きに注意**: 「その allow でこの呼び出し形が通るか」を見るので、
+# 判定は「form が allow 前置で始まるか」である（allow が form で始まるか、ではない）。
+#   allow `Bash(npm:*)`           × form `npm run`  → 通る（過剰）
+#   allow `Bash(npx playwright:*)` × form `npx`      → 通らない（playwright に固定済み）
+doctor_allow_permits_form() {
+  local allow_prefix="$1" form="$2"
+  [ -n "$allow_prefix" ] || return 1
+  [ "$form" = "$allow_prefix" ] && return 0
+  case "$form" in
+    "${allow_prefix} "*) return 0 ;;
+  esac
+  return 1
+}
+
+# 引数: プロジェクトルート, allow(JSON配列), project scope の allow(JSON配列), forms("form<TAB>why"の複数行)
+# 戻り値: [{rule, found_in, permits: [{form, why}]}]（該当する allow ルールごとに1要素）
+doctor_allow_overreach_items_json() {
+  local project="$1" allow_json="$2" project_allow="$3" forms="$4"
+  local result='[]' rule prefix permits form why line
+  local tab=$'\t'
+  while IFS= read -r rule; do
+    [ -z "$rule" ] && continue
+    prefix="$(doctor_rule_command_prefix "$rule")" || continue
+    permits='[]'
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      form="${line%%"$tab"*}"
+      why="${line#*"$tab"}"
+      if doctor_allow_permits_form "$prefix" "$form"; then
+        permits="$(jq -c --arg f "$form" --arg w "$why" '. + [{form: $f, why: $w}]' <<<"$permits")"
+      fi
+    done <<EOF
+$forms
+EOF
+    [ "$(jq -r 'length' <<<"$permits")" = "0" ] && continue
+    result="$(jq -c --arg r "$rule" --argjson found "$(doctor_rule_locations_json "$rule" "$project" "$project_allow")" \
+      --argjson permits "$permits" '. + [{rule: $r, found_in: $found, permits: $permits}]' <<<"$result")"
+  done <<EOF
+$(jq -r '.[]' <<<"$allow_json")
+EOF
   printf '%s\n' "$result"
 }
 
@@ -621,6 +731,43 @@ EOF
       '. + [{check: "settings_base_allow", severity: $sev,
              summary: ("期待される allow のうち " + ($items | length | tostring) + " 件がプロジェクト settings・ユーザー設定・settings.local.json のいずれにも無い"),
              items: $items, remediation: $cmd}]' <<<"$findings")"
+  fi
+
+  # --- settings_allow_overreach ---
+  # 「期待 allow が在るか」（settings_base_allow）と表裏の検査。同じ allow を別の観点から
+  # 見るもので、両立しないのではなく trade-off を明示するために両方出す。
+  local overreach_forms
+  if ! overreach_forms="$(doctor_general_exec_forms "$DOCTOR_GENERAL_EXEC_FILE")"; then
+    checks="$(jq -c --arg sev "$(doctor_severity_of settings_allow_overreach)" \
+      --arg reason "general-exec-allow.json が読めない（インストール破損）: ${DOCTOR_GENERAL_EXEC_FILE}" \
+      '. + [{id: "settings_allow_overreach", severity: $sev, result: "skipped", reason: $reason}]' <<<"$checks")"
+  else
+    local union_allow union_ask union_deny weakened overreach_items
+    union_allow="$(doctor_scope_field_union_json "$project" allow "$actual_allow")"
+    union_ask="$(doctor_scope_field_union_json "$project" ask "$actual_ask")"
+    union_deny="$(doctor_scope_field_union_json "$project" deny "$actual_deny")"
+    weakened="$(jq -c -n --argjson a "$union_ask" --argjson d "$union_deny" '($a + $d) | unique')"
+    if [ "$(jq -r 'length' <<<"$weakened")" = "0" ]; then
+      checks="$(jq -c --arg sev "$(doctor_severity_of settings_allow_overreach)" \
+        --arg reason "deny / ask が 1 件も無いため、迂回される対象が無い" \
+        '. + [{id: "settings_allow_overreach", severity: $sev, result: "skipped", reason: $reason}]' <<<"$checks")"
+    else
+      overreach_items="$(doctor_allow_overreach_items_json "$project" "$union_allow" "$actual_allow" "$overreach_forms")"
+      if [ "$(jq -r 'length' <<<"$overreach_items")" = "0" ]; then
+        checks="$(jq -c --arg sev "$(doctor_severity_of settings_allow_overreach)" \
+          '. + [{id: "settings_allow_overreach", severity: $sev, result: "ok"}]' <<<"$checks")"
+      else
+        checks="$(jq -c --arg sev "$(doctor_severity_of settings_allow_overreach)" \
+          '. + [{id: "settings_allow_overreach", severity: $sev, result: "finding"}]' <<<"$checks")"
+        findings="$(jq -c --arg sev "$(doctor_severity_of settings_allow_overreach)" \
+          --argjson items "$overreach_items" --argjson weakened "$weakened" \
+          '. + [{check: "settings_allow_overreach", severity: $sev,
+                 summary: ("汎用実行系の allow が " + ($items | length | tostring) + " 件あり、deny / ask の "
+                           + ($weakened | length | tostring) + " 件は別名の呼び出しで迂回されうる"),
+                 items: $items, weakened: $weakened,
+                 remediation: "実行するプログラムが固定される形まで allow を狭める（例: Bash(docker:*) → Bash(docker compose:*) / Bash(docker ps:*)）。ツールチェインの allow は外せないことが多く、**この指摘は 0 件にすることを目的としない** —— 狭められない分は「deny / ask が実効的でない範囲」として受け入れ、不可逆操作の歯止めを permission 以外（人間承認・CI 側の保護ルール・環境分離）に置く。保証の範囲は docs/settings-governance.md §3.1"}]' <<<"$findings")"
+      fi
+    fi
   fi
 
   # --- claude_md_sections / claude_md_placeholders / claude_md_doc_map ---

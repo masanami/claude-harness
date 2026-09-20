@@ -1,0 +1,225 @@
+{
+  "_comment": [
+    "汎用実行系の呼び出し形の正本（Issue #238）。preflight.sh の settings_allow_overreach 検査が読む。",
+    "",
+    "■ 何を載せるか",
+    "載せる基準は列挙ではなく形である: 『呼び出し側が、実行されるプログラムを引数で指名できるか』。",
+    "指名できる形を allow すると、permission マッチャは呼び出し側の 1 つの文字列しか見ないため、",
+    "別名の文字列で deny / ask を迂回できる（deny / ask は前方一致であり、間接実行を捉えない）。",
+    "この基準は scripts/config/command-allowlist.txt の (a)/(b) の切り分けと同じものである。",
+    "",
+    "■ 書式と照合の向き",
+    "commands[].form は Bash(...) の中に書かれるコマンド前置（トークン列）である。",
+    "照合は『その allow ルールでこの form が通るか』＝ form が allow の前置で始まるか、で行う。",
+    "  allow Bash(npm:*)            × form \"npm run\" → 通る（過剰として報告する）",
+    "  allow Bash(npx playwright:*) × form \"npx\"     → 通らない（実行対象が固定されている）",
+    "",
+    "■ 網羅ではない",
+    "処理系ごとに際限なくあり、denylist は構造的に取りこぼす（claude-harness PR #224 で",
+    "`bundle exec rm -rf /` が先頭トークン一致をすり抜けることを実測）。この一覧は",
+    "『検出できたものを出す』ためのものであって、0 件にすれば安全になる類のものではない。",
+    "保証の範囲は docs/settings-governance.md §3.1 が正本。"
+  ],
+  "commands": [
+    {
+      "form": "bash",
+      "why": "`bash -c '<任意>'` でシェル構文ごと任意のプログラムを実行できる"
+    },
+    {
+      "form": "sh",
+      "why": "`sh -c '<任意>'` でシェル構文ごと任意のプログラムを実行できる"
+    },
+    {
+      "form": "zsh",
+      "why": "`zsh -c '<任意>'` でシェル構文ごと任意のプログラムを実行できる"
+    },
+    {
+      "form": "env",
+      "why": "`env <VAR=val> <cmd>` で任意のプログラムを起動でき、PATH / LD_PRELOAD 等も差し替えられる"
+    },
+    {
+      "form": "xargs",
+      "why": "`xargs <cmd>` で任意のプログラムを起動できる"
+    },
+    {
+      "form": "find",
+      "why": "`find . -exec <cmd> {} \\;` で任意のプログラムを起動できる"
+    },
+    {
+      "form": "git -c",
+      "why": "`git -c alias.x='!<任意>' x` のように、設定注入でシェルコマンドを実行できる"
+    },
+    {
+      "form": "npm run",
+      "why": "package.json の script が指す任意のプログラムを起動する。Issue #238 の `npm run cdk -- deploy <Stack>-prod` がこの形"
+    },
+    {
+      "form": "npm exec",
+      "why": "`npm exec <pkg>` は指定したパッケージの実行ファイルを起動する"
+    },
+    {
+      "form": "npm install",
+      "why": "依存の postinstall スクリプトが任意のコードを実行する"
+    },
+    {
+      "form": "npm ci",
+      "why": "依存の postinstall スクリプトが任意のコードを実行する"
+    },
+    {
+      "form": "pnpm run",
+      "why": "package.json の script が指す任意のプログラムを起動する"
+    },
+    {
+      "form": "pnpm exec",
+      "why": "指定したパッケージの実行ファイルを起動する"
+    },
+    {
+      "form": "pnpm dlx",
+      "why": "取得したパッケージを実行する"
+    },
+    {
+      "form": "yarn run",
+      "why": "package.json の script が指す任意のプログラムを起動する"
+    },
+    {
+      "form": "yarn dlx",
+      "why": "取得したパッケージを実行する"
+    },
+    {
+      "form": "bun run",
+      "why": "package.json の script ないし指定ファイルの任意のコードを実行する"
+    },
+    {
+      "form": "npx",
+      "why": "`npx <pkg>` は指定したパッケージを実行する（`--no` / `--offline` を付けない形は取得も行う）"
+    },
+    {
+      "form": "bunx",
+      "why": "`bunx <pkg>` は指定したパッケージを実行する"
+    },
+    {
+      "form": "node",
+      "why": "`node <file>` / `node -e '<任意>'` / `node --require <file>` で任意のコードを実行できる"
+    },
+    {
+      "form": "deno run",
+      "why": "`deno run <url|file>` でローカル・リモートの任意のコードを実行できる"
+    },
+    {
+      "form": "deno eval",
+      "why": "引数のコードをそのまま実行する"
+    },
+    {
+      "form": "python",
+      "why": "`python <file>` / `python -c '<任意>'` / `python -m <module>` で任意のコードを実行できる"
+    },
+    {
+      "form": "python3",
+      "why": "`python3 <file>` / `python3 -c '<任意>'` / `python3 -m <module>` で任意のコードを実行できる"
+    },
+    {
+      "form": "pip install",
+      "why": "取得したパッケージの setup スクリプトを実行する（`-e .` はリポジトリ自身のコードを実行する）"
+    },
+    {
+      "form": "pip3 install",
+      "why": "取得したパッケージの setup スクリプトを実行する"
+    },
+    {
+      "form": "uv run",
+      "why": "`uv run <cmd>` で任意のプログラムを起動できる"
+    },
+    {
+      "form": "uvx",
+      "why": "`uvx <pkg>` は取得したパッケージを実行する"
+    },
+    {
+      "form": "poetry run",
+      "why": "`poetry run <cmd>` で任意のプログラムを起動できる"
+    },
+    {
+      "form": "pipenv run",
+      "why": "`pipenv run <cmd>` で任意のプログラムを起動できる"
+    },
+    {
+      "form": "ruby",
+      "why": "`ruby <file>` / `ruby -e '<任意>'` で任意のコードを実行できる"
+    },
+    {
+      "form": "bundle exec",
+      "why": "`bundle exec <cmd>` で任意のプログラムを起動できる（PR #224 で `bundle exec rm -rf /` が先頭トークン一致をすり抜けることを実測）"
+    },
+    {
+      "form": "bundler exec",
+      "why": "`bundler exec <cmd>` で任意のプログラムを起動できる"
+    },
+    {
+      "form": "rake",
+      "why": "`rake <task>` が Rakefile の定める任意の手続きを実行する"
+    },
+    {
+      "form": "cargo run",
+      "why": "`cargo run` はビルドスクリプトごとリポジトリのコードを実行する"
+    },
+    {
+      "form": "cargo install",
+      "why": "取得した crate のビルドスクリプトを実行する"
+    },
+    {
+      "form": "go run",
+      "why": "`go run <pkg>` で任意のコードを実行できる"
+    },
+    {
+      "form": "go generate",
+      "why": "ソース中の `//go:generate` 行が指す任意のコマンドを実行する"
+    },
+    {
+      "form": "dotnet exec",
+      "why": "`dotnet exec <dll>` で任意のアセンブリを実行できる"
+    },
+    {
+      "form": "dotnet run",
+      "why": "プロジェクトのコードをビルドして実行する"
+    },
+    {
+      "form": "make",
+      "why": "`make <target>` が Makefile の定める任意の手続きを実行する。`make -f <別ファイル>` で Makefile 自体も差し替えられる"
+    },
+    {
+      "form": "just",
+      "why": "`just <recipe>` が justfile の定める任意の手続きを実行する"
+    },
+    {
+      "form": "task",
+      "why": "`task <task>` が Taskfile の定める任意の手続きを実行する"
+    },
+    {
+      "form": "docker run",
+      "why": "コンテナ内で任意のプログラムを起動でき、`-v /:/host` でホスト FS 全域・認証情報へ到達できる"
+    },
+    {
+      "form": "docker exec",
+      "why": "起動中のコンテナで任意のプログラムを起動できる"
+    },
+    {
+      "form": "docker compose run",
+      "why": "compose 定義のサービス上で任意のコマンドを起動できる（compose 定義が要る点で『事前準備なしの 1 文字列』ではないが、リポジトリに定義が在れば成立する）"
+    },
+    {
+      "form": "docker compose exec",
+      "why": "起動中のサービスで任意のコマンドを起動できる"
+    },
+    {
+      "form": "kubectl exec",
+      "why": "`kubectl exec <pod> -- <cmd>` でクラスタ内の任意のプログラムを起動できる"
+    },
+    {
+      "form": "ssh",
+      "why": "`ssh <host> <cmd>` でリモートの任意のプログラムを起動できる"
+    },
+    {
+      "form": "gh api",
+      "why": "`gh api -X POST …/actions/workflows/…/dispatches` のように、GitHub 側の任意の副作用（workflow_dispatch・release 作成・タグ作成）へ HTTP で到達できる。`gh workflow` / `gh release` を ask に置いてもこの経路は別の文字列になる"
+    }
+  ]
+}

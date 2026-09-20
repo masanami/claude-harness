@@ -31,7 +31,7 @@
 
 harness が要求する allow の**正本は `generate-settings.sh` の `gs_build_generated_settings_json`**（＝ `/init-project` が実際に書き込むもの）であり、本スクリプトはそれを `source` して呼び出した結果を期待値に使う。**期待 allow の一覧を本スクリプトや本仕様へ書き写さない。** 2 つのリストを同期させる散文規定は必ずずれ、しかもずれても誰も気付かない（生成器が新しい allow を足しても診断が要求しないため、追従漏れの検出という目的が静かに失われる）。
 
-`gs_build_generated_settings_json` には deny の正本（`base-deny.json`）を渡さず空配列を渡し、`.permissions.allow` だけを読む。診断は allow しか見ないため、`base-deny.json` の欠損で**診断そのものが落ちて allow の検査まで巻き添えになる**のを避ける。
+`gs_build_generated_settings_json` には deny / ask の正本（`base-deny.json` / `base-ask.json`）を渡さず空配列を渡し（`ask` 引数は省略可）、`.permissions.allow` だけを読む。期待 allow の判定は allow しか見ないため、これらの設定ファイルの欠損で**診断そのものが落ちて allow の検査まで巻き添えになる**のを避ける。
 
 ## 検査項目と severity（正本。実行時に判定しない）
 
@@ -43,6 +43,7 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 | `launcher_plugin_root` | ランチャーが解決するプラグインルートが、本スクリプト自身のプラグインルートと一致する | blocking |
 | `settings_launcher_allow` | settings の allow に `Bash(claude-harness-run:*)` が在り、deny / ask に同一文字列が無い | blocking |
 | `settings_base_allow` | 上記以外の期待 allow が settings に揃っている | advisory |
+| `settings_allow_overreach` | 汎用実行系の allow が deny / ask を無効化していない | advisory |
 | `claude_md_sections` | `CLAUDE.md` にテンプレートの節（H2 見出し）が揃っている | advisory |
 | `claude_md_placeholders` | `CLAUDE.md` にテンプレートのプレースホルダが未置換で残っていない | advisory |
 | `claude_md_doc_map` | ドキュメントマップの行と実ファイルの存在が一致する | advisory |
@@ -65,6 +66,29 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 - **`DOCTOR_ALLOW_SCOPES` から外した層に在るルールは要件を満たさない**（例: `--settings` で渡す一時ファイル、managed settings）。検査対象の層を増やすときは、実測記録を `docs/settings-governance.md` に残してから表を変える。
 - **shadowing は完全一致のみ検出する**（`deny` / `ask` に allow と同一の文字列が在る場合）。優先順は deny > ask > allow。**前置き一致どうしの打ち消し（例: `Bash(claude-harness-run:*)` に対する `Bash(claude-harness-run preflight)` 等）の意味論は本リポジトリに実測記録が無いため、検出対象外**とする（明示的な仮定。実測できた時点で拡張する）。
 - **`Read(~/.claude/plugins/**)` は意図的に検査対象外**。生成設定へ加える案は「採らない」と決定済みである（理由 3 点は `docs/skill-note-inventory.md` 6 節の表: 権限拡大が広い／`CLAUDE_CONFIG_DIR` 利用環境・ローカルチェックアウトを 1 つの静的パターンで覆えない／既存の導入済みプロジェクトには効かない）。ランチャー不在時の正しい是正は**ランチャーを導入すること**（`docs/script-launcher.md` §2）であり、Read 許可の追加ではない。
+
+#### `settings_allow_overreach`
+
+**汎用実行系の allow が deny / ask を無効化している状態**を検出する（Issue #238）。`settings_base_allow` が「期待した allow が在るか」を見るのに対し、本検査は同じ allow を**逆の観点**（広すぎないか）から見る。2 つは両立しない要求ではなく、trade-off を明示するために両方出す。
+
+判定の材料:
+
+- **allow / ask / deny とも `DOCTOR_ALLOW_SCOPES` の 3 層の和集合**で見る。deny / ask も allow と同じく 3 層のどこに在っても効くため、「何が保護されているか」を同じ範囲で数える。
+- **汎用実行系の呼び出し形の正本は `skills/init-project/scripts/general-exec-allow.json`**（`{commands: [{form, why}]}`）。一覧を本仕様やスクリプトへ書き写さない。載せる基準は列挙ではなく形であり、**「呼び出し側が、実行されるプログラムを引数で指名できるか」**で決める（`scripts/config/command-allowlist.txt` の (a)/(b) の切り分けと同じ基準）。
+- 照合の向きは**「その allow ルールでこの呼び出し形が通るか」**＝ `form` が allow のコマンド前置で始まるか、である。`Bash(npm:*)` は `npm run` を通すので該当し、`Bash(npx playwright:*)` は `npx` を通さないので該当しない（実行対象が固定されている）。`Bash(` 以外のルール（`Read(...)` 等）は対象外。
+
+結果:
+
+| 条件 | result |
+|---|---|
+| `general-exec-allow.json` が読めない・スキーマ不正 | `skipped`（理由つき）。`harness-terms.json` と同じ理由で **exit 2 にしない** |
+| deny / ask が 3 層のどこにも 1 件も無い | `skipped`（迂回される対象が無い） |
+| 該当する allow が 0 件 | `ok` |
+| 該当する allow が 1 件以上 | `finding`（advisory） |
+
+**この検査は 0 件にすることを目的としない。** ツールチェインの allow（`Bash(npm:*)` 等）を外せば開発そのものが止まるため、`/init-project` が提示するスニペットをそのまま使っている環境でも finding は残る。目的は「deny / ask が実効的でない範囲」を毎回明示することであり、赤を消させることではない。blocking にしないのはこのためである（blocking にすると、消せない指摘で gate が恒久的に死ぬ）。**保証の範囲の正本は `docs/settings-governance.md` §3.1**。
+
+**この一覧は網羅ではない**（明示的な仮定）。処理系ごとに際限なくあり、denylist は構造的に取りこぼす（claude-harness PR #224 で、先頭トークン列の一致だけでは `bundle exec rm -rf /` が通ることを実測）。取りこぼしたものは「検出されなかった」であって「安全である」ではない。
 
 #### `claude_md_sections` / `claude_md_placeholders`
 
@@ -125,12 +149,13 @@ severity は**この表で固定**であり、実行時の状況で変えない�
   "project": "/path/to/project",
   "settings": { "path": "/path/to/project/.claude/settings.json", "exists": true },
   "claudeMd": { "path": "/path/to/project/CLAUDE.md", "exists": true },
-  "counts": { "checks": 8, "ok": 5, "finding": 1, "skipped": 2, "blocking": 0, "advisory": 1 },
+  "counts": { "checks": 9, "ok": 5, "finding": 2, "skipped": 2, "blocking": 0, "advisory": 2 },
   "checks": [
     { "id": "launcher_on_path", "severity": "blocking", "result": "ok" },
     { "id": "launcher_plugin_root", "severity": "blocking", "result": "ok" },
     { "id": "settings_launcher_allow", "severity": "blocking", "result": "ok", "satisfied_by": ["user"] },
     { "id": "settings_base_allow", "severity": "advisory", "result": "finding" },
+    { "id": "settings_allow_overreach", "severity": "advisory", "result": "finding" },
     { "id": "claude_md_sections", "severity": "advisory", "result": "ok" },
     { "id": "claude_md_placeholders", "severity": "advisory", "result": "ok" },
     { "id": "claude_md_doc_map", "severity": "advisory", "result": "skipped", "reason": "CLAUDE.md にドキュメントマップ節が無い" },
@@ -148,8 +173,8 @@ severity は**この表で固定**であり、実行時の状況で変えない�
 }
 ```
 
-- `checks` は**全 8 件を必ず出す**。`skipped` を出さずに黙って落とすと「未検査」と「調べた結果の 0 件」が区別できなくなる。`skipped` には必ず `reason` を付ける。
-- `findings` の各要素は `check` / `severity` / `summary` / `items` / `remediation` を持つ。`items` の形は検査ごとに異なる（allow 系は `{rule, found_in}`（ランチャーは加えて `shadowed_by`）、doc map は `{path, state, kind}`、節は `{section}`、harness 固有語は `{term, line}` 等）。
+- `checks` は**全 9 件を必ず出す**。`skipped` を出さずに黙って落とすと「未検査」と「調べた結果の 0 件」が区別できなくなる。`skipped` には必ず `reason` を付ける。
+- `findings` の各要素は `check` / `severity` / `summary` / `items` / `remediation` を持つ。`items` の形は検査ごとに異なる（allow 系は `{rule, found_in}`（ランチャーは加えて `shadowed_by`）、doc map は `{path, state, kind}`、節は `{section}`、harness 固有語は `{term, line}` 等）。`settings_allow_overreach` だけは `items`（`{rule, found_in, permits:[{form, why}]}`）に加えて **`weakened`**（その allow によって迂回されうる deny / ask ルールの一覧）を持つ。
 - `checks[]` の `settings_launcher_allow` / `settings_base_allow` が `ok` のときは `satisfied_by`（層名の配列）を持つ。
 - `status` は `findings` から決まる: blocking が 1 件以上あれば `fail`、findings があり blocking が 0 件なら `warn`、findings が 0 件なら `ok`。
 - `skipped` が blocking の検査を隠すことはない。`launcher_plugin_root` が skipped になるのは `launcher_on_path` が finding のとき（＝既に `fail`）だけである。

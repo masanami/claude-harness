@@ -100,9 +100,14 @@ assert_eq "vitest単体では追加権限なし" "[]" "$(gs_test_allow_json vite
 # gs_infra_allow_json: infra別の追加権限
 # ============================================================
 echo "=== test: gs_infra_allow_json ==="
-assert_true "docker で Bash(docker:*) が入る" "$(json_contains "$(gs_infra_allow_json docker)" 'Bash(docker:*)')"
 assert_true "docker で Bash(docker compose:*) が入る" "$(json_contains "$(gs_infra_allow_json docker)" 'Bash(docker compose:*)')"
-assert_true "Dockerfile 検出値(analyze-project.sh形式)でもdocker権限が入る" "$(json_contains "$(gs_infra_allow_json Dockerfile)" 'Bash(docker:*)')"
+assert_true "docker で Bash(docker ps:*) が入る" "$(json_contains "$(gs_infra_allow_json docker)" 'Bash(docker ps:*)')"
+assert_true "docker で Bash(docker logs:*) が入る" "$(json_contains "$(gs_infra_allow_json docker)" 'Bash(docker logs:*)')"
+# Issue #238: `docker run -v /:/host …` の1文字列でホストFS全域へ到達できるため、
+# 総称の Bash(docker:*) は出さずサブコマンド単位へ狭める。
+assert_true "docker で総称の Bash(docker:*) は入らない（Issue #238）" \
+  "$(jq -e 'index("Bash(docker:*)") == null' >/dev/null <<<"$(gs_infra_allow_json docker)" && echo true || echo false)"
+assert_true "Dockerfile 検出値(analyze-project.sh形式)でもdocker権限が入る" "$(json_contains "$(gs_infra_allow_json Dockerfile)" 'Bash(docker compose:*)')"
 assert_eq "infra指定なしでは空配列" "[]" "$(gs_infra_allow_json "")"
 
 # ============================================================
@@ -173,6 +178,87 @@ assert_true "gs_load_base_deny_json: パスに二重引用符を含んでもエ�
   "$(jq -e . >/dev/null 2>&1 <<<"$QUOTE_JSON_LINE" && echo true || echo false)"
 
 # ============================================================
+# base-deny.json / base-ask.json の中身（Issue #238 の回帰）
+# ここは「規約そのもの」であり、実装の都合で静かに減ると本番反映経路が開く。
+# 追加/削除はいずれも意図的な変更としてこのテストを直させる。
+# ============================================================
+echo "=== test: base-deny.json / base-ask.json の中身 ==="
+TGS_BASE_ASK_FILE="${TGS_TEST_DIR}/../../skills/init-project/scripts/base-ask.json"
+assert_true "base-ask.json が存在する" "$([ -f "$TGS_BASE_ASK_FILE" ] && echo true || echo false)"
+
+# deny: 取り返しのつかない操作（Issue #238 で追加した3件を含む）
+for required in 'Bash(rm -rf:*)' 'Bash(git push --force:*)' 'Bash(git push --force-with-lease:*)' \
+                'Bash(docker run:*)' 'Bash(docker exec:*)' 'Bash(gh repo delete:*)'; do
+  assert_true "base-deny.json に ${required} が在る" \
+    "$(jq -e --arg r "$required" 'index($r) != null' >/dev/null "$TGS_BASE_DENY_FILE" && echo true || echo false)"
+done
+
+# ask: 本番へ反映されるリリース系（headless では実質 deny、対話では人間が判断できる）
+for required in 'Bash(git tag:*)' 'Bash(git push --tags:*)' 'Bash(git push --follow-tags:*)' \
+                'Bash(gh workflow:*)' 'Bash(gh release:*)' \
+                'Bash(cdk deploy:*)' 'Bash(cdk destroy:*)' 'Bash(npm run cdk:*)' 'Bash(npx cdk:*)'; do
+  assert_true "base-ask.json に ${required} が在る" \
+    "$(jq -e --arg r "$required" 'index($r) != null' >/dev/null "$TGS_BASE_ASK_FILE" && echo true || echo false)"
+done
+
+# 形の不変条件: どちらも Bash(...) の permission ルールであること。
+# 形が崩れたルールは「書いてあるのに一致しない」＝最も気付きにくい欠陥になる。
+for f in "$TGS_BASE_DENY_FILE" "$TGS_BASE_ASK_FILE"; do
+  assert_true "$(basename "$f"): 全要素が Bash(...) の形をしている" \
+    "$(jq -e 'all(test("^Bash\\(.+\\)$"))' >/dev/null "$f" && echo true || echo false)"
+done
+
+# deny と ask に同じルールを両方書かない（deny > ask の優先順で ask 側が死に、
+# 「ask にしたつもりが常に拒否」という読み違いを生むため）。
+assert_true "base-deny.json と base-ask.json に重複するルールが無い" \
+  "$(jq -e -n --slurpfile d "$TGS_BASE_DENY_FILE" --slurpfile a "$TGS_BASE_ASK_FILE" \
+      '(($d[0] // []) - (($d[0] // []) - ($a[0] // []))) | length == 0' >/dev/null && echo true || echo false)"
+
+# 自己矛盾の検査: スニペットの allow と、ベース deny / ask が同じ文字列を持たない。
+# （`--force` を deny しながら `--force-with-lease` を allow していた Issue #238 の型）
+TGS_SNIPPET_FOR_CONFLICT="$(gs_build_user_settings_snippet_json npm playwright docker | jq -c '.permissions.allow')"
+for f in "$TGS_BASE_DENY_FILE" "$TGS_BASE_ASK_FILE"; do
+  assert_true "スニペットの allow と $(basename "$f") が同一ルールを共有しない" \
+    "$(jq -e -n --argjson allow "$TGS_SNIPPET_FOR_CONFLICT" --slurpfile r "$f" \
+        '[$allow[] | select(. as $x | ($r[0] // []) | index($x) != null)] | length == 0' >/dev/null && echo true || echo false)"
+done
+
+# ============================================================
+# gs_load_base_ask_json: base-ask.json 正本の読み込みと、欠損/不正時の明示エラー
+# （base-deny.json と同じ規律。欠損＝インストール破損として非0 exit する）
+# ============================================================
+echo "=== test: gs_load_base_ask_json ==="
+assert_eq "gs_load_base_ask_json はbase-ask.jsonの内容をそのまま返す" \
+  "$(jq -c '.' "$TGS_BASE_ASK_FILE")" "$(gs_load_base_ask_json "$(dirname "$TGS_BASE_ASK_FILE")")"
+
+TGS_MISSING_ASK_DIR="${TGS_TMP_DIR}/missing-ask"
+mkdir -p "$TGS_MISSING_ASK_DIR"
+MISSING_ASK_EXIT=0
+if MISSING_ASK_OUTPUT=$(gs_load_base_ask_json "$TGS_MISSING_ASK_DIR" 2>&1); then
+  MISSING_ASK_EXIT=0
+else
+  MISSING_ASK_EXIT=$?
+fi
+assert_true "gs_load_base_ask_json: base-ask.jsonが存在しない場合は非0 exit" \
+  "$([ "$MISSING_ASK_EXIT" -ne 0 ] && echo true || echo false)"
+assert_true "gs_load_base_ask_json: 不在時はstderrにファイルパスを含むエラー" \
+  "$(printf '%s' "$MISSING_ASK_OUTPUT" | grep -qF "${TGS_MISSING_ASK_DIR}/base-ask.json" && echo true || echo false)"
+
+TGS_BAD_ASK_DIR="${TGS_TMP_DIR}/bad-ask"
+mkdir -p "$TGS_BAD_ASK_DIR"
+echo '{"not":"an array"}' > "${TGS_BAD_ASK_DIR}/base-ask.json"
+BAD_ASK_EXIT=0
+if BAD_ASK_OUTPUT=$(gs_load_base_ask_json "$TGS_BAD_ASK_DIR" 2>&1); then
+  BAD_ASK_EXIT=0
+else
+  BAD_ASK_EXIT=$?
+fi
+assert_true "gs_load_base_ask_json: オブジェクト形式のbase-ask.jsonは非0 exit" \
+  "$([ "$BAD_ASK_EXIT" -ne 0 ] && echo true || echo false)"
+assert_true "gs_load_base_ask_json: 不正スキーマ時もstderrにファイルパスを含むエラー" \
+  "$(printf '%s' "$BAD_ASK_OUTPUT" | grep -qF "${TGS_BAD_ASK_DIR}/base-ask.json" && echo true || echo false)"
+
+# ============================================================
 # gs_validate_settings_schema: JSON境界のスキーマ検証(構文だけでなく型契約を検証)
 # ============================================================
 echo "=== test: gs_validate_settings_schema ==="
@@ -180,6 +266,12 @@ assert_true "正常なsettings jsonはvalid" \
   "$(gs_validate_settings_schema '{"permissions":{"allow":["Bash(a:*)"],"deny":[]}}' && echo true || echo false)"
 assert_true "permissions省略でもvalid" "$(gs_validate_settings_schema '{}' && echo true || echo false)"
 assert_true "allow/deny省略でもvalid" "$(gs_validate_settings_schema '{"permissions":{}}' && echo true || echo false)"
+assert_true "ask が文字列配列ならvalid" \
+  "$(gs_validate_settings_schema '{"permissions":{"ask":["Bash(git tag:*)"]}}' && echo true || echo false)"
+assert_eq "ask が配列でなければinvalid" "false" \
+  "$(gs_validate_settings_schema '{"permissions":{"ask":"not-array"}}' && echo true || echo false)"
+assert_eq "ask の要素が文字列でなければinvalid" "false" \
+  "$(gs_validate_settings_schema '{"permissions":{"ask":[1,2]}}' && echo true || echo false)"
 assert_eq "allowが文字列でなく配列でない場合はinvalid" "false" \
   "$(gs_validate_settings_schema '{"permissions":{"allow":"not-array"}}' && echo true || echo false)"
 assert_eq "allow要素に非文字列が混じる場合はinvalid" "false" \
@@ -208,9 +300,14 @@ assert_true "pm/stack省略でもvalid" "$(gs_validate_analyze_input_schema '{}'
 # ============================================================
 # gs_build_generated_settings_json: 合成結果
 # ============================================================
-echo "=== test: gs_build_generated_settings_json（プロジェクト settings は deny 専用） ==="
+echo "=== test: gs_build_generated_settings_json（プロジェクト settings は制限専用） ==="
 BASE_DENY='["Bash(rm -rf:*)","Bash(rm -r:*)"]'
-GENERATED="$(gs_build_generated_settings_json npm playwright docker "$BASE_DENY")"
+BASE_ASK='["Bash(git tag:*)","Bash(gh release:*)"]'
+GENERATED="$(gs_build_generated_settings_json npm playwright docker "$BASE_DENY" "$BASE_ASK")"
+assert_eq "ask はベースaskがそのまま入る" "$(jq -c 'sort' <<<"$BASE_ASK")" "$(jq -c '.permissions.ask | sort' <<<"$GENERATED")"
+# preflight.sh は allow しか読まないため ask の正本を渡さずに呼ぶ。省略時は空配列になること。
+assert_eq "第5引数(ask)を省略すると ask は空配列" "[]" \
+  "$(jq -c '.permissions.ask' <<<"$(gs_build_generated_settings_json npm playwright docker "$BASE_DENY")")"
 assert_eq "生成するプロジェクト settings の allow は空（pm/test/infra を渡しても）" "[]" "$(jq -c '.permissions.allow' <<<"$GENERATED")"
 assert_eq "deny はベースdenyがそのまま入る" "$(jq -c 'sort' <<<"$BASE_DENY")" "$(jq -c '.permissions.deny | sort' <<<"$GENERATED")"
 assert_true "生成結果は settings スキーマを満たす" "$(gs_validate_settings_schema "$GENERATED" && echo true || echo false)"
@@ -237,7 +334,12 @@ assert_true "スニペットにランチャー権限 Bash(claude-harness-run:*) 
 assert_true "スニペットに cd 権限 Bash(cd:*) が入る（worktree 起点の複合コマンド用）" "$(json_contains "$SNIPPET_ALLOW" 'Bash(cd:*)')"
 assert_true "スニペットに pm 権限 Bash(npm:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(npm:*)')"
 assert_true "スニペットに test 権限 Bash(npx playwright:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(npx playwright:*)')"
-assert_true "スニペットに infra 権限 Bash(docker:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(docker:*)')"
+assert_true "スニペットに infra 権限 Bash(docker compose:*) が入る" "$(json_contains "$SNIPPET_ALLOW" 'Bash(docker compose:*)')"
+# Issue #238: 縮小した allow が再び広がっていないことを固定する（回帰の本体）。
+assert_true "スニペットに総称の Bash(docker:*) が入らない（Issue #238）" \
+  "$(jq -e 'index("Bash(docker:*)") == null' >/dev/null <<<"$SNIPPET_ALLOW" && echo true || echo false)"
+assert_true "スニペットに Bash(git push --force-with-lease:*) が入らない（deny へ移した。Issue #238）" \
+  "$(jq -e 'index("Bash(git push --force-with-lease:*)") == null' >/dev/null <<<"$SNIPPET_ALLOW" && echo true || echo false)"
 assert_true "スニペットは deny を持たない（deny はプロジェクト settings の層）" "$(jq -e '.permissions | has("deny") | not' >/dev/null <<<"$SNIPPET" && echo true || echo false)"
 for forbidden in 'Bash(bash:*)' 'Bash(sh:*)' 'Bash(zsh:*)' 'Bash(env:*)' 'Bash(xargs:*)'; do
   assert_true "スニペットにも汎用実行系 ${forbidden} が現れない（否定検査）" \
@@ -256,6 +358,7 @@ assert_true "マージ結果に既存の独自denyが保持される" "$(json_co
 assert_eq "マージ結果の allow は既存のまま（生成側は allow を足さない）" \
   "$(jq -cS '.permissions.allow' <<<"$EXISTING")" "$(jq -cS '.permissions.allow' <<<"$MERGED")"
 assert_true "マージ結果に生成側のdenyも入る" "$(json_contains "$(jq -c '.permissions.deny' <<<"$MERGED")" 'Bash(rm -rf:*)')"
+assert_true "マージ結果に生成側のaskも入る" "$(json_contains "$(jq -c '.permissions.ask' <<<"$MERGED")" 'Bash(git tag:*)')"
 
 MERGED_TWICE="$(gs_merge_settings_json "$MERGED" "$GENERATED")"
 assert_eq "同じ入力で2回マージしても差分が出ない(冪等)" "$(jq -cS '.' <<<"$MERGED")" "$(jq -cS '.' <<<"$MERGED_TWICE")"
@@ -266,6 +369,11 @@ EXISTING_WITH_OTHER_KEYS='{"env":{"FOO":"bar"},"permissions":{"allow":["Bash(cus
 MERGED_WITH_OTHER_KEYS="$(gs_merge_settings_json "$EXISTING_WITH_OTHER_KEYS" "$GENERATED")"
 assert_eq "マージ結果で既存のトップレベルキー(env)が保持される" "bar" "$(jq -r '.env.FOO' <<<"$MERGED_WITH_OTHER_KEYS")"
 assert_true "マージ結果で既存のpermissions.ask配下が保持される" "$(json_contains "$(jq -c '.permissions.ask' <<<"$MERGED_WITH_OTHER_KEYS")" 'Bash(risky:*)')"
+# 既存 ask を保持したうえで生成側の ask を足す（deny と同じ冪等マージ）。
+assert_true "マージ結果に既存 ask と生成側 ask が両方入る" \
+  "$(json_contains "$(jq -c '.permissions.ask' <<<"$MERGED_WITH_OTHER_KEYS")" 'Bash(gh release:*)')"
+MERGED_ASK_TWICE="$(gs_merge_settings_json "$MERGED_WITH_OTHER_KEYS" "$GENERATED")"
+assert_eq "ask を含むマージも冪等" "$(jq -cS '.' <<<"$MERGED_WITH_OTHER_KEYS")" "$(jq -cS '.' <<<"$MERGED_ASK_TWICE")"
 
 # ============================================================
 # gs_extract_*_from_input: analyze-project.sh 出力形式からの抽出
@@ -293,6 +401,9 @@ assert_eq "CLI: (a) exit code 0" "0" "$CASE_A_EXIT"
 assert_true "CLI: (a) 既存の独自allowエントリが保持される" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET1")" 'Bash(custom-cmd:*)')"
 assert_eq "CLI: (a) pm 権限はプロジェクト settings に追加されない（deny 専用）" "false" "$(json_contains "$(jq -c '.permissions.allow' "$TGS_TARGET1")" 'Bash(npm:*)')"
 assert_true "CLI: (a) 生成側の deny は追加される" "$(json_contains "$(jq -c '.permissions.deny' "$TGS_TARGET1")" 'Bash(rm -rf:*)')"
+assert_true "CLI: (a) 生成側の ask も追加される" "$(json_contains "$(jq -c '.permissions.ask' "$TGS_TARGET1")" 'Bash(git tag:*)')"
+assert_eq "CLI: (a) stdout の ask_count は書き込んだ ask の件数" \
+  "$(jq -r '.permissions.ask | length' "$TGS_TARGET1")" "$(jq -r '.ask_count' "${TGS_TMP_DIR}/case-a-stdout.json")"
 assert_true "CLI: (a) stdout の user_settings_snippet に pm 権限が出る" "$(json_contains "$(jq -c '.user_settings_snippet.permissions.allow' "${TGS_TMP_DIR}/case-a-stdout.json")" 'Bash(npm:*)')"
 assert_true "CLI: (a) stdout の user_settings_snippet にランチャー権限が出る" "$(json_contains "$(jq -c '.user_settings_snippet.permissions.allow' "${TGS_TMP_DIR}/case-a-stdout.json")" 'Bash(claude-harness-run:*)')"
 assert_eq "CLI: (a) stdout の user_settings_path は CLAUDE_CONFIG_DIR 配下（環境を汚さず値だけ確認）" "${TGS_TMP_DIR}/cfg/settings.json" \
@@ -313,8 +424,10 @@ assert_eq "CLI: 新規生成したプロジェクト settings の allow は空" 
 TGS_SNIPPET_B="$(jq -c '.user_settings_snippet.permissions.allow' "${TGS_TMP_DIR}/case-b-stdout.json")"
 assert_true "CLI: --pm npm でスニペットに Bash(npm:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(npm:*)')"
 assert_true "CLI: --test playwright --pm npm でスニペットに Bash(npx playwright:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(npx playwright:*)')"
-assert_true "CLI: --infra docker でスニペットに Bash(docker:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(docker:*)')"
 assert_true "CLI: --infra docker でスニペットに Bash(docker compose:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(docker compose:*)')"
+assert_true "CLI: --infra docker でスニペットに Bash(docker ps:*) が入る" "$(json_contains "$TGS_SNIPPET_B" 'Bash(docker ps:*)')"
+assert_true "CLI: --infra docker でもスニペットに総称の Bash(docker:*) は入らない" \
+  "$(jq -e 'index("Bash(docker:*)") == null' >/dev/null <<<"$TGS_SNIPPET_B" && echo true || echo false)"
 
 # --- --input で analyze-project.sh 形式のJSONを渡した場合に同等の結果になる ---
 TGS_TARGET3="${TGS_TMP_DIR}/case-c/.claude/settings.json"
@@ -404,6 +517,29 @@ assert_true "CLI: base-deny.json欠損時はtargetファイルが生成されな
   "$([ ! -f "$TGS_TARGET_MISSING_DENY_CLI" ] && echo true || echo false)"
 assert_true "CLI: base-deny.json欠損時はstderrにbase-deny.jsonのパスを含む" \
   "$(grep -qF "${TGS_MISSING_DENY_CLI_DIR}/base-deny.json" "${TGS_TMP_DIR}/missing-deny-cli-stderr.log" && echo true || echo false)"
+
+echo "=== test: CLI — base-ask.json欠損時もexit非0でstdoutが空になる ==="
+# base-deny.json だけを持たせ、base-ask.json の欠損だけを単独で検証する
+# （deny の欠損に隠れて ask の欠損が無視されていないことを見る）。
+TGS_MISSING_ASK_CLI_DIR="${TGS_TMP_DIR}/missing-ask-cli"
+mkdir -p "$TGS_MISSING_ASK_CLI_DIR"
+cp "$TGS_TARGET_SCRIPT" "${TGS_MISSING_ASK_CLI_DIR}/generate-settings.sh"
+cp "$TGS_BASE_DENY_FILE" "${TGS_MISSING_ASK_CLI_DIR}/base-deny.json"
+TGS_TARGET_MISSING_ASK_CLI="${TGS_TMP_DIR}/case-missing-ask-cli/.claude/settings.json"
+if bash "${TGS_MISSING_ASK_CLI_DIR}/generate-settings.sh" --pm npm --target "$TGS_TARGET_MISSING_ASK_CLI" \
+    >"${TGS_TMP_DIR}/missing-ask-cli-stdout.json" 2>"${TGS_TMP_DIR}/missing-ask-cli-stderr.log"; then
+  FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("CLI: base-ask.json欠損でexit非0")
+  echo "  NG - CLI: base-ask.json欠損でexit非0"
+else
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "  ok - CLI: base-ask.json欠損でexit非0"
+fi
+assert_true "CLI: base-ask.json欠損時はstdoutが空(status:okを返さない)" \
+  "$([ ! -s "${TGS_TMP_DIR}/missing-ask-cli-stdout.json" ] && echo true || echo false)"
+assert_true "CLI: base-ask.json欠損時はtargetファイルが生成されない" \
+  "$([ ! -f "$TGS_TARGET_MISSING_ASK_CLI" ] && echo true || echo false)"
+assert_true "CLI: base-ask.json欠損時はstderrにbase-ask.jsonのパスを含む" \
+  "$(grep -qF "${TGS_MISSING_ASK_CLI_DIR}/base-ask.json" "${TGS_TMP_DIR}/missing-ask-cli-stderr.log" && echo true || echo false)"
 
 # ============================================================
 # CLI: 一時ファイル生成の安全性と書き込み失敗時の挙動

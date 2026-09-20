@@ -8,6 +8,37 @@
 
 ---
 
+## 4.7.0
+
+### 追加
+
+- **`/init-project` が生成する `.claude/settings.json` に `permissions.ask` を書くようになった（Issue #238）。** ベース ask の正本は `skills/init-project/scripts/base-ask.json`（新設）で、中身は**本番へ反映されるリリース系**: `git tag` / `git push --tags` / `git push --follow-tags` / `gh workflow` / `gh release` / `cdk deploy` / `cdk destroy` / `npm run cdk` / `npx cdk`。
+  - `deny` ではなく `ask` にしたのは、これらが「人間が意図してやることはあるが、自走セッションが単独でやってはいけない」操作だからである。**`ask` は headless（`claude -p`）では実質 deny として働き、対話セッションでは人間が判断できる**ため、自走委譲だけを止められる。切り分けの正本は `docs/settings-governance.md` §1.1。
+  - `.devcontainer/claude-settings.json`（`/init-devcontainer`）には **`ask` を入れない**。コンテナ内には承認する人間がいないため、`ask` が静かに全拒否へ倒れるのを避ける（`/init-devcontainer` は従来どおり `base-deny.json` だけを読む）。
+- **`claude-harness-run preflight` に advisory チェック `settings_allow_overreach` を足した（Issue #238）。** 「実行するプログラムを引数で指名できる」allow（`Bash(npm:*)` / `Bash(docker:*)` / `Bash(bash:*)` 等）が在るために、`deny` / `ask` が別名の呼び出しで迂回されうる状態を指摘する。呼び出し形の正本は `skills/init-project/scripts/general-exec-allow.json`（新設）。
+  - **この指摘は 0 件にすることを目的としない。** ツールチェインの allow を外せば開発そのものが止まるため、`/init-project` の提示するスニペットをそのまま使っていても finding は残る。目的は「`deny` / `ask` が実効的でない範囲」を毎回明示することで、blocking にしないのもこのためである。
+  - 検査項目は 8 件から **9 件**になった（`counts.checks` が 9 になる）。`findings[]` のうち本検査だけは `items`（`{rule, found_in, permits}`）に加えて `weakened`（迂回されうる deny / ask の一覧）を持つ。
+
+### 変更
+
+- **ベース deny に 3 件追加した（Issue #238）**: `Bash(git push --force-with-lease:*)` / `Bash(docker run:*)` / `Bash(docker exec:*)`。`--force` / `-f` を deny しながら等価な履歴破壊の経路（`--force-with-lease`）を allow で開けていた矛盾を解消し、`docker run -v /:/host …` の 1 文字列でホスト FS 全域・認証情報へ到達する経路を塞ぐ。
+- **`/init-devcontainer` が生成する `.devcontainer/claude-settings.json` の deny も 3 件増える。** 同じ `base-deny.json` を読むため（重複を避けるための共有であり、意図した波及）。`ask` は入らない（上記）。
+- **`user_settings_snippet` の allow を 2 か所狭めた（Issue #238）**:
+  - `Bash(git push --force-with-lease:*)` を**削除**（上記 deny へ移した）。
+  - infra の `Bash(docker:*)` を **`Bash(docker compose:*)` / `Bash(docker ps:*)` / `Bash(docker logs:*)` の 3 件へ置き換え**（`docker run` を落とす）。
+- **`generate-settings.sh` の stdout に `ask_count` が増えた。** 既存フィールドの意味は変わらない。冪等マージは既存の `permissions.ask` を保持しつつ生成側の非重複分だけを足す（`allow` を削らないのは従来どおり）。
+- **保証の範囲を `docs/settings-governance.md` §3.1 に明記した。** 保証するのは **「呼び出し側の 1 つの文字列だけで、事前準備なしに `deny` / `ask` 対象へ到達できないこと」**の 1 点だけである。`deny` / `ask` は前方一致であり `git -C <path> push origin v1.2.3` を取り逃がす（Claude Code 2.1.270 実測）。`npm run` / `make` が起動する子プロセスにも permission 判定は適用されない。**完全な封じ込めは達成できない**ことを認めたうえで、残る範囲を `settings_allow_overreach` で可視化する設計にしてある。同節に Issue #238 が挙げた経路ごとの現況表（塞がれないものを含む）を置いた。
+
+### 利用者が取る操作
+
+- **既に導入済みのプロジェクトは何もしなくてよい（遡及適用はしない）。** 生成物はテンプレート追従を持たないため、`ask` も狭めた allow も自動では反映されない。反映したい場合は `claude-harness-run skills/init-project/scripts/generate-settings.sh --target ".claude/settings.json"` を再実行する（`deny` / `ask` の不足分だけがマージされ、既存の `allow` は削られない）。
+- **ユーザー設定の `allow` から `Bash(git push --force-with-lease:*)` と `Bash(docker:*)` を外すかは各自の判断**。外さなくても新しい `deny` が優先するため `docker run` / `git push --force-with-lease` は止まる（deny は allow に優先し、`bypassPermissions` でも効く）。
+- **リリースを自動化しているリポジトリは、生成された `permissions.ask` から該当行を外す。** 例えば CI ではなくエージェントにタグ付与をさせている場合、`Bash(git tag:*)` の ask が headless で拒否として効く。
+- **docker を使うプロジェクトでは `preflight` の `settings_base_allow`（advisory）が新しい 3 件を不足として挙げる。** 期待 allow はスニペットから導出するため、ユーザー設定に `Bash(docker:*)` しか無い環境では `Bash(docker compose:*)` / `Bash(docker ps:*)` / `Bash(docker logs:*)` が「どこにも無い」と出る。`remediation` のとおりユーザー設定へ足すか、指摘のまま運用するかは判断でよい（advisory なので exit 0）。
+- **`preflight` が `settings_allow_overreach` で warn を返すようになる。** exit code は 0 のまま（advisory のため `status` は `warn`）。CI 等で `status == "ok"` を条件にしている場合は `counts.blocking == 0` での判定へ変えること。
+
+---
+
 ## 4.6.0
 
 ### 破壊的変更
