@@ -66,7 +66,7 @@ dev server とテストデータを整えたうえで、**`/demo` と同梱の P
 
 **Step 0-2（セットアップスクリプトを実行）**: `claude-harness-run skills/demo/scripts/walkthrough-setup.sh` を実行し、`WALKTHROUGH_SETUP_STATUS=<ready|deps-missing|error>` を確認する（`deps-missing` の場合は表示された案内コマンドをユーザーに実行してもらう。`error` の場合は原因解消後に再実行する。詳細な分岐は `skills/demo/SKILL.md` Phase 2 と同一のため重複記載しない）
 
-**Step 0-3（project root の明示・monorepo 注意）**: monorepoでPlaywrightがサブワークスペース配下にある場合、`walkthrough-setup.sh` / `run-walkthrough.mjs` は既定で git root を基準に `@playwright/test` を解決しようとするため、**Playwright が実際に入っているサブワークスペースを `WALKTHROUGH_PROJECT_ROOT` で明示しないと解決に失敗する**。`CLAUDE.md` のディレクトリ構成を確認し、必要なら `WALKTHROUGH_PROJECT_ROOT=<Playwrightプロジェクトの絶対パス>` を以降のスクリプト呼び出しに付与する。この値は `WALKTHROUGH_OUT`（成果物の出力先）の解決基準にもなる（Step 2-2 参照）。
+**Step 0-3（project root の明示・monorepo 注意）**: monorepoでPlaywrightがサブワークスペース配下にある場合、`walkthrough-setup.sh` / `run-walkthrough.mjs` は既定で git root を基準に `@playwright/test` を解決しようとするため、**Playwright が実際に入っているサブワークスペースを `WALKTHROUGH_PROJECT_ROOT` で明示しないと解決に失敗する**。`@playwright/test` を依存に持つ `package.json` を Glob/Grep で探して Playwright プロジェクトの位置を特定し（`CLAUDE.md` にディレクトリ構成が書かれているとは限らない）、git root と異なる場合は `WALKTHROUGH_PROJECT_ROOT=<Playwrightプロジェクトの絶対パス>` を以降のスクリプト呼び出しに付与する。この値は `WALKTHROUGH_OUT`（成果物の出力先）の解決基準にもなる（Step 2-2 参照）。
 
 ---
 
