@@ -1,6 +1,6 @@
 ---
 name: issue-conflict-predictor
-description: "複数Issueの並列実装で、Issue間のファイル衝突・依存関係を予測する。Triggers on: '/para-impl からの衝突予測委譲'"
+description: "複数Issueの並列実装で、Issue間のファイル衝突・依存関係を予測する。Triggers on: 'Issue 間のファイル衝突・依存を事前に予測したいとき（例: /para-impl からの委譲）'"
 tools: Read, Glob, Grep
 model: sonnet
 # effort: 1Issueあたりの予測に限定した軽量タスクのため low。

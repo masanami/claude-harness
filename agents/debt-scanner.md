@@ -1,6 +1,6 @@
 ---
 name: debt-scanner
-description: "プロジェクトの担当ディレクトリ配下を技術負債の観点でスキャンする。Triggers on: '/reduce-debt からの負債スキャン委譲'"
+description: "プロジェクトの担当ディレクトリ配下を技術負債の観点でスキャンする。Triggers on: '技術負債を観点別にスキャンしたいとき（例: /reduce-debt からの委譲）'"
 # tools: スキャン専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

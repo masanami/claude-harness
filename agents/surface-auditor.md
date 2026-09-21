@@ -1,6 +1,6 @@
 ---
 name: surface-auditor
-description: "テストコードを読み、そのテストが検証している振る舞いを抽出して公開面／内部実装に仕分ける。Triggers on: '/surface-audit からの抽出委譲'"
+description: "テストコードを読み、そのテストが検証している振る舞いを抽出して公開面／内部実装に仕分ける。Triggers on: 'テストが担保している振る舞いを抽出して公開面と内部実装に仕分けたいとき（例: /surface-audit からの委譲）'"
 tools: Read, Glob, Grep
 model: sonnet
 # effort: 対象ファイルが明示的に指定された読解・分類タスクであり、探索や設計判断を含まないため

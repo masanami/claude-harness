@@ -1,6 +1,6 @@
 ---
 name: spec-fixer
-description: "機能仕様ドキュメントの blocker 指摘を機械的に修正する。Triggers on: '/define-feature からの修正委譲'"
+description: "機能仕様ドキュメントの blocker 指摘を機械的に修正する。Triggers on: '機能仕様の blocker 指摘を機械的に修正したいとき（例: /define-feature からの委譲）'"
 # tools: 既存ファイルの部分編集のみのためWrite不要。
 tools: Read, Edit, Grep
 model: sonnet

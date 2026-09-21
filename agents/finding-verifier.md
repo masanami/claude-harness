@@ -1,6 +1,6 @@
 ---
 name: finding-verifier
-description: "code-reviewer・design-reviewer が報告したレビュー指摘・blockerを、diff起点で反証する懐疑者。ファイル起点でCLAUDE.mdの規約と照合するのは debt-verifier。Triggers on: '/self-review からの反証委譲', '/pr-merge からの反証委譲', '/promote-verify からの反証委譲'"
+description: "code-reviewer・design-reviewer が報告したレビュー指摘・blockerを、diff起点で反証する懐疑者。ファイル起点でCLAUDE.mdの規約と照合するのは debt-verifier。Triggers on: 'レビュー指摘・blocker を diff 起点で反証したいとき（例: /self-review, /pr-merge からの委譲）'"
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

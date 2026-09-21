@@ -17,6 +17,12 @@
 #         理由は正本 §3）
 #   (D-3) `Triggers on:` のスラッシュ語が**実在するスキル**を指していること。実在しない
 #         ものは台帳の「別名」列で宣言されていること（リネームで起動が止まる事故の検出）
+#   (D-5) agents の②が**呼び出し元の名指しだけ**で構成されていないこと。skills の②は
+#         利用者の発話（それ自体が起動の入力）だが、agents はモデルが意味で選ぶため、
+#         呼び出し元の名指しは選択の入力と一致せず、列挙が網羅と読まれると**逆に
+#         呼ばれなくなる**（正本 §4）。委譲元は `（例: …）` の中だけに置く。
+#         **検出できるのは「委譲元の名指しがタスクの形の側に在る」ことだけ**であり、
+#         タスクの形が妥当か（モデルが実際にその語でその agents を選ぶか）は検出できない
 #   (D-4) 台帳と現物の一致。起動トリガー列は**双方向**（減らす変更も増やす変更も台帳の
 #         編集を伴う）。保持語列は片方向（台帳外の語が在ること自体は欠陥ではない。
 #         理由は正本 §5）。行の集合は `skills/` のディレクトリ名・`agents/` のファイル名
@@ -111,6 +117,32 @@ desc_struct_errors() {
   fi
 }
 
+# agents の②の「タスクの形」の部分（`（例:` より前）を返す。
+trigger_task_part() {
+  local task="${1%%（例:*}"
+  printf '%s' "$task" | sed 's/[[:space:]]*$//'
+}
+
+# agents の②の欠陥を1行1件で出す（欠陥が無ければ何も出さない）。
+# 面の名前の集合は ALL_SURFACE_NAMES（導出済み）を使う。手書きのリストは持たない。
+agent_trigger_errors() {
+  local tok="$1" task n
+  task="$(trigger_task_part "$tok")"
+  if [ -z "$task" ]; then
+    printf '%s\n' "タスクの形が空（委譲元の例示しかない）"
+    return 0
+  fi
+  case "$task" in
+    */*) printf '%s\n' "タスクの形に委譲元のスラッシュ語が在る（委譲元は （例: …） の中に置く）" ;;
+  esac
+  while IFS= read -r n; do
+    [ -z "$n" ] && continue
+    case "$task" in
+      *"$n"*) printf '%s\n' "タスクの形に面の名前が在る: ${n}（委譲元は （例: …） の中に置く）" ;;
+    esac
+  done <<<"${ALL_SURFACE_NAMES:-}"
+}
+
 echo "=== (D-0) 検出器の自己検査（壊れた検出器で以降の照合を pass にしない） ==="
 
 DESC_TMP="$(mktemp -d)"
@@ -147,6 +179,20 @@ DERIVED_COUNT="$(printf '%s\n' "$DERIVED" | grep -c '[^[:space:]]')"
 
 assert_eq "(D-0) 対象を導出できる（導出0件を pass にしない）" "true" \
   "$(if [ "$DERIVED_COUNT" -ge 2 ]; then echo true; else echo false; fi)"
+
+# 面の名前の集合（(D-5) が「タスクの形に呼び出し元の名指しが在る」ことを見るのに使う）
+ALL_SURFACE_NAMES="$(printf '%s\n' "$DERIVED" | cut -f2 | sort -u)"
+assert_eq "(D-0) 面の名前を導出できる（導出0件を pass にしない）" "true" \
+  "$(if [ "$(printf '%s\n' "$ALL_SURFACE_NAMES" | grep -c '[^[:space:]]')" -ge 2 ]; then echo true; else echo false; fi)"
+
+assert_eq "(D-0) 正例: タスクの形＋例示に欠陥を出さない" "" \
+  "$(agent_trigger_errors '技術負債を観点別にスキャンしたいとき（例: /reduce-debt からの委譲）')"
+assert_eq "(D-0) 反例: 呼び出し元の名指しだけのトリガーを検出する" "true" \
+  "$(if [ -n "$(agent_trigger_errors '/reduce-debt からの反証委譲')" ]; then echo true; else echo false; fi)"
+assert_eq "(D-0) 反例: 面の名前がタスクの形の側に在るのを検出する" "true" \
+  "$(if [ -n "$(agent_trigger_errors 'feature-implementer からの委譲')" ]; then echo true; else echo false; fi)"
+assert_eq "(D-0) 反例: 例示しか無いトリガーを検出する" "true" \
+  "$(if [ -n "$(agent_trigger_errors '（例: /reduce-debt からの委譲）')" ]; then echo true; else echo false; fi)"
 
 # 面の名前とファイル配置の対応（リネーム時に台帳と現物が同時にずれるのを防ぐ）
 surface_path() {
@@ -288,6 +334,26 @@ while IFS= read -r row; do
       "$(if printf '%s' "$val" | grep -qF -- "$keep"; then echo true; else echo false; fi)"
   done <<<"$(ledger_items "$(ledger_cell "$row" 5)")"
 done <<<"$LEDGER_ROWS"
+
+echo ""
+echo "=== (D-5) agents の②が呼び出し元の名指しだけで構成されていない ==="
+
+# skills の②は利用者の発話（起動の入力そのもの）なので、自分のスラッシュ語を含むのが正しい。
+# 本検査は agents だけに当てる。
+while IFS=$'\t' read -r surface name; do
+  [ -z "${surface:-}" ] && continue
+  [ "$surface" = "agent" ] || continue
+  path="$(surface_path "$surface" "$name")"
+  [ -r "${REPO_ROOT}/${path}" ] || continue
+  val="$(desc_value "${REPO_ROOT}/${path}")"
+  errs=""
+  while IFS= read -r tok; do
+    [ -z "$tok" ] && continue
+    e="$(agent_trigger_errors "$tok")"
+    [ -n "$e" ] && errs="${errs}${errs:+; }[${tok}] ${e}"
+  done <<<"$(desc_triggers "$val")"
+  assert_eq "(D-5) ②がタスクの形で書かれている: ${path}" "" "$errs"
+done <<<"$DERIVED"
 
 echo ""
 echo "=== 実測（正本 §7 の再現手段。単位はバイト数と文字数の両方を出す） ==="

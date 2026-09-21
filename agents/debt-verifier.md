@@ -1,6 +1,6 @@
 ---
 name: debt-verifier
-description: "debt-scanner が検出した技術負債の指摘を、ファイル起点でCLAUDE.mdの規約と照合して反証する懐疑者。diff起点でレビュー指摘を反証するのは finding-verifier。Triggers on: '/reduce-debt からの反証委譲'"
+description: "debt-scanner が検出した技術負債の指摘を、ファイル起点でCLAUDE.mdの規約と照合して反証する懐疑者。diff起点でレビュー指摘を反証するのは finding-verifier。Triggers on: 'ファイル起点で技術負債の指摘を反証したいとき（例: /reduce-debt からの委譲）'"
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

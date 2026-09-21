@@ -1,6 +1,6 @@
 ---
 name: ticket-worker
-description: "複数Issueの並列実装で、1つのIssueをworktree内で最初から最後まで自走で実装するworker。Triggers on: '/para-impl からのIssue割り当て', '/impl からのIssue割り当て'"
+description: "複数Issueの並列実装で、1つのIssueをworktree内で最初から最後まで自走で実装するworker。Triggers on: '1つの Issue を worktree 内で最初から最後まで実装させたいとき（例: /para-impl からの委譲）'"
 tools: Read, Glob, Grep, Edit, Write, Bash, Task, Skill
 model: sonnet
 # effort: CI失敗の分析と Phase 4 差し戻し判断を含むフロー統括のため high（実装の中核は feature-implementer 側が担う）。
