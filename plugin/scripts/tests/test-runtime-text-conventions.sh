@@ -40,7 +40,7 @@ RT_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${RT_TEST_DIR}/../.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-CONV_FILE="${REPO_ROOT}/docs/plugin-path-conventions.md"
+CONV_FILE="${REPO_ROOT}/../docs/plugin-path-conventions.md"
 REVIEWER_FILE="${REPO_ROOT}/agents/code-reviewer.md"
 IMPLEMENTER_FILE="${REPO_ROOT}/agents/feature-implementer.md"
 

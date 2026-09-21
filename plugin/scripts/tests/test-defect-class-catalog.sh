@@ -46,7 +46,7 @@ DC_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${DC_TEST_DIR}/../.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-CANON_FILE="docs/defect-class-catalog.md"
+CANON_FILE="../docs/defect-class-catalog.md"
 SWEEP_REF="skills/self-review/references/defect-sweep.md"
 SELF_REVIEW="skills/self-review/SKILL.md"
 CANON_MARKER='<!-- 正本: docs/defect-class-catalog.md -->'

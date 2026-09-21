@@ -3,8 +3,29 @@
 本プラグイン（`claude-harness`）の利用者向け変更履歴。**破壊的変更と、それに対して利用者が取る操作**を記録する。
 
 - 記録の開始は **4.0.0** から。3.x 以前は版数だけを上げていたため履歴が無く、経緯は git log と [`docs/adr/`](docs/adr/) を参照する。
-- 版数は `.claude-plugin/plugin.json` の `version` が正本。破壊的変更があればメジャーを上げる。
+- 版数は `plugin/.claude-plugin/plugin.json` の `version` が正本。破壊的変更があればメジャーを上げる。
 - **設計判断そのものの正本は ADR** であり、本ファイルはそれを利用者の操作へ翻訳したもの。理由を知りたい場合は各項の ADR リンクを辿る。
+
+---
+
+## 未リリース（版数は未定。リリース時に人が決める）
+
+### 変更
+
+- **プラグインの中身をリポジトリの `plugin/` 配下へ移し、`marketplace.json` の `source` を `"./"` から `"./plugin"` に変えた（Issue #255・V9）。** 移したのは `skills/`・`agents/`・`scripts/`・`bin/`・`hooks/`・`.claude-plugin/plugin.json`。**導入先に置かれるプラグインの中の構成（`skills/`・`agents/`・`scripts/`・`bin/`・`hooks/`）は変わらない**ため、`claude-harness-run` の target・`read-plugin-doc` の引数・`Bash(claude-harness-run:*)` の allow はそのまま使える。
+  - **配布物からリポジトリのルート直下が外れる。** これまで導入先のキャッシュには `docs/`・`README.md`・`CHANGELOG.md`・`LICENSE` も入っていたが、以後は `plugin/` の中身だけが入る（実測: 更新後のキャッシュは `.claude-plugin` `agents` `bin` `hooks` `scripts` `skills` のみ）。プラグインは実行時に `docs/` を読まない前提で作られているため、動作への影響は無い。
+- **リポジトリのルートに `Makefile` を置き、`make check` を品質ゲートの入口にした（開発者向け。配布物には入らない）。** 現時点では bash テスト全件（`plugin/scripts/tests/*.sh`）を順に実行し、失敗したテスト名を集計して 1 本でも落ちれば非 0 で終わる。
+
+### 利用者が取る操作（V9）
+
+実測環境: Claude Code 2.1.278・macOS。`CLAUDE_CONFIG_DIR` を一時ディレクトリへ向けた**隔離環境**で、旧構成（4.7.0・`source: "./"`）を導入してからマーケットプレイス側を新構成へ進めて測った。マーケットプレイスの型は `directory`（ローカルパス）と `git`（URL 指定。ローカルの HTTP サーバー越し）の 2 通りで、結果は同じだった。
+
+- **マーケットプレイス経由で導入済みの環境は、再インストール不要。通常どおり更新するだけでよい**（`/plugin` の管理画面から更新、または `claude plugin marketplace update masanami-harness` → `claude plugin update claude-harness@masanami-harness` → 再起動）。実測では `installed_plugins.json` の `installPath` が新しい版のキャッシュへ切り替わり、その中身は従来と同じ構成だった。
+- **更新が取り込まれるのは、この変更を含む版へ `version` が上がったとき**。実測では、マーケットプレイス側が新構成（`source: "./plugin"`）へ進んでも `version` が同じ間は `already at the latest version` となり、導入済みのキャッシュ（旧構成）がそのまま使われ続けた。壊れもしないが、追従もしない。
+- **PATH 上へコピーしたランチャー（`claude-harness-run`）は入れ直さなくてよい。** コピーは `installed_plugins.json` の `installPath` からプラグインルートを解決するため、更新後は新しい版を指す（実測で確認）。
+- **`--plugin-dir` でローカルの checkout を読ませている場合は、指定を `<checkout>/plugin` へ変える**（`claude --plugin-dir /path/to/claude-harness/plugin`）。`CLAUDE_HARNESS_ROOT` を設定している場合も同様に `<checkout>/plugin` を指す。**リポジトリのルートを指したままだと、エラーにならずに `claude-harness:` のスキルが 1 つも見えなくなる**（実測・各 1 回: 同名プラグインを導入済みの環境でも 0 件になった。`--plugin-dir` を外すと導入済みの分が見える＝ルートの指定が導入済みの同名プラグインを隠す）。ランチャーは `CLAUDE_HARNESS_ROOT is set but is not a plugin root` で exit 69 になる。
+- **同名のプラグインを導入済みの環境で `--plugin-dir` を併用すると、スキルは `--plugin-dir` 側が読まれる一方、PATH 上のランチャーは導入済みのキャッシュ側を解決する**（実測。スキルの Base directory は checkout、`claude-harness-run --plugin-root` はキャッシュを返した）。checkout のスクリプトを動かしたいときは `CLAUDE_HARNESS_ROOT=<checkout>/plugin` を設定して起動する（これで両方が checkout を指すことを実測で確認）。この挙動自体は今回の移動の前後で変わらない。
+- **実測できなかった範囲**: ① GitHub をソースにした実際のマーケットプレイス（`masanami/claude-harness`）での更新——マージ前には測れないため、同じ `git` 型のローカル URL で代用した。② 更新後の**導入済みプラグイン**からのスキル起動——隔離環境は未ログインのため `claude -p` を実行できなかった（`claude plugin details` がスキル 23・エージェント 22・フック 1 を認識し、`claude plugin validate` が通ることまでは確認。スキルの起動とランチャー経由のスクリプト実行は `--plugin-dir plugin` で確認した）。③ 利用者の実環境（`~/.claude/plugins`）の書き換えを伴う確認、`/plugin` 管理画面（対話 UI）からの更新、自動更新の経路、project スコープでの導入、Windows・Linux。
 
 ---
 
