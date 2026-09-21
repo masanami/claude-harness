@@ -33,7 +33,7 @@ AG_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${AG_TEST_DIR}/../.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-STRATEGY_FILE="${REPO_ROOT}/docs/ai-driven-development-strategy.md"
+STRATEGY_FILE="${REPO_ROOT}/../docs/ai-driven-development-strategy.md"
 CRITIC_FILE="${REPO_ROOT}/agents/spec-critic.md"
 
 PASS_COUNT=0

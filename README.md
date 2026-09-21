@@ -34,7 +34,7 @@ Claude Code プラグインとして、任意のリポジトリに横展開で�
 /plugin install claude-harness@masanami-harness --scope user
 
 # ローカルのプラグインディレクトリを指定して起動
-claude --plugin-dir /path/to/claude-harness
+claude --plugin-dir /path/to/claude-harness/plugin
 ```
 
 > **Note**: `--scope user` を指定すると `.claude/settings.json` に記録され、プロジェクト単位で管理できます。省略するとユーザースコープ（全プロジェクト共通）にインストールされます。

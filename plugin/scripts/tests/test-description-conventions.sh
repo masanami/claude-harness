@@ -42,8 +42,8 @@ DESC_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${DESC_TEST_DIR}/../.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-CANON_DOC="${REPO_ROOT}/docs/description-conventions.md"
-PARENT_DOC="${REPO_ROOT}/docs/plugin-path-conventions.md"
+CANON_DOC="${REPO_ROOT}/../docs/description-conventions.md"
+PARENT_DOC="${REPO_ROOT}/../docs/plugin-path-conventions.md"
 
 PASS_COUNT=0
 FAIL_COUNT=0

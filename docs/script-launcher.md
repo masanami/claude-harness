@@ -79,7 +79,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 - **シンボリックリンクではなくコピーにする理由**: プラグインキャッシュのパスは `…/claude-harness/<version>/` を含むため、リンクはプラグイン更新で切れる。一方コピーしたランチャーは**実行のたびに現行版のプラグインルートを解決し直す**ので、プラグインを更新してもコピーを置き直す必要は無い（ランチャー自身の仕様が変わったときだけ再コピーする）。
 - `~/.local/bin` が PATH に無い場合はシェルの設定（`~/.zshrc` 等）へ追加する。Claude Code の Bash ツールはユーザーのプロファイルから初期化されるため、プロファイルに書けばセッションからも見える。手順3の疎通確認は**必ず Claude Code の Bash ツール側でも**行うこと。
 - **解決規則はランチャー本体（§4）と一致させてある**。`~/.claude` 決め打ち・`.value[0]` 固定にすると、`CLAUDE_CONFIG_DIR` を使う環境や `claude-harness@` エントリが複数ある環境で、導入失敗や旧版の固定化につながる。
-- ローカルチェックアウトで開発している場合は、コピーせず `CLAUDE_HARNESS_ROOT=/path/to/claude-harness` を設定すればそのツリーが使われる（`claude --plugin-dir` で起動している場合も同様）。
+- ローカルチェックアウトで開発している場合は、コピーせず `CLAUDE_HARNESS_ROOT=/path/to/claude-harness/plugin` を設定すればそのツリーが使われる（`claude --plugin-dir` で起動している場合も同様）。
 
 ### allowlist の設定
 
@@ -210,7 +210,7 @@ bash "<解決済みプラグインルート>/scripts/xxx.sh" <引数>
 ### 現在の契約
 
 - **コマンド文字列をシェルへ渡さない。** `--lint` / `--typecheck` / `--test` / `--auto-fix`（`quality-check-runner`）と `test_command`（`mutation-run`）は、空白で argv に分解して**直接実行**する。`;` `&&` `|` `>` `$(…)` `` ` `` クォート グロブ といったシェル構文は解釈されず、**含まれていればコマンドを1つも実行せずに exit 4 で拒否**する（黙って別物をリテラルとして実行しない）
-- **実行してよいコマンドは同梱の閉じた一覧に限る。** argv の先頭トークン列が [`scripts/config/command-allowlist.txt`](../scripts/config/command-allowlist.txt) のエントリに前置一致しなければ拒否する。シェルを外すだけでは不十分で、`rm -rf …` を argv として実行できれば迂回は成立するため、**統制の主体はこの一覧**である
+- **実行してよいコマンドは同梱の閉じた一覧に限る。** argv の先頭トークン列が [`scripts/config/command-allowlist.txt`](../plugin/scripts/config/command-allowlist.txt) のエントリに前置一致しなければ拒否する。シェルを外すだけでは不十分で、`rm -rf …` を argv として実行できれば迂回は成立するため、**統制の主体はこの一覧**である
 - **一覧の拡張路は同梱ファイルの編集だけ。** 環境変数・CLI フラグ・利用側リポジトリのファイルからは差し替えられない（差し替えられるなら、それが「任意文字列を通す別経路」になる）
 - **一覧は「実行されるコマンド」を固定する。** エントリには2種類ある。`npm run` / `make` / `cargo test` のように**プロジェクト自身の設定ファイルが実行内容を決める**もの（呼び出し側が渡すのは名前であってプログラムのパスではない）と、`bundle exec` / `uv run` / `python3 -m` / `npx --no` のように**次のトークンが実行対象そのもの**になるものである。後者は「ラッパー」として扱い、**残りの argv もそれ自体が一覧に載っていること**を要求する（`bundle exec rspec` ✅ / `bundle exec rm -rf /` ❌）。この区別が無いと、前置一致だけでは `bundle exec rm -rf /` が通る
 - **`--env` で実行系の解決を差し替えられない。** `--env` は **allowlist 方式**で、スキルが実際に使う変数（`WALKTHROUGH_*` / `BASE_URL`）以外はすべて拒否する（exit 64）。`PATH` / `NODE_PATH` / `PYTHONPATH` / `GEM_PATH` / `CLASSPATH` / `NODE_OPTIONS` / `LD_PRELOAD` / `CLAUDE_HARNESS_ROOT` のような「どのプログラムが実際に走るかを変える」変数は処理系ごとに際限なくあるため、**禁止列挙では取りこぼす**

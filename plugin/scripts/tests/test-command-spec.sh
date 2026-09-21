@@ -565,10 +565,10 @@ assert_file_contains() {
 }
 
 assert_file_contains "script-launcher.md に allow の意味（deny の適用範囲）の節がある" \
-  "${REPO_ROOT}/docs/script-launcher.md" \
+  "${REPO_ROOT}/../docs/script-launcher.md" \
   '## 6. このランチャーを allow することの意味'
 assert_file_contains "script-launcher.md が任意コマンド実行にならない旨を明記している" \
-  "${REPO_ROOT}/docs/script-launcher.md" \
+  "${REPO_ROOT}/../docs/script-launcher.md" \
   'シェルへ渡さない'
 assert_file_contains "quality-check-runner の仕様に exit 4 がある" \
   "${REPO_ROOT}/scripts/specs/quality-check-runner.md" \

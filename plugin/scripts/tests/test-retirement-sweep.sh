@@ -468,7 +468,7 @@ echo "=== test: 手順の正本が本スクリプトを退役手順に組み込�
 # 散文の手順（正本）とスクリプトが乖離しないよう、手順側が「スイープを必須ステップとして
 # 呼ぶこと」と「除外は ADR 置き場であること」を書いていることを固定する。
 # 手順に書かれていないスクリプトは実行されず、掃引が実施されないまま退役が完了しうる。
-STRATEGY_FILE="${REPO_ROOT}/docs/ai-driven-development-strategy.md"
+STRATEGY_FILE="${REPO_ROOT}/../docs/ai-driven-development-strategy.md"
 assert_eq "戦略ドキュメントを読める（読めない状態を pass にしない）" "true" \
   "$(if [ -r "$STRATEGY_FILE" ]; then echo true; else echo false; fi)"
 assert_eq "退役手順がスイープスクリプトを名指ししている" "true" \
