@@ -1,6 +1,6 @@
 # harness runtime 設計（Issue #201）
 
-> **状態: 設計案（承認前）**。本文書は Issue #201 の決定（2026-09-20〜21）を前提に、実装に入る前に確定させるべき設計を置く。**「未決」と書いた箇所は本文書では決めていない**。推奨案を仮に採って先へ書き進めた箇所は「推奨案を仮に採る」と明記した。
+> **状態: 設計（2026-09-21 に問い Q1〜Q15 を決定済み）**。本文書は Issue #201 の決定（2026-09-20〜21）を前提に、実装に入る前に確定させるべき設計を置く。問い Q1〜Q15 の決定の記録は §11 にある。**「未決」と書いた箇所だけが本文書で決めていないもの**で、その一覧も §11 にある。
 >
 > - 正本は Issue #201 のコメント群。食い違ったら Issue が正。
 > - 本文書は設計の置き場であり、`skills/`・`agents/`・`scripts/` の挙動は変えない（実装は §10 の段階計画に従い別 PR で行う）。
@@ -20,6 +20,8 @@
 | LLM と遷移の境界 | LLM は意味判断を型付き出力で返し、runtime が決定的な遷移へ写像する。不正値・未知値は fail-closed | 2026-08-23 最終決定 §5（2026-09-20 で維持） |
 | flywheel との関係 | runtime は flywheel へ依存しない。flywheel は harness 内部の step・判断値を理解しない | 2026-08-23 §3（維持） |
 | 非目標 | UI・daemon・scheduler・remote worker・汎用 DSL・provider 選択 | 2026-08-23 §4・2026-09-20 §8 |
+
+本設計の承認の場で 2026-09-21 に決まったこと（Q1〜Q15）は §11 に記録した。そのうち上の決定の**理由**に影響するものが 1 つある。Q4（CLI がスクリプトと YAML をバイナリに埋め込んで持つ）を採ったため、決定③の理由の 1 つ「YAML なら workflow の修正でバイナリを出し直さずに済む」は**失われた**。オーナーはこれを承知のうえで Q4 を採った。**決定③（式を持たない YAML）そのものは変わらない**。残る理由（実行前に検証できる・差分が読める・式の評価器＝DSL を作らずに済む・内部のグラフをデータとして持つ）だけで決定③は成り立つ（§6.5）。
 
 ### 0.1 本文書で**空けておく**もの
 
@@ -63,13 +65,13 @@
 - **制御フローは YAML＋Go のステップ種類**（順序・分岐・fan-out・合流・上限・ゲート）
 - **機械処理はスクリプト**（`worktree-setup`・`ci-wait`・`quality-check-runner` 等を子プロセスとして呼ぶ）
 
-### 1.1 ステップの粒度（推奨案を仮に採る → 問い Q6）
+### 1.1 ステップの粒度（Q6 で決定）
 
 **runtime の 1 ステップ ＝ 1 回の子プロセス起動**（スクリプト 1 回、または `claude -p` 1 回）とする。
 
 - `feature-implementer` の**内側のループ**（`/quality-check` 最大 3 回・`/self-review` の反復・`design-deviation-verifier` の多数決）は、最初の段階では**エージェント定義の散文に残す**。これらは 1 つの Claude セッション内の Task ネストで閉じており、外へ出すには `/self-review` 自体の移行（Issue 本文の旧 Phase 2 相当）が要る。今回の主対象（ラウンドをまたぐ状態）には効かない。
 - 外側のループ（Phase 4→8 の差し戻し・CI 待ち・レビュー待ち・人の承認待ち・合流）は**すべて runtime へ移す**。ここが「再開のたびに親が組み立て直している」部分である。
-- 帰結として **`ticket-worker` は役目を失う**（責務は「`/impl` を呼ぶ」「CI の loop-until-green」「返却」で、いずれも runtime が持つ）。Task ネストは `ticket-worker`（深度1）→ `feature-implementer`（深度2）→ `code-reviewer`（深度3）から、`feature-implementer` がセッションの主体（深度0）になる形へ 1 段浅くなる。`claude -p --agent claude-harness:feature-implementer` で主体に据えられるかは**未検証**（`--agent` フラグの存在は `claude --help`〔2.1.278〕で確認済み。プラグインのエージェントを名前空間付きで指定できるかは PR-3 で実測する）。
+- 帰結として **`ticket-worker` は廃止する**（責務は「`/impl` を呼ぶ」「CI の loop-until-green」「返却」で、いずれも runtime が持つ）。Task ネストは `ticket-worker`（深度1）→ `feature-implementer`（深度2）→ `code-reviewer`（深度3）から、`feature-implementer` がセッションの主体（深度0）になる形へ 1 段浅くなる。`claude -p --agent claude-harness:feature-implementer` で主体に据えられるかは**未検証**（`--agent` フラグの存在は `claude --help`〔2.1.278〕で確認済み。プラグインのエージェントを名前空間付きで指定できるかは PR-3 で実測する）。
 
 ---
 
@@ -148,7 +150,7 @@ YAML に書けるのは次だけ。**条件式・演算・文字列の組み立�
 
 | 要素 | 形 | 意味 |
 | --- | --- | --- |
-| `schema` | `harness.workflow/v1` | スキーマ版（§7.4 の版照合の対象） |
+| `schema` | `harness.workflow/v1` | スキーマ版（§7.3 の版照合の対象） |
 | `inputs` | 名前 → 型（`integer`/`string`/`array`/`object`）・`required` | run の入力。起動時に検証 |
 | `limits` | 名前付きの**整数・金額リテラル** | 上限値（予算・差し戻し回数）。ステップと遷移から名前で参照する |
 | `steps.<id>.kind` | Go に登録された種類名 | 振る舞いは Go 側 |
@@ -158,7 +160,13 @@ YAML に書けるのは次だけ。**条件式・演算・文字列の組み立�
 | 遷移先 | ステップ id ／ `{goto, with, limit, exhausted}` ／ `{gate: <id>}` ／ `{fail: <理由>}` ／ `{done: <理由>}` ／ `{retry: <n>, exhausted: …}` | `limit` は `limits` の名前。回数は Go が数える |
 | `timeout`・`budget_usd` | リテラル | ステップ単位の上限 |
 
-終了状態も `outcome` として同じ表で扱う。runtime が付与する予約値: `error`（非 0 終了・起動失敗）・`timeout`・`invalid_output`（スキーマ不一致・未知の enum 値）・`budget_exhausted`。**予約値を `on` に書かなければ、既定で run を `failed` にする**（fail-closed。書けば明示的に別の遷移へ送れる）。
+終了状態も `outcome` として同じ表で扱う。runtime が付与する予約値: `step_error`（非 0 終了・起動失敗）・`step_timeout`（ステップの `timeout` 超過）・`invalid_output`（スキーマ不一致・未知の enum 値）・`budget_exhausted`。予約値はステップの出力の enum 値と衝突してはならず、`harness validate` が衝突を拒否する（例: `ci-wait` は `ci: "timeout"` を返すので、予約値の側に `step_` を付けて分けた）。**予約値を `on` に書かなければ、既定で run を `failed` にする**（fail-closed。書けば明示的に別の遷移へ送れる）。
+
+`retry` と `limit` の回数は Go が数える。数え方の単位: `limit`（差し戻し）は **unit 単位でラウンドをまたいで**累計する（§4.2）。`retry` は**ラウンド単位**で数え、ゲートを抜けて新しいラウンドに入ると 0 に戻る（例: `ci-pending` ゲートから resume した `ci` は、再び 1 回の再試行を持つ）。
+
+#### 式にしないための線引き（Q12 で決定）
+
+YAML と Go のステップ種類が許す判定は**一致だけ**である。遷移のキーは「ステップの `outcome`（enum）の値が表のどの行と一致するか」、`select` は「参照 1 つが指す enum 値をそのまま outcome にする」だけで、どちらも比較（大小・範囲）・論理結合（and / or / not）・加工（演算・連結・集計・関数）を持たない。**今後の要求で比較・論理結合・加工を YAML 側に足す必要が出たら、それは式の導入とみなして止める**。その場合はまず Go 側のステップ種類の追加で解けるかを検討し（`plan-parallel` の `predict_min_issues` のように、閾値はリテラル引数として種類の中で比較する）、それでも足りなければオーナーの判断を仰ぐ（決定③の確認事項どおり）。`harness validate` は `when:`・`if:` のような条件キーや、参照の文法（§3.3）に無い形を未知のキーとして拒否する（§6.3）。
 
 ### 3.2 追加するステップ種類（Go）
 
@@ -177,13 +185,16 @@ YAML に書けるのは次だけ。**条件式・演算・文字列の組み立�
 
 ### 3.3 値の受け渡し: 参照だけを許し、加工を許さない
 
-**書き切れる**。文法は次の 3 形だけで、演算・連結・添字計算・既定値の指定は持たない。
+**書き切れる**。文法は次の 4 形だけで、演算・連結・添字計算・既定値の指定は持たない。
 
 ```text
 $inputs.<名前>
 $steps.<step id>.<output のフィールドパス>     # 同一 unit 内で最後に成功した実行の値
 $edge.<名前>                                   # 遷移の with で渡された値（遷移先のステップ内でのみ有効）
+$gate.note                                     # input 型ゲートの resume で添えられた自由記述（そのゲートから出る遷移の with でのみ有効）
 ```
+
+`$gate.note` は **LLM への入力としてだけ**渡せる。遷移のキーにも `select` の値にも使えない（遷移のキーは `outcome` の enum だけ。§3.1 の線引き）。`harness validate` は `$gate.note` が遷移の `with` 以外に現れたら拒否する。
 
 - **読み込み時に全参照を検証する**: 参照先ステップの `output` スキーマにそのフィールドが在ること、型が受け手の `with` と一致することを、実行前に機械的に調べる（決定③の「実行前に検証できる」を参照にも効かせる）。
 - **「その経路でまだ実行されていないステップ」への参照が要る箇所は、遷移の `with` へ寄せる**（例: CI 失敗ログは `ci → fix` の遷移に載せる。`fix` の定義が `$steps.ci` を直接読むと、E2E 失敗から来た経路では値が無い）。これで null の扱いを文法に持ち込まずに済む。
@@ -283,14 +294,14 @@ steps:
 
   e2e:
     kind: llm
-    prompt: prompts/ticket-e2e.md         # /create-e2e まで。/explain-e2e は runtime の外（§3.6）
+    prompt: prompts/ticket-e2e.md         # /create-e2e まで。/explain-e2e は runtime の外（§3.7）
     session: continue:implement
     output: schemas/e2e-result.json       # outcome: pass|fail, failure_summary, scenarios, traceability
     budget_usd: 8
     on:
       pass: publish
       fail: { goto: fix, with: { failure: $steps.e2e.failure_summary },
-              limit: rework, exhausted: { fail: e2e } }            # I11 に上限を与える（Q8）
+              limit: rework, exhausted: { fail: e2e } }            # I11 に上限 3 を与える（Q8）
 
   publish:
     kind: pull-request
@@ -315,7 +326,15 @@ steps:
       none:  review                                   # CI 未設定は green 相当
       red:   { goto: fix, with: { failure: $steps.ci.failure_log_excerpt },
                limit: rework, exhausted: { fail: ci_red } }
-      timeout: { retry: 1, exhausted: { fail: ci_timeout } }   # 現行と同じ。gate 化は Q10
+      timeout: { retry: 1, exhausted: { gate: ci-pending } }   # Q10: 失敗にせずラウンドを区切る
+
+  ci-pending:                                        # CI を待ちきれなかった（新情報が無いので fix へは送らない。W1）
+    kind: gate
+    type: input
+    decider: any
+    requested_action: CI が時間内に終わらなかった。CI の完了後に recheck を渡して resume（止めるなら abort）
+    inputs: [recheck, abort]
+    on: { recheck: ci, abort: { fail: ci_timeout } }
 
   review:                                            # ラウンドの区切り R1
     kind: gate
@@ -339,7 +358,7 @@ steps:
   review-human:
     kind: gate
     type: input
-    decider: human
+    decider: human                        # R2 を decider: parent の別ゲートへ分けるかは未決（§11 の N2）
     requested_action: レビュー対応で人の判断が要る（内容は respond の出力を参照）
     inputs: [respond, abort]
     on: { respond: respond, abort: { fail: aborted_by_human } }
@@ -360,7 +379,7 @@ steps:
   human-merge:                                       # R5: 既定ブランチへのマージは runtime が行わない
     kind: gate
     type: observe
-    decider: human
+    decider: human                        # observe 型に TTY を要求するかは未決（§11 の N1。本文は要求しない読み）
     observe: pr-state                     # resume 時に gh で PR の実状態を確認
     requested_action: 既定ブランチ宛 PR のマージは人が行う。マージ後に resume
     on: { merged: cleanup, open: { gate: human-merge }, closed: { fail: pr_closed } }
@@ -368,7 +387,7 @@ steps:
   design-deviation:
     kind: gate
     type: input
-    decider: human                        # 問い Q9
+    decider: human                        # Q9: input 型の human ゲートは TTY 必須（§5.3）
     requested_action: クリティカル設計の逸脱を検知（implement / fix の deviation_report を参照）
     inputs: [follow-decision, abort]
     on:
@@ -381,7 +400,9 @@ steps:
     on: { released: { done: merged }, kept: { done: merged }, dirty: { done: merged_worktree_dirty } }
 ```
 
-> `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す。§3.3 の 3 形に 4 形目として加える（Q12 に含める）。
+> `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す（§3.3。Q12 で決定）。
+>
+> `ci-pending` は `decider: any`（外部待ちで、解決に意思決定を含まない）なので TTY を要求しない。`recheck` で `ci` に戻ると、`retry` はラウンド単位で数えるため再び 1 回の再試行を持つ（§3.1）。`limit: rework` の累計は戻らない。
 
 ### 3.5 書き下ろし: `para-impl`（fan-out）
 
@@ -418,7 +439,7 @@ steps:
 ```
 
 - **P7 の headless 問題が消える**: 既定ブランチ base の直列ペアでは、先行 unit が `human-merge` ゲートで止まり、後続 unit は「未起動（先行待ち）」として状態に残る。run は `waiting` で終わり、人がマージして `resume` すれば後続が起動する。現行の「後続をスキップして再開手順を報告」が不要になる。
-- **P2（1 件か複数か）の分岐は無くす**（推奨案を仮に採る → Q7）: 1 件も `fanout` の 1 項目として扱い、単一経路も worktree で動かす。単一経路と並列経路の差（worktree の有無・CI 確認の手段・`/explain-e2e` の実施者）が消え、I14 の 2 経路も 1 本になる。
+- **P2（1 件か複数か）の分岐は無くす**（Q7 で決定）: 1 件も `fanout` の 1 項目として扱い、単一経路も worktree で動かす。単一経路と並列経路の差（worktree の有無・CI 確認の手段・`/explain-e2e` の実施者）が消え、I14 の 2 経路も 1 本になる。**単一経路の利用者には「メインのチェックアウトではなく worktree で作業することになる」変化がある**。移行時に利用者へ見える変更として §8.1 に載せる。
 - **P11（統合時のコンフリクト解決）**: 本 YAML には書いていない。`pull-request` 種類が mergeable 状態を観測して `conflict` outcome を返し、解決用の `llm` ステップへ送る形で書ける（種類の追加で解ける）が、現行でも発生時の手順が散文 1 行しかなく、入出力を定義できる材料が無い。PR-5 で実例を取ってから足す。
 
 ### 3.6 書き切れたか（結果）
@@ -432,7 +453,7 @@ steps:
 | I7・I13 | `pull-request` 種類が型付き値から本文を生成 | 不要（種類で解いた） |
 | I8・R2・R3 | `gate`（input 型） | 不要 |
 | I10 | `select` 種類 | 不要（種類で解いた） |
-| I11・I14・W1・W2 | 遷移の `limit`（回数は Go が数える）・`retry` | 不要 |
+| I11・I14・W1・W2 | 遷移の `limit`（回数は Go が数える）・`retry`・`ci-pending` ゲート | 不要 |
 | I12 | **runtime の外**に置く（§3.7） | — |
 | I15・P10 | runtime が子プロセスを直接監視する（§4.5） | 不要 |
 | P3〜P6・P13 | `plan-parallel` 種類（閾値はリテラル引数） | 不要（種類で解いた） |
@@ -442,13 +463,13 @@ steps:
 | P11 | 未記述（材料不足。種類の追加で解ける見込み） | 不要の見込み |
 | W3・W4 | outcome 表（deviation → gate）・`pull-request` の冪等性 | 不要 |
 
-**結論: 最初の対象は式なしで書き切れた。** ただし 4 種類（`select`・`workspace`・`pull-request`・`plan-parallel`）を Go 側に足す前提である。式の代わりに足したものの中で、**式に近づいているのは `select` だけ**（参照 1 つの値をそのまま outcome にする＝一致だけ。比較演算・複数値の組み合わせは持たない）。これを許すかは Q12 に上げる。
+**結論: 最初の対象は式なしで書き切れた。** ただし 4 種類（`select`・`workspace`・`pull-request`・`plan-parallel`）を Go 側に足す前提である。式の代わりに足したものの中で、**式に近づいているのは `select` だけ**（参照 1 つの値をそのまま outcome にする＝一致だけ。比較演算・複数値の組み合わせは持たない）。Q12 で `select` と `$gate.note` を許すと決めた。根拠は、一致だけで比較・組み合わせを持たず、「式を足さず Go 側のステップ種類の追加で解く」という承認済みタスク案の方針そのものであること。どこまでを許すかは §3.1「式にしないための線引き」に書いた。
 
 ### 3.7 runtime の外に置くもの
 
-- **`/explain-e2e` の Phase 1**（対話前提）。runtime は `e2e` の出力（シナリオ一覧・トレーサビリティ表）を成果物として保存し、run の要約に「次の操作（非ブロッキング）」として載せる。PR 作成の前提条件ではない（`/impl` Phase 7 のとおり）ので、ゲートにはしない（Q14）。
+- **`/explain-e2e` の Phase 1**（対話前提）。runtime は `e2e` の出力（シナリオ一覧・トレーサビリティ表）を成果物として保存し、run の要約に「次の操作（非ブロッキング）」として載せる。PR 作成の前提条件ではない（`/impl` Phase 7 のとおり）ので、ゲートにはしない（Q14 で決定）。現行の単一経路では `/impl` が `/explain-e2e` まで実施していたので、これも利用者に見える変更になる（§8.1）。
 - **`feature-implementer` の内側のループ**（§1.1）。
-- **入れ子の Task の合流規律**: runtime が監視できるのは自分が起動した `claude -p` までで、その中の Task は見えない。`join-gate.md` の「ネストへの伝播」条項は Claude セッション内では引き続き必要である（§8 で縮む量の見積もりにはこれを残す）。
+- **入れ子の Task の合流規律**: runtime が監視できるのは自分が起動した `claude -p` までで、その中の Task は見えない。`join-gate.md` の「ネストへの伝播」条項は Claude セッション内では引き続き必要である（§8 の段階 (B) で縮む量・§9 の M5 にはこれを残した量で数える）。
 
 ---
 
@@ -485,13 +506,13 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 ### 4.3 予算の扱い
 
 - **1 unit の累計**を持つ。`llm` ステップ起動時に `--max-budget-usd = min(ステップの budget_usd, 残予算)` を付ける。`--max-budget-usd` は起動ごとに効き、`--resume` ではカウンタが 0 に戻る（Tom の運用で実測済みの性質）ので、**累計の責任は runtime が持つ**。
-- 費用は `claude -p --output-format json` の結果から得る【未検証: フィールド名は PR-3 で実測して固定する】。**得られなかった実行は、そのステップの上限額を消費したものとして数える**（fail-closed。`unknown_cost_count` に記録）。
+- 費用は `claude -p --output-format json` の結果から得る【未検証: フィールド名は PR-3 で実測して固定する】。**得られなかった実行は、そのステップの上限額（実際に付与した `--max-budget-usd` の値）を消費したものとして数える**（fail-closed。Q15 で決定。`unknown_cost_count` に記録）。
 - 残予算がステップの最低額を下回ったら、起動せず `budget_exhausted` を outcome にする（既定で `failed`。YAML で人間ゲートへ送ることもできる）。
 
 ### 4.4 Claude セッションの扱い
 
 - `llm` ステップは **runtime が `--session-id <uuid>` を事前に採番して起動**する（`claude --help` で存在確認済み）。起動前にイベントとして記録するので、runtime が途中で落ちても `session_id` は失われない（クラッシュ復旧の副次効果。これ以上の作り込みはしない）。
-- `session: continue:<step>` は、そのステップの最新実行の `session_id` を `--resume` で引き継ぐ。差し戻しの修正で実装時の文脈を保つか、状態から組み立てた新しいブリーフで始めるかは費用と品質のトレードオフで、**実測で決める**（Q11）。
+- `session: continue:<step>` は、そのステップの最新実行の `session_id` を `--resume` で引き継ぐ。差し戻しの修正で実装時の文脈を保つか、状態から組み立てた新しいブリーフで始めるかは費用と品質のトレードオフである。**YAML の `session` でステップごとに指定でき、差し戻し系（`fix`・`commit`・`e2e`）の既定は `continue`（`--resume` で継続）とする**（Q11 で決定）。PR-4 の shadow run で M1・M3（§9）を比べ、既定を見直す。
 - **再開のブリーフは runtime が状態から決定的に組み立てる**（どのブランチ・何ラウンド目・残予算・直前ラウンドの結果・人の指示文）。現状これを親の LLM が散文とログから毎回組み立てており、差し戻し対応の費用が実装本体を上回った例がある（Issue #201 2026-09-21 実測）。ここが導入効果の本体である。
 
 ### 4.5 子プロセスの監視と合流
@@ -500,7 +521,9 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 - `harness run` / `resume` は、全 unit がゲートか終端に達するまでプロセスとして生存する（daemon は持たない）。
 - runtime が落ちた場合（副次）: 次の `resume` / `status` で「`running` のまま生存プロセスが無い」ステップ実行を `interrupted` とし、その unit を `interrupted` ゲートへ送る（自動の再実行はしない。LLM ステップは部分的なコミットを残しうるため冪等ではない）。
 
-### 4.6 置き場と形式（未決: オーナーが承認の場で決める）
+### 4.6 置き場と形式（Q1・Q2 でオーナーが決定: L2・F1）
+
+**決定: 置き場は L2（`$XDG_STATE_HOME/claude-harness/`、未設定なら `~/.local/state/claude-harness/`。環境変数 `HARNESS_STATE_DIR` で上書き可）、形式は F1（run ごとの `events.jsonl`〔正本〕＋ `state.json`）**。以下は判断材料として残す比較である。
 
 **置き場**（前提: プラグインのディレクトリには置かない＝更新で失われる。Issue 2026-09-21 決定①）
 
@@ -510,7 +533,7 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 | **L2** | ユーザー単位の状態ディレクトリ（`$XDG_STATE_HOME/claude-harness/`、未設定なら `~/.local/state/claude-harness/`）。run はリポジトリのパスを記録 | CLI 本体と同じ「ユーザーにインストールされる道具」の単位。`harness runs` で横断一覧ができる。クローンの作り直しに耐える | リポジトリを消しても run が残る（掃除の操作が要る）。コンテナ内では別の置き場になる |
 | L3 | 作業ツリー内の `.harness/`（gitignore） | 見つけやすい | worktree ごとに分かれ、fan-out の親子が別の場所になる。`.gitignore` の追加を利用先へ要求する |
 
-**推奨: L2**（環境変数 `HARNESS_STATE_DIR` で上書き可）。根拠: 観測を「実行主体の外から」行う主体（人の端末・将来の flywheel）は、どのリポジトリかを知らなくても run を引けるほうがよい。Issue の CLI 例も `harness runs`（横断一覧）を想定している。
+**採った案: L2**（環境変数 `HARNESS_STATE_DIR` で上書き可）。根拠: 観測を「実行主体の外から」行う主体（人の端末・将来の flywheel）は、どのリポジトリかを知らなくても run を引けるほうがよい。Issue の CLI 例も `harness runs`（横断一覧）を想定している。
 
 **形式**
 
@@ -520,7 +543,7 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 | F2 | SQLite 1 ファイル | 横断の問い合わせ・並行アクセスに強い | 人が直接読めない。Go では cgo（mattn）か純 Go 実装（modernc）の選択が要り、クロスビルドに影響する |
 | F3 | run ごとに JSON 1 ファイルを書き換え | 最も単純 | 履歴（ラウンドの経過）が残らず、観測・監査の要求を満たさない |
 
-**推奨: F1**。同じ run への同時書き込みは run ディレクトリのロック（`worktree-setup.sh` と同じ mkdir 方式）で直列化する。run 数が増えて `harness runs` が遅くなったら、索引ファイルを足す（形式は変えない）。
+**採った案: F1**。同じ run への同時書き込みは run ディレクトリのロック（`worktree-setup.sh` と同じ mkdir 方式）で直列化する。run 数が増えて `harness runs` が遅くなったら、索引ファイルを足す（形式は変えない）。
 
 ---
 
@@ -533,8 +556,8 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 | `harness run <workflow> [入力]` | run を開始し、全 unit がゲートか終端に達するまで進める |
 | `harness status <run> [--json]` | 状態の観測（どの unit が・どのステップで・何を待ち・何が失敗したか・残予算・ラウンド） |
 | `harness runs [--json]` | run の一覧 |
-| `harness resume <run> [--unit <key>] [--input <値>] [--note <文>]` | ゲートを解決して次のラウンドへ |
-| `harness approve <run> …` | `decider: human` のゲートの解決（`resume` との分け方は Q9 と一緒に決める） |
+| `harness resume <run> [--unit <key>] [--input <値>] [--note <文>]` | ゲートを解決して次のラウンドへ。**TTY を要求するゲート（§5.3）は解決できず、`approve` を案内して止まる** |
+| `harness approve <run> [--unit <key>] --input <値> [--note <文>]` | TTY を要求するゲートの解決。端末が接続されていなければ拒否し、接続されていれば対象の要約を表示して確認の入力を求める |
 | `harness cancel <run>` | 停止（子プロセスの停止と記録） |
 | `harness validate [<workflow>]` | YAML の静的検証（§6.3） |
 | `harness setup` | `claude plugin marketplace add` / `claude plugin install` を呼ぶ（決定①） |
@@ -544,9 +567,14 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 
 成功扱いにも無限待機にもせず、**状態・要求操作・再開方法を構造化 JSON と終了コードで返して終了する**（Issue 成功基準）。「待機中」と「失敗」と「成功」は別の終了コードにする。
 
-### 5.3 ゲートの解決経路と安全性（未決 → Q9）
+### 5.3 ゲートの解決経路と安全性（Q9 でオーナーが決定）
 
-flywheel は承認を**人間の直接操作に限り**、CLI の承認は端末（TTY）が無ければ拒否する設計を採っている（flywheel `docs/architecture.md` §9。理由: Claude から承認コマンドが呼べると、自走中の Claude が自分で承認できる経路が開く）。harness の `gate` は `decider` を持つので、同じ考え方を `decider: human` のゲートにだけ適用するのが推奨である。`decider: parent`（CLAUDE.md の判定表で親が決めてよい問い）と `any`（レビュー待ちのような外部待ち）は TTY を要求しない。
+flywheel は承認を**人間の直接操作に限り**、CLI の承認は端末（TTY）が無ければ拒否する設計を採っている（flywheel `docs/architecture.md` §9。理由: Claude から承認コマンドが呼べると、自走中の Claude が自分で承認できる経路が開く）。**決定: harness では `decider: human` のゲートにだけ TTY を必須にする**。`decider: parent`（CLAUDE.md の判定表で親が決めてよい問い）と `any`（レビュー待ちのような外部待ち）は TTY を要求しない。
+
+- 本文の YAML で TTY を要求するゲートは `design-deviation`・`review-human`（どちらも `type: input`・`decider: human`）。
+- **`type: observe` かつ `decider: human` のゲート（`human-merge`）の扱いは未決**（§11 の N1）。observe 型では resume が判断を運ばず、外部の実状態（PR がマージされたか）を runtime が確かめるだけだからである。本文では「**TTY を要求するのは `input` 型の human ゲートだけ**」という読みを**仮に採って**書いている。
+- 解決の記録には `actor`・`channel`（`tty` / `non-tty`）を必ず残す（§4.1 の Gate）。
+- 同じマシン・同じユーザーで動くプロセスによる意図的な回避（疑似端末の作成など）までは防げない。防ぐのは「Claude が通常の道具立てで human ゲートを解決してしまうこと」である（flywheel §9 と同じ範囲）。
 
 ### 5.4 スロット（worktree）の払い出し主体
 
@@ -566,12 +594,24 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 
 ### 6.1 Go モジュールの配置
 
-**推奨: `runtime/` に独立した Go モジュールを置く**（`runtime/go.mod`、`runtime/cmd/harness/`、`runtime/internal/…`）。ワークフロー定義は `runtime/workflows/`、プロンプトは `runtime/workflows/prompts/`、出力スキーマは `runtime/workflows/schemas/`。
+**`runtime/` に独立した Go モジュールを置く**（`runtime/go.mod`、`runtime/cmd/harness/`、`runtime/internal/…`）。ワークフロー定義は `runtime/workflows/`、プロンプトは `runtime/workflows/prompts/`、出力スキーマは `runtime/workflows/schemas/`。配置の細部（ディレクトリ名）は可逆な内部構造なので本文書で決め、PR-2 で変えてよい。
 
-- ルート直下に `go.mod` を置く案は、プラグインのルート＝リポジトリのルートである現状では配布物に必ず混ざる（§6.2）。
-- Go のモジュールをサブディレクトリに置くと、`go install` 用のタグは `runtime/vX.Y.Z` 形式になる（Go のサブディレクトリ・モジュールの規約）。§7.3 の版の分け方と整合する。
+- X1（§6.2）の移動後のリポジトリ構成:
 
-### 6.2 プラグインの配布物に Go のソース・バイナリを含めない（未決 → Q5）
+  ```text
+  .claude-plugin/marketplace.json   # source: "./plugin"
+  plugin/                           # 配布物（キャッシュへコピーされるのはここだけ）
+    .claude-plugin/plugin.json
+    skills/ agents/ scripts/ bin/ hooks/
+  runtime/                          # Go モジュール（配布物に入らない）
+    go.mod cmd/harness/ internal/ workflows/{prompts,schemas}/
+  docs/  Makefile  CHANGELOG.md  README.md
+  ```
+
+- Go のモジュールをサブディレクトリに置くと、`go install` 用のタグは `runtime/vX.Y.Z` 形式になる（Go のサブディレクトリ・モジュールの規約）。§7.2 の版の分け方と整合する。
+- 以降、本文書で `scripts/…` と書いたパスは、X1 の移動後は `plugin/scripts/…` を指す。
+
+### 6.2 プラグインの配布物に Go のソース・バイナリを含めない（Q5 でオーナーが決定: X1）
 
 事実（Claude Code の公式ドキュメント plugin-marketplaces を 2026-09-21 に参照）:
 
@@ -587,22 +627,22 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 | X2 | CI が Go を除いた zip を作ってリリースに添付し、`source: {source: archive, url: …}` にする | 作業ツリーの構成を変えない | プラグインの配布がリリース工程に依存する（現在は main がそのまま配布物）。`marketplace.json` の URL を版ごとに更新する必要がある |
 | X3 | 除外しない（Go のソースは入るが、バイナリはコミットしないので入らない） | 手間ゼロ | 決定（「含めない方法を決める」）を満たさない。`go.mod` を含むディレクトリが利用者の環境に置かれる |
 
-**推奨: X1**。実施するなら **Go のコードが入る前（PR-1）に単独で**行う（移動と機能追加を同じ PR に混ぜない）。
+**決定: X1**。**Go のコードが入る前（PR-1）に単独の PR で**行う（移動と機能追加を同じ PR に混ぜない）。プラグインの利用者から見ると、`marketplace.json` の `source` が変わるだけで、導入済みのプラグインの中身の構成（`skills/`・`agents/`…）は変わらない。移動が既存の導入先へ与える影響（再インストールの要否）は PR-1 で実測し、CHANGELOG に書く（§8.1）。
 
 ### 6.3 品質ゲートの入口を 1 つにまとめる
 
-現状、bash テストにも単一の入口が無い。**推奨: ルートに `Makefile` を置き `make check` を唯一の入口にする**（X1 ならルートは配布物に入らない）。
+現状、bash テストにも単一の入口が無い。**ルートに `Makefile` を置き `make check` を唯一の入口にする**（X1 によりルートは配布物に入らない。入口の名前は可逆な選択なので本文書で決めた）。
 
 ```text
 make check
-  ├─ bash テスト全件（scripts/tests/*.sh を順に実行し、失敗したテスト名を集計。1 本でも落ちれば非 0）
+  ├─ bash テスト全件（plugin/scripts/tests/*.sh を順に実行し、失敗したテスト名を集計。1 本でも落ちれば非 0）
   ├─ cd runtime && go vet ./... && go test ./...
   └─ harness validate（runtime/workflows/*.yaml の静的検証）
 ```
 
 - `go` が無い環境では **skip ではなく失敗**にする（`quality-check-runner` が「ゲートが 1 つも実行されていない」を `pass` にしない理由と同じ。検査していないものを通過と報告しない）。
 - `harness validate` が検査するもの: 未知のキーの拒否（`when:` のような式の混入を構文として受け付けない）・`on` が `output` の `outcome` enum を網羅していること・全参照が参照先の出力スキーマに存在し型が合うこと・到達不能なステップ・`limit` が `limits` に定義されていること・`agent`/`run` の参照先が実在すること。
-- 本リポジトリには PR CI が無い。`make check` をそのまま CI の 1 ジョブにできる形にしておく（CI の追加は §7.2 のリリース用ワークフローと一緒に人が判断する）。
+- 本リポジトリには PR CI が無い。`make check` をそのまま CI の 1 ジョブにできる形にしておく（CI の追加は §6.4 のリリース用ワークフローと一緒に人が判断する）。
 
 ### 6.4 OS・アーキテクチャ別のビルドとリリース
 
@@ -611,9 +651,9 @@ make check
 - 起動: **タグの push をトリガーにした GitHub Actions**（GoReleaser 等でクロスビルド・チェックサム付き）。**タグを打つのは人**である。本リポジトリの `.claude/settings.json` の `ask` に `git tag`・`git push --tags`・`gh release`・`gh workflow` が入っており、headless の子セッションからは実行できない（それが意図どおり）。
 - 導入: リリースのバイナリを置く（手順は README）＋ `go install github.com/masanami/claude-harness/runtime/cmd/harness@runtime/vX.Y.Z` の併記。その後 `harness setup`。自動更新は持たない（`harness version` が新しい版の存在を案内するところまで。後回し）。
 
-### 6.5 CLI が `scripts/` とワークフロー定義をどこから得るか（未決 → Q4。決定との緊張がある）
+### 6.5 CLI が `scripts/` とワークフロー定義をどこから得るか（Q4 でオーナーが決定: S1＝バイナリに埋め込む）
 
-決定①は「CLI は Claude Code の内部ファイルに依存しない」、決定②は「runtime は既存の bash スクリプトを子プロセスとして呼ぶ」、決定③の確認事項は「YAML はプラグイン側、バイナリは CLI 側で別々に更新される」としている。**CLI がプラグインの場所からスクリプトと YAML を読むと、プラグインの場所の解決に `installed_plugins.json`（決定①が壊れやすさの実例に挙げたもの）が要る**。flywheel や CI からスキルを通さずに起動する経路では、スキルの「Base directory」も渡せない。
+決定①は「CLI は Claude Code の内部ファイルに依存しない」、決定②は「runtime は既存の bash スクリプトを子プロセスとして呼ぶ」、決定③の確認事項は「YAML はプラグイン側、バイナリは CLI 側で別々に更新される」としている。**CLI がプラグインの場所からスクリプトと YAML を読むと、プラグインの場所の解決に `installed_plugins.json`（決定①が壊れやすさの実例に挙げたもの）が要る**。flywheel や CI からスキルを通さずに起動する経路では、スキルの「Base directory」も渡せない。この衝突を S1 で解いた。
 
 | 案 | 方法 | 評価 |
 | --- | --- | --- |
@@ -621,7 +661,21 @@ make check
 | S2 | プラグインのディレクトリから読む。場所はスキルからの引数、無ければ `installed_plugins.json` | YAML の更新にリリース不要。ただし決定①が避けた依存そのもの |
 | S3 | 環境変数（`CLAUDE_HARNESS_ROOT`）を必須にする | 単純だが利用者の手順が増える。flywheel 側に harness 固有の設定を持たせる経路になる |
 
-**推奨: S1**（開発時は `--workflow-dir` / `--scripts-dir` で作業ツリーを指せるようにする）。子の `claude -p` が使う `agents/`・`skills/` はインストール済みのプラグインから Claude Code が解決するので、**CLI とプラグインの版のずれは §7.4 の照合で止める**。`claude -p --plugin-dir` で CLI 同梱の版を読ませる案もあり得る（`--plugin-dir` の存在は確認済み。インストール済みの同名プラグインとの重複時の挙動は未検証）。
+**決定: S1**（開発時は `--workflow-dir` / `--scripts-dir` で作業ツリーを指せるようにする）。埋め込むのは `plugin/scripts/`（X1 後のパス）と `runtime/workflows/`。
+
+**S1 の帰結（決定③との関係を曖昧にしないための整理）**:
+
+| 決定③の要素 | S1 を採った後 |
+| --- | --- |
+| 決定そのもの: 式を持たない YAML で宣言し、ステップの種類は Go で持つ | **変わらない** |
+| 理由「再開できる runtime は内部でステップのグラフをデータとして持つ必要がある」 | 残る |
+| 理由「式の評価器（実質 DSL）を作らずに済む」 | 残る |
+| 理由「宣言的で、実行前に検証できる（読める・差分が追える・遷移の漏れを機械的に調べられる）」 | 残る |
+| 理由「汎用 DSL は非目標のまま守れる」 | 残る |
+| 理由「Go ではコード定義の変更に再ビルドとリリースが要る。YAML なら workflow の修正でバイナリを出し直さずに済む」 | **失われる**。YAML はバイナリに埋め込まれるので、workflow の修正は CLI のリリースで配る。オーナーはこれを承知のうえで S1 を採った（2026-09-21） |
+| 確認事項「YAML はプラグイン側、バイナリは CLI 側で別々に更新される」 | **前提が消える**。YAML は CLI と同じ単位で更新される。YAML のスキーマ版の照合（§7.3）は、開発時の `--workflow-dir` と、`resume` 時に run の記録した定義と現在の定義がずれた場合に効く |
+
+子の `claude -p` が使う `agents/`・`skills/` はインストール済みのプラグインから Claude Code が解決する。**CLI とプラグインの版のずれは §7.3 の照合で止める**。`claude -p --plugin-dir` で CLI 同梱の版を読ませる案もあり得る（`--plugin-dir` の存在は確認済み。インストール済みの同名プラグインとの重複時の挙動は未検証。PR-6 以降の検討事項）。
 
 ---
 
@@ -629,10 +683,10 @@ make check
 
 ### 7.1 何が別々に更新されるか
 
-- CLI（バイナリ＋S1 なら同梱のスクリプトと YAML）
+- CLI（バイナリ＋同梱のスクリプトと YAML。§6.5 の S1）
 - プラグイン（薄いスキル・`agents/`・プラグイン側の `scripts/`）
 
-### 7.2 版番号の分け方（推奨案を仮に採る → Q13）
+### 7.2 版番号の分け方（Q13 で決定）
 
 - プラグイン: 従来どおり `.claude-plugin/plugin.json` の `version`（semver）。
 - CLI: 独立した semver。タグは `runtime/vX.Y.Z`。
@@ -642,12 +696,15 @@ make check
 
 - CLI は **対応するプラグイン版の範囲** と **対応するワークフロースキーマ版の集合** を内蔵する。
 - 薄いスキルは CLI を呼ぶとき自分のプラグイン版を渡す。CLI は範囲外なら**専用の終了コードで止まり**、どちらを更新すべきかを表示する（動き続けない。決定①）。
-- `harness run` は YAML の `schema` が対応集合に無ければ読み込まず止まる（S2 を採った場合にだけ実際に起きる。S1 なら同梱の YAML は常に一致する）。
+- `harness run` は YAML の `schema` が対応集合に無ければ読み込まず止まる（S1 を採ったので同梱の YAML は常に一致する。実際に効くのは開発時の `--workflow-dir` で別の定義を読ませた場合）。
 - 再開時も照合する: run は開始時のワークフロー定義のハッシュを記録しており、**`resume` 時に定義が変わっていたら既定では止まる**（途中で遷移表が変わった run を黙って続けない）。
+- S1 では **CLI を更新すると同梱の定義も変わる**ため、ゲートで待っている run（レビュー待ち等）が更新後の `resume` で止まる。回避策として、run が開始時の CLI 版を記録し、新しい CLI が**開始時の版の展開ディレクトリ（`~/.local/share/claude-harness/runtime/<開始時の版>/`）の定義**を、そのスキーマ版に対応していれば読み込んで続ける形を**仮に採る**（§11 の N3）。対応していなければ、止まって「開始時の版で `resume` する」か「その run を `cancel` する」かを案内する。
 
 ---
 
-## 8. 既存スキルとの併存手順（未決: オーナーが承認の場で決める）
+## 8. 既存スキルとの併存手順（Q3 でオーナーが決定: C3）
+
+**決定: C3（期限付きの段階移行 → メジャー版で一括切替）**。以下は判断材料として残す比較と、決定後の手順である。
 
 撤退条件「workflow 定義と既存 SKILL.md の二重管理が避けられない」「kernel と従来経路の二重管理が長期化する」と、成功基準「置き換えた SKILL.md が実際に小さくなっている」の両方を満たす必要がある。
 
@@ -656,9 +713,25 @@ make check
 | C1 | 新スキル（例: `/impl-run`）を並べ、旧 `/impl`・`/para-impl` は残す。後で旧を消す | 旧を消すまで無期限 | 旧を消す判断が先送りされやすい（撤退条件に直結） |
 | C2 | 既存 `/impl`・`/para-impl` に切り替えフラグを足し、既定を旧→新へ反転し、旧を消す | 反転まで | 1 つのスキルが 2 経路を持つ期間、散文がかえって増える |
 | **C3** | **段階を期限付きで区切る**: (A) shadow — スキルは触らず、CLI を人の端末から実チケットに使い比較 → (B) 切替 — メジャー版で `/impl`・`/para-impl` を「CLI を呼ぶ薄いスキル」へ置き換え、`ticket-worker` と散文の制御フローを同じ PR で削除 → (C) 旧経路は git の履歴にだけ残す | (A) の間だけ。(A) では SKILL.md を変えないので二重管理は「未採用の新経路」であって正本の競合ではない | (B) が一度に大きい。戻すときはメジャー版を戻す |
-| C4 | 旧方式は対話専用として残し、headless（flywheel 経由）だけ CLI にする | 無期限 | flywheel の起動形は §10 待ちで、今は入口が無い。二重管理が恒久化する |
+| C4 | 旧方式は対話専用として残し、headless（flywheel 経由）だけ CLI にする | 無期限 | flywheel の起動形は flywheel §10 の実装待ちで、今は入口が無い。二重管理が恒久化する |
 
-**推奨: C3**。(A) の終了条件を事前に数字で置く（例: shadow run が N 件・§9 の指標で劣化なし）。(B) の PR で `skills/impl/SKILL.md` ほかの縮小を §0.2 の 82,139 B に対する差分として示す。縮まない部分（メソドロジー・`feature-implementer` の内側・入れ子 Task の合流規律）は §3.7 のとおり明示して残す。
+**採った案: C3**。(A) の終了条件は事前に数字で置く（例: shadow run が N 件・§9 の指標で劣化なし）。**N と「劣化なし」の閾値はまだ決めていない**（§11 の N4）。(B) の PR で `skills/impl/SKILL.md` ほかの縮小を §0.2 の 82,139 B に対する差分として示す。縮まない部分（メソドロジー・`feature-implementer` の内側・入れ子 Task の合流規律）は §3.7 のとおり明示して残す。
+
+### 8.1 移行時に利用者へ見える変更
+
+段階 (B)（PR-7・メジャー版）で CHANGELOG の「破壊的変更」「利用者が取る操作」に載せる（V9 だけは PR-1 の時点で載せる）。完了承認の場で人間が見直す一覧でもある。
+
+| # | 変更 | 対象の利用者 | 由来 |
+| --- | --- | --- | --- |
+| V1 | **単一 Issue の `/impl`（と `/para-impl` に 1 件だけ渡した場合）も worktree で作業する**。これまでは作業ツリー（メインのチェックアウト）で `git checkout -b` していたが、切替後は `<リポジトリの 1 つ上>/<リポジトリ名>-worktrees/issue-<番号>`（`worktree-setup` の既定）に作業ブランチが置かれ、メインのチェックアウトは触られない。手元で続きを編集する利用者は worktree へ移動する必要がある | 人が対話で `/impl` を直接使う利用者 | Q7 |
+| V2 | 単一経路でも、E2E 失敗による差し戻しが最大 3 回で打ち切られる（これまで上限の記載が無かった） | 単一経路の利用者 | Q8 |
+| V3 | CI が時間内に終わらなかったとき、失敗で終わらず `ci-pending` ゲートで止まり、`resume` で CI の再確認から続けられる | `/para-impl` の並列経路の利用者・上位層（flywheel 等） | Q10 |
+| V4 | 単一経路でも `/explain-e2e` を自動では実施しない。run の要約に「次の操作」として案内される | 単一経路の利用者 | Q14 |
+| V5 | `ticket-worker` エージェントがなくなる | エージェントを名指しで使っていた利用者 | Q6 |
+| V6 | 実装委譲の状態が `~/.local/state/claude-harness/`（`$XDG_STATE_HOME` があればその配下）に残る。掃除の操作が要る | 全利用者 | Q1・Q2 |
+| V7 | CLI（`harness`）の導入が必要になる（`harness setup` でプラグインも整う）。CLI とプラグインの版が合わないとスキルが止まって更新を案内する | 全利用者 | 決定①・Q4・Q13 |
+| V8 | 人間が決めるゲート（設計の逸脱・レビュー対応で人の判断が要る場合）は、端末から `harness approve` で解決する。Claude に指示して解決させることはできない | 全利用者 | Q9 |
+| V9 | `marketplace.json` の `source` が `./plugin` になる（PR-1。導入済みの環境で再インストールが要るかは PR-1 で実測） | 全利用者 | Q5 |
 
 ---
 
@@ -684,39 +757,56 @@ make check
 | PR | 内容 | 依存 | この PR で**しない**こと |
 | --- | --- | --- | --- |
 | PR-0 | 本設計文書 | — | — |
-| PR-1 | 配布物の境界（Q5 で X1 なら `plugin/` への移動）＋ `make check`（この時点では bash テストだけ） | Q5 | Go のコード |
-| PR-2 | `runtime/` の骨格: YAML 読み込みと `harness validate`・イベントログと状態の畳み込み（F1 なら往復テスト）・`command` 種類・`run`/`status`/`runs`/`cancel` | Q1・Q2 | LLM 呼び出し |
-| PR-3 | `llm` 種類（`--session-id`・`--json-schema`・`--max-budget-usd`・費用の累計）・`gate` 種類・`resume`/`approve`。費用フィールドと `--agent` の実測 | Q9・Q11 | 実チケットでの使用 |
-| PR-4 | `select`・`workspace`・`pull-request` 種類、`resolve-ticket` スクリプト、`ticket` ワークフロー。**shadow run**（C3 の段階 A） | Q6〜Q8・Q10・Q12・Q14 | スキルの変更 |
+| PR-1 | 配布物の境界（X1: `plugin/` への移動）＋ `make check`（この時点では bash テストだけ）＋ CHANGELOG の V9 | — | Go のコード |
+| PR-2 | `runtime/` の骨格: YAML 読み込みと `harness validate`（§3.1 の線引きの検査を含む）・イベントログと状態の畳み込み（F1 の往復テスト）・状態の置き場（L2）・`command` 種類・`run`/`status`/`runs`/`cancel` | PR-1 | LLM 呼び出し |
+| PR-3 | `llm` 種類（`--session-id`・`--json-schema`・`--max-budget-usd`・費用の累計と Q15 の fail-closed）・`gate` 種類・`resume`/`approve`（Q9 の TTY 判定）。費用フィールドと `--agent` の実測 | PR-2・N1 | 実チケットでの使用 |
+| PR-4 | `select`・`workspace`・`pull-request` 種類、`resolve-ticket` スクリプト、`ticket` ワークフロー（`ci-pending` ゲートを含む）。**shadow run**（C3 の段階 A）。Q11 の既定を M1・M3 で見直す | PR-3・N2 | スキルの変更 |
 | PR-5 | `fanout`・`plan-parallel` 種類、`para-impl` ワークフロー、P11 のコンフリクト解決 | PR-4 の shadow 結果 | スキルの変更 |
-| PR-6 | リリース用の GitHub Actions とビルド設定（タグは人が打つ）・`setup`・`version`・版照合 | Q4・Q13 | 自動更新 |
-| PR-7 | 切替（C3 の段階 B。メジャー版）: `/impl`・`/para-impl` を薄いスキルへ、`ticket-worker` と散文の制御フローを削除、構造テスト（`test-impl-primitive.sh`・`test-para-impl-join-gate.sh` 等）の組み替え | Q3・段階 A の終了条件 | — |
+| PR-6 | リリース用の GitHub Actions とビルド設定（タグは人が打つ）・S1 の埋め込みと展開・`setup`・`version`・版照合（N3 を含む） | PR-2〜 | 自動更新 |
+| PR-7 | 切替（C3 の段階 B。メジャー版）: `/impl`・`/para-impl` を薄いスキルへ、`ticket-worker` と散文の制御フローを削除、構造テスト（`test-impl-primitive.sh`・`test-para-impl-join-gate.sh` 等）の組み替え、CHANGELOG に §8.1 の V1〜V8 | 段階 A の終了条件（N4） | — |
 
 **後回しにするもの**: クラッシュ復旧の作り込み（§4.5 の `interrupted` ゲート以上のもの）・run 横断の索引・自動更新・`/self-review` の内側の移行・`/pr-review-respond` の内部手順の移行（本設計では 1 つの `llm` ステップとして呼ぶだけ）・flywheel 向け接続契約の固定（flywheel §10 の実装待ち）・UI。
 
 ---
 
-## 11. 未決の問い
+## 11. 決定の記録と残る未決
 
-「決める人」: **人間**＝オーナーが承認の場で決める ／ **親**＝委譲元が決めてよい（ただし親が範囲外と判断すれば人間へ）。
+### 11.1 決定済み（2026-09-21）
 
-| # | 問い | 選択肢 | 推奨 | 決める人 |
+前回版で「未決の問い」として上げた 15 件は、2026-09-21 にすべて推奨どおりに決まった。**Q1〜Q5・Q9 はオーナー（人間）本人の回答**（PR #254 を確認したうえで「すべて推奨どおり。Q4 はバイナリに埋め込む」）。Q6〜Q8・Q10〜Q15 は委譲元（親）の回答。
+
+| # | 問い | 採った案 | 決めた人 | 反映先 |
 | --- | --- | --- | --- | --- |
-| Q1 | 永続状態の置き場 | L1 git common dir ／ L2 ユーザーの状態ディレクトリ ／ L3 作業ツリー内 | L2（§4.6） | 人間（既定） |
-| Q2 | 永続状態の形式 | F1 イベント JSONL＋状態 JSON ／ F2 SQLite ／ F3 JSON 1 ファイル | F1（§4.6） | 人間（既定） |
-| Q3 | 既存スキルとの併存手順 | C1〜C4 | C3（期限付きの段階。§8） | 人間（既定） |
-| Q4 | CLI がスクリプトと YAML をどこから得るか（決定①③の緊張） | S1 バイナリに埋め込み ／ S2 プラグインから読む ／ S3 環境変数 | S1。ただし決定③の「YAML の修正にバイナリの出し直しが要らない」が失われる（§6.5） | 人間（決定の解釈に関わる） |
-| Q5 | プラグインの配布物から Go を除く方法 | X1 `plugin/` へ移動 ／ X2 zip アーカイブ配布 ／ X3 除外しない | X1 を PR-1 で単独実施（§6.2） | 人間（リポジトリ構成の大きな変更） |
-| Q6 | ステップの粒度 | 1 ステップ＝子プロセス 1 回（内側のループは散文に残す） ／ `/self-review` まで runtime へ分解 | 前者。`ticket-worker` は廃止（§1.1） | 親 |
-| Q7 | 1 件の場合も worktree＋fan-out 1 項目に統一するか | 統一する ／ 単一経路（作業ツリー直下でブランチを切る）を残す | 統一（§3.5。単一経路の利用者には worktree で作業することになる変化がある） | 親（利用者体験の変化を重く見るなら人間） |
-| Q8 | 単一経路の E2E→Phase 4 の無上限ループに上限を付けるか | 並列経路と同じ 3 回 ／ 別の値 ／ 付けない | 3 回（並列経路と揃える。§2.1 I11） | 親 |
-| Q9 | ゲートの解決経路 | 全ゲート TTY 必須 ／ TTY 不要（actor 記録のみ） ／ `decider: human` だけ TTY 必須 | 最後（flywheel §9 と同じ理由。§5.3） | **人間**（安全性のトレードオフ） |
-| Q10 | CI の `timeout`（再試行 1 回後）を失敗にするか、ゲートにするか | 現行どおり失敗 ／ `ci-pending` ゲートで止めて resume 可能にする | ゲート（ラウンドの区切りとして扱える。現行の失敗は状態を持てないことの帰結）。本文の YAML は現行どおりで書いた | 親 |
-| Q11 | 差し戻しの修正で Claude セッションを引き継ぐか | `--resume` で継続 ／ 状態から組み立てた新しいセッション ／ ステップごとに YAML で指定 | YAML で指定できるようにし、既定は継続。PR-4 の shadow で M1・M3 を比べて既定を見直す | 親 |
-| Q12 | `select` 種類と `$gate.note` を「式ではない」として許すか | 許す ／ 許さない（`analyze` の値を後段まで持ち回る別の形にする） | 許す（一致だけで、比較・組み合わせを持たない。§3.6） | 親（決定③の解釈に疑義があれば人間） |
-| Q13 | CLI とプラグインの版番号 | 独立（`runtime/vX.Y.Z`）＋互換範囲の照合 ／ 同一版番号 | 独立（§7.2） | 親 |
-| Q14 | `/explain-e2e` の扱い | runtime の外で非ブロッキングの「次の操作」 ／ `input` 型ゲート | 前者（§3.7） | 親 |
-| Q15 | 費用が取れなかった実行の数え方 | ステップの上限額を消費したとみなす ／ 0 とみなす ／ run を止める | 上限額とみなす（fail-closed。§4.3） | 親 |
+| Q1 | 永続状態の置き場 | L2: `$XDG_STATE_HOME/claude-harness/`（未設定なら `~/.local/state/claude-harness/`。`HARNESS_STATE_DIR` で上書き可） | 人間 | §4.6 |
+| Q2 | 永続状態の形式 | F1: run ごとの `events.jsonl`（正本）＋ `state.json`＋ `logs/`・`artifacts/` | 人間 | §4.6 |
+| Q3 | 既存スキルとの併存手順 | C3: 期限付きの段階移行（shadow → メジャー版で一括切替） | 人間 | §8 |
+| Q4 | CLI がスクリプトと YAML をどこから得るか | S1: バイナリに埋め込み、版ごとのディレクトリへ展開して使う。**決定③の理由のうち「YAML の修正にバイナリの出し直しが要らない」は失われることを承知で採った。決定③そのものは不変** | 人間 | §0・§6.5・§7 |
+| Q5 | プラグインの配布物から Go を除く方法 | X1: プラグインの中身を `plugin/` へ移す。Go 導入前に単独の PR（PR-1） | 人間 | §6.1・§6.2・§10 |
+| Q6 | ステップの粒度 | 1 ステップ＝子プロセス 1 回。内側のループは散文に残す。`ticket-worker` は廃止 | 親 | §1.1 |
+| Q7 | 1 件の場合も worktree＋fan-out 1 項目に統一するか | 統一する。**単一経路の利用者には worktree で作業することになる変化があり、利用者に見える変更として §8.1 V1 に載せた** | 親 | §3.5・§8.1 |
+| Q8 | 単一経路の E2E→Phase 4 のループに上限を付けるか | 3 回（並列経路と揃える） | 親 | §3.4・§8.1 |
+| Q9 | ゲートの解決経路 | `decider: human` のゲートだけ TTY 必須（observe 型の扱いは N1） | 人間 | §5.1・§5.3 |
+| Q10 | CI の timeout（再試行 1 回後） | `ci-pending` ゲートで止めて resume 可能にする | 親 | §3.4・§8.1 |
+| Q11 | 差し戻しで Claude セッションを引き継ぐか | YAML の `session` でステップごとに指定。既定は `--resume` で継続。PR-4 の shadow で見直す | 親 | §4.4 |
+| Q12 | `select` 種類と `$gate.note` を許すか | 許す。**許すのは一致だけ。比較・論理結合・加工を足す要求が出たら式の導入とみなして止める** | 親 | §3.1・§3.3・§3.6 |
+| Q13 | CLI とプラグインの版番号 | 独立（CLI は `runtime/vX.Y.Z`）＋互換範囲の照合 | 親 | §7.2・§7.3 |
+| Q14 | `/explain-e2e` の扱い | runtime の外で、止めない「次の操作」として案内する | 親 | §3.7・§8.1 |
+| Q15 | 費用が取れなかった実行の数え方 | そのステップの上限額を消費したとみなす（fail-closed） | 親 | §4.3 |
+
+### 11.2 残る未決（回答の反映で新たに生じたもの）
+
+本文では推奨案を**仮に採って**書いた。決まったら該当箇所を改める。
+
+| # | 問い | 選択肢 | 推奨（本文で仮に採った案） | 決める人 |
+| --- | --- | --- | --- | --- |
+| N1 | Q9 の「`decider: human` のゲートは TTY 必須」を、observe 型の human ゲート（`human-merge`: resume が判断を運ばず、PR がマージされたかを runtime が確かめるだけ）にも適用するか | (a) input 型の human ゲートだけに適用 ／ (b) observe 型にも適用（マージ後の `resume` も人が端末で行う） ／ (c) `human-merge` を `decider: any` に改める（人間が行うのはマージ操作そのもので、ゲートの解決ではないと整理し直す） | (a)。マージという判断は GitHub 上で人が済ませており、runtime は実状態を確認するだけなので、TTY で守るものが無い。(b) だと flywheel などがマージ後に自動で再開できなくなる | 人間（Q9 の解釈） |
+| N2 | `review-human` ゲートは `/pr-review-respond` の 2 種類の停止をまとめている。R2（修正後の `/quality-check` が 3 回通らない）と R3（`design_change`/`critical` 分類）である。Q9 により両方が TTY 必須になるが、R2 は親が決めてよい種類の判断ではないか | (a) 現状のまま 1 つの human ゲート ／ (b) R2 を `decider: parent` の別ゲート（`review-qc-failed`）に分け、R3 だけを human にする | (b)。R2 は品質ゲートの未通過で、現行の `feature-implementer` の `failure` と同じく親が扱っている判断である。ただし本文の YAML は安全側の (a) のまま書いた | 親（安全性の判断と見るなら人間） |
+| N3 | S1 のもとで、ゲート待ちの run がある状態で CLI を更新したときの再開 | (a) 開始時の版の展開ディレクトリの定義を読んで続ける（スキーマ版が対応していれば） ／ (b) 常に止めて、開始時の版の CLI で再開するよう案内する ／ (c) 更新後の定義へ移し替える（遷移表の対応付けが要る） | (a)（§7.3）。展開ディレクトリは版ごとに不変なので、定義の取り違えは起きない | 親 |
+| N4 | C3 の段階 (A) の終了条件（shadow run の件数 N と「劣化なし」の閾値） | 例: N＝10 件・M2（取り違え）が導入前以下・M6（偽収束）0 件・M1 が導入前以下 ／ 期間で区切る（例: 4 週間） | 件数と指標の両方で置く（例の値）。数字そのものは PR-4 の shadow 開始時に、M1 の導入前の値を測り直してから確定する | 人間（C3 の具体化） |
+
+### 11.3 空けたまま残すもの（決めない）
+
+- flywheel が harness を呼ぶときの起動形（接続契約）。flywheel `docs/architecture.md` §10 の実装後に確定する（§0.1・§5.6）。
 
 ---
 
@@ -726,4 +816,5 @@ make check
 - `claude -p --output-format json` の結果に含まれる費用・`session_id` のフィールド名。
 - `--plugin-dir` で読ませたプラグインと、インストール済みの同名プラグインが併存したときの挙動。
 - プラグインのキャッシュへのコピー範囲・除外機構が無いことは公式ドキュメントの記述に基づく（実機でのコピー範囲は未確認）。
+- X1（`plugin/` への移動）が導入済みの環境に与える影響（再インストールの要否）。PR-1 で実測する。
 - 本文 YAML の予算値（`budget_usd`）は仮の値。Tom の実測（実装委譲 1 件 $10〜12）を目安に置いただけで、較正は shadow run で行う。
