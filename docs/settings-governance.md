@@ -81,6 +81,83 @@ Claude Code の permission ルール（`allow` / `ask` / `deny`）は複数の s
 - **言える**: `.claude/settings.local.json` は worktree に「コピーされない」が、**main checkout ルートのファイルが worktree からも読まれる**（v2.1.211 以降）。過去に本リポジトリが前提にしていた「local は worktree に効かない」は現行版では成立しない。ただし個人・マシン限定であることは変わらず、版依存の挙動でもあるため、運用 allow の置き場としては引き続き当てにしない。
 - **言えない**: 対話セッション（`claude` を REPL で起動）や `Agent` ツールのサブエージェントでの適用は測っていない。上の表はすべて headless `-p` である。
 
+### 2.1 `.claude/rules/` の適用規則の実測記録（2026-09-20 / Claude Code 2.1.278 / macOS 26.6.2）
+
+Issue #242 の判断材料として測った。`.claude/rules/` は `permissions` とは別の機構（CLAUDE.md と同じ「指示の読み込み」）なので、上の表の結論（trust と allow の関係）からは演繹せず、独立に測っている。導入可否の案と推奨は `docs/claude-rules-adoption.md` に置く。
+
+**測り方**: いずれも **headless `claude -p`**（`--model haiku --tools Read --output-format json`。R14 だけ `--tools Read Agent`、R15 は `--tools ""`、R16 は `--tools Write --permission-mode acceptEdits`、R17 は `--tools Grep`）を、`mktemp -d "$HOME/.rules-probe.XXXXXX"` で作った repo 外の一時 git リポジトリを cwd にして起動した。読み込みの判定は次の **2 系統**で取り、両者が一致した行だけを表に載せている。
+
+1. **モデルの回答**: 各 rules ファイルに固有の合言葉（`CW-…`）を書いておき、「文脈に見える `CW-` を全部挙げよ」と聞く。`num_turns` でツール呼び出し回数を確認し、モデルが `.claude/` を自分で読んだ交絡が無いことを確かめた（読み出しなしのプローブは `num_turns: 1`、1 ファイル読むプローブは `num_turns: 2`）。
+2. **`InstructionsLoaded` フックのログ**: `--settings <一時ファイル>` でフックを渡し、ペイロード（`file_path` / `load_reason` / `trigger_file_path` / `globs`）を一時ファイルへ追記させた。ハーネス側の事実であり、モデルの自己申告に依存しない。
+
+実行者のユーザー設定と `~/.claude.json` は書き換えていない。**一時リポジトリはすべて trust 未承認**（実測の前後とも `~/.claude.json` の `projects` に該当パスの項目が無く、親の `$HOME` の項目は `hasTrustDialogAccepted: false`）。一時リポジトリとログは測定後に削除した。
+
+プローブ用リポジトリの配置（`CW-…` は各ファイルの合言葉。`paths` の無いものは frontmatter なし）:
+
+```
+CLAUDE.md                              CW-ROOT-CLAUDEMD
+.claude/rules/always.md                CW-ALWAYS
+.claude/rules/sub/deep.md              CW-SUBDIR
+.claude/rules/notmd.txt                CW-TXT
+.claude/rules/src-ts.md                CW-SRC-TS         paths: "src/**/*.ts"
+.claude/rules/dotslash.md              CW-DOTSLASH       paths: "./src/**/*.ts"
+.claude/rules/root-md.md               CW-ROOT-MD        paths: "*.md"
+.claude/rules/any-md.md                CW-ANY-MD         paths: "**/*.md"
+.claude/rules/lib-rel.md               CW-LIBREL         paths: "lib/*.ts"
+pkg/.claude/rules/nested-always.md     CW-NESTED-ALWAYS
+pkg/.claude/rules/nested-scoped.md     CW-NESTED-SCOPED  paths: "lib/*.ts"
+src/a.ts  src/deep/b.ts  lib/x.ts  pkg/lib/y.ts  other/z.py  README.md  docs/x.md
+```
+
+「起動時 3 本」は `CLAUDE.md`・`.claude/rules/always.md`・`.claude/rules/sub/deep.md`（フックの `load_reason: session_start`）を指す。
+
+| # | 権限モード | ルールの置き場 | プローブ | 結果 |
+|---|---|---|---|---|
+| R1 | `default` | 上の配置（cwd = リポジトリルート） | ファイルを読まずに合言葉を列挙 | **起動時 3 本だけが読まれた**。`paths` の無い rule はサブディレクトリ（`rules/sub/`）も含めて起動時に読まれる。`notmd.txt`・`paths` 付きの 5 本・`pkg/.claude/rules/` の 2 本は読まれない。**trust 未承認でも読まれる**（stderr に trust の警告なし） |
+| R2 | `default` | 同上 | `other/z.py` を Read | 起動時 3 本のまま。**どの `paths` にも一致しないファイルでは何も足されない**（対照） |
+| R3 | `default` | 同上 | `src/a.ts` を Read | `src-ts.md` が足された（フック: `load_reason: path_glob_match`, `trigger_file_path: …/src/a.ts`, `globs: ["src/**/*.ts"]`）。**`./src/**/*.ts` の `dotslash.md` は足されない** |
+| R4 | `default` | 同上 | `src/deep/b.ts` を Read | R3 と同じ（`**` は 2 階層下にも一致。`./` 付きはここでも不一致） |
+| R5 | `default` | 同上 | `README.md`（ルート直下）を Read | `root-md.md`（`*.md`）と `any-md.md`（`**/*.md`）の両方が足された |
+| R6 | `default` | 同上 | `docs/x.md`（サブディレクトリ）を Read | **R5 と同じく `*.md` の `root-md.md` も足された**（フック: `trigger_file_path: …/docs/x.md`, `globs: ["*.md"]`）。スラッシュを含まないパターンは階層を問わず basename に一致した。公式ドキュメントの表（下記）とは食い違う |
+| R7 | `default` | 同上 | `lib/x.ts` を Read | ルートの `lib-rel.md`（`lib/*.ts`）が足された。`pkg/` 側の rule は足されない |
+| R8 | `default` | 同上 | `pkg/lib/y.ts` を Read | `pkg/.claude/rules/` の 2 本が足された（`nested-scoped.md` は `path_glob_match`、`nested-always.md` は `load_reason: nested_traversal`）。**ルートの `lib-rel.md`（同じ `lib/*.ts`）は足されない**。スラッシュを含むパターンの基準は「その `.claude/` を含むディレクトリ」で、末尾一致ではない |
+| R9 | `default` | 同上（**cwd = `pkg/`**） | ファイルを読まずに合言葉を列挙 | 起動時 3 本 **＋ `pkg/.claude/rules/nested-always.md`** が `session_start` で読まれた。cwd から上位へ辿って親の `CLAUDE.md` と `.claude/rules/` も読む |
+| R10 | `default` | 同上（cwd = `pkg/`） | cwd の外の `<root>/src/a.ts` と `pkg/lib/y.ts` を Read | `<root>/src/a.ts` の Read は**権限で拒否**（`permission_denials: 1`）され、`src-ts.md` は足されない。`pkg/lib/y.ts` で `nested-scoped.md` は足された。**「cwd の外にある一致ファイル」はこの形では測れていない**（R11 で条件を変えて取り直した） |
+| R11 | `default` | 同上（cwd = `pkg/`、`--add-dir <root>` を追加） | `<root>/src/a.ts` を Read | 読めて、ルートの `src-ts.md` が `path_glob_match` で足された。cwd がサブディレクトリでも、上位の `.claude/rules/` の `paths` は**その rules の置き場を基準に**評価される。`--add-dir` を付けた点が R10 と条件が違う |
+| R12 | `default` | 同上（`--setting-sources user` を追加） | `src/a.ts` を Read | 回答は `NONE`、フックログは空。**`project` を外すと `CLAUDE.md` も rules も（`paths` 付きも）一切読まれない** |
+| R13 | `default` | 同上を `git worktree add` した worktree（cwd = worktree） | `src/a.ts` を Read | 起動時 3 本＋`src-ts.md`。フックの `file_path` は **worktree 側のパス**。追跡されている rules は worktree にチェックアウトされ、そのまま効く |
+| R14 | `default` | 同上 | 親は何も読まず、`Agent` で general-purpose サブエージェントを 1 つ起動して `src/a.ts` を Read させ、親子それぞれに合言葉を列挙させる | **サブエージェントの回答**: 起動時 3 本＋`CW-SRC-TS`。**親の回答**: 起動時 3 本のみ。サブエージェントにも起動時の rule が入り、`paths` 付き rule は**読んだ側の文脈にだけ**入る（フックログには `path_glob_match` が 1 件。ペイロードに親子を区別する項目は無かった） |
+| R15 | `default` | 別の一時リポジトリ。`CLAUDE.md` に「PRIORITY の問いには ALPHA」、`.claude/rules/a-first.md` に「BRAVO」、`.claude/rules/z-last.md` に「CHARLIE」（いずれも `paths` なし） | 「PRIORITY の問いに 1 語で答えよ」を haiku で 3 回・sonnet で 2 回 | haiku: `ALPHA` / `ALPHA` / `BRAVO`。sonnet: `CHARLIE` / `CHARLIE`。**矛盾させたときにどれが勝つかは一定しない**。sonnet に文脈内の並び順を申告させると `ALPHA` → `BRAVO` → `CHARLIE`（`CLAUDE.md` が先、rules はファイル名順）。並び順はモデルの自己申告 1 回だけで、確度は低い |
+| R16 | `acceptEdits` | 別の一時リポジトリ。`.claude/rules/src-ts.md`（`paths: "src/**/*.ts"`）のみ | Read を使わず **Write だけ**で新規ファイル `src/new.ts` を作成 | ファイルは作成されたが、回答は `NONE`、フックログは空。**一致するパスへの Write（新規作成）では発火しない** |
+| R17 | `default` | R16 と同じ | Read を使わず **Grep だけ**で `src/a.ts` にヒットさせる（`output_mode: content`） | 回答は `NONE`、フックログは空。**Grep のヒットでは発火しない** |
+
+R16・R17 の陽性対照は同じ内容の rule を使った R3（Read で発火）である。リポジトリは別だが、rule ファイルの中身と `paths` は同一にした。
+
+公式ドキュメント（同日取得。`https://code.claude.com/docs/en/memory`）の記述。**以下は読んだ内容であって測った内容ではない**:
+
+- 「Rules without `paths` frontmatter are loaded at launch with the same priority as `.claude/CLAUDE.md`.」「All `.md` files are discovered recursively」— R1 と一致。
+- 「Path-scoped rules trigger when Claude reads files matching the pattern, not on every tool use.」— R3・R16・R17 と一致。
+- パターン例の表に「`*.md` — Markdown files in the project root」— **R6 と食い違う**（実測ではサブディレクトリの `docs/x.md` にも一致した）。`paths` の相対基準と `./` 接頭辞の扱いは、同ページに記述が無い。
+- 「Project rules are skipped if you exclude `project` from `--setting-sources`. Before v2.1.211, rules that load on demand, including path-scoped rules and rules in nested `.claude/rules/` directories, loaded even when `project` was excluded.」— 現行版の挙動は R12 と一致。v2.1.211 より前の挙動は測っていない。
+- 「User-level rules are loaded before project rules, giving project rules higher priority.」「if two rules contradict each other, Claude may pick one arbitrarily.」— 後者は R15 と整合する。前者（`~/.claude/rules/`）は測っていない。
+- プロジェクトの `.claude/rules/` が workspace trust を要するかは、同ページに**記述が無い**。trust に触れているのは、外部 import の承認ダイアログと、作業ディレクトリ外を指す symlink の rules だけである。
+- 「Use the `InstructionsLoaded` hook to log which `CLAUDE.md` and rules files are loaded, when they load, and why.」— 本節の計器の出所。
+
+#### 実測から言えること・言えないこと
+
+- **言える**: プロジェクトの `.claude/rules/` は **trust 未承認の clone でも、headless でも、worktree でも、サブエージェントでも読まれる**（R1・R13・R14）。tracked の `allow`（§2 の #2）と違い、「人間が clone ごとに trust を承認しないと効かない」という制約は無い。裏返せば、**他人が commit した rules は承認なしに文脈へ入る**（CLAUDE.md と同じ性質）。
+- **言える**: `paths` の無い rule は **CLAUDE.md と同じく起動時に毎回読まれる**（R1）。CLAUDE.md から `paths` なしの rule へ移しても、毎セッションの固定費は減らない。減るのは `paths` を付けたときだけである。
+- **言える**: `paths` 付き rule が発火するのは **Read のときだけ**で、新規ファイルの Write と Grep では発火しない（R16・R17）。「新しいファイルをどこに置くか」のように**まだ存在しないファイルに効かせたい規約**は、`paths` 付き rule に置いても、作成の時点では文脈に入らない。
+- **言える**: スラッシュを含むパターンは「その `.claude/` を含むディレクトリ」からの相対で評価され（R7・R8・R11）、スラッシュを含まないパターンは階層を問わず basename に一致する（R6）。`./` で始まるパターンは一致しない（R3・R4）。**`./` 付きで書いた rule は、エラーも警告も出ずに永久に発火しない**。
+- **言える**: 矛盾する指示を CLAUDE.md と rules に分けて置いても、決まった優先順では解決されない（R15）。rules は CLAUDE.md を「上書き」する層ではなく、同じ文脈に並ぶ追加の指示である。
+- **言える**: `--setting-sources` から `project` を外す起動では、CLAUDE.md と同時に rules も全部落ちる（R12）。
+- **言えない**: **未対応バージョンでの挙動（無視されるか・エラーか）は測っていない**。旧版を入れて起動すると、実行者の `~/.claude.json` と `~/.claude/` を旧版が書き換えうるため、「ユーザー設定を書き換えない」という本実測の制約の下では試さなかった。`.claude/rules/` がどの版から使えるかも、公式ドキュメントの同ページからは特定できなかった（v2.1.198 / v2.1.207 / v2.1.211 / v2.1.217 で挙動が変わった旨の記述があるだけ）。
+- **言えない**: **対話セッション（REPL）では測っていない**。trust ダイアログを承認した後・拒否した後で rules の扱いが変わるかも測っていない（承認の書き込みを要するため）。上の表はすべて trust 未承認の headless `-p` である。
+- **言えない**: ユーザーレベルの `~/.claude/rules/` とプロジェクト rules の関係、`claudeMdExcludes` による除外、symlink の rules、`paths` のブレース展開・`[` の扱い、Edit・Glob・Bash（`cat` 等）での発火、`/compact` 後の再読み込みは測っていない。
+- **言えない**: R15 は 5 回の試行であり、「どのモデルでも一定しない」とまでは言えない。言えるのは「一定の優先順を前提にできる結果ではなかった」までである。
+- **言えない**: 読み込みの判定にはモデル haiku を使った。読み込み自体はハーネス側の処理で、フックログがモデルに依らずそれを示しているが、**読み込まれた rule にモデルがどの程度従うか**（遵守率）は測っていない。
+- **付記（実行環境の事実）**: 実行者のグローバル gitignore（`~/.config/git/ignore`）に `.claude/*` があり、プローブ用リポジトリでは `.claude/rules/*.md` が `git add` で無視された（`git add -f` で追跡させた）。この環境に限った事情だが、同じ設定の利用者のもとでは、生成した rules が commit されず、worktree（R13）にも他の clone にも届かない。
+
 ---
 
 ## 3. プロジェクト settings が保証しない範囲（誤った安心を消す）
@@ -198,3 +275,4 @@ tracked の `.claude/settings.json` に書いたルールが**効かない**状�
 - `skills/init-project/SKILL.md` ステップ6 — 生成物の契約とスニペットの提示（本文書 §1 の決定を参照する）
 - `skills/init-project/SKILL.md` ステップ4 — 生成物へ harness／プラグイン固有の語を書かない規定（出所の規律。本文書 §1 の決定と対）
 - `docs/getting-started.md` §2 — 導入手順と「許可設定をどこに置くか」
+- `docs/claude-rules-adoption.md` — `.claude/rules/` の導入可否の案と推奨（§2.1 の実測を根拠にする。Issue #242）
