@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [],
+    "ask": [
+      "Bash(cdk deploy:*)",
+      "Bash(cdk destroy:*)",
+      "Bash(gh release:*)",
+      "Bash(gh workflow:*)",
+      "Bash(git push --follow-tags:*)",
+      "Bash(git push --tags:*)",
+      "Bash(git tag:*)",
+      "Bash(npm run cdk:*)",
+      "Bash(npx cdk:*)"
+    ],
+    "deny": [
+      "Bash(docker exec:*)",
+      "Bash(docker run:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(git clean -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(rm -r:*)",
+      "Bash(rm -rf:*)"
+    ]
+  }
+}
