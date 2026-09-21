@@ -14,6 +14,7 @@
 
 - **プラグインの中身をリポジトリの `plugin/` 配下へ移し、`marketplace.json` の `source` を `"./"` から `"./plugin"` に変えた（Issue #255・V9）。** 移したのは `skills/`・`agents/`・`scripts/`・`bin/`・`hooks/`・`.claude-plugin/plugin.json`。**導入先に置かれるプラグインの中の構成（`skills/`・`agents/`・`scripts/`・`bin/`・`hooks/`）は変わらない**ため、`claude-harness-run` の target・`read-plugin-doc` の引数・`Bash(claude-harness-run:*)` の allow はそのまま使える。
   - **配布物からリポジトリのルート直下が外れる。** これまで導入先のキャッシュには `docs/`・`README.md`・`CHANGELOG.md`・`LICENSE` も入っていたが、以後は `plugin/` の中身だけが入る（実測: 更新後のキャッシュは `.claude-plugin` `agents` `bin` `hooks` `scripts` `skills` のみ）。プラグインは実行時に `docs/` を読まない前提で作られているため、動作への影響は無い。
+- **`plugin/LICENSE` を置いた（Issue #257）。** `plugin/` への移動でルートの `LICENSE` が配布物から外れたため、同じ内容の実ファイルを配布物の中にも置く。2 つの内容がずれると `make check`（`plugin/scripts/tests/test-license-sync.sh`）が失敗する。
 - **リポジトリのルートに `Makefile` を置き、`make check` を品質ゲートの入口にした（開発者向け。配布物には入らない）。** 現時点では bash テスト全件（`plugin/scripts/tests/*.sh`）を順に実行し、失敗したテスト名を集計して 1 本でも落ちれば非 0 で終わる。
 
 ### 利用者が取る操作（V9）
