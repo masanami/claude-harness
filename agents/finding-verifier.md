@@ -1,6 +1,6 @@
 ---
 name: finding-verifier
-description: code-reviewer/design-reviewer が報告したレビュー指摘に対して懐疑的に反証を試みる際に使用するエージェント。diff起点でレビュー指摘・blockerを検証する点で、ファイル起点・CLAUDE.md照合型の debt-verifier とは反証観点が異なる。
+description: "code-reviewer・design-reviewer が報告したレビュー指摘・blockerを、diff起点で反証する懐疑者。ファイル起点でCLAUDE.mdの規約と照合するのは debt-verifier。Triggers on: 'レビュー指摘・blocker を diff 起点で反証したいとき（例: /self-review, /pr-merge からの委譲）'"
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

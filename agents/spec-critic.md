@@ -1,6 +1,6 @@
 ---
 name: spec-critic
-description: 機能仕様ドキュメントを受入基準の検証可能性・内部整合・下流実装可能性のいずれかの観点で批評する際に使用するエージェント。
+description: "機能仕様ドキュメントを受入基準の検証可能性・内部整合・下流実装可能性のいずれかの観点で批評する。Triggers on: '機能仕様を検証可能性・内部整合・実装可能性の観点で批評したいとき（例: /define-feature からの委譲）'"
 tools: Read, Grep
 model: sonnet
 # effort: メイン（define-feature=opus/xhigh）より軽量にしてトークン単価を抑える。批評は

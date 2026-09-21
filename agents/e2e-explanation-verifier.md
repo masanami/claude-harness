@@ -1,6 +1,6 @@
 ---
 name: e2e-explanation-verifier
-description: 実装済みE2Eテストの解説とコードの整合・アサーションの妥当性を、解説作成者とは独立したコンテキストで確認する際に使用するエージェント。
+description: "実装済みE2Eテストの解説とコードの整合・アサーションの妥当性を、解説作成者とは独立したコンテキストで確認する。Triggers on: 'E2Eの解説とコードの整合を独立に確認したいとき（例: /explain-e2e からの委譲）'"
 # tools: 読み取り専用の検証専用エージェントのため。コード修正は行わない。
 tools: Read, Grep
 model: sonnet

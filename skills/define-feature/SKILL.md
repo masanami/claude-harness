@@ -1,6 +1,6 @@
 ---
 name: define-feature
-description: "ユーザーとの対話と既存コード分析から機能仕様ドキュメントを作成する。要件定義・クリティカル設計の意思決定・(複雑な機能なら)機能全体の設計を1ドキュメントにまとめる。GitHub Issue 作成は /create-ticket の責務。Triggers on: '/define-feature', '機能定義', '要件定義', '機能設計'"
+description: "ユーザーとの対話と既存コード分析から機能仕様ドキュメント（要件定義・クリティカル設計の決定・必要なら機能全体の設計）を作成する。GitHub Issue 作成は /create-ticket の責務。Triggers on: '/define-feature', '機能定義', '要件定義', '機能設計'"
 argument-hint: "[テーマや概要]"
 model: opus
 # effort: 要件・クリティカル設計の意思決定を担う最上流のため xhigh。

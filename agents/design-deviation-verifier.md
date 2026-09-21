@@ -1,6 +1,6 @@
 ---
 name: design-deviation-verifier
-description: feature-implementer が自己申告した「クリティカル設計整合」に対し、実装が親要件チケットの決定に本当に従っているかを独立に反証する際に使用するエージェント。
+description: "feature-implementer が自己申告した「クリティカル設計整合」に対し、実装が親要件チケットの決定に従っているかを独立に反証する懐疑者。Triggers on: '実装が設計決定に従っているかを独立に反証したいとき（例: feature-implementer からの委譲）'"
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

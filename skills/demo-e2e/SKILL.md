@@ -1,6 +1,6 @@
 ---
 name: demo-e2e
-description: "E2Eテストケースカタログ(CASE_ID付きCSV)と突き合わせながら、1テストケースごとに解説→実演→人間判定のサイクルでHeaded Playwrightのデモを行う。Triggers on: '/demo-e2e', 'テストケースごとにデモして', 'カタログと突き合わせてデモ', 'E2Eケースを1件ずつ確認して'"
+description: "E2Eテストケースカタログと突き合わせ、1ケースずつ解説→実演（Headed Playwright）→人間判定を繰り返す。Triggers on: '/demo-e2e', 'テストケースごとにデモして', 'カタログと突き合わせてデモ', 'E2Eケースを1件ずつ確認して'"
 argument-hint: "[カタログCSVパス|CASE_ID...|specファイル|画面名]"
 model: sonnet
 # effort: ブラウザ操作自体は/demoと同様に深い推論を要さないが、spec/シードデータからテスト設計意図を

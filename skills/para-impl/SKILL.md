@@ -1,6 +1,6 @@
 ---
 name: para-impl
-description: "GitHub Issueを分析し、1チケットの実装フロー（正本は `/impl`）へ fan-out する。複数Issue指定時は star 型で並列実行する。並列度・直列化は上位層から受け取り、無指定時のみ自分で決める。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
+description: "GitHub Issueを分析し、1チケットの実装フロー（正本は /impl）へ fan-out する（複数Issue指定時は star 型で並列実行）。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
 argument-hint: "<Issue番号> [Issue番号...] [--base <統合ブランチ>] [--max-parallel <N>] [--serial <番号,番号,...>]"
 model: opus
 # effort: 設計〜TDD実装〜PRの自走フローを担うため high。

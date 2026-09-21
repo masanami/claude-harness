@@ -1,6 +1,6 @@
 ---
 name: claim-advocate
-description: PRレビューコメントへの却下判断（対応不要と分類された指摘）に対し、その判断自体を疑い元の指摘の正当性を探す懐疑者エージェント。
+description: "PRレビューコメントへの却下判断（対応不要と分類された指摘）を疑い、元の指摘の正当性を探す懐疑者。Triggers on: 'レビューコメントの却下判断を疑い直したいとき（例: /pr-review-respond からの委譲）'"
 # tools: 検証専用エージェントのため読み取り系のみ。コード修正は行わない。
 tools: Read, Glob, Grep
 model: sonnet

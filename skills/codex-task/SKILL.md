@@ -1,6 +1,6 @@
 ---
 name: codex-task
-description: "調査(read-only)または雑務(workspace-write)をCodexへ委譲し、境界の付いた小さなJSONサマリだけを受け取る。Triggers on: '/codex-task', 'Codexで調べて', 'Codexにやらせて', 'Codexへ委譲'"
+description: "調査(read-only)または雑務(workspace-write)をCodexへ委譲し、結論をJSONで受け取る。Triggers on: '/codex-task', 'Codexで調べて', 'Codexにやらせて', 'Codexへ委譲'"
 argument-hint: "[investigate|chore] <タスクの1行要約>"
 effort: medium
 ---

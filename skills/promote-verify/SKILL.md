@@ -1,6 +1,6 @@
 ---
 name: promote-verify
-description: "統合ブランチ→main 昇格前に、親Issueの受入基準を全数チェックし、サブタスク完了状況・品質チェック・E2E結果をまとめた昇格前検証パッケージ（判断材料）を作成する。Triggers on: '/promote-verify', '昇格前検証', '昇格前チェック'"
+description: "統合ブランチ→main 昇格前の判断材料として、親Issueの受入基準を全数チェックした昇格前検証パッケージを作成する。Triggers on: '/promote-verify', '昇格前検証', '昇格前チェック'"
 argument-hint: "[親Issue番号]"
 model: opus
 # effort: 受入基準ごとの整合判定・懐疑的検証の結果を人間向けに整形する統括作業のため high。

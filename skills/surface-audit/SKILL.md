@@ -1,6 +1,6 @@
 ---
 name: surface-audit
-description: "公開面×テスト担保の診断。公開面をカテゴリ側から列挙し、テストが実際に担保している振る舞いと突き合わせて、テスト未担保の公開面（GAP）を検出する。報告のみで、ファイル生成・修正・Issue 起票はしない。Triggers on: '/surface-audit', 'テスト担保を診断', '公開面を監査', 'GAPを検出', 'テストの無い公開面'"
+description: "テストが担保していない公開面（GAP）を検出する。報告のみで、ファイル生成・修正・Issue 起票はしない。Triggers on: '/surface-audit', 'テスト担保を診断', '公開面を監査', 'GAPを検出', 'テストの無い公開面'"
 model: sonnet
 # effort: 抽出・分類の実務は fan-out 側（surface-auditor）が担い、本スキルは列挙・チャンク分割・
 # 完全性 join・報告の統括に徹するため high（opus 相当の推論は不要）。
