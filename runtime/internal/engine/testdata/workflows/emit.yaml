@@ -1,0 +1,15 @@
+# 予約値の fail-closed を確かめる: step_error・invalid_output は on に無いので run は failed になる。
+schema: harness.workflow/v1
+id: emit
+inputs:
+  json: { type: string, required: true }
+  code: { type: integer, required: true }
+steps:
+  emit:
+    kind: command
+    run: emit
+    with: { json: $inputs.json, code: $inputs.code }
+    output: schemas/emit.json
+    on:
+      ok: { done: ok }
+      other: { fail: other }

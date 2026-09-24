@@ -1,0 +1,13 @@
+# cancel・timeout を確かめる: 孫プロセスを持つスクリプトを待つ。
+schema: harness.workflow/v1
+id: sleeper
+inputs:
+  pidfile: { type: string, required: true }
+steps:
+  sleep:
+    kind: command
+    run: sleeper
+    with: { pidfile: $inputs.pidfile }
+    exit: { 0: finished }
+    on:
+      finished: { done: finished }

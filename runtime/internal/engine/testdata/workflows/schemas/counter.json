@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["outcome", "excerpt", "count"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["red", "green", "again", "ok"] },
+    "excerpt": { "type": "string" },
+    "count": { "type": "integer" }
+  }
+}
