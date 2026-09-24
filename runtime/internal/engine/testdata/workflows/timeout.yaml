@@ -1,0 +1,15 @@
+# 予約値を on に書けば明示的に別の遷移へ送れる（step_timeout → done）。
+schema: harness.workflow/v1
+id: timeout
+inputs:
+  pidfile: { type: string, required: true }
+steps:
+  sleep:
+    kind: command
+    run: sleeper
+    with: { pidfile: $inputs.pidfile }
+    exit: { 0: finished }
+    timeout: 1s
+    on:
+      finished: { done: finished }
+      step_timeout: { done: timeout_routed }

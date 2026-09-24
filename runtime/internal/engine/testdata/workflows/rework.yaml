@@ -1,0 +1,28 @@
+# limit（unit 単位の累計）と $edge（遷移の with で渡した値）を確かめる。
+schema: harness.workflow/v1
+id: rework
+inputs:
+  state:    { type: string, required: true }
+  outcomes: { type: string, required: true }
+  log:      { type: string, required: true }
+limits:
+  rework: 2
+steps:
+  ci:
+    kind: command
+    run: counter
+    with: { state: $inputs.state, outcomes: $inputs.outcomes, log: $inputs.log }
+    output: schemas/counter.json
+    on:
+      green: { done: green }
+      red: { goto: fix, with: { failure: $steps.ci.excerpt, count: $steps.ci.count },
+             limit: rework, exhausted: { fail: ci_red } }
+      again: { fail: unexpected }
+      ok: { fail: unexpected }
+  fix:
+    kind: command
+    run: recorder
+    with: { log: $inputs.log, failure: $edge.failure, count: $edge.count, first: $steps.ci.outcome }
+    output: schemas/pass.json
+    on:
+      pass: ci

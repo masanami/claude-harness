@@ -1,0 +1,30 @@
+# $steps.<id>.outcome は exit 表で outcome を得るステップ（出力 JSON を持たない）でも、そのステップの outcome を指す。
+# ステップの with（fine の経路）と、遷移の with（odd の経路）の両方で確かめる。
+schema: harness.workflow/v1
+id: exit-outcome
+inputs:
+  code: { type: integer, required: true }
+  log:  { type: string, required: true }
+steps:
+  probe:
+    kind: command
+    run: emit
+    with: { json: "{}", code: $inputs.code }
+    exit: { 0: fine, 3: odd }
+    on:
+      fine: record
+      odd: { goto: note, with: { seen: $steps.probe.outcome } }
+  record:
+    kind: command
+    run: recorder
+    with: { log: $inputs.log, outcome: $steps.probe.outcome }
+    output: schemas/pass.json
+    on:
+      pass: { done: recorded }
+  note:
+    kind: command
+    run: recorder
+    with: { log: $inputs.log, seen: $edge.seen }
+    output: schemas/pass.json
+    on:
+      pass: { done: noted }

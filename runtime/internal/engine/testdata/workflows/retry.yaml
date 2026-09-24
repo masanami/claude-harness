@@ -1,0 +1,17 @@
+# retry（ラウンド単位で数える）と exhausted を確かめる。
+schema: harness.workflow/v1
+id: retry
+inputs:
+  state:    { type: string, required: true }
+  outcomes: { type: string, required: true }
+steps:
+  flaky:
+    kind: command
+    run: counter
+    with: { state: $inputs.state, outcomes: $inputs.outcomes }
+    output: schemas/counter.json
+    on:
+      again: { retry: 2, exhausted: { fail: gave_up } }
+      ok: { done: ok }
+      red: { fail: unexpected }
+      green: { fail: unexpected }

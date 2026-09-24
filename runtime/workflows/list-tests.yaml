@@ -1,0 +1,21 @@
+# command 種類だけで書いたサンプル（Issue #259・docs/harness-runtime-design.md §10 PR-2）。
+# plugin/scripts/list-test-files.sh（読み取り専用・gh を呼ばない）を 1 回起動し、stdout の JSON を
+# schemas/list-test-files.json で検証して、status の値で遷移する。
+#
+#   harness run list-tests [--input root=<dir>]
+schema: harness.workflow/v1
+id: list-tests
+description: リポジトリのテストファイルを列挙する（command 種類の動作確認用のサンプル）
+inputs:
+  root: { type: string }              # 省略時は harness を起動したディレクトリ
+steps:
+  list:
+    kind: command
+    run: list-test-files
+    with: { root: $inputs.root }
+    output: schemas/list-test-files.json
+    outcome_field: status
+    timeout: 60s
+    on:
+      ok: { done: listed }
+      no_test_files_found: { fail: no_test_files_found }
