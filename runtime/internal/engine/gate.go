@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,7 +52,7 @@ func InterruptEvents(st *runstate.State) []runstate.Event {
 	var evs []runstate.Event
 	for _, u := range st.Units {
 		x := u.Running()
-		if x == nil || (x.PID > 0 && groupAlive(x.PID)) {
+		if x == nil || (x.PID > 0 && groupAlive(x.PID)) || (x.PID == 0 && len(sessionProcesses(x.SessionID)) > 0) {
 			continue
 		}
 		fin := &runstate.StepFinished{Unit: u.Key, Step: x.Step, Attempt: x.Attempt, Interrupted: true,
@@ -85,10 +87,37 @@ func StopOrphans(st *runstate.State, grace time.Duration) {
 		return
 	}
 	for _, u := range st.Units {
-		if x := u.Running(); x != nil && x.PID > 0 {
+		x := u.Running()
+		switch {
+		case x == nil:
+		case x.PID > 0:
 			StopOrphan(x.PID, grace)
+		default:
+			// llm は session_id を記録してから起動し、PID を後から記録する。その間に runner が落ちると PID が無いので、
+			// argv に session_id を含むプロセス（自分のプロセスグループの長として起動している）を探して止める。
+			for _, pid := range sessionProcesses(x.SessionID) {
+				StopOrphan(pid, grace)
+			}
 		}
 	}
+}
+
+// sessionProcesses は argv に session_id を含む生きているプロセスを返す（pgrep -f。見つからない・pgrep が無ければ空）。
+func sessionProcesses(sid string) []int {
+	if sid == "" {
+		return nil
+	}
+	out, err := exec.Command("pgrep", "-f", sid).Output()
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, f := range strings.Fields(string(out)) {
+		if pid, err := strconv.Atoi(f); err == nil && pid != os.Getpid() {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 // Reopen は run を記録した定義で開き直す。定義が開始時から変わっていれば止める（§7.3: 途中で遷移表が変わった run を
@@ -115,6 +144,9 @@ type Resolution struct {
 	Actor    string // resume | approve
 	User     string
 	Channel  string // tty | non-tty
+	// GateOpenedAt は、確認を求めたときに見ていたゲートの開いた時刻（approve）。解決の時点で同じゲートが開き直して
+	// いれば（別の解決で進んでまた同じゲートに来た）、人が見ていない文脈を解決しないように拒否する。
+	GateOpenedAt string
 }
 
 // RefusedError は要求をこの経路では受け付けられないこと（状態は何も変えていない）。
@@ -240,16 +272,19 @@ func (e *Engine) Resolve(ctx context.Context, req Resolution) (*runstate.State, 
 			return nil, refused("gate %s: observation %s failed; the gate stays open: %v", step.ID, step.Observe, err)
 		}
 	}
-	gateAt := ""
+	gateAt, openedAt := "", ""
 	if u.Gate != nil {
-		gateAt = u.Gate.Gate
+		gateAt, openedAt = u.Gate.Gate, u.Gate.OpenedAt
+	}
+	if req.GateOpenedAt != "" && req.GateOpenedAt != openedAt {
+		return nil, refused("gate %s of unit %s was reopened after it was shown; nothing was recorded", gateAt, u.Key)
 	}
 	_, err = e.Run.AppendIf(func(cur *runstate.State) ([]runstate.Event, error) {
 		cu := cur.Unit(u.Key)
 		if runstate.Terminal(cur.Status) {
 			return nil, refused("run %s already ended as %s", cur.RunID, cur.Status)
 		}
-		if (cu.Gate == nil && gateAt != "") || (cu.Gate != nil && cu.Gate.Gate != gateAt) {
+		if (cu.Gate == nil && gateAt != "") || (cu.Gate != nil && (cu.Gate.Gate != gateAt || cu.Gate.OpenedAt != openedAt)) {
 			return nil, refused("unit %s changed while resolving (another resume?); nothing was recorded", u.Key)
 		}
 		// ゲートで待っている run には runner が居ない（run は待機で終わる）。runner が居るのは running の run だけ。

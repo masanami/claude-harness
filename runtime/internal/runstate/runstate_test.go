@@ -116,8 +116,8 @@ func TestFoldGatesAndBudget(t *testing.T) {
 	if u.Rounds[0].CostUSD != 0.5 || u.Rounds[1].CostUSD != 2 || u.Rounds[1].Trigger.Gate != "review" || u.Rounds[0].EndedBy != "gate:review" {
 		t.Fatalf("rounds = %s", mustJSON(t, u.Rounds))
 	}
-	if sid, cost := u.LastSession("implement"); sid != "s1" || *cost != 0.5 {
-		t.Fatalf("last session = %s %v", sid, cost)
+	if sid := u.LastSession("implement"); sid != "s1" {
+		t.Fatalf("last session = %s", sid)
 	}
 }
 
@@ -505,5 +505,29 @@ func TestInvalidEventIsNotWritten(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(r.Dir, EventsFile))
 	if !bytes.Equal(before, after) {
 		t.Fatal("an inconsistent event reached events.jsonl")
+	}
+}
+
+// continue の引き継ぎ元は、そのステップの最新の実行が起動した claude のセッションだけ（古いラウンドへ戻らない）。
+func TestLastSessionIsTheLatestLaunchedExecution(t *testing.T) {
+	u := &Unit{Rounds: []*Round{
+		{No: 1, Steps: []*StepExecution{{Step: "impl", PID: 5, SessionID: "a"}, {Step: "other", PID: 6, SessionID: "z"}}},
+	}}
+	if got := u.LastSession("impl"); got != "a" {
+		t.Fatalf("launched: %q", got)
+	}
+	u.Rounds[0].Steps[0].ReportedSessionID = "a2"
+	if got := u.LastSession("impl"); got != "a2" {
+		t.Fatalf("the session claude reported wins: %q", got)
+	}
+	// 予算切れで起動しなかった実行が最新なら、前のラウンドのセッションへ戻らない。
+	u.Rounds = append(u.Rounds, &Round{No: 2, Steps: []*StepExecution{{Step: "impl", Outcome: "budget_exhausted", Reserved: true}}})
+	if got := u.LastSession("impl"); got != "" {
+		t.Fatalf("not launched: %q", got)
+	}
+	// session_id を記録したが起動に失敗した（PID も報告も無い）実行も引き継ぎ元にしない。
+	u.Rounds[1].Steps[0] = &StepExecution{Step: "impl", SessionID: "b"}
+	if got := u.LastSession("impl"); got != "" {
+		t.Fatalf("start failed: %q", got)
 	}
 }

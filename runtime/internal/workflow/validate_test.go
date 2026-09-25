@@ -434,3 +434,10 @@ func TestRequiresTTY(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectsGateAsTheFirstStep(t *testing.T) {
+	y := strings.Replace(base, "steps:\n", "steps:\n  first:\n    kind: gate\n    type: input\n    decider: any\n    requested_action: x\n    inputs: [go]\n    on: { go: a }\n", 1)
+	if err := check(t, y); err == nil || !strings.Contains(err.Error(), "the first step must not be a gate") {
+		t.Fatalf("err = %v", err)
+	}
+}

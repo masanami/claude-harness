@@ -673,6 +673,7 @@ func cmdResolve(actor string, args []string, env Env) int {
 			fmt.Fprintln(env.Stderr, "harness: not approved; nothing was recorded")
 			return ExitFailed
 		}
+		req.GateOpenedAt = u.Gate.OpenedAt // 確認した開き方のゲートだけを解決する
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
@@ -765,8 +766,9 @@ func cmdCancel(args []string, env Env) int {
 		if runstate.Terminal(st.Status) {
 			break
 		}
-		if !runstate.Alive(st.PID) {
-			// runner が居ない（落ちた run）。子プロセスが残っていれば止め、停止を自分で記録する。
+		if st.Status == runstate.StatusWaiting || !runstate.Alive(st.PID) {
+			// runner が居ない（ゲートで待っている run、または落ちた run）。子プロセスが残っていれば止め、停止を自分で記録する。
+			// 待機中の run の PID は終わった runner のもので、別のプロセスに再利用されていても待たない。
 			for _, u := range st.Units {
 				if x := u.Running(); x != nil {
 					engine.StopOrphan(x.PID, 5*time.Second)

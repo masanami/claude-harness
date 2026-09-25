@@ -69,6 +69,8 @@ func (e *Engine) executeLLM(ctx context.Context, st *runstate.State, u *runstate
 		return err
 	}
 	notLaunched := func(outcome, msg string) result {
+		// 起動していない実行はセッションを作っていない（continue の引き継ぎ元にしない）。
+		started.SessionID, started.Resume = "", false
 		if err := record(); err != nil {
 			return result{err: err}
 		}
@@ -86,9 +88,9 @@ func (e *Engine) executeLLM(ctx context.Context, st *runstate.State, u *runstate
 
 	args := []string{"-p", "--output-format", "json"}
 	if step.Session == "continue" {
-		sid, _ := u.LastSession(step.SessionFrom)
+		sid := u.LastSession(step.SessionFrom)
 		if sid == "" {
-			return notLaunched("step_error", fmt.Sprintf("session continue:%s: step %s has no Claude session to continue", step.SessionFrom, step.SessionFrom))
+			return notLaunched("step_error", fmt.Sprintf("session continue:%s: the latest execution of step %s did not launch claude, so there is no session to continue", step.SessionFrom, step.SessionFrom))
 		}
 		started.SessionID, started.Resume = sid, true
 		args = append(args, "--resume", sid)
@@ -258,14 +260,14 @@ func parseEnvelope(out []byte) *envelope {
 // charge は実行の費用を決める。費用が得られなければ付与した上限額を消費したとみなす（fail-closed。Q15）。
 // --resume で同じセッションを引き継いだ実行では claude がセッションの累計を報告するため、同じセッションの
 // 前回の報告との差をこの実行の費用とする（差が負なら報告が不整合なので費用不明として扱う）。
+// 非 0 終了は報告を信用せず費用不明として上限額で数えるが、報告された額が上限額を超えていればその額で数える
+// （claude はターンの合間に上限を確かめるので超過しうる。分かっている額より少なく数えない）。
 func charge(u *runstate.Unit, started *runstate.StepStarted, code int, env *envelope) (cost *float64, unknown bool, reported *float64) {
 	granted := *started.BudgetGrantedUSD
-	if env != nil {
-		reported = env.cost
+	if env == nil || env.cost == nil {
+		return &granted, true, nil
 	}
-	if code != 0 || env == nil || env.cost == nil {
-		return &granted, true, reported
-	}
+	reported = env.cost
 	c := *env.cost
 	if started.Resume && (env.sessionID == "" || env.sessionID == started.SessionID) {
 		if prev := u.SessionReportedCost(started.SessionID); prev != nil {
@@ -274,6 +276,10 @@ func charge(u *runstate.Unit, started *runstate.StepStarted, code int, env *enve
 			}
 			c -= *prev
 		}
+	}
+	if code != 0 {
+		c = math.Max(c, granted)
+		return &c, true, reported
 	}
 	return &c, false, reported
 }

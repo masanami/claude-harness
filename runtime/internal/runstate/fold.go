@@ -159,23 +159,28 @@ func (u *Unit) Running() *StepExecution {
 	return nil
 }
 
-// LastSession は unit の中で step の最新の実行が使った Claude の session_id（claude が報告した値を優先）と、
-// その実行の後にセッションの累計として報告された費用を返す（session: continue の引き継ぎ元。§4.4）。
-func (u *Unit) LastSession(step string) (string, *float64) {
+// LastSession は unit の中で step の**最新の**実行が使った Claude の session_id（claude が報告した値を優先）を返す
+// （session: continue の引き継ぎ元。§4.4）。最新の実行が claude を起動していなければ（予算切れ等）空を返し、
+// それより前のラウンドのセッションへは戻らない（古い文脈で黙って続けない）。起動したとみなすのは、
+// 子プロセスの PID が記録されているか、claude が session_id を報告した実行だけ。
+func (u *Unit) LastSession(step string) string {
 	for i := len(u.Rounds) - 1; i >= 0; i-- {
 		r := u.Rounds[i]
 		for j := len(r.Steps) - 1; j >= 0; j-- {
 			x := r.Steps[j]
-			if x.Step != step || x.SessionID == "" {
+			if x.Step != step {
 				continue
 			}
 			if x.ReportedSessionID != "" {
-				return x.ReportedSessionID, x.CostReportedUSD
+				return x.ReportedSessionID
 			}
-			return x.SessionID, x.CostReportedUSD
+			if x.PID != 0 {
+				return x.SessionID
+			}
+			return ""
 		}
 	}
-	return "", nil
+	return ""
 }
 
 // SessionReportedCost は、session_id のセッションについて最後に報告された累計費用を返す（無ければ nil）。

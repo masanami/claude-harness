@@ -54,6 +54,9 @@ func Validate(wf *Workflow, opts Options) Problems {
 	for _, s := range wf.Steps {
 		v.stepKind(s)
 	}
+	if len(wf.Steps) > 0 && wf.Steps[0].Kind == "gate" {
+		v.errf(wf.Steps[0].Line, "steps.%s: the first step must not be a gate (a gate is opened by a transition into it)", wf.Steps[0].ID)
+	}
 	v.budget()
 	for _, s := range wf.Steps {
 		v.onTable(s)

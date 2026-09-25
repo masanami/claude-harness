@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
 )
@@ -282,5 +283,34 @@ func TestResumeStopsTheOrphanAndReruns(t *testing.T) {
 	}
 	if u.Budget.SpentUSD != 2.3 || u.Budget.UnknownCostCount != 1 {
 		t.Fatalf("budget = %+v", u.Budget)
+	}
+}
+
+// ゲートで待っている run の cancel は、runner を待たずに停止を記録する（待機中の run には runner が居ない）。
+func TestCancelOfAWaitingRun(t *testing.T) {
+	state := t.TempDir()
+	h := newHarness(t, "HARNESS_STATE_DIR="+state)
+	out, _, code := h.run(runArgs(t, "gates", `json={"outcome":"any"}`, "log=x", "state=x")...)
+	if code != ExitWaiting {
+		t.Fatalf("run exit %d", code)
+	}
+	id := decode[statusView](t, out).RunID
+	// 終わった runner の PID が別のプロセス（このテスト自身）に再利用された状況を作る。
+	run, err := runstate.Open(filepath.Join(state, "runs"), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run.Append(runstate.Event{Type: runstate.EvRunnerStarted, RunnerStarted: &runstate.RunnerStarted{PID: os.Getpid(), Command: "test"}}); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	out, errOut, code := h.run("cancel", id)
+	if code != ExitOK || time.Since(start) > 10*time.Second {
+		t.Fatalf("cancel exit %d after %s\n%s%s", code, time.Since(start), out, errOut)
+	}
+	out, _, _ = h.run("status", "--json", id)
+	st := decode[runstate.State](t, out)
+	if st.Status != "cancelled" || st.Units[0].Gate != nil || st.Units[0].Status != "cancelled" {
+		t.Fatalf("status = %s", out)
 	}
 }

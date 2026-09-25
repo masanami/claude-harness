@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -355,6 +357,7 @@ func TestUnknownCostIsChargedAtTheGrantedCap(t *testing.T) {
 		{"cost is not a number", 0, strings.Replace(claudeResult("pass", 0.5), "0.5", `"0.5"`, 1), ""},
 		{"not JSON", 0, "this is not json", "invalid_output"},
 		{"non-zero exit with a cost", 1, claudeResult("pass", 0.5), "step_error"},
+		{"non-zero exit with a cost above the cap", 1, claudeResult("pass", 2.3), "step_error"},
 		{"error result", 0, strings.Replace(claudeResult("pass", 0.5), `"subtype":"success","is_error":false`, `"subtype":"error_max_budget_usd","is_error":true`, 1), "step_error"},
 	}
 	for _, c := range cases {
@@ -364,6 +367,13 @@ func TestUnknownCostIsChargedAtTheGrantedCap(t *testing.T) {
 			st, _ := start(t, "llm", map[string]any{"issue": 1})
 			u := st.Unit(MainUnit)
 			x := u.Rounds[0].Steps[0]
+			if c.name == "non-zero exit with a cost above the cap" {
+				// 上限額を超えた報告は、分かっている額より少なく数えない（claude はターンの合間に上限を確かめるので超過しうる）。
+				if !near(u.Budget.SpentUSD, 2.3) || u.Budget.UnknownCostCount != 1 || x.Outcome != "step_error" {
+					t.Fatalf("budget = %+v execution = %+v", u.Budget, x)
+				}
+				return
+			}
 			if c.name == "error result" {
 				// is_error でも費用が報告されていれば、それを数える（費用は取れている）。
 				if !near(u.Budget.SpentUSD, 0.5) || u.Budget.UnknownCostCount != 0 || x.Outcome != "step_error" {
@@ -583,4 +593,78 @@ func TestTimeoutAndCancelAreChargedAtTheGrantedCap(t *testing.T) {
 		}
 		assertDead(t, filepath.Join(f.dir, "pids"))
 	})
+}
+
+// runner が claude を起動した直後、PID を記録する前に落ちた場合: PID の無い実行でも、argv の session_id から
+// 生きている子を見つけ、status はそれを打ち切らず、resume（StopOrphans）が止めてから interrupted にする。
+func TestOrphanWithoutARecordedPID(t *testing.T) {
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	run, err := runstate.Create(t.TempDir(), "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := newUUID()
+	granted := 2.0
+	if _, err := run.Append(
+		runstate.Event{Type: runstate.EvRunStarted, RunStarted: &runstate.RunStarted{RunID: "r1", Inputs: map[string]json.RawMessage{},
+			Limits: map[string]float64{"budget_usd": 5}, PID: dead.Process.Pid, Units: []string{MainUnit}, EntryStep: "implement"}},
+		runstate.Event{Type: runstate.EvRoundStarted, RoundStarted: &runstate.RoundStarted{Unit: MainUnit, Round: 1, Trigger: runstate.Trigger{Kind: "start"}}},
+		runstate.Event{Type: runstate.EvStepStarted, StepStarted: &runstate.StepStarted{Unit: MainUnit, Step: "implement", Attempt: 1, SessionID: sid, BudgetGrantedUSD: &granted}},
+	); err != nil {
+		t.Fatal(err)
+	}
+	// 偽の claude の代わりに、argv に session_id を持つプロセスを自分のプロセスグループで起動する。
+	child := exec.Command("bash", "-c", "sleep 60; :", sid) // 「; :」で bash が sleep へ exec せず argv に sid が残る
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go child.Wait()
+	defer syscall.Kill(-child.Process.Pid, syscall.SIGKILL)
+	// fork から exec までの間は argv がまだ bash のものではないので、見えるまで待つ。
+	for deadline := time.Now().Add(5 * time.Second); len(sessionProcesses(sid)) == 0 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	st, err := Interrupt(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unit(MainUnit).Running() == nil {
+		t.Fatal("a step whose claude is still alive must not be interrupted")
+	}
+	StopOrphans(st, time.Second)
+	deadline := time.Now().Add(5 * time.Second)
+	for runstate.Alive(child.Process.Pid) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if runstate.Alive(child.Process.Pid) {
+		t.Fatal("StopOrphans did not stop the claude found by its session id")
+	}
+	st, err = Interrupt(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := st.Unit(MainUnit)
+	if x := u.Rounds[0].Steps[0]; x.Status != "interrupted" || u.Gate == nil || u.Gate.Gate != workflow.InterruptedGate || !near(u.Budget.SpentUSD, 2) {
+		t.Fatalf("execution = %+v gate = %+v budget = %+v", x, u.Gate, u.Budget)
+	}
+}
+
+// approve の確認の後にゲートが開き直していたら（別の解決で進み、また同じゲートに来た）、見ていない文脈を解決しない。
+func TestResolutionIsBoundToTheGateInstance(t *testing.T) {
+	st, e := start(t, "gates", map[string]any{"json": `{"outcome":"human"}`, "log": filepath.Join(t.TempDir(), "log"), "state": "x"})
+	shown := st.Unit(MainUnit).Gate.OpenedAt
+	_, err := resolve(t, e, Resolution{Input: "abort", HasInput: true, Actor: "approve", Channel: "tty", GateOpenedAt: shown + "x"})
+	var ref *RefusedError
+	if !errors.As(err, &ref) || !strings.Contains(err.Error(), "reopened") {
+		t.Fatalf("err = %v", err)
+	}
+	st = mustResolve(t, e, Resolution{Input: "abort", HasInput: true, Actor: "approve", Channel: "tty", GateOpenedAt: shown})
+	if st.Status != runstate.StatusFailed || st.Reason != "aborted_by_human" {
+		t.Fatalf("status = %s (%s)", st.Status, st.Reason)
+	}
 }

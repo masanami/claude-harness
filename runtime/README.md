@@ -110,5 +110,5 @@ steps:
 
 - ゲートに達すると unit のラウンドが閉じ、run は `waiting` になって `harness run` / `resume` は終了コード 3 で終わる（daemon は持たない）。
 - `resume` はゲートを解決し、その遷移先から新しいラウンドを始める。閉じたラウンドのステップは再実行しない。run が開始時の定義から変わっていれば続けない（§7.3）。
-- **端末（TTY）を要求するのは `type: input` かつ `decider: human` のゲートだけ**（Q9・N1）。`resume` はそれを解決できず `approve` を案内して止まる。`approve` は stdin が端末でなければ何も読まずに拒否し、端末なら対象の要約を表示して `yes` の入力を求める。解決の記録（`gate_resolved`）には `actor`（resume / approve）・`user`・`channel`（tty / non-tty）が残る。
+- **端末（TTY）を要求するのは `type: input` かつ `decider: human` のゲートだけ**（Q9・N1）。`resume` はそれを解決できず `approve` を案内して止まる。`approve` は stdin が端末でなければ何も読まずに拒否し、端末なら対象の要約を表示して `yes` の入力を求める。解決の記録（`gate_resolved`）には `actor`（resume / approve）・`user`・`channel`（tty / non-tty）が残る。TTY の判定は「Claude が通常の道具立てで human ゲートを解決してしまうこと」を防ぐもので、疑似端末を作る（`script` 等）意図的な回避までは防げない（§5.3）。
 - runner が落ちて止まったステップは組み込みの `interrupted` ゲート（`decider: any`・`rerun` / `abort`）で待つ。`rerun` はそのステップを新しいラウンドでやり直す。
