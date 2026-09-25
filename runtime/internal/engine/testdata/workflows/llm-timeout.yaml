@@ -1,0 +1,15 @@
+# llm ステップの timeout と停止で、付与した上限額が費用として数えられることを確かめる。
+schema: harness.workflow/v1
+id: llm-timeout
+limits:
+  budget_usd: 5
+steps:
+  implement:
+    kind: llm
+    prompt: prompts/implement.md
+    output: schemas/impl.json
+    budget_usd: 2
+    timeout: 1s
+    on:
+      pass: { done: ok }
+      failure: { fail: implement_failed }

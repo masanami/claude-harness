@@ -533,3 +533,54 @@ func TestReopenRefusesAChangedDefinition(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// timeout・停止で終わった llm の実行は費用が得られないので、付与した上限額を消費したものとして数える。
+func TestTimeoutAndCancelAreChargedAtTheGrantedCap(t *testing.T) {
+	t.Run("timeout", func(t *testing.T) {
+		f := newFake(t)
+		os.WriteFile(filepath.Join(f.dir, "responses", "1.sleep"), nil, 0o644)
+		st, _ := start(t, "llm-timeout", nil)
+		u := st.Unit(MainUnit)
+		x := u.Rounds[0].Steps[0]
+		if st.Status != runstate.StatusFailed || x.Outcome != "step_timeout" || !x.CostUnknown || !near(u.Budget.SpentUSD, 2) || u.Budget.UnknownCostCount != 1 {
+			t.Fatalf("status = %s execution = %+v budget = %+v", st.Status, x, u.Budget)
+		}
+	})
+	t.Run("cancel", func(t *testing.T) {
+		f := newFake(t)
+		os.WriteFile(filepath.Join(f.dir, "responses", "1.sleep"), nil, 0o644)
+		scripts := testdata(t, "scripts")
+		wf, err := workflow.LoadAndValidate(testdata(t, "workflows", "llm.yaml"), workflow.Options{ScriptsDir: scripts})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, err := Start(StartParams{RunsDir: t.TempDir(), WF: wf, Inputs: map[string]json.RawMessage{"issue": json.RawMessage("1")}, ScriptsDir: scripts, Cwd: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.ClaudeBin = testdata(t, "scripts", "fake-claude.sh")
+		e.KillGrace, e.PollInterval = time.Second, 20*time.Millisecond
+		done := make(chan *runstate.State, 1)
+		go func() {
+			st, err := e.Loop(context.Background())
+			if err != nil {
+				t.Error(err)
+			}
+			done <- st
+		}()
+		waitFile(t, filepath.Join(f.dir, "pids"))
+		os.WriteFile(filepath.Join(e.Run.Dir, runstate.CancelFile), nil, 0o644)
+		var st *runstate.State
+		select {
+		case st = <-done:
+		case <-time.After(20 * time.Second):
+			t.Fatal("the run did not stop")
+		}
+		u := st.Unit(MainUnit)
+		x := u.Rounds[0].Steps[0]
+		if st.Status != runstate.StatusCancelled || x.Status != "cancelled" || !x.CostUnknown || !near(u.Budget.SpentUSD, 2) || u.Budget.UnknownCostCount != 1 {
+			t.Fatalf("status = %s execution = %+v budget = %+v", st.Status, x, u.Budget)
+		}
+		assertDead(t, filepath.Join(f.dir, "pids"))
+	})
+}
