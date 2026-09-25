@@ -1,14 +1,15 @@
-// Package cli は harness コマンドの面（docs/harness-runtime-design.md §5.1 のうち PR-2 の範囲:
-// run / status / runs / cancel / validate）。
+// Package cli は harness コマンドの面（docs/harness-runtime-design.md §5.1 のうち PR-3 までの範囲:
+// run / status / runs / resume / approve / cancel / validate）。
 //
 // 終了コード（harness 内部の割り当て。flywheel 向けの接続契約としては固定していない。§0.1・§5.6）:
 //
 //	0 成功（run は succeeded）  1 失敗（run が failed・validate の違反・操作の失敗）
 //	2 使い方の誤り（run に渡したワークフロー定義が不正で run を始めなかった場合を含む）
-//	3 待機（ゲート。PR-3 で使う）  4 停止（run が cancelled）
+//	3 待機（run がゲートで止まった。状態・要求操作・再開方法を JSON で返す。§5.2）  4 停止（run が cancelled）
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -46,28 +47,53 @@ type Env struct {
 	Stderr io.Writer
 	Getenv func(string) string
 	Getwd  func() (string, error)
+	// IsTerminal は f が端末かを返す（approve の TTY 判定。テストで差し替える）。
+	IsTerminal func(f *os.File) bool
 }
 
 // DefaultEnv はプロセスの標準入出力と環境変数。
 func DefaultEnv() Env {
-	return Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv, Getwd: os.Getwd}
+	return Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv, Getwd: os.Getwd, IsTerminal: isTerminal}
+}
+
+func (env Env) terminal() bool {
+	f := env.IsTerminal
+	if f == nil {
+		f = isTerminal
+	}
+	return f(env.Stdin)
+}
+
+// channel は解決の経路（§5.3: tty / non-tty）。
+func (env Env) channel() string {
+	if env.terminal() {
+		return "tty"
+	}
+	return "non-tty"
 }
 
 const usage = `usage: harness <command> [options]
 
 commands:
   run [--workflow-dir DIR] [--scripts-dir DIR] [--input NAME=VALUE]... <workflow>
-      start a run and advance it until it ends
+      start a run and advance it until it ends or waits at a gate (exit 3 with the gate as JSON)
   status [--json] <run-id>
       show where a run is (the event log is the source of truth)
   runs [--json]
       list runs in the state directory
+  resume [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
+      resolve the gate a run waits at and advance it to the next gate or the end
+      (gates decided by a human with an input are not resolvable here; use approve)
+  approve [--unit KEY] --input VALUE [--note TEXT] <run-id>
+      resolve a gate from a terminal: shows what is approved and asks for confirmation (refused without a TTY)
   cancel <run-id>
       stop a run: stop its child process and record the stop
   validate [--workflow-dir DIR] [--scripts-dir DIR] [<workflow>...]
       statically check workflow definitions (all *.yaml in the workflow directory by default)
 
 state directory: $HARNESS_STATE_DIR, else $XDG_STATE_HOME/claude-harness, else ~/.local/state/claude-harness
+claude executable for llm steps: $HARNESS_CLAUDE_BIN, else claude in PATH
+exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled
 `
 
 // Main は harness コマンドを実行して終了コードを返す。
@@ -84,6 +110,10 @@ func Main(args []string, env Env) int {
 		return cmdStatus(rest, env)
 	case "runs":
 		return cmdRuns(rest, env)
+	case "resume":
+		return cmdResolve("resume", rest, env)
+	case "approve":
+		return cmdResolve("approve", rest, env)
 	case "cancel":
 		return cmdCancel(rest, env)
 	case "validate":
@@ -268,6 +298,7 @@ func cmdRun(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "harness: cannot start the run: %v\n", err)
 		return ExitFailed
 	}
+	eng.ClaudeBin = env.Getenv("HARNESS_CLAUDE_BIN")
 	fmt.Fprintf(env.Stderr, "harness: run %s started (%s)\n", eng.Run.ID, eng.Run.Dir)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
@@ -379,27 +410,62 @@ func checkType(v any, t *workflow.Type) error {
 
 // statusView は status --json の中身: 畳み込んだ状態に、外から run を辿るための場所と、
 // 読み込みで気付いたこと（末尾の切れた行）を添える（§5.5）。
-// RunnerAlive は終端でない run についてだけ出す: running のまま runner のプロセスが居なければ、その run は
-// 誰も進めていない（落ちた runner。§4.5 の interrupted の扱いは後の PR。ここでは外から見分けられるようにする）。
+// RunnerAlive は running の run についてだけ出す: runner のプロセスが居なければ、その run は誰も進めていない
+// （落ちた runner。実行中だったステップは次の status / resume が interrupted にする。§4.5）。
+// Waiting はゲートで待っている unit ごとの「人に求める操作」と再開方法（§5.2・§5.6）。
 type statusView struct {
 	*runstate.State
-	RunDir      string `json:"run_dir"`
-	EventsFile  string `json:"events_file"`
-	RunnerAlive *bool  `json:"runner_alive,omitempty"`
-	TornTail    *int   `json:"torn_tail_bytes,omitempty"`
+	RunDir      string        `json:"run_dir"`
+	EventsFile  string        `json:"events_file"`
+	RunnerAlive *bool         `json:"runner_alive,omitempty"`
+	Waiting     []waitingView `json:"waiting,omitempty"`
+	TornTail    *int          `json:"torn_tail_bytes,omitempty"`
+}
+
+// waitingView は待っているゲート 1 つ。ResumeCommand は解決に使うコマンドの形（<...> は選ぶ値）。
+type waitingView struct {
+	Unit            string   `json:"unit"`
+	Gate            string   `json:"gate"`
+	Type            string   `json:"type"`
+	Decider         string   `json:"decider"`
+	RequestedAction string   `json:"requested_action"`
+	Inputs          []string `json:"inputs,omitempty"`
+	RequiresTTY     bool     `json:"requires_tty"`
+	ResumeCommand   string   `json:"resume_command"`
 }
 
 func view(run *runstate.Run, st *runstate.State, torn *runstate.Torn) statusView {
 	v := statusView{State: st, RunDir: run.Dir, EventsFile: filepath.Join(run.Dir, runstate.EventsFile)}
-	if !runstate.Terminal(st.Status) {
+	if st.Status == runstate.StatusRunning {
 		alive := runstate.Alive(st.PID)
 		v.RunnerAlive = &alive
+	}
+	if !runstate.Terminal(st.Status) {
+		for _, u := range st.Units {
+			if u.Gate != nil {
+				v.Waiting = append(v.Waiting, waiting(st.RunID, u))
+			}
+		}
 	}
 	if torn != nil {
 		n := torn.Bytes
 		v.TornTail = &n
 	}
 	return v
+}
+
+func waiting(runID string, u *runstate.Unit) waitingView {
+	g := u.Gate
+	w := waitingView{Unit: u.Key, Gate: g.Gate, Type: g.Type, Decider: g.Decider, RequestedAction: g.RequestedAction, Inputs: g.Inputs, RequiresTTY: g.RequiresTTY}
+	switch {
+	case g.Type == workflow.GateObserve:
+		w.ResumeCommand = fmt.Sprintf("harness resume %s --unit %s", runID, u.Key)
+	case g.RequiresTTY:
+		w.ResumeCommand = fmt.Sprintf("harness approve %s --unit %s --input <%s> [--note <text>]  # from a terminal, by a person", runID, u.Key, strings.Join(g.Inputs, "|"))
+	default:
+		w.ResumeCommand = fmt.Sprintf("harness resume %s --unit %s --input <%s> [--note <text>]", runID, u.Key, strings.Join(g.Inputs, "|"))
+	}
+	return w
 }
 
 func writeJSON(w io.Writer, v any) {
@@ -436,6 +502,14 @@ func cmdStatus(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
 		return ExitFailed
 	}
+	if !runstate.Terminal(st.Status) {
+		// runner が落ちて running のまま残ったステップ実行を interrupted にする（§4.5。子プロセスが残っていれば触らない）。
+		if next, err := engine.Interrupt(run); err != nil {
+			fmt.Fprintf(env.Stderr, "harness: warning: cannot record the interruption: %v\n", err)
+		} else {
+			st = next
+		}
+	}
 	if _, ok := flags["json"]; ok {
 		writeJSON(env.Stdout, view(run, st, torn))
 		return ExitOK
@@ -454,6 +528,13 @@ func cmdStatus(args []string, env Env) int {
 			fmt.Fprintf(env.Stdout, " (%s)", u.Reason)
 		}
 		fmt.Fprintf(env.Stdout, ", round %d, step %s\n", len(u.Rounds), u.CurrentStep)
+		if b := u.Budget; b != nil {
+			fmt.Fprintf(env.Stdout, "  budget: spent %.4f / %.4f USD (remaining %.4f, unknown cost x%d)\n", b.SpentUSD, b.LimitUSD, b.RemainingUSD, b.UnknownCostCount)
+		}
+		if u.Gate != nil {
+			w := waiting(st.RunID, u)
+			fmt.Fprintf(env.Stdout, "  waiting at gate %s (%s, decider %s): %s\n  resume: %s\n", w.Gate, w.Type, w.Decider, w.RequestedAction, w.ResumeCommand)
+		}
 		if r := u.CurrentRound(); r != nil {
 			for _, x := range r.Steps {
 				o := x.Outcome
@@ -530,6 +611,110 @@ func cmdRuns(args []string, env Env) int {
 	return ExitOK
 }
 
+// --- resume / approve ---------------------------------------------------------
+
+// cmdResolve は resume と approve（§5.1・§5.3）。approve は端末が無ければ拒否し、あれば対象の要約を表示して
+// 確認の入力を求める。どちらも解決の記録に actor（コマンド）と channel（tty / non-tty）を残す。
+func cmdResolve(actor string, args []string, env Env) int {
+	flags, pos, err := parseArgs(args, flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true})
+	if err != nil {
+		return usageErr(env, err)
+	}
+	if len(pos) != 1 {
+		return usageErr(env, fmt.Errorf("%s takes exactly one run id", actor))
+	}
+	_, hasInput := flags["input"]
+	_, hasNote := flags["note"]
+	if actor == "approve" && !hasInput {
+		return usageErr(env, errors.New("approve needs --input"))
+	}
+	channel := env.channel()
+	if actor == "approve" && channel != "tty" {
+		// Claude が通常の道具立てで human ゲートを解決できないように、端末の無い approve は何も読まずに拒否する（§5.3）。
+		fmt.Fprintln(env.Stderr, "harness: approve refused: stdin is not a terminal. A gate decided by a person is approved by that person from a terminal.")
+		return ExitFailed
+	}
+	run, err := openRun(env, pos[0])
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+		return ExitFailed
+	}
+	st, _, err := run.Load()
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+		return ExitFailed
+	}
+	if runstate.Terminal(st.Status) {
+		fmt.Fprintf(env.Stderr, "harness: run %s already ended as %s; nothing to %s\n", st.RunID, st.Status, actor)
+		return ExitFailed
+	}
+	// runner が落ちていれば、残った子プロセスを止め、実行中だったステップを interrupted にする（§4.5。自動で再実行しない）。
+	engine.StopOrphans(st, 5*time.Second)
+	if st, err = engine.Interrupt(run); err != nil {
+		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+		return ExitFailed
+	}
+	eng, err := engine.Reopen(run, st)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+		return ExitFailed
+	}
+	eng.ClaudeBin = env.Getenv("HARNESS_CLAUDE_BIN")
+	req := engine.Resolution{
+		Unit: first(flags, "unit"), Input: first(flags, "input"), HasInput: hasInput, Note: first(flags, "note"), HasNote: hasNote,
+		Actor: actor, User: env.Getenv("USER"), Channel: channel,
+	}
+	u, err := eng.CheckResolution(st, req)
+	if err != nil {
+		return resolveErr(env, run, st, err)
+	}
+	if actor == "approve" {
+		if !confirm(env, st, u, req) {
+			fmt.Fprintln(env.Stderr, "harness: not approved; nothing was recorded")
+			return ExitFailed
+		}
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
+	st, err = eng.Resolve(ctx, req)
+	if err != nil {
+		var ref *engine.RefusedError
+		if errors.As(err, &ref) {
+			cur, _, _ := run.Load()
+			return resolveErr(env, run, cur, err)
+		}
+		fmt.Fprintf(env.Stderr, "harness: run %s stopped with an internal error: %v\n", run.ID, err)
+		return ExitFailed
+	}
+	writeJSON(env.Stdout, view(run, st, nil))
+	return exitFor(st.Status)
+}
+
+// resolveErr は解決できなかった理由を出す。状態は変えていないので、現在地（待っているゲートと再開方法）も JSON で返す。
+func resolveErr(env Env, run *runstate.Run, st *runstate.State, err error) int {
+	fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+	if st != nil {
+		writeJSON(env.Stdout, view(run, st, nil))
+	}
+	return ExitFailed
+}
+
+// confirm は approve の確認: 対象の要約を端末へ表示し、yes の入力を求める。
+func confirm(env Env, st *runstate.State, u *runstate.Unit, req engine.Resolution) bool {
+	g := u.Gate
+	fmt.Fprintf(env.Stderr, "run:      %s (%s)\nunit:     %s, round %d\ngate:     %s (%s, decider %s)\nrequest:  %s\ninput:    %s\n",
+		st.RunID, st.Workflow.ID, u.Key, len(u.Rounds), g.Gate, g.Type, g.Decider, g.RequestedAction, req.Input)
+	if req.HasNote {
+		fmt.Fprintf(env.Stderr, "note:     %s\n", req.Note)
+	}
+	fmt.Fprint(env.Stderr, "approve? type yes to confirm: ")
+	line, err := bufio.NewReader(env.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return false
+	}
+	return strings.TrimSpace(line) == "yes"
+}
+
 // --- cancel -----------------------------------------------------------------
 
 // cancel の待ち時間。runner は子プロセスへ SIGTERM を送り、猶予（5 秒）内に終わらなければ SIGKILL を送る。
@@ -561,10 +746,7 @@ func cmdCancel(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "harness: run %s already ended as %s; nothing to cancel\n", st.RunID, st.Status)
 		return ExitFailed
 	}
-	channel := "non-tty"
-	if fi, err := env.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-		channel = "tty"
-	}
+	channel := env.channel()
 	if _, err := run.Append(runstate.Event{Type: runstate.EvCancelRequested, CancelRequested: &runstate.CancelRequested{Actor: "cli", Channel: channel}}); err != nil {
 		fmt.Fprintf(env.Stderr, "harness: cannot record the cancel request: %v\n", err)
 		return ExitFailed

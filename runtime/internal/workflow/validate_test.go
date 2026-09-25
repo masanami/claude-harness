@@ -67,6 +67,14 @@ func setup(t *testing.T, name, yaml string) (string, string) {
 	if err := os.WriteFile(filepath.Join(scripts, "tool.sh"), []byte("#!/bin/bash\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	for f, body := range map[string]string{"prompts/p.md": "# prompt\n", "agents/feature-implementer.md": "---\nname: feature-implementer\n---\n"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, f)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, f), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	path := filepath.Join(dir, name+".yaml")
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -159,7 +167,7 @@ func TestRejects(t *testing.T) {
 		{"reserved value in the exit table", "    with: { n: $inputs.n }\n    output: schemas/out.json", "    with: { n: $inputs.n }\n    exit: { 0: ok, 1: bad, 2: step_timeout }", `outcome "step_timeout" collides with a reserved value`},
 
 		// 種類・run の参照先の実在・出力スキーマ
-		{"unregistered kind", "  a:\n    kind: command", "  a:\n    kind: llm", `kind "llm" is not a registered step kind`},
+		{"unregistered kind", "  a:\n    kind: command", "  a:\n    kind: fanout", `kind "fanout" is not a registered step kind`},
 		{"missing script", "    run: tool\n    with: { n: $inputs.n }", "    run: nope\n    with: { n: $inputs.n }", `run "nope" does not exist`},
 		{"outcome not required", "    with: { n: $inputs.n }\n    output: schemas/out.json", "    with: { n: $inputs.n }\n    output: schemas/optional.json", "must be listed in required"},
 		{"outcome without enum", "    with: { n: $inputs.n }\n    output: schemas/out.json", "    with: { n: $inputs.n }\n    output: schemas/noenum.json", "must declare a non-empty enum"},
@@ -276,6 +284,153 @@ func TestParseRef(t *testing.T) {
 	for _, s := range bad {
 		if _, err := ParseRef(s); err == nil {
 			t.Errorf("ParseRef(%q) must fail", s)
+		}
+	}
+}
+
+func init() {
+	RegisterObservation("pr", []string{"merged", "open"})
+}
+
+// llmBase は llm と gate（input・observe）を使う、検証を通るワークフロー。
+const llmBase = `schema: harness.workflow/v1
+id: w
+inputs:
+  n: { type: integer, required: true }
+limits:
+  budget_usd: 10
+steps:
+  impl:
+    kind: llm
+    agent: claude-harness:feature-implementer
+    prompt: prompts/p.md
+    session: new
+    with: { n: $inputs.n, obj: $steps.a.detail }
+    output: schemas/out.json
+    budget_usd: 2
+    timeout: 30m
+    on:
+      ok: { gate: review }
+      bad: { gate: deviation }
+  review:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: wait for the review
+    inputs: [respond, ready]
+    on:
+      respond: { goto: fix, with: { note: "address the review comments" } }
+      ready: { gate: merged }
+  deviation:
+    kind: gate
+    type: input
+    decider: human
+    requested_action: decide
+    inputs: [follow, abort]
+    on:
+      follow: { goto: fix, with: { note: $gate.note } }
+      abort: { fail: aborted }
+  fix:
+    kind: llm
+    prompt: prompts/p.md
+    session: continue:impl
+    with: { note: $edge.note }
+    output: schemas/out.json
+    budget_usd: 1
+    on:
+      ok: { gate: review }
+      bad: { fail: bad }
+  merged:
+    kind: gate
+    type: observe
+    decider: human
+    observe: pr
+    with: { n: $inputs.n }
+    requested_action: a person merges
+    on:
+      merged: { done: merged }
+      open: { gate: merged }
+`
+
+func TestLLMAndGateBaseIsValid(t *testing.T) {
+	// $steps.a は llmBase に無いので、先頭に command ステップ a を置いた形で検査する。
+	if err := check(t, llmWithA(llmBase)); err != nil {
+		t.Fatalf("llmBase must be valid: %v", err)
+	}
+}
+
+// llmWithA は llmBase の先頭に command ステップ a（impl へ進む）を足す（$steps.a.detail の参照先）。
+func llmWithA(y string) string {
+	return strings.Replace(y, "steps:\n", "steps:\n  a:\n    kind: command\n    run: tool\n    output: schemas/out.json\n    on: { ok: impl, bad: { fail: a_bad } }\n", 1)
+}
+
+func TestRejectsLLMAndGate(t *testing.T) {
+	cases := []struct {
+		name     string
+		old, new string
+		want     string
+	}{
+		{"llm without budget limit", "limits:\n  budget_usd: 10\n", "", "limits.budget_usd is required when the workflow has llm steps"},
+		{"llm without budget_usd", "    budget_usd: 2\n", "", "budget_usd is required for kind llm"},
+		{"non-positive budget_usd", "    budget_usd: 2\n", "    budget_usd: 0\n", "must be a positive amount"},
+		{"llm without prompt", "    agent: claude-harness:feature-implementer\n    prompt: prompts/p.md\n", "    agent: claude-harness:feature-implementer\n", "prompt is required for kind llm"},
+		{"missing prompt file", "    agent: claude-harness:feature-implementer\n    prompt: prompts/p.md\n", "    agent: claude-harness:feature-implementer\n    prompt: prompts/nope.md\n", `prompt "prompts/nope.md" does not exist`},
+		{"missing agent", "agent: claude-harness:feature-implementer", "agent: claude-harness:nobody", `agent "claude-harness:nobody" does not exist`},
+		{"agent of another plugin", "agent: claude-harness:feature-implementer", "agent: other:feature-implementer", "only agents of the claude-harness plugin"},
+		{"agent without namespace", "agent: claude-harness:feature-implementer", "agent: feature-implementer", "must match"},
+		{"bad session", "    session: new\n", "    session: resume\n", "must be new or continue:<step id>"},
+		{"continue a missing step", "session: continue:impl", "session: continue:nope", "refers to a step that does not exist"},
+		{"continue a non-llm step", "session: continue:impl", "session: continue:a", "only llm steps have a Claude session"},
+		{"continue a step not on every path", "session: continue:impl", "session: continue:fix", "has not necessarily run on every path"},
+		{"exit on llm", "    budget_usd: 2\n", "    budget_usd: 2\n    exit: { 0: ok }\n", `unknown key "exit"`},
+		{"gate without decider", "    decider: any\n", "", "decider is required for kind gate"},
+		{"unknown decider", "    decider: any\n", "    decider: robot\n", `decider "robot" must be human, parent or any`},
+		{"gate without type", "    type: input\n    decider: any\n", "    decider: any\n", "type is required for kind gate"},
+		{"gate without requested_action", "    requested_action: wait for the review\n", "", "requested_action is required"},
+		{"input gate without inputs", "    inputs: [respond, ready]\n", "", "an input gate needs inputs"},
+		{"input gate misses an input", "      ready: { gate: merged }\n", "", `outcome "ready" is not covered`},
+		{"duplicate input", "inputs: [respond, ready]", "inputs: [respond, ready, ready]", `duplicate value "ready"`},
+		{"reserved input", "inputs: [respond, ready]", "inputs: [respond, ready, step_error]", "collides with a reserved value"},
+		{"reserved outcome routed from a gate", "      ready: { gate: merged }\n", "      ready: { gate: merged }\n      step_error: { fail: x }\n", "a gate does not produce the reserved value"},
+		{"retry on a gate", "      ready: { gate: merged }\n", "      ready: { retry: 1, exhausted: { gate: merged } }\n", "retry is not valid on a gate"},
+		{"with on an input gate", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    with: { n: $inputs.n }\n", "with is only valid for type observe"},
+		{"unregistered observation", "observe: pr", "observe: nope", `observe "nope" is not a registered observation`},
+		{"observe gate with inputs", "    observe: pr\n", "    observe: pr\n    inputs: [merged, open]\n", "inputs is only valid for type input"},
+		{"observe gate misses an outcome", "      open: { gate: merged }\n", "", `outcome "open" is not covered`},
+		{"gate note from an llm step", "      bad: { fail: bad }\n", "      bad: { goto: review, with: { x: $gate.note } }\n", "step \"fix\" is not an input gate"},
+		{"note of another type on another transition", `with: { note: "address the review comments" }`, "with: { note: $inputs.n }", "incoming transitions pass different types"},
+		{"note not passed by every transition", `      respond: { goto: fix, with: { note: "address the review comments" } }`, "      respond: fix", `does not pass "note"`},
+		{"interrupted is reserved", "  merged:\n", "  interrupted:\n    kind: gate\n    type: input\n    decider: any\n    requested_action: x\n    inputs: [go]\n    on: { go: { done: x } }\n  merged:\n", `step id "interrupted" is reserved`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if n := strings.Count(llmBase, c.old); n != 1 {
+				t.Fatalf("fragment %q occurs %d times in llmBase", c.old, n)
+			}
+			err := check(t, llmWithA(strings.Replace(llmBase, c.old, c.new, 1)))
+			if err == nil {
+				t.Fatalf("expected rejection containing %q, but the workflow was accepted", c.want)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("expected rejection containing %q, got:\n%v", c.want, err)
+			}
+		})
+	}
+}
+
+func TestRequiresTTY(t *testing.T) {
+	for _, c := range []struct {
+		typ, decider string
+		want         bool
+	}{
+		{GateInput, DeciderHuman, true},
+		{GateObserve, DeciderHuman, false}, // N1
+		{GateInput, DeciderParent, false},
+		{GateInput, DeciderAny, false},
+		{GateObserve, DeciderAny, false},
+	} {
+		if got := RequiresTTY(c.typ, c.decider); got != c.want {
+			t.Errorf("RequiresTTY(%s, %s) = %v, want %v", c.typ, c.decider, got, c.want)
 		}
 	}
 }

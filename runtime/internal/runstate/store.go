@@ -145,6 +145,29 @@ func (r *Run) Append(evs ...Event) (*State, error) {
 	return r.appendLocked(evs...)
 }
 
+// AppendIf はロックの中で現在の状態を check に渡し、nil が返ったときだけ evs を追記する
+// （resume の「runner が生きていない」のように、読んでから書くまでの間に変わりうる前提を確かめる）。
+// evs を nil で返す関数を渡すと、状態を読んだ結果から追記するイベントを決められる。
+func (r *Run) AppendIf(check func(*State) ([]Event, error)) (*State, error) {
+	unlock, err := r.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	st, _, err := r.Load()
+	if err != nil {
+		return nil, err
+	}
+	evs, err := check(st)
+	if err != nil {
+		return nil, err
+	}
+	if len(evs) == 0 {
+		return st, nil
+	}
+	return r.appendLocked(evs...)
+}
+
 func (r *Run) appendLocked(evs ...Event) (*State, error) {
 	path := filepath.Join(r.Dir, EventsFile)
 	var events []Event

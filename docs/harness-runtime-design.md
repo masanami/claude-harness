@@ -71,7 +71,7 @@
 
 - `feature-implementer` の**内側のループ**（`/quality-check` 最大 3 回・`/self-review` の反復・`design-deviation-verifier` の多数決）は、最初の段階では**エージェント定義の散文に残す**。これらは 1 つの Claude セッション内の Task ネストで閉じており、外へ出すには `/self-review` 自体の移行（Issue 本文の旧 Phase 2 相当）が要る。今回の主対象（ラウンドをまたぐ状態）には効かない。
 - 外側のループ（Phase 4→8 の差し戻し・CI 待ち・レビュー待ち・人の承認待ち・合流）は**すべて runtime へ移す**。ここが「再開のたびに親が組み立て直している」部分である。
-- 帰結として **`ticket-worker` は廃止する**（責務は「`/impl` を呼ぶ」「CI の loop-until-green」「返却」で、いずれも runtime が持つ）。Task ネストは `ticket-worker`（深度1）→ `feature-implementer`（深度2）→ `code-reviewer`（深度3）から、`feature-implementer` がセッションの主体（深度0）になる形へ 1 段浅くなる。`claude -p --agent claude-harness:feature-implementer` で主体に据えられるかは**未検証**（`--agent` フラグの存在は `claude --help`〔2.1.278〕で確認済み。プラグインのエージェントを名前空間付きで指定できるかは PR-3 で実測する）。
+- 帰結として **`ticket-worker` は廃止する**（責務は「`/impl` を呼ぶ」「CI の loop-until-green」「返却」で、いずれも runtime が持つ）。Task ネストは `ticket-worker`（深度1）→ `feature-implementer`（深度2）→ `code-reviewer`（深度3）から、`feature-implementer` がセッションの主体（深度0）になる形へ 1 段浅くなる。`claude -p --agent claude-harness:feature-implementer` で**主体に据えられることを PR-3 で実測した**（2026-09-26・`claude` 2.1.283・インストール済みのプラグインを名前空間付きで指定。空のディレクトリで「作業はせず、あなたのエージェント名だけを答えて」に「機能実装エージェント（feature-implementer）」と答え、結果の `modelUsage` のモデルがセッション既定〔`claude-opus-5-5`〕ではなくエージェント定義の `model: sonnet` に当たる `claude-sonnet-5` だった）。
 
 ---
 
@@ -506,7 +506,7 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 ### 4.3 予算の扱い
 
 - **1 unit の累計**を持つ。`llm` ステップ起動時に `--max-budget-usd = min(ステップの budget_usd, 残予算)` を付ける。`--max-budget-usd` は起動ごとに効き、`--resume` ではカウンタが 0 に戻る（Tom の運用で実測済みの性質）ので、**累計の責任は runtime が持つ**。
-- 費用は `claude -p --output-format json` の結果から得る【未検証: フィールド名は PR-3 で実測して固定する】。**得られなかった実行は、そのステップの上限額（実際に付与した `--max-budget-usd` の値）を消費したものとして数える**（fail-closed。Q15 で決定。`unknown_cost_count` に記録）。
+- 費用は `claude -p --output-format json` の結果の **`total_cost_usd`**（USD の数値）から得る（PR-3 で実測・2026-09-26・`claude` 2.1.283。同じ結果に `session_id`〔`--session-id` で渡した値がそのまま返る〕・`structured_output`〔`--json-schema` の型付き出力〕・`is_error`・`subtype`〔成功は `success`〕・モデル別の `modelUsage.<model>.costUSD` がある）。**`--resume` した実行の `total_cost_usd` はセッションの累計**だった（1 回目 $0.2145 → 同じセッションを `--resume` した 2 回目が $0.3514。`modelUsage` の出力トークン 165 が 1 回目 54＋2 回目 111 の和）。そのため `session: continue` の実行は、同じセッションの前回の報告との差をその実行の費用として数える（差が負なら報告が不整合として費用不明に倒す）。`--resume` は `--fork-session` を付けなければ同じ `session_id` を使い続ける。**得られなかった実行は、そのステップの上限額（実際に付与した `--max-budget-usd` の値）を消費したものとして数える**（fail-closed。Q15 で決定。`unknown_cost_count` に記録）。
 - 残予算がステップの最低額を下回ったら、起動せず `budget_exhausted` を outcome にする（既定で `failed`。YAML で人間ゲートへ送ることもできる）。
 
 ### 4.4 Claude セッションの扱い
@@ -812,8 +812,8 @@ make check
 
 ## 12. 未検証事項
 
-- `claude -p --agent claude-harness:feature-implementer` でプラグインのエージェントをセッションの主体に据えられるか（フラグの存在のみ確認）。
-- `claude -p --output-format json` の結果に含まれる費用・`session_id` のフィールド名。
+- ~~`claude -p --agent claude-harness:feature-implementer` でプラグインのエージェントをセッションの主体に据えられるか~~ → PR-3 で実測済み（§1.1）。
+- ~~`claude -p --output-format json` の結果に含まれる費用・`session_id` のフィールド名~~ → PR-3 で実測済み（§4.3）。
 - `--plugin-dir` で読ませたプラグインと、インストール済みの同名プラグインが併存したときの挙動。
 - プラグインのキャッシュへのコピー範囲・除外機構が無いことは公式ドキュメントの記述に基づく（実機でのコピー範囲は未確認）。
 - X1（`plugin/` への移動）が導入済みの環境に与える影響（再インストールの要否）。PR-1 で実測する。

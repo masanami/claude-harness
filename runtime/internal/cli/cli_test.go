@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,11 +13,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/masanami/claude-harness/runtime/internal/engine"
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
 )
 
 // テストバイナリ自身を harness として起動する（別プロセスの run と cancel を実際に走らせるため）。
 func TestMain(m *testing.M) {
+	// テスト用ワークフロー（engine/testdata/workflows/gates.yaml）の observe ゲートが使う観測。
+	engine.RegisterObserver("fake-state", []string{"merged", "open", "closed"}, func(context.Context, map[string]json.RawMessage) (string, json.RawMessage, error) {
+		return "merged", nil, nil
+	})
 	if os.Getenv("HARNESS_CLI_TEST_MAIN") == "1" {
 		os.Exit(Main(os.Args[1:], DefaultEnv()))
 	}
