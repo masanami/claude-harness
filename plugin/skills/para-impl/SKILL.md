@@ -3,8 +3,8 @@ name: para-impl
 description: "GitHub Issueを分析し、1チケットの実装フロー（正本は /impl）へ fan-out する（複数Issue指定時は star 型で並列実行）。Triggers on: '/para-impl', '並列実装', 'Issueを実装して'"
 argument-hint: "<Issue番号> [Issue番号...] [--base <統合ブランチ>] [--max-parallel <N>] [--serial <番号,番号,...>]"
 model: opus
-# effort: 設計〜TDD実装〜PRの自走フローを担うため high。
-effort: high
+# effort: 設計〜TDD実装〜PRの自走フローを担うが、Opus 5.5 では既定の medium で足りる（深い検討はレビュー agent 側の high で担保）。
+effort: medium
 ---
 
 # Issue実装指示書

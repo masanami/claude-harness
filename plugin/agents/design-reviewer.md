@@ -5,8 +5,8 @@ description: "設計・アーキテクチャ・依存関係をレビューする
 # 修正が必要な場合は、レビュー結果を報告し、実装エージェント（feature-implementer）に委譲する。
 tools: Read, Glob, Grep, Bash
 model: opus
-# effort: 依存方向・境界の構造的判断を要するレビュー中核のため xhigh。
-effort: xhigh
+# effort: 依存方向・境界の構造的判断を要するレビュー中核のため high（Opus 5.5 の既定 medium より一段上）。
+effort: high
 ---
 
 # 設計レビューエージェント

@@ -2,7 +2,7 @@
 name: self-review
 description: "コード変更のセルフレビューを実施する。Triggers on: '/self-review', 'セルフレビュー', 'self-review', 'コードレビューして'"
 argument-hint: "[sweep]"
-# effort: 深い検討は委譲先レビュー agent（code-reviewer/design-reviewer=xhigh）側で効くため、本スキルは session 継承（無指定）とする。
+# effort: 深い検討は委譲先レビュー agent（code-reviewer/design-reviewer=high）側で効くため、本スキルは session 継承（無指定）とする。
 ---
 
 # Self Review

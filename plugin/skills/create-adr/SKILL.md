@@ -3,9 +3,9 @@ name: create-adr
 description: "恒常的な設計決定を ADR として記録する（退役する機能仕様から ADR 昇格の要否を判定するモードを併せ持つ）。定常フローの必須ステップではなく、必要時に呼ぶ。Triggers on: '/create-adr', 'ADRを書いて', '設計判断を記録', 'ADR昇格を判定'"
 argument-hint: "[決定のテーマ] | promote <機能仕様パス|ディレクトリ...>"
 model: opus
-# effort: 「何を恒常的な決定として残すか」の線引きが成果物の価値を決めるため high。
+# effort: 「何を恒常的な決定として残すか」の線引きが成果物の価値を決めるが、Opus 5.5 では既定の medium で足りる。
 # 抽出・執筆量は小さいが、判断を誤ると ADR が乱造されて読まれなくなる（本スキルの中核リスク）。
-effort: high
+effort: medium
 ---
 
 # 設計判断記録（ADR）の作成

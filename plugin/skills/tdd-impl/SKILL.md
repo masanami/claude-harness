@@ -2,8 +2,8 @@
 name: tdd-impl
 description: "Kent Beck/t-wada 流の TDD でテストコードとプロダクションコードを実装する。Triggers on: '/tdd-impl', 'TDDで実装', 'TDD実装'"
 argument-hint: "[設計成果物 or Issue番号]"
-# effort: テスト設計と実装の規律を担うため high。
-effort: high
+# effort: テスト設計と実装の規律を担う。model は未指定（多くは Opus 5.5 のセッションで動く）のため impl とそろえて medium。
+effort: medium
 ---
 
 # TDD実装（t-wada / Kent Beck 流）
