@@ -16,6 +16,15 @@
   - **配布物からリポジトリのルート直下が外れる。** これまで導入先のキャッシュには `docs/`・`README.md`・`CHANGELOG.md`・`LICENSE` も入っていたが、以後は `plugin/` の中身だけが入る（実測: 更新後のキャッシュは `.claude-plugin` `agents` `bin` `hooks` `scripts` `skills` のみ）。プラグインは実行時に `docs/` を読まない前提で作られているため、動作への影響は無い。
 - **`plugin/LICENSE` を置いた（Issue #257）。** `plugin/` への移動でルートの `LICENSE` が配布物から外れたため、同じ内容の実ファイルを配布物の中にも置く。2 つの内容がずれると `make check`（`plugin/scripts/tests/test-license-sync.sh`）が失敗する。
 - **リポジトリのルートに `Makefile` を置き、`make check` を品質ゲートの入口にした（開発者向け。配布物には入らない）。** 現時点では bash テスト全件（`plugin/scripts/tests/*.sh`）を順に実行し、失敗したテスト名を集計して 1 本でも落ちれば非 0 で終わる。
+- **`model: opus` を指定したスキル・エージェントの `effort` を、Opus 5.5 向けに一段ずつ下げた（Issue #264）。** Opus 5.5 で既定の effort が `high` から `medium` に変わり、Opus 4.8/4.7・Fable 5 の頃に決めた値では一段ずつ高すぎる前提になっていたため。
+  - `xhigh` → `high`: `code-reviewer`・`design-reviewer`（agent）、`define-feature`（skill）。
+  - `high` → `medium`: `impl`・`para-impl`・`create-adr`・`promote-verify`・`reduce-debt`・`tdd-impl`（skill。`tdd-impl` は `model` 未指定だが、多くは Opus 5.5 のセッションで動くため `impl` とそろえた）。
+  - 据え置き: `defect-sweeper`（`high`）・`e2e-engineer`・`create-e2e`・`pr-review-respond`（`medium`）・`pr-merge`（`low`）と、`model: sonnet` のものすべて。対応表と据え置きの理由は `docs/customization.md` §7。
+
+### 利用者が取る操作（effort の見直し）
+
+- **プラグインのファイルをそのまま使っている場合は何もしなくてよい。** 更新すると新しい値が効く。
+- **プロジェクトの `.claude/agents/` / `.claude/skills/` に同名のオーバーライドを置いている場合、そのファイルの `effort` は自動では変わらない**（プロジェクト側が優先するため）。プラグインの値に追従させたいなら、オーバーライドの `effort` を上の変更後の値へ直す。以前の深さを保ちたい場合（Opus 4.x・Fable 5 で動かしている等）は、オーバーライドの `effort` をそのまま残すか、旧値（`xhigh` / `high`）を明示する。
 
 ### 利用者が取る操作（V9）
 

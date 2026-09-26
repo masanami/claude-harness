@@ -9,8 +9,8 @@ tools: Read, Glob, Grep, Bash, Skill
 skills:
   - code-review
 model: opus
-# effort: バグ・正確性・設計の深い検討を要するレビュー中核のため xhigh。
-effort: xhigh
+# effort: バグ・正確性・設計の深い検討を要するレビュー中核のため high（Opus 5.5 の既定 medium より一段上）。
+effort: high
 ---
 
 # コードレビューエージェント

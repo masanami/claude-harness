@@ -179,7 +179,9 @@ model: opus
 
 ## 7. reasoning effort（思考の深さ）の方針
 
-各スキル・サブエージェントは frontmatter の `effort` で reasoning effort を指定できます（Opus 4.8/4.7・Fable 5 で `low` / `medium` / `high` / `xhigh`。`max` は session 専用のため frontmatter では使わない）。frontmatter の `effort` は実行時に session level を override します（環境変数は override しない）。effort は model-dependent（モデルごとに calibrate 済み）です。
+各スキル・サブエージェントは frontmatter の `effort` で reasoning effort を指定できます（`low` / `medium` / `high` / `xhigh`。`max` は session 専用のため frontmatter では使わない）。frontmatter の `effort` は実行時に session level を override します（環境変数は override しない）。effort は model-dependent（モデルごとに calibrate 済み）です。
+
+現在の値は **Opus 5.5 を前提に調整**しています（Issue #264）。Opus 5.5 では既定の effort が `high` から `medium` に変わったため、Opus 4.8/4.7・Fable 5 の頃に決めた値から、`model: opus` を指定したもの（と Opus 5.5 のセッションで動くことが多い `tdd-impl`）を**一段ずつ下げました**。`low` のもの、浅い推論では役割を果たせないもの、`model: sonnet` のものは据え置いています。
 
 ### 割り当ての基本方針
 
@@ -187,20 +189,35 @@ model: opus
 
 | 対象 | 種別 | effort | 理由 |
 |------|------|--------|------|
-| code-reviewer | agent | `xhigh` | バグ・正確性・設計の深い検討 |
-| design-reviewer | agent | `xhigh` | 依存方向・境界の構造的判断 |
-| feature-implementer | agent | `high` | 実装の中核ロジック |
-| ticket-worker | agent | `high` | 1チケットのフロー統括（CI失敗分析・差し戻し判断） |
+| code-reviewer | agent | `high` | バグ・正確性・設計の深い検討（旧値 `xhigh`） |
+| design-reviewer | agent | `high` | 依存方向・境界の構造的判断（旧値 `xhigh`） |
+| defect-sweeper | agent | `high` | 据え置き（下記） |
+| feature-implementer | agent | `high` | 実装の中核ロジック（`model: sonnet` のため対象外） |
+| ticket-worker | agent | `high` | 1チケットのフロー統括（CI失敗分析・差し戻し判断。`model: sonnet` のため対象外） |
 | issue-conflict-predictor | agent | `low` | 1Issueあたりのファイル衝突予測に限定した軽量タスク |
-| e2e-engineer | agent | `medium` | パターン踏襲が中心 |
+| e2e-engineer | agent | `medium` | 据え置き（下記） |
 | doc-verifier | agent | `medium` | 整合性チェック |
 | surface-auditor | agent | `medium` | 指定ファイルの読解・分類（探索・設計判断を含まない） |
-| surface-audit | skill | `high` | 列挙・fan-out・完全性 join の統括（抽出の実務は agent 側） |
-| define-feature | skill | `xhigh` | 要件・クリティカル設計の意思決定 |
-| impl / para-impl / tdd-impl / reduce-debt | skill | `high` | 設計〜実装・負債判断・fan-out 統括 |
-| create-ticket / pr-review-respond / create-e2e / explain-e2e / init-project / init-devcontainer | skill | `medium` | 分解・実装・解説・初期設定 |
+| surface-audit | skill | `high` | 列挙・fan-out・完全性 join の統括（抽出の実務は agent 側。`model: sonnet` のため対象外） |
+| define-feature | skill | `high` | 要件・クリティカル設計の意思決定（旧値 `xhigh`） |
+| impl / para-impl / tdd-impl | skill | `medium` | 設計〜実装の自走フロー。深い検討はレビュー agent 側で担保（旧値 `high`） |
+| create-adr / promote-verify / reduce-debt | skill | `medium` | ADR の線引き・受入基準の整合判定の整形・負債の優先度判断（旧値 `high`） |
+| create-e2e / pr-review-respond | skill | `medium` | 据え置き（下記） |
+| create-ticket / explain-e2e / init-project / init-devcontainer | skill | `medium` | 分解・解説・初期設定 |
 | commit / quality-check / pr-merge | skill | `low` | 定型・機械的処理 |
 | self-review / demo | skill | （無指定＝継承） | 下記参照 |
+
+上表は主なものです。表に無いスキル・エージェント（`model: sonnet` の検証・分類系など）の値と理由は各ファイルの frontmatter と直前の `# effort:` コメントが正本です。
+
+#### Opus 5.5 への調整で据え置いたもの
+
+| 対象 | 種別 | effort | 理由 |
+|------|------|--------|------|
+| defect-sweeper | agent | `high` | 中核が「好意的解釈をせず、文字どおりに従う実装を再現する」推論であり、浅い effort では書き手の意図を補って読む方向へ流れて掃引が成り立たないため |
+| e2e-engineer | agent | `medium` | E2E テストのコードそのものを書く工程のため |
+| create-e2e | skill | `medium` | 同上 |
+| pr-review-respond | skill | `medium` | 指摘への対応の要否を判断して修正する工程で、`low` だと「対応不要」と判断する方向に振れる恐れがあるため |
+| pr-merge | skill | `low` | `low` はそのままにする |
 
 ### スキル→サブエージェント委譲時の effort
 
@@ -211,7 +228,7 @@ model: opus
 
 このため、深い検討が委譲先で行われるスキルは**スキル本体を継承のままにできます**。
 
-- **self-review**: 深い検討は委譲先レビュー agent（`code-reviewer`/`design-reviewer` = `xhigh`）側で効くため、スキル本体は継承。
+- **self-review**: 深い検討は委譲先レビュー agent（`code-reviewer`/`design-reviewer` = `high`）側で効くため、スキル本体は継承。
 - **demo**: ブラウザ操作主体で深い推論を要さないため継承。
 
 > この委譲時の効き方は実機検証で最終確認する余地があります（#25 未決事項Cと関連）。

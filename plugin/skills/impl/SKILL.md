@@ -3,8 +3,8 @@ name: impl
 description: "単一 Issue の1チケット実装フローを、実装フェーズの人間ゲートなしで実行する。複数Issueの並列化・並列度の決定は担わない。Triggers on: '/impl', 'このIssueを実装して', 'Issueを1件実装して'"
 argument-hint: "<Issue番号> [--base <統合ブランチ>] [--worktree <worktreeの絶対パス>]"
 model: opus
-# effort: 設計〜TDD実装〜PRの自走フローを担うため high。
-effort: high
+# effort: 設計〜TDD実装〜PRの自走フローを担うが、Opus 5.5 では既定の medium で足りる（深い検討はレビュー agent 側の high で担保）。
+effort: medium
 ---
 
 # 1チケットの実装フロー（Phase 3〜8）
