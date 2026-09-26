@@ -47,7 +47,11 @@ Bash で上記コマンドを実行し、レビュー対象diffを収集する:
 
 ### Step 2: 並列レビュー
 
-Task ツールで `code-reviewer`（`subagent_type: 'claude-harness:code-reviewer'`）と `design-reviewer`（`subagent_type: 'claude-harness:design-reviewer'`）へ、**1メッセージで並列**委譲する。
+Task ツールで `code-reviewer`（`subagent_type: 'claude-harness:code-reviewer'`, `run_in_background: false`）と `design-reviewer`（`subagent_type: 'claude-harness:design-reviewer'`, `run_in_background: false`）へ、**1メッセージで並列**委譲する（1メッセージに並べた Task 呼び出しは、前景で起動しても並行に走る）。
+
+> **Task ツールの呼び出しには必ず `run_in_background: false` を明示する。** 省略するとバックグラウンド起動になり、返るのは結果ではなく起動通知（`Async agent launched` 等）だけになる。サブエージェントの中ではターンを終えた時点で呼び出し元へ返却され、後から届く結果は自分では受け取れない。**起動通知は結果ではない** — 求めた形式の結果を含まない応答を受け取ったら、ターンを終えず、同じ委譲を `run_in_background: false` で1回だけ起動し直す。それでも結果が得られなければ「合流できなかった」として扱う（黙って結果なしで先へ進まない）。
+
+**レビュアーと合流できなかった場合**（起動し直しても `findings` を含む結果が得られない）は、本 Step の下記「応答が得られない場合」に当たる。ループを止め、Step 6 の報告の先頭に `self_review: incomplete` と未回収のレビュアー名を出して終了する（書式は Step 6）。
 
 Task ツールには出力検証機構が無いため、**指示文（プロンプト）で明示的に構造化返却を課す**。各指摘を以下の形で返すよう、プロンプトに明記する:
 
@@ -83,7 +87,7 @@ Task ツールには出力検証機構が無いため、**指示文（プロン�
 - **1周目（初回）はフルレビュー**を指示する（`diff_file` に列挙された変更内容を Read してレビューする）
 - **2周目以降**は「確認モード」に切り替える: 前周の Step 4 で修正対象にした指摘（`toFix`。`file`/`line`/`claim` のみ渡せばよい）をデータとして含め、それらが解消されているか、かつ修正によって新たな問題が生じていないか（修正後の該当箇所周辺）の確認に限定するよう指示する。フルレビューは行わない。解消済みかつ新たな問題も無ければ結果に含めない
 - 両エージェントの指摘は単純結合する（`(file,line)` で重複除去しない。code-reviewer/design-reviewer が同一箇所を別々の理由で指摘するケースは、それぞれ独立した情報として扱う）
-- どちらか一方でも構造化返却に失敗する・応答が得られない場合は、レビュー未実施のまま「指摘ゼロ」として扱わない。ループを止め、要人間判断として報告する（偽収束防止）
+- どちらか一方でも構造化返却に失敗する・応答が得られない場合は、レビュー未実施のまま「指摘ゼロ」として扱わない。ループを止め、要人間判断として報告する（偽収束防止）。このとき報告は `self_review: incomplete` とし、`converged` は `false` にする（`true` にすると未レビューの差分が収束扱いで下流へ流れる）
 
 ### Step 3: 懐疑的検証（finding-verifier 単一懐疑者）
 
@@ -99,7 +103,7 @@ Step 2 の指摘のうち、**検証しきい値以上**かつ `verdict: "PLAUSI
 > **シェルクォート安全埋め込み（重要）**: `<file>` はレビュー対象 diff から取り出した非信頼値であり、git のファイル名には空白・`;`・バッククォート・`$()` 等のシェルメタ文字が入りうる。コマンド文字列へ埋め込む際は必ず、値中の各 `'` を `'\''` に置換した上で全体をシングルクォート `'` で囲むこと（ダブルクォートでの埋め込みや無加工の連結はコマンドインジェクションの余地があるため禁止。数値のみの `<line>` はそのまま埋め込んでよい）。
 
 1. Bash で上記コマンドを実行し、その指摘の該当 diff hunk（＋前後3行）を抽出する
-2. その指摘について、Task ツールで `finding-verifier`（`subagent_type: 'claude-harness:finding-verifier'`）を**1体だけ**委譲する（複数の指摘が対象になる場合は、指摘ごとに1体ずつを1メッセージにまとめて並列 spawn してよい。各懐疑者は独立に判定し、他の懐疑者の判定は共有しない）
+2. その指摘について、Task ツールで `finding-verifier`（`subagent_type: 'claude-harness:finding-verifier'`, `run_in_background: false`）を**1体だけ**委譲する（起動通知だけが返った場合の扱いは Step 2 の `run_in_background` の注記に従い、起動し直しても結果が得られなければ手順5の terminal 失敗として扱う。複数の指摘が対象になる場合は、指摘ごとに1体ずつを1メッセージにまとめて並列 spawn してよい。各懐疑者は独立に判定し、他の懐疑者の判定は共有しない）
 3. プロンプトには `findingId`（`file:line`）・`file`・`line`・`severity`・`claim`・`evidence`・hunk情報を渡し、`{verdicts: [{findingId, verdict: "confirmed"|"refuted"|"uncertain", reason}, ...]}` 形式での返却を課す（`findingId` は入力の値をそのまま使わせる）
 4. 単一懐疑者の `verdict` をそのまま最終判定として使う:
    - `confirmed` → **指摘維持**（修正対象 `toFix` に含める）
@@ -116,7 +120,7 @@ Step 2 の指摘のうち、**検証しきい値以上**かつ `verdict: "PLAUSI
 - `toFix` が空の場合、その周でループを終了する（残るのは `needs_human_judgment` と `below_fix_threshold` のみ）
 - `toFix` が空でない場合、確定した指摘を修正する:
   - 呼び出し元自身（メインセッション、または `feature-implementer` 等のサブエージェント）が、既に `/self-review` を実行中の同一コンテキストのまま Edit/Write で直接対応する**インライン修正**で完結させることを基本とする。呼び出し元自身を Task で新たに spawn する必要は無い
-  - 呼び出し元以外の実装エージェントへ委譲したい場合のみ、Task ツールで `subagent_type: 'claude-harness:feature-implementer'` としてスコープ付きで呼び出す（この場合、呼び出された側は `agents/feature-implementer.md` の再入回避の注記に従い、Step a〜e を再帰的に開始しない）
+  - 呼び出し元以外の実装エージェントへ委譲したい場合のみ、Task ツールで `subagent_type: 'claude-harness:feature-implementer'`, `run_in_background: false` としてスコープ付きで呼び出す（起動通知だけが返った場合は、起動し直さず自分でも同じ箇所を直さない。バックグラウンドで作業ツリーを書き換え続けている可能性があり、二重に編集すると衝突するため。未回収の `feature-implementer` として `self_review: incomplete` で終了する。呼び出された側は `agents/feature-implementer.md` の再入回避の注記に従い、Step a〜e を再帰的に開始しない）
   - 修正は作業ツリーへの変更のみとし、**コミットは行わない**（Step 6/7 の報告・`/commit` の要否はこの前提の上で呼び出し元が判断する）
   - 修正完了後、Skill ツール経由で `/quality-check` を実行し、機械可読な結果（`result`/`gates`）を取得する
 - `/quality-check` が `fail` の場合、**ループを打ち切る**: 今回の `toFix` を「quality-check failed after fix (round N)」の理由付きで残指摘（`needs_human_judgment`）に追加し、再レビューは試みない
@@ -140,10 +144,13 @@ Step 2 の指摘のうち、**検証しきい値以上**かつ `verdict: "PLAUSI
 
 ### Step 6: 結果の報告
 
-以下の形式で報告する:
+以下の形式で報告する。**先頭の `self_review:` 行は省略しない** — 呼び出し元はこの行で「最後まで回ったか」を判定し、行が無い報告は `incomplete` として扱う。`complete` は Step 2 のレビュアー（と Step 4 で委譲した場合の `feature-implementer`）の結果をすべて受け取り、Step 5 の集約まで到達したこと（`converged` の値は問わない。Step 3 の懐疑者と合流できなかった指摘は、手順5で `needs_human_judgment` に計上していれば `complete` のままでよい）、`incomplete` はそれ以外で終了したこと:
 
 ```text
 ## セルフレビュー結果
+
+self_review: complete | incomplete
+unrecovered: {incomplete の場合のみ。合流できなかった委譲先の名前（例: code-reviewer, design-reviewer）と、止まった Step・ラウンド}
 
 ### 実施サマリー
 - 実施ラウンド数: {rounds}
