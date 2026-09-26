@@ -26,6 +26,44 @@ func IsReserved(outcome string) bool {
 	return false
 }
 
+// BudgetLimit は unit の累計予算（USD）を置く limits の名前（§4.3）。llm ステップを持つワークフローは必ず定義する。
+const BudgetLimit = "budget_usd"
+
+// InterruptedGate は runtime が落ちて running のまま残ったステップ実行を送る組み込みのゲート（§4.5）。
+// ステップ id としては使えない。
+const InterruptedGate = "interrupted"
+
+// ゲートの型（§3.2）と決める主体（§5.3）。
+const (
+	GateInput   = "input"
+	GateObserve = "observe"
+
+	DeciderHuman  = "human"
+	DeciderParent = "parent"
+	DeciderAny    = "any"
+)
+
+// RequiresTTY は、ゲートの解決に端末（TTY）が要るかを返す。要るのは input 型かつ decider: human のゲートだけ
+// （Q9・N1。observe 型は resume が判断を運ばず、runtime が外部の実状態を確かめるだけなので要求しない）。
+func RequiresTTY(gateType, decider string) bool {
+	return gateType == GateInput && decider == DeciderHuman
+}
+
+// observations は Go に登録された observe 型ゲートの観測（名前 → 返しうる outcome）。
+// 観測の実体は engine が持ち、登録は engine.RegisterObserver を通す（読み込み時に outcome の網羅を検査するため）。
+var observations = map[string][]string{}
+
+// RegisterObservation は観測の名前と outcome を登録する。
+func RegisterObservation(name string, outcomes []string) {
+	observations[name] = append([]string(nil), outcomes...)
+}
+
+// Observation は登録された観測の outcome を返す。
+func Observation(name string) ([]string, bool) {
+	o, ok := observations[name]
+	return o, ok
+}
+
 // Workflow は読み込んだワークフロー定義。Steps の先頭が開始ステップ。
 type Workflow struct {
 	Schema      string
@@ -133,12 +171,33 @@ type Step struct {
 	Exit         []*ExitEntry
 	Timeout      time.Duration
 
+	// llm 種類（§3.2・§4.3・§4.4）
+	Prompt      string  // ワークフローのディレクトリからの相対パス
+	Agent       string  // claude-harness:<エージェント名>（--agent へ渡す）
+	Session     string  // new | continue
+	SessionFrom string  // continue:<step> の <step>
+	BudgetUSD   float64 // --max-budget-usd の上限（残予算と小さいほうを付与する）
+
+	// gate 種類（§3.2・§5.2・§5.3）
+	GateType        string // input | observe
+	Decider         string // human | parent | any
+	RequestedAction string
+	GateInputs      []string // input 型: resume で受け付ける値（そのまま outcome になる）
+	Observe         string   // observe 型: 登録された観測の名前
+
 	// 読み込み時に解決するもの
 	OutputSchema *OutputSchema
 }
 
 // Outcomes はステップが返しうる outcome（予約値を除く）を宣言順に返す。
 func (s *Step) Outcomes() []string {
+	if s.Kind == "gate" {
+		if s.GateType == GateObserve {
+			o, _ := Observation(s.Observe)
+			return o
+		}
+		return s.GateInputs
+	}
 	if len(s.Exit) > 0 {
 		var out []string
 		seen := map[string]bool{}

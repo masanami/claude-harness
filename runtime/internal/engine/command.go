@@ -23,9 +23,55 @@ const maxStdout = 32 << 20
 // timeout・cancel ではグループごと止める（スクリプトが起動した孫プロセスを残さない）。
 func (e *Engine) execute(ctx context.Context, st *runstate.State, u *runstate.Unit, step *workflow.Step) result {
 	attempt := u.Attempts(step.ID) + 1
-	res := e.executeAttempt(ctx, st, u, step, attempt)
+	var res result
+	switch step.Kind {
+	case "command":
+		res = e.executeAttempt(ctx, st, u, step, attempt)
+	case "llm":
+		res = e.executeLLM(ctx, st, u, step, attempt)
+	default:
+		res = result{err: fmt.Errorf("step %s: kind %s cannot be executed (a gate is opened by the transition into it)", step.ID, step.Kind)}
+	}
 	res.attempt = attempt
 	return res
+}
+
+// waitOutcome は子プロセスを待った結果。
+type waitOutcome int
+
+const (
+	exited waitOutcome = iota
+	timedOut
+	cancelledByRequest
+)
+
+// wait は子プロセスの終了・timeout・cancel の要求のどれかを待つ。timeout と cancel ではグループごと止める。
+func (e *Engine) wait(ctx context.Context, pid int, done chan error, timeout time.Duration) (waitOutcome, error) {
+	var deadline <-chan time.Time
+	if timeout > 0 {
+		t := time.NewTimer(timeout)
+		defer t.Stop()
+		deadline = t.C
+	}
+	tick := time.NewTicker(e.poll())
+	defer tick.Stop()
+	for {
+		select {
+		case err := <-done:
+			return exited, err
+		case <-deadline:
+			e.stop(pid, done)
+			return timedOut, nil
+		case <-tick.C:
+			if e.cancelRequested(ctx) {
+				e.stop(pid, done)
+				return cancelledByRequest, nil
+			}
+		case <-ctx.Done():
+			e.stop(pid, done)
+			return cancelledByRequest, nil
+		}
+	}
 }
 
 func (e *Engine) executeAttempt(ctx context.Context, st *runstate.State, u *runstate.Unit, step *workflow.Step, attempt int) result {
@@ -79,32 +125,12 @@ func (e *Engine) executeAttempt(ctx context.Context, st *runstate.State, u *runs
 		return result{err: err}
 	}
 
-	var timeout <-chan time.Time
-	if step.Timeout > 0 {
-		t := time.NewTimer(step.Timeout)
-		defer t.Stop()
-		timeout = t.C
-	}
-	tick := time.NewTicker(e.poll())
-	defer tick.Stop()
-	var waitErr error
-wait:
-	for {
-		select {
-		case waitErr = <-done:
-			break wait
-		case <-timeout:
-			e.stop(cmd.Process.Pid, done)
-			return fail("step_timeout", fmt.Sprintf("exceeded timeout %s", step.Timeout), nil)
-		case <-tick.C:
-			if e.cancelRequested(ctx) {
-				e.stop(cmd.Process.Pid, done)
-				return result{cancelled: true}
-			}
-		case <-ctx.Done():
-			e.stop(cmd.Process.Pid, done)
-			return result{cancelled: true}
-		}
+	how, waitErr := e.wait(ctx, cmd.Process.Pid, done, step.Timeout)
+	switch how {
+	case timedOut:
+		return fail("step_timeout", fmt.Sprintf("exceeded timeout %s", step.Timeout), nil)
+	case cancelledByRequest:
+		return result{cancelled: true}
 	}
 
 	// 正常に終わった後もグループに残る孫プロセス（スクリプトが背後で起動したもの）を止める。

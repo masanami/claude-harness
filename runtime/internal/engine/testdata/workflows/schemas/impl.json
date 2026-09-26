@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["outcome"],
+  "additionalProperties": false,
+  "properties": {
+    "outcome": { "type": "string", "enum": ["pass", "failure"] },
+    "summary": { "type": "string" }
+  }
+}

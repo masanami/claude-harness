@@ -11,7 +11,14 @@ import (
 type Options struct {
 	// ScriptsDir は command の run が指すスクリプト（<ScriptsDir>/<run>.sh）の置き場。
 	ScriptsDir string
+	// AgentsDir は llm の agent が指すエージェント定義（<AgentsDir>/<名前>.md）の置き場。
+	// 空なら ScriptsDir の隣の agents/（plugin/scripts に対する plugin/agents）。
+	AgentsDir string
 }
+
+// AgentPlugin は llm の agent に書けるプラグインの名前空間（本リポジトリのプラグイン名）。
+// `claude -p --agent claude-harness:<名前>` で主体に据えられることは PR-3 で実測した（§1.1）。
+const AgentPlugin = "claude-harness"
 
 // LoadAndValidate は読み込みと検証をまとめて行う。問題があれば Problems を返す。
 func LoadAndValidate(path string, opts Options) (*Workflow, error) {
@@ -47,6 +54,10 @@ func Validate(wf *Workflow, opts Options) Problems {
 	for _, s := range wf.Steps {
 		v.stepKind(s)
 	}
+	if len(wf.Steps) > 0 && wf.Steps[0].Kind == "gate" {
+		v.errf(wf.Steps[0].Line, "steps.%s: the first step must not be a gate (a gate is opened by a transition into it)", wf.Steps[0].ID)
+	}
+	v.budget()
 	for _, s := range wf.Steps {
 		v.onTable(s)
 	}
@@ -56,6 +67,7 @@ func Validate(wf *Workflow, opts Options) Problems {
 	}
 	g := buildGraph(wf)
 	v.references(g)
+	v.sessions(g)
 	v.reachability(g)
 	v.uncountedCycles()
 	return v.problems
@@ -65,6 +77,135 @@ func (v *validator) stepKind(s *Step) {
 	switch s.Kind {
 	case "command":
 		v.command(s)
+	case "llm":
+		v.llm(s)
+	case "gate":
+		v.gate(s)
+	}
+}
+
+// budget は、llm ステップを持つワークフローが unit の累計予算（limits.budget_usd）を定義していることを確かめる
+// （上限の無い累計は数えても止められない。§4.3）。
+func (v *validator) budget() {
+	hasLLM := false
+	for _, s := range v.wf.Steps {
+		if s.Kind == "llm" {
+			hasLLM = true
+		}
+	}
+	if !hasLLM {
+		return
+	}
+	l := v.wf.Limit(BudgetLimit)
+	if l == nil {
+		v.errf(0, "limits.%s is required when the workflow has llm steps (the unit's total budget in USD; see §4.3)", BudgetLimit)
+	} else if !(l.Value > 0) {
+		v.errf(l.Line, "limits.%s must be a positive amount", BudgetLimit)
+	}
+}
+
+func (v *validator) llm(s *Step) {
+	if s.Prompt == "" {
+		v.errf(s.Line, "steps.%s: prompt is required for kind llm", s.ID)
+	} else if filepath.IsAbs(s.Prompt) || strings.HasPrefix(filepath.Clean(s.Prompt), "..") {
+		v.errf(s.Line, "steps.%s: prompt %q must be a path inside the workflow directory", s.ID, s.Prompt)
+	} else if fi, err := os.Stat(filepath.Join(v.wf.Dir, s.Prompt)); err != nil || !fi.Mode().IsRegular() {
+		v.errf(s.Line, "steps.%s: prompt %q does not exist", s.ID, s.Prompt)
+	}
+	if s.Output == "" {
+		v.errf(s.Line, "steps.%s: output is required for kind llm (the typed output and its outcome enum come from it)", s.ID)
+	} else {
+		v.outputSchema(s)
+	}
+	if !(s.BudgetUSD > 0) {
+		v.errf(s.Line, "steps.%s: budget_usd is required for kind llm (the most one launch may spend)", s.ID)
+	}
+	if s.Agent != "" {
+		v.agent(s)
+	}
+	if s.Session == "continue" {
+		src := v.wf.Step(s.SessionFrom)
+		switch {
+		case src == nil:
+			v.errf(s.Line, "steps.%s: session continue:%s refers to a step that does not exist", s.ID, s.SessionFrom)
+		case src.Kind != "llm":
+			v.errf(s.Line, "steps.%s: session continue:%s refers to a %s step; only llm steps have a Claude session", s.ID, s.SessionFrom, src.Kind)
+		}
+	}
+	for _, o := range s.Outcomes() {
+		if IsReserved(o) {
+			v.errf(s.Line, "steps.%s: outcome %q collides with a reserved value (%s)", s.ID, o, strings.Join(ReservedOutcomes, ", "))
+		}
+	}
+}
+
+func (v *validator) agent(s *Step) {
+	plugin, name, _ := strings.Cut(s.Agent, ":")
+	if plugin != AgentPlugin {
+		v.errf(s.Line, "steps.%s: agent %q: only agents of the %s plugin can be checked (write %s:<name>)", s.ID, s.Agent, AgentPlugin, AgentPlugin)
+		return
+	}
+	dir := v.opts.AgentsDir
+	if dir == "" && v.opts.ScriptsDir != "" {
+		dir = filepath.Join(filepath.Dir(v.opts.ScriptsDir), "agents")
+	}
+	if dir == "" {
+		v.errf(s.Line, "steps.%s: cannot check agent %q: agents directory is not set", s.ID, s.Agent)
+		return
+	}
+	if fi, err := os.Stat(filepath.Join(dir, name+".md")); err != nil || !fi.Mode().IsRegular() {
+		v.errf(s.Line, "steps.%s: agent %q does not exist (%s)", s.ID, s.Agent, filepath.Join(dir, name+".md"))
+	}
+}
+
+func (v *validator) gate(s *Step) {
+	switch s.Decider {
+	case DeciderHuman, DeciderParent, DeciderAny:
+	case "":
+		v.errf(s.Line, "steps.%s: decider is required for kind gate (human, parent or any)", s.ID)
+	default:
+		v.errf(s.Line, "steps.%s: decider %q must be human, parent or any", s.ID, s.Decider)
+	}
+	if strings.TrimSpace(s.RequestedAction) == "" {
+		v.errf(s.Line, "steps.%s: requested_action is required for kind gate (what the resolver is asked to do)", s.ID)
+	}
+	switch s.GateType {
+	case GateInput:
+		if len(s.GateInputs) == 0 {
+			v.errf(s.Line, "steps.%s: an input gate needs inputs (the values resume accepts; each becomes the outcome)", s.ID)
+		}
+		if s.Observe != "" {
+			v.errf(s.Line, "steps.%s: observe is only valid for type observe", s.ID)
+		}
+		if len(s.With) > 0 {
+			v.errf(s.Line, "steps.%s: with is only valid for type observe (an input gate takes its value from resume)", s.ID)
+		}
+	case GateObserve:
+		if len(s.GateInputs) > 0 {
+			v.errf(s.Line, "steps.%s: inputs is only valid for type input (an observe gate takes its outcome from the observation, not from the resolver)", s.ID)
+		}
+		if s.Observe == "" {
+			v.errf(s.Line, "steps.%s: an observe gate needs observe (the name of a registered observation)", s.ID)
+		} else if _, ok := Observation(s.Observe); !ok {
+			v.errf(s.Line, "steps.%s: observe %q is not a registered observation", s.ID, s.Observe)
+		}
+	case "":
+		v.errf(s.Line, "steps.%s: type is required for kind gate (input or observe)", s.ID)
+	default:
+		v.errf(s.Line, "steps.%s: type %q must be input or observe", s.ID, s.GateType)
+	}
+	for _, o := range s.Outcomes() {
+		if IsReserved(o) {
+			v.errf(s.Line, "steps.%s: outcome %q collides with a reserved value (%s)", s.ID, o, strings.Join(ReservedOutcomes, ", "))
+		}
+	}
+	for _, e := range s.On {
+		if IsReserved(e.Outcome) {
+			v.errf(e.Line, "steps.%s.on: a gate does not produce the reserved value %q", s.ID, e.Outcome)
+		}
+		if e.T.Kind == TRetry {
+			v.errf(e.Line, "steps.%s.on.%s: retry is not valid on a gate (resolve the gate again instead)", s.ID, e.Outcome)
+		}
 	}
 }
 
@@ -348,7 +489,10 @@ func (v *validator) valueType(g *graph, b *Binding, what, stepID, outcome string
 			v.errf(b.Line, "%s: $gate.note is only valid in the with of a transition leaving an input gate (see §3.3)", what)
 			return nil
 		}
-		v.errf(b.Line, "%s: $gate.note is only valid in the with of a transition leaving an input gate; step %q is a %s step", what, stepID, v.wf.Step(stepID).Kind)
+		if s := v.wf.Step(stepID); s.Kind == "gate" && s.GateType == GateInput {
+			return &Type{Name: "string"}
+		}
+		v.errf(b.Line, "%s: $gate.note is only valid in the with of a transition leaving an input gate; step %q is not an input gate", what, stepID)
 		return nil
 	}
 	return nil
@@ -417,6 +561,8 @@ func (v *validator) typeOfSupplied(g *graph, e edge, b *Binding) *Type {
 			t, _ := stepFieldType(src, r.Path)
 			return t
 		}
+	case RefGate:
+		return &Type{Name: "string"}
 	}
 	return nil
 }
@@ -442,6 +588,7 @@ func (v *validator) acceptable(s *Step, t *Type, line int, what string) {
 		}
 		v.errf(line, "%s: kind command passes values as argv, so it accepts scalars and arrays of scalars, not %s", what, t)
 	}
+	// llm は with を JSON のデータブロックとして添付し（§3.3）、gate（observe）は観測へ JSON で渡すので、型を問わない。
 }
 
 func isScalar(t *Type) bool {
@@ -450,6 +597,23 @@ func isScalar(t *Type) bool {
 		return true
 	}
 	return false
+}
+
+// sessions は、session: continue:<step> の <step> が、そのステップへ至るどの経路でも先に実行されていることを確かめる
+// （引き継ぐセッションが無い経路を作らない）。<step> から出る辺をすべて取り除いたグラフで到達できるなら、経由しない経路がある。
+func (v *validator) sessions(g *graph) {
+	for _, s := range v.wf.Steps {
+		if s.Kind != "llm" || s.Session != "continue" {
+			continue
+		}
+		if src := v.wf.Step(s.SessionFrom); src == nil || src.Kind != "llm" {
+			continue // stepKind が報告済み
+		}
+		r := g.reachable(func(e edge) bool { return e.from == s.SessionFrom })
+		if r[s.ID] {
+			v.errf(s.Line, "steps.%s: session continue:%s: step %q has not necessarily run on every path that reaches %q, so there may be no session to continue", s.ID, s.SessionFrom, s.SessionFrom, s.ID)
+		}
+	}
 }
 
 // --- グラフ -------------------------------------------------------------------

@@ -51,6 +51,7 @@ var (
 	reRefInput = regexp.MustCompile(`^\$inputs\.([A-Za-z_][A-Za-z0-9_]*)$`)
 	reRefStep  = regexp.MustCompile(`^\$steps\.([a-z][a-z0-9-]*)((?:\.[A-Za-z_][A-Za-z0-9_]*)+)$`)
 	reRefEdge  = regexp.MustCompile(`^\$edge\.([A-Za-z_][A-Za-z0-9_]*)$`)
+	reAgent    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$`) // <プラグイン>:<エージェント>
 )
 
 // exprKeys は条件・繰り返し・評価を思わせるキー。文法に無いキーはすべて拒否されるが、
@@ -67,10 +68,12 @@ type kindSpec struct {
 	keys []string
 }
 
-// kinds は Go に登録されたステップ種類（§3.2）。PR-2 では command だけ。
+// kinds は Go に登録されたステップ種類（§3.2）。PR-3 で llm と gate を足した。
 // 種類を足すときは、ここと engine の実行器の両方に足す。
 var kinds = map[string]kindSpec{
 	"command": {keys: []string{"kind", "description", "run", "with", "output", "outcome_field", "exit", "timeout", "on"}},
+	"llm":     {keys: []string{"kind", "description", "prompt", "agent", "session", "with", "output", "budget_usd", "timeout", "on"}},
+	"gate":    {keys: []string{"kind", "description", "type", "decider", "requested_action", "inputs", "observe", "with", "on"}},
 }
 
 // Kinds は登録済みの種類名を返す。
@@ -419,6 +422,10 @@ func (p *parser) steps(n *yaml.Node) []*Step {
 			p.errf(pr.knode, "step id %q must match %s", pr.key, reStepID.String())
 			continue
 		}
+		if pr.key == InterruptedGate {
+			p.errf(pr.knode, "step id %q is reserved for the runtime's built-in gate (a step left running by a runner that died)", pr.key)
+			continue
+		}
 		if s := p.step(pr.key, pr.knode, pr.val); s != nil {
 			out = append(out, s)
 		}
@@ -473,9 +480,45 @@ func (p *parser) step(id string, knode, n *yaml.Node) *Step {
 					s.Timeout = d
 				}
 			}
+		case "prompt":
+			s.Prompt, _ = p.str(f.val, fw)
+		case "agent":
+			s.Agent, _ = p.matched(f.val, fw, reAgent)
+		case "session":
+			if str, ok := p.str(f.val, fw); ok {
+				switch {
+				case str == "new":
+					s.Session = "new"
+				case strings.HasPrefix(str, "continue:") && reStepID.MatchString(strings.TrimPrefix(str, "continue:")):
+					s.Session, s.SessionFrom = "continue", strings.TrimPrefix(str, "continue:")
+				default:
+					p.errf(f.val, "%s must be new or continue:<step id> (got %q)", fw, str)
+				}
+			}
+		case "budget_usd":
+			if f.val.Kind != yaml.ScalarNode || (f.val.Tag != "!!int" && f.val.Tag != "!!float") {
+				p.errf(f.val, "%s must be an amount literal", fw)
+			} else if v, err := strconv.ParseFloat(f.val.Value, 64); err != nil || !(v > 0) {
+				p.errf(f.val, "%s must be a positive amount", fw)
+			} else {
+				s.BudgetUSD = v
+			}
+		case "type":
+			s.GateType, _ = p.str(f.val, fw)
+		case "decider":
+			s.Decider, _ = p.str(f.val, fw)
+		case "requested_action":
+			s.RequestedAction, _ = p.str(f.val, fw)
+		case "inputs":
+			s.GateInputs = p.outcomeList(f.val, fw)
+		case "observe":
+			s.Observe, _ = p.matched(f.val, fw, reOutcome)
 		case "on":
 			onNode = f.val
 		}
+	}
+	if s.Kind == "llm" && s.Session == "" {
+		s.Session = "new"
 	}
 	if onNode == nil {
 		p.errf(n, "%s: on is required", what)
@@ -483,6 +526,35 @@ func (p *parser) step(id string, knode, n *yaml.Node) *Step {
 		s.On = p.onTable(onNode, what+".on")
 	}
 	return s
+}
+
+// outcomeList は input 型ゲートの inputs（outcome の値の列）を読む。
+func (p *parser) outcomeList(n *yaml.Node, what string) []string {
+	if !p.plain(n, what) {
+		return nil
+	}
+	if n.Kind != yaml.SequenceNode {
+		p.errf(n, "%s must be a list of values", what)
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, it := range n.Content {
+		if !p.plain(it, what) {
+			continue
+		}
+		v, ok := p.matched(it, what+" item", reOutcome)
+		if !ok {
+			continue
+		}
+		if seen[v] {
+			p.errf(it, "%s: duplicate value %q", what, v)
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 func (p *parser) exitTable(n *yaml.Node, what string) []*ExitEntry {

@@ -30,6 +30,9 @@ type Engine struct {
 	ScriptsDir string
 	Cwd        string
 
+	// ClaudeBin は llm 種類が起動する claude の実行ファイル（空なら PATH の claude）。テストは偽の claude を指す。
+	ClaudeBin string
+
 	// KillGrace は停止時に SIGTERM から SIGKILL までの猶予。PollInterval は cancel の印を見る間隔。
 	KillGrace    time.Duration
 	PollInterval time.Duration
@@ -112,7 +115,8 @@ func (e *Engine) Loop(ctx context.Context) (*runstate.State, error) {
 		if err != nil {
 			return nil, err
 		}
-		if runstate.Terminal(st.Status) {
+		if runstate.Terminal(st.Status) || st.Status == runstate.StatusWaiting {
+			// 待機（ゲート）はプロセスを終えて、状態・要求操作・再開方法を返す（§5.2。daemon は持たない）。
 			return st, nil
 		}
 		// cancel の印（ファイル）を置く前に cancel が落ちても、記録された要求は拾う。
@@ -169,9 +173,9 @@ func CancelEvents(st *runstate.State, actor, channel, note string) []runstate.Ev
 	var evs []runstate.Event
 	for _, u := range st.Units {
 		if x := u.Running(); x != nil {
-			evs = append(evs, runstate.Event{Type: runstate.EvStepFinished, StepFinished: &runstate.StepFinished{
-				Unit: u.Key, Step: x.Step, Attempt: x.Attempt, Cancelled: true, Error: "cancelled",
-			}})
+			fin := &runstate.StepFinished{Unit: u.Key, Step: x.Step, Attempt: x.Attempt, Cancelled: true, Error: "cancelled"}
+			chargeUnknown(fin, x.BudgetGrantedUSD)
+			evs = append(evs, runstate.Event{Type: runstate.EvStepFinished, StepFinished: fin})
 		}
 	}
 	return append(evs, runstate.Event{Type: runstate.EvRunCancelled, RunCancelled: &runstate.RunCancelled{
@@ -189,17 +193,49 @@ type result struct {
 	errText   string
 	cancelled bool
 	err       error // 記録そのものに失敗した（run を進められない）
+
+	// llm 種類の費用（runstate.StepFinished の同名フィールドへ写す）
+	costUSD         *float64
+	costUnknown     bool
+	costReportedUSD *float64
+	sessionID       string
+}
+
+// chargeUnknown は費用が得られなかった実行に、付与した上限額を消費したものとして数える（fail-closed。§4.3・Q15）。
+// granted が nil（llm でない・起動していない）なら何もしない。
+func chargeUnknown(fin *runstate.StepFinished, granted *float64) {
+	if granted == nil {
+		return
+	}
+	g := *granted
+	fin.CostUSD, fin.CostUnknown = &g, true
 }
 
 // decide は結果から step_finished と遷移のイベントを作る。予約値が on に無ければ run を失敗にする（fail-closed）。
 func (e *Engine) decide(st *runstate.State, u *runstate.Unit, step *workflow.Step, res result) ([]runstate.Event, error) {
 	// st は execute の前に読んだ状態なので、この実行の番号は result が持つ。
-	attempt := res.attempt
 	evs := []runstate.Event{{Type: runstate.EvStepFinished, StepFinished: &runstate.StepFinished{
-		Unit: u.Key, Step: step.ID, Attempt: attempt, Outcome: res.outcome, Reserved: res.reserved,
+		Unit: u.Key, Step: step.ID, Attempt: res.attempt, Outcome: res.outcome, Reserved: res.reserved,
 		Output: res.output, ExitCode: res.exitCode, Error: res.errText,
+		CostUSD: res.costUSD, CostUnknown: res.costUnknown, CostReportedUSD: res.costReportedUSD, SessionID: res.sessionID,
 	}}}
 	// 遷移の with が $steps.<このステップ> を読むとき、いま得た出力を使う。
+	cur := succeeded(u)
+	if !res.reserved {
+		cur.outcomes[step.ID] = res.outcome
+		if res.output != nil {
+			cur.outputs[step.ID] = res.output
+		}
+	}
+	tevs, err := e.transitionEvents(st, u, step, res.outcome, res.reserved, cur)
+	if err != nil {
+		return nil, err
+	}
+	return append(evs, tevs...), nil
+}
+
+// succeeded は unit の成功した実行の値（$steps 参照の解決元）の写し。
+func succeeded(u *runstate.Unit) done {
 	cur := done{outputs: map[string]json.RawMessage{}, outcomes: map[string]string{}}
 	for k, v := range u.Outputs {
 		cur.outputs[k] = v
@@ -207,24 +243,35 @@ func (e *Engine) decide(st *runstate.State, u *runstate.Unit, step *workflow.Ste
 	for k, v := range u.Outcomes {
 		cur.outcomes[k] = v
 	}
-	if !res.reserved {
-		cur.outcomes[step.ID] = res.outcome
-		if res.output != nil {
-			cur.outputs[step.ID] = res.output
-		}
-	}
-	tr := &runstate.Transition{Unit: u.Key, From: step.ID, Outcome: res.outcome}
-	t := step.OnFor(res.outcome)
+	return cur
+}
+
+// transitionEvents は step の outcome から遷移のイベントを作る。遷移先がゲートならゲートを開き（ラウンドが閉じる）、
+// 終端なら run を終える。予約値が on に無ければ run を失敗にする（fail-closed）。
+func (e *Engine) transitionEvents(st *runstate.State, u *runstate.Unit, step *workflow.Step, outcome string, reserved bool, cur done) ([]runstate.Event, error) {
+	tr := &runstate.Transition{Unit: u.Key, From: step.ID, Outcome: outcome}
+	t := step.OnFor(outcome)
 	if t == nil {
-		if !res.reserved {
-			return nil, fmt.Errorf("step %s returned outcome %q with no transition (the workflow was not validated)", step.ID, res.outcome)
+		if !reserved {
+			return nil, fmt.Errorf("step %s returned outcome %q with no transition (the workflow was not validated)", step.ID, outcome)
 		}
-		tr.Action, tr.Reason, tr.Default = "fail", res.outcome, true
+		tr.Action, tr.Reason, tr.Default = "fail", outcome, true
 	} else if err := e.resolve(st, u, step, t, cur, tr); err != nil {
 		return nil, err
 	}
-	evs = append(evs, runstate.Event{Type: runstate.EvTransition, Transition: tr})
+	if tr.Action == "step" && !tr.Retry {
+		if target := e.WF.Step(tr.To); target != nil && target.Kind == "gate" {
+			tr.Action = "gate"
+		}
+	}
+	evs := []runstate.Event{{Type: runstate.EvTransition, Transition: tr}}
 	switch tr.Action {
+	case "gate":
+		target := e.WF.Step(tr.To)
+		if target == nil || target.Kind != "gate" {
+			return nil, fmt.Errorf("gate %q is not a gate step of workflow %s", tr.To, e.WF.ID)
+		}
+		evs = append(evs, gateOpenedEvent(u.Key, target))
 	case "fail":
 		evs = append(evs, runstate.Event{Type: runstate.EvRunFinished, RunFinished: &runstate.RunFinished{Status: runstate.StatusFailed, Reason: tr.Reason}})
 	case "done":
@@ -234,10 +281,11 @@ func (e *Engine) decide(st *runstate.State, u *runstate.Unit, step *workflow.Ste
 }
 
 // resolve は遷移先を決める。limit は unit 単位の累計、retry はラウンド単位で数える（§3.1）。
-// done は成功したステップの値（$steps 参照の解決元）。
+// done は成功したステップの値（$steps 参照の解決元）と、ゲートの resume で添えられた自由記述（$gate.note）。
 type done struct {
 	outputs  map[string]json.RawMessage
 	outcomes map[string]string
+	note     *string
 }
 
 func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.Step, t *workflow.Transition, cur done, tr *runstate.Transition) error {
@@ -282,7 +330,7 @@ func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.St
 			}
 		}
 	case workflow.TGate:
-		return fmt.Errorf("gate transitions are not supported in this version")
+		tr.Action, tr.To = "gate", t.Target
 	}
 	return nil
 }
@@ -337,6 +385,11 @@ func value(st *runstate.State, cur done, edge map[string]json.RawMessage, v work
 			return nil, fmt.Errorf("%s: value is null", r.Raw)
 		}
 		return json.Marshal(cur)
+	case workflow.RefGate:
+		if cur.note == nil {
+			return nil, fmt.Errorf("%s: no note was given when the gate was resolved", r.Raw)
+		}
+		return json.Marshal(*cur.note)
 	}
 	return nil, fmt.Errorf("%s: not resolvable in this version", r.Raw)
 }

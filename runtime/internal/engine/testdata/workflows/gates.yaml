@@ -1,0 +1,62 @@
+# ゲートの解決経路（§5.3）を確かめる: route の outcome で、input×human・observe×human・input×parent・input×any のどれかへ進む。
+schema: harness.workflow/v1
+id: gates
+inputs:
+  json:  { type: string, required: true }
+  log:   { type: string, required: true }
+  state: { type: string, required: true }
+steps:
+  route:
+    kind: command
+    run: emit
+    with: { json: $inputs.json }
+    output: schemas/route.json
+    on:
+      human: { gate: deviation }
+      observe: { gate: merge-wait }
+      parent: { gate: ask-parent }
+      any: { gate: ask-any }
+  deviation:
+    kind: gate
+    type: input
+    decider: human
+    requested_action: a critical design deviation was detected; decide how to proceed
+    inputs: [follow, abort]
+    on:
+      follow: { goto: record, with: { note: $gate.note } }
+      abort: { fail: aborted_by_human }
+  record:
+    kind: command
+    run: recorder
+    with: { log: $inputs.log, failure: $edge.note }
+    output: schemas/pass.json
+    on:
+      pass: { done: followed }
+  merge-wait:
+    kind: gate
+    type: observe
+    decider: human
+    observe: fake-state
+    with: { path: $inputs.state }
+    requested_action: a person merges the PR; resume after the merge
+    on:
+      merged: { done: merged }
+      open: { gate: merge-wait }
+      closed: { fail: pr_closed }
+  ask-parent:
+    kind: gate
+    type: input
+    decider: parent
+    requested_action: the parent decides whether to go on
+    inputs: [go, stop]
+    on:
+      go: { done: went }
+      stop: { fail: stopped }
+  ask-any:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: anyone may say go
+    inputs: [go]
+    on:
+      go: { done: went }

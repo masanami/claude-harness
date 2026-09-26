@@ -51,6 +51,105 @@ func finished() []Event {
 	)
 }
 
+func f64(v float64) *float64 { return &v }
+
+// gated は llm ステップ・ゲート・resume・費用（既知と不明）を含む列（PR-3）。gatedWaiting 個目まではゲートで待っている。
+func gated() []Event {
+	return []Event{
+		{Type: EvRunStarted, RunStarted: &RunStarted{
+			RunID: "r1", Workflow: WorkflowRef{ID: "w", Schema: "harness.workflow/v1", Hash: "h", Path: "/w.yaml"},
+			Inputs: map[string]json.RawMessage{}, Limits: map[string]float64{"budget_usd": 10}, Origin: "cli", Cwd: "/repo", PID: 123,
+			Units: []string{"main"}, EntryStep: "implement",
+		}},
+		{Type: EvRoundStarted, RoundStarted: &RoundStarted{Unit: "main", Round: 1, Trigger: Trigger{Kind: "start"}}},
+		{Type: EvStepStarted, StepStarted: &StepStarted{Unit: "main", Step: "implement", Attempt: 1, SessionID: "s1", BudgetGrantedUSD: f64(2), PromptLog: "logs/implement.1.prompt.md"}},
+		{Type: EvStepProcess, StepProcess: &StepProcess{Unit: "main", Step: "implement", Attempt: 1, PID: 77}},
+		{Type: EvStepFinished, StepFinished: &StepFinished{Unit: "main", Step: "implement", Attempt: 1, Outcome: "pass", Output: json.RawMessage(`{"outcome":"pass"}`), ExitCode: intp(0), CostUSD: f64(0.5), CostReportedUSD: f64(0.5), SessionID: "s1"}},
+		{Type: EvTransition, Transition: &Transition{Unit: "main", From: "implement", Outcome: "pass", Action: "gate", To: "review"}},
+		{Type: EvGateOpened, GateOpened: &GateOpened{Unit: "main", Gate: "review", Type: "input", Decider: "human", RequestedAction: "decide", Inputs: []string{"respond", "abort"}, RequiresTTY: true}},
+		// ここまでが待機中（gatedWaiting）
+		{Type: EvRunnerStarted, RunnerStarted: &RunnerStarted{PID: 124, Command: "approve"}},
+		{Type: EvGateResolved, GateResolved: &GateResolved{Unit: "main", Gate: "review", Outcome: "respond", Note: "fix it", Actor: "approve", User: "u", Channel: "tty"}},
+		{Type: EvTransition, Transition: &Transition{Unit: "main", From: "review", Outcome: "respond", Action: "step", To: "fix"}},
+		{Type: EvRoundStarted, RoundStarted: &RoundStarted{Unit: "main", Round: 2, Trigger: Trigger{Kind: "gate", Gate: "review", Input: "respond"}}},
+		{Type: EvStepStarted, StepStarted: &StepStarted{Unit: "main", Step: "fix", Attempt: 1, SessionID: "s1", Resume: true, BudgetGrantedUSD: f64(2)}},
+		{Type: EvStepProcess, StepProcess: &StepProcess{Unit: "main", Step: "fix", Attempt: 1, PID: 78}},
+		{Type: EvStepFinished, StepFinished: &StepFinished{Unit: "main", Step: "fix", Attempt: 1, Outcome: "invalid_output", Reserved: true, ExitCode: intp(0), CostUSD: f64(2), CostUnknown: true}},
+		{Type: EvTransition, Transition: &Transition{Unit: "main", From: "fix", Outcome: "invalid_output", Action: "fail", Reason: "invalid_output", Default: true}},
+		{Type: EvRunFinished, RunFinished: &RunFinished{Status: StatusFailed, Reason: "invalid_output"}},
+	}
+}
+
+const gatedWaiting = 7
+
+func TestFoldGatesAndBudget(t *testing.T) {
+	s, err := Fold(withSeq(gated()[:gatedWaiting]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := s.Unit("main")
+	if s.Status != StatusWaiting || u.Status != StatusWaiting || u.Gate == nil || u.Gate.Gate != "review" || u.Rounds[0].EndedBy != "gate:review" {
+		t.Fatalf("waiting: status = %s unit = %s gate = %+v", s.Status, u.Status, u.Gate)
+	}
+	if x := u.Rounds[0].Steps[0]; x.PID != 77 || x.SessionID != "s1" || *x.BudgetGrantedUSD != 2 {
+		t.Fatalf("execution = %+v", x)
+	}
+	if b := u.Budget; b.LimitUSD != 10 || b.SpentUSD != 0.5 || b.RemainingUSD != 9.5 || b.UnknownCostCount != 0 {
+		t.Fatalf("budget = %+v", b)
+	}
+
+	s, err = Fold(withSeq(gated()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u = s.Unit("main")
+	if s.Status != StatusFailed || s.PID != 124 || u.Gate != nil || len(u.Gates) != 1 {
+		t.Fatalf("status = %s pid = %d gate = %+v", s.Status, s.PID, u.Gate)
+	}
+	res := u.Gates[0].Resolution
+	if res == nil || res.Actor != "approve" || res.Channel != "tty" || res.Note != "fix it" || u.Outcomes["review"] != "respond" {
+		t.Fatalf("resolution = %+v", res)
+	}
+	if b := u.Budget; b.SpentUSD != 2.5 || b.RemainingUSD != 7.5 || b.UnknownCostCount != 1 {
+		t.Fatalf("budget = %+v", b)
+	}
+	if u.Rounds[0].CostUSD != 0.5 || u.Rounds[1].CostUSD != 2 || u.Rounds[1].Trigger.Gate != "review" || u.Rounds[0].EndedBy != "gate:review" {
+		t.Fatalf("rounds = %s", mustJSON(t, u.Rounds))
+	}
+	if sid := u.LastSession("implement"); sid != "s1" {
+		t.Fatalf("last session = %s", sid)
+	}
+}
+
+func TestFoldRejectsInconsistentGates(t *testing.T) {
+	cases := map[string]func([]Event) []Event{
+		"human gate resolved without a tty": func(e []Event) []Event { e[8].GateResolved.Channel = "non-tty"; return e },
+		"resolution without an actor":       func(e []Event) []Event { e[8].GateResolved.Actor = ""; return e },
+		"unknown channel":                   func(e []Event) []Event { e[8].GateResolved.Channel = "ssh"; return e },
+		"resolving another gate":            func(e []Event) []Event { e[8].GateResolved.Gate = "other"; return e },
+		"step while waiting": func(e []Event) []Event {
+			return withSeq(append(e[:gatedWaiting:gatedWaiting], Event{Type: EvStepStarted, StepStarted: &StepStarted{Unit: "main", Step: "review", Attempt: 1}}))
+		},
+		"round while waiting": func(e []Event) []Event {
+			return withSeq(append(e[:gatedWaiting:gatedWaiting], Event{Type: EvRoundStarted, RoundStarted: &RoundStarted{Unit: "main", Round: 2, Trigger: Trigger{Kind: "gate"}}}))
+		},
+		"negative cost":         func(e []Event) []Event { e[4].StepFinished.CostUSD = f64(-1); return e },
+		"second process":        func(e []Event) []Event { e[3].StepProcess.Step = "fix"; return e },
+		"gate for another step": func(e []Event) []Event { e[6].GateOpened.Gate = "elsewhere"; return e },
+		"cancelled and interrupted": func(e []Event) []Event {
+			e[4].StepFinished.Cancelled, e[4].StepFinished.Interrupted = true, true
+			return e
+		},
+	}
+	for name, f := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Fold(f(withSeq(gated()))); err == nil {
+				t.Fatal("want an error")
+			}
+		})
+	}
+}
+
 func newRun(t *testing.T) *Run {
 	t.Helper()
 	r, err := Create(t.TempDir(), "r1")
@@ -73,7 +172,7 @@ func mustJSON(t *testing.T, v any) string {
 
 // イベント列 → events.jsonl → 状態 が、どの経路で作っても同じになる（往復）。
 func TestRoundTrip(t *testing.T) {
-	for name, evs := range map[string][]Event{"cancelled": sample(), "finished": finished()} {
+	for name, evs := range map[string][]Event{"cancelled": sample(), "finished": finished(), "gated": gated()} {
 		t.Run(name, func(t *testing.T) {
 			r := newRun(t)
 			var appended *State
@@ -406,5 +505,29 @@ func TestInvalidEventIsNotWritten(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(r.Dir, EventsFile))
 	if !bytes.Equal(before, after) {
 		t.Fatal("an inconsistent event reached events.jsonl")
+	}
+}
+
+// continue の引き継ぎ元は、そのステップの最新の実行が起動した claude のセッションだけ（古いラウンドへ戻らない）。
+func TestLastSessionIsTheLatestLaunchedExecution(t *testing.T) {
+	u := &Unit{Rounds: []*Round{
+		{No: 1, Steps: []*StepExecution{{Step: "impl", PID: 5, SessionID: "a"}, {Step: "other", PID: 6, SessionID: "z"}}},
+	}}
+	if got := u.LastSession("impl"); got != "a" {
+		t.Fatalf("launched: %q", got)
+	}
+	u.Rounds[0].Steps[0].ReportedSessionID = "a2"
+	if got := u.LastSession("impl"); got != "a2" {
+		t.Fatalf("the session claude reported wins: %q", got)
+	}
+	// 予算切れで起動しなかった実行が最新なら、前のラウンドのセッションへ戻らない。
+	u.Rounds = append(u.Rounds, &Round{No: 2, Steps: []*StepExecution{{Step: "impl", Outcome: "budget_exhausted", Reserved: true}}})
+	if got := u.LastSession("impl"); got != "" {
+		t.Fatalf("not launched: %q", got)
+	}
+	// session_id を記録したが起動に失敗した（PID も報告も無い）実行も引き継ぎ元にしない。
+	u.Rounds[1].Steps[0] = &StepExecution{Step: "impl", SessionID: "b"}
+	if got := u.LastSession("impl"); got != "" {
+		t.Fatalf("start failed: %q", got)
 	}
 }

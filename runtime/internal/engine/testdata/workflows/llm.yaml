@@ -1,0 +1,38 @@
+# llm 種類とゲートを確かめる: implement（新しいセッション）→ review（input 型・decider: any）→ fix（implement のセッションを継続）→ review …
+schema: harness.workflow/v1
+id: llm
+inputs:
+  issue: { type: integer, required: true }
+limits:
+  budget_usd: 5
+steps:
+  implement:
+    kind: llm
+    agent: claude-harness:feature-implementer
+    prompt: prompts/implement.md
+    session: new
+    with: { issue: $inputs.issue }
+    output: schemas/impl.json
+    budget_usd: 2
+    on:
+      pass: { gate: review }
+      failure: { fail: implement_failed }
+  review:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: wait for the review; respond to address it, ready to finish
+    inputs: [respond, ready]
+    on:
+      respond: fix
+      ready: { done: merged }
+  fix:
+    kind: llm
+    prompt: prompts/fix.md
+    session: continue:implement
+    with: { summary: $steps.implement.summary }
+    output: schemas/impl.json
+    budget_usd: 2
+    on:
+      pass: { gate: review }
+      failure: { fail: fix_failed }
