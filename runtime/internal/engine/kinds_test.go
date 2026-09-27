@@ -192,7 +192,9 @@ func TestWorkspaceProvidedIsNeverRemoved(t *testing.T) {
 // 同じブランチの既存の作業ツリーを再利用した（この run が作っていない）場合も、release は消さない。
 func TestWorkspaceReusedThatThisRunDidNotCreateIsKept(t *testing.T) {
 	tl := newTools(t)
-	tl.write(tl.wt, "setup.reused", "")
+	if err := os.Mkdir(filepath.Join(tl.wt, "wt"), 0o755); err != nil { // 同じブランチの worktree が既に在る
+		t.Fatal(err)
+	}
 	st, _ := tl.start("ws", nil)
 	if st.Status != runstate.StatusSucceeded || st.Reason != "kept" {
 		t.Fatalf("status %s reason %s", st.Status, st.Reason)
@@ -202,6 +204,21 @@ func TestWorkspaceReusedThatThisRunDidNotCreateIsKept(t *testing.T) {
 	}
 	if tl.read(tl.wt, "cleanup.calls") != "" {
 		t.Errorf("worktree-cleanup was called for a reused worktree this run did not create")
+	}
+}
+
+// この run が作った作業ツリーを取り直した（reused）なら、作ったのはこの run のままで、release が消す。
+func TestWorkspaceReacquiredByTheSameRunIsStillRemoved(t *testing.T) {
+	tl := newTools(t)
+	st, _ := tl.start("ws-twice", nil)
+	if st.Status != runstate.StatusSucceeded || st.Reason != "released" {
+		t.Fatalf("status %s reason %s: %v", st.Status, st.Reason, steps(st))
+	}
+	if output(t, st, "again")["outcome"] != "reused" {
+		t.Fatalf("again = %v", output(t, st, "again"))
+	}
+	if _, err := os.Stat(filepath.Join(tl.wt, "wt")); !os.IsNotExist(err) {
+		t.Errorf("the worktree this run created was not removed: %v", err)
 	}
 }
 

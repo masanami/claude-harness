@@ -1,0 +1,18 @@
+# workspace 種類: 同じ run が作った作業ツリーを取り直した（reused）場合、作ったのはこの run のままなので release が消す。
+schema: harness.workflow/v1
+id: ws-twice
+steps:
+  first:
+    kind: workspace
+    action: acquire
+    with: { issue: 7, branch: feature/issue-7-x, base: main }
+    on: { provided: again, created: again, reused: again, conflict: { fail: conflict } }
+  again:
+    kind: workspace
+    action: acquire
+    with: { issue: 7, branch: feature/issue-7-x, base: main }
+    on: { provided: release, created: release, reused: release, conflict: { fail: conflict } }
+  release:
+    kind: workspace
+    action: release
+    on: { released: { done: released }, kept: { done: kept }, dirty: { done: dirty } }
