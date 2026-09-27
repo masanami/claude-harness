@@ -71,6 +71,25 @@ func init() {
 		"clash":{"type":"string","enum":["yes","step_error"]}}}`
 }
 
+// select の値が後ろで宣言された select の outcome を指していても解決できる（宣言の順に依らない）。
+func TestChainedSelectsInAnyOrder(t *testing.T) {
+	y := strings.Replace(kindsBase, "  route:\n    kind: select\n    value: $steps.a.kind\n    on: { yes: pr, no: back }\n  back:\n    kind: select\n    value: $steps.route.outcome\n    on: { yes: pr, no: pr }\n",
+		"  route:\n    kind: select\n    value: $steps.a.kind\n    on: { yes: back, no: back }\n  back:\n    kind: select\n    value: $steps.last.outcome\n    on: { yes: pr, no: pr }\n  last:\n    kind: select\n    value: $steps.a.kind\n    on: { yes: pr, no: pr }\n", 1)
+	if y == kindsBase {
+		t.Fatal("fixture did not change")
+	}
+	err := check(t, y)
+	// back は last の outcome を読むが、last は back より前に必ず成功するわけではない（到達の検査で拒否される）。
+	// ここで確かめたいのは「enum が解決できない」誤りが出ないこと。
+	if err != nil && strings.Contains(err.Error(), "no enum values") {
+		t.Fatalf("a select referring to a later select must resolve its enum: %v", err)
+	}
+	cyc := strings.Replace(kindsBase, "    value: $steps.a.kind\n    on: { yes: pr, no: back }\n", "    value: $steps.back.outcome\n    on: { yes: pr, no: back }\n", 1)
+	if err := check(t, cyc); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("select cycle: %v", err)
+	}
+}
+
 func TestKindsBaseIsValid(t *testing.T) {
 	if err := check(t, kindsBase); err != nil {
 		t.Fatalf("kindsBase must be valid: %v", err)

@@ -73,27 +73,43 @@ func (e *Engine) executePullRequest(ctx context.Context, st *runstate.State, u *
 		// base へ直接 push しない（PR を作るのは作業ブランチからだけ）。
 		return stepError("the working branch %q is the PR base itself; refusing to push to the base", branch)
 	}
-	if argv, r := git("push", "-u", "origin", branch); !r.ok() {
+	// 既定ブランチ（本番の反映先）へは push しない（R5: 既定ブランチへの反映は人がマージする）。
+	argv, r := gh("repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name")
+	if !r.ok() {
 		return toolFailure(r, argv)
 	}
-	argv, r := git("rev-parse", "HEAD")
+	if def := strings.TrimSpace(string(r.stdout)); def == "" || branch == def {
+		return stepError("the working branch %q is the repository's default branch (%q); refusing to push to it", branch, def)
+	}
+	ref := "refs/heads/" + branch
+	if argv, r := git("push", "-u", "origin", ref+":"+ref); !r.ok() {
+		return toolFailure(r, argv)
+	}
+	argv, r = git("rev-parse", "--verify", ref)
 	if !r.ok() {
 		return toolFailure(r, argv)
 	}
 	head := strings.TrimSpace(string(r.stdout))
 
 	out := prOutput{Branch: branch, HeadSHA: head}
-	argv, r = gh("pr", "list", "--head", branch, "--state", "open", "--json", "number,url,baseRefName")
+	argv, r = gh("pr", "list", "--head", branch, "--state", "open", "--json", "number,url,baseRefName,isCrossRepository")
 	if !r.ok() {
 		return toolFailure(r, argv)
 	}
-	var existing []struct {
-		Number      int    `json:"number"`
-		URL         string `json:"url"`
-		BaseRefName string `json:"baseRefName"`
+	var listed []struct {
+		Number            int    `json:"number"`
+		URL               string `json:"url"`
+		BaseRefName       string `json:"baseRefName"`
+		IsCrossRepository bool   `json:"isCrossRepository"`
 	}
-	if err := json.Unmarshal(r.stdout, &existing); err != nil {
+	if err := json.Unmarshal(r.stdout, &listed); err != nil {
 		return stepError("gh pr list output is not a JSON array: %v", err)
+	}
+	existing := listed[:0]
+	for _, pr := range listed {
+		if !pr.IsCrossRepository { // 同名ブランチの fork からの PR は自分の PR ではない
+			existing = append(existing, pr)
+		}
 	}
 	switch {
 	case len(existing) > 1:
@@ -231,6 +247,10 @@ func RenderPRBody(in PRInput) string {
 	}
 
 	fmt.Fprintf(&b, "## 残指摘（全 %d 件）\n\n", len(in.ResidualFindings))
+	if in.QualityGiven && in.Quality != "pass" && in.Quality != "skip" {
+		// 実装ステップが pass / skip 以外（逸脱で止まった等）で終わった後の経路では、/self-review の残指摘が揃っていない。
+		fmt.Fprintf(&b, "**注意: 実装ステップは %s で終わっている。以下は実装ステップが返した値で、/self-review を最後まで通した結果ではない（件数が 0 でも「指摘なし」を意味しない）。**\n\n", in.Quality)
+	}
 	switch {
 	case !in.FindingsGiven:
 		b.WriteString("（残指摘は渡されていない）\n\n")
@@ -255,6 +275,7 @@ func RenderPRBody(in PRInput) string {
 	}
 
 	b.WriteString("---\n\n")
+	b.WriteString("残指摘・未検証・品質ゲートの節は実装ステップ（implement）の出力から作っている。差し戻しの修正（fix）の後の変化は反映されない。\n\n")
 	fmt.Fprintf(&b, "この PR は harness runtime（run `%s`）が作成した。品質ゲート・未検証・残指摘・クロスリポジトリ確証の節は、実装ステップの型付きの出力から runtime が転記した（LLM による要約・件数への丸めを経ていない）。\n", in.RunID)
 	return b.String()
 }

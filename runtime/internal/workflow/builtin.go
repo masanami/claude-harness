@@ -172,6 +172,26 @@ func (v *validator) requiredValue(s *Step, name string, line int, what string) {
 	}
 }
 
+// resolveSelect は select を、値が別の select の outcome を指していればそちらを先に解決してから検査する
+// （宣言の順に依らない）。state: 0 未着手・1 解決中・2 済み。select どうしの循環参照は拒否する。
+func (v *validator) resolveSelect(s *Step, state map[string]int) {
+	switch state[s.ID] {
+	case 1:
+		v.errf(s.Line, "steps.%s: value %s: select steps refer to each other in a cycle", s.ID, s.Value.Raw)
+		return
+	case 2:
+		return
+	}
+	state[s.ID] = 1
+	if r := s.Value; r != nil && r.Kind == RefSteps {
+		if src := v.wf.Step(r.Step); src != nil && src.Kind == "select" && src.ID != s.ID {
+			v.resolveSelect(src, state)
+		}
+	}
+	v.selectKind(s)
+	state[s.ID] = 2
+}
+
 // selectKind は select 種類（§3.2・Q12）の検査: value は $steps.<id>.<field> 1 つで、その値は enum を持つ string。
 // outcome はその enum をそのまま使う（一致だけ。比較・組み合わせは持たない）。参照先が必ず成功していることは references が確かめる。
 func (v *validator) selectKind(s *Step) {

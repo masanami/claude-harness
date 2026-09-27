@@ -222,6 +222,44 @@ func TestWorkspaceReacquiredByTheSameRunIsStillRemoved(t *testing.T) {
 	}
 }
 
+// run が止まっている間に作業ツリーが消され、同じパスに別の run が作り直したら、release はそれを消さない
+// （パスが同じでも、この run の印が無い作業ツリーは自分のものではない）。
+func TestWorkspaceReleaseKeepsAWorktreeRecreatedBySomeoneElse(t *testing.T) {
+	tl := newTools(t)
+	st, e := tl.start("ws-gate", nil)
+	if st.Status != runstate.StatusWaiting {
+		t.Fatalf("status %s", st.Status)
+	}
+	mark := filepath.Join(tl.wt, "wt", ".fake-gitdir", ownerFile)
+	if got := tl.read(filepath.Dir(mark), ownerFile); got != st.RunID+" main\n" {
+		t.Fatalf("ownership mark = %q", got)
+	}
+	tl.write(filepath.Dir(mark), ownerFile, "20260101-000000-other main\n") // 別の run が作り直した
+	st, err := resolve(t, e, input("go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != runstate.StatusSucceeded || st.Reason != "kept" {
+		t.Fatalf("status %s reason %s", st.Status, st.Reason)
+	}
+	if tl.read(tl.wt, "cleanup.calls") != "" {
+		t.Errorf("worktree-cleanup was called for a worktree another run re-created")
+	}
+}
+
+// 呼び出し元の作業ツリーが base そのもの・detached なら、後続が base へ push しうるので conflict。
+func TestWorkspaceProvidedOnTheBaseIsAConflict(t *testing.T) {
+	for _, b := range []string{"main", "HEAD"} {
+		tl := newTools(t)
+		provided := t.TempDir()
+		tl.write(provided, ".fake-branch", b+"\n")
+		st, _ := tl.start("ws", map[string]any{"provided": provided})
+		if st.Status != runstate.StatusFailed || st.Reason != "conflict" {
+			t.Fatalf("branch %s: status %s reason %s", b, st.Status, st.Reason)
+		}
+	}
+}
+
 func TestWorkspaceDirtyIsKept(t *testing.T) {
 	tl := newTools(t)
 	tl.write(tl.wt, "cleanup.dirty", "")
@@ -317,7 +355,7 @@ func TestPullRequestOpensWithTheTranscribedSections(t *testing.T) {
 		t.Fatalf("publish output = %v", out)
 	}
 	calls := tl.read(tl.git, "calls")
-	if !strings.Contains(calls, "push\t-u\torigin\tfeature/issue-7-x") {
+	if !strings.Contains(calls, "push\t-u\torigin\trefs/heads/feature/issue-7-x:refs/heads/feature/issue-7-x\n") {
 		t.Errorf("git calls = %s", calls)
 	}
 	gh := tl.read(tl.gh, "calls")
@@ -372,6 +410,16 @@ func TestPullRequestUpdatesAnExistingPR(t *testing.T) {
 	}
 }
 
+// 同じ名前のブランチから出た fork の PR は自分の PR ではない（push だけで終わらず、自分の PR を作る）。
+func TestPullRequestIgnoresForkPRs(t *testing.T) {
+	tl := newTools(t)
+	tl.write(tl.gh, "pr-list", `[{"number":99,"url":"https://github.com/o/r/pull/99","baseRefName":"main","isCrossRepository":true}]`)
+	st, _ := tl.start("pr", map[string]any{"findings": []any{}, "unverified": []any{}, "quality": "pass"})
+	if out := output(t, st, "publish"); out["outcome"] != "opened" || out["pr_number"] != float64(7) {
+		t.Fatalf("publish output = %v", out)
+	}
+}
+
 func TestPullRequestRefusals(t *testing.T) {
 	t.Run("open PR to another base", func(t *testing.T) {
 		tl := newTools(t)
@@ -384,6 +432,14 @@ func TestPullRequestRefusals(t *testing.T) {
 	t.Run("branch is the base", func(t *testing.T) {
 		tl := newTools(t)
 		tl.write(tl.cwd, ".fake-branch", "main\n")
+		st, _ := tl.start("pr", map[string]any{"findings": []any{}, "unverified": []any{}, "quality": "pass"})
+		if st.Status != runstate.StatusFailed || strings.Contains(tl.read(tl.git, "calls"), "push") {
+			t.Fatalf("status %s; git calls:\n%s", st.Status, tl.read(tl.git, "calls"))
+		}
+	})
+	t.Run("branch is the default branch", func(t *testing.T) {
+		tl := newTools(t)
+		tl.write(tl.gh, "default-branch", "feature/issue-7-x\n") // base（main）とは別の既定ブランチ
 		st, _ := tl.start("pr", map[string]any{"findings": []any{}, "unverified": []any{}, "quality": "pass"})
 		if st.Status != runstate.StatusFailed || strings.Contains(tl.read(tl.git, "calls"), "push") {
 			t.Fatalf("status %s; git calls:\n%s", st.Status, tl.read(tl.git, "calls"))
@@ -408,8 +464,13 @@ func TestRenderPRBody(t *testing.T) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "## 未検証") {
-		t.Errorf("a pass without unverified items must not have the unverified section:\n%s", body)
+	if strings.Contains(body, "## 未検証") || strings.Contains(body, "注意: 実装ステップは") {
+		t.Errorf("a pass without unverified items must not have the unverified section or the caveat:\n%s", body)
+	}
+	// 実装ステップが逸脱で止まった後の経路では、0 件を「指摘なし」と読ませない。
+	body = RenderPRBody(PRInput{RunID: "r1", Closes: 4, Quality: "deviation", QualityGiven: true, FindingsGiven: true})
+	if !strings.Contains(body, "注意: 実装ステップは deviation で終わっている") {
+		t.Errorf("a deviated implementation must carry the caveat:\n%s", body)
 	}
 	// 形の分からない要素も落とさない（JSON のまま載せる）。知っているフィールド以外も残す。
 	body = RenderPRBody(PRInput{RunID: "r1", Closes: 4, Quality: "skip", QualityGiven: true, FindingsGiven: true,

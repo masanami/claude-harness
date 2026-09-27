@@ -84,6 +84,8 @@ func TestResolveTicket(t *testing.T) {
 		{name: "the same Base line twice", body: "Base: feat/a\n\nBase: feat/a\n", remote: "feat/a", outcome: "ok", base: "feat/a", kind: "integration", source: "issue"},
 		{name: "placeholder left in the Base line", body: "Base: {統合ブランチ}\n", outcome: "base_missing", base: "{統合ブランチ}", kind: "integration", source: "issue", wantMsg: "ブランチ名として受け付けられない"},
 		{name: "Base: inside a sentence is not a Base line", body: "see the Base: line of #40\n", outcome: "ok", base: "main", kind: "default", source: "default"},
+		{name: "Base in a code block is not read", body: "例:\n```\nBase: feat/example\n```\n", outcome: "ok", base: "main", kind: "default", source: "default"},
+		{name: "a branch that only ends with the base is not the base", body: "Base: epic\n", remote: "feature/epic", outcome: "base_missing", base: "epic", kind: "integration", source: "issue", checkLsR: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -102,7 +104,7 @@ func TestResolveTicket(t *testing.T) {
 			if c.outcome == "ok" && r.Message != "" {
 				t.Errorf("ok with a message: %q", r.Message)
 			}
-			if c.checkLsR && !strings.Contains(tl.read(tl.git, "calls"), "ls-remote\t--exit-code\t--heads\torigin\t"+c.base) {
+			if c.checkLsR && !strings.Contains(tl.read(tl.git, "calls"), "ls-remote\t--exit-code\t--heads\torigin\trefs/heads/"+c.base+"\n") {
 				t.Errorf("did not check the remote: %s", tl.read(tl.git, "calls"))
 			}
 		})
@@ -130,6 +132,9 @@ func TestResolveTicketFailures(t *testing.T) {
 	t.Run("bad arguments", func(t *testing.T) {
 		tl := newTools(t)
 		if _, code, _ := resolveTicket(t, tl, "", "--nope"); code != 2 {
+			t.Fatalf("exit %d", code)
+		}
+		if _, code, _ := resolveTicket(t, tl, "", "--base"); code != 2 { // 値の無い引数で止まらずに回り続けない
 			t.Fatalf("exit %d", code)
 		}
 	})

@@ -376,7 +376,12 @@ func (e *Engine) observe(ctx context.Context, st *runstate.State, u *runstate.Un
 		}
 		with[b.Name] = v
 	}
-	outcome, observed, err := fn(ctx, ObserveEnv{Dir: e.dirFor(u), Gh: e.GhBin}, with)
+	dir := e.dirFor(u)
+	if _, err := os.Stat(dir); err != nil {
+		// 待っている間に作業ツリーが消された（マージの後など）: run を開始したディレクトリで確かめる。
+		dir = e.Cwd
+	}
+	outcome, observed, err := fn(ctx, ObserveEnv{Dir: dir, Gh: e.GhBin}, with)
 	if err != nil {
 		return "", nil, err
 	}

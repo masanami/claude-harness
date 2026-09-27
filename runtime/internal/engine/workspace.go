@@ -21,6 +21,12 @@ var acquireMu sync.Mutex
 // worktreeConflictMarkers は worktree-setup.sh が「払い出し先が使えない」ときに stderr へ出す文言
 // （別ブランチの登録済み worktree・未登録のディレクトリ。scripts/specs/worktree-setup.md の「挙動の要点」）。
 // スクリプトはこの 2 つを他の失敗と同じ終了コードで返すので、文言で見分ける（一致しなければ step_error。fail-closed）。
+// ownerFile は、この run が作った作業ツリーであることの印（作業ツリーの git dir〔.git/worktrees/<名前>/〕に置く）。
+// 払い出し先のパスは同じ Issue の run どうしで同じになるので、パスだけでは「この run が作ったもの」と言えない
+// （run が止まっている間に人が消し、別の run が作り直した作業ツリーを消さないため）。git dir は worktree-cleanup の
+// `git worktree remove` が一緒に消し、作業ツリーの変更（git status）にも現れない。
+const ownerFile = "claude-harness-owner"
+
 var worktreeConflictMarkers = []string{
 	"is already registered for a different branch",
 	"already exists but is not a registered git worktree",
@@ -86,6 +92,12 @@ func (e *Engine) acquire(tools *stepTools, u *runstate.Unit, step *workflow.Step
 			return toolFailure(actual, []string{e.gitBin(), "rev-parse", "--abbrev-ref", "HEAD"})
 		}
 		out.Branch = strings.TrimSpace(string(actual.stdout))
+		if out.Branch == "HEAD" || out.Branch == "" || out.Branch == base {
+			// 作業ブランチでない作業ツリー（detached・base そのもの）では、後続の pull-request が base へ push しうる。
+			out.Outcome = workflow.WorkspaceConflict
+			out.Detail = fmt.Sprintf("the provided worktree %q is on %q, not on a working branch (it must not be detached or on the base %q)", provided, out.Branch, base)
+			return builtinOutput(step, out)
+		}
 		out.Outcome, out.Detail = workflow.WorkspaceProvided, "the caller provided the worktree; the runtime does not remove it"
 		if out.Branch != branch {
 			// 払い出し先のブランチは呼び出し元のもの（§5.4）。提案されたブランチ名との違いは記録だけする。
@@ -123,13 +135,21 @@ func (e *Engine) acquire(tools *stepTools, u *runstate.Unit, step *workflow.Step
 	if setup.Branch != "" {
 		out.Branch = setup.Branch
 	}
-	created := setup.Created
+	created := false
 	if setup.Created {
-		out.Outcome, out.Detail = workflow.WorkspaceCreated, "worktree-setup created the worktree; release removes it"
+		out.Outcome = workflow.WorkspaceCreated
+		if e.markOwner(tools, setup.WorktreePath, u.Key) {
+			created = true
+			out.Detail = "worktree-setup created the worktree; release removes it"
+		} else {
+			out.Detail = "worktree-setup created the worktree, but the ownership mark could not be written; release keeps it"
+		}
 	} else {
 		out.Outcome = workflow.WorkspaceReused
-		// 同じ run が前に作った作業ツリーを取り直した（interrupted からのやり直し等）なら、作ったのはこの run のまま。
-		if prev := u.Workspace; prev != nil && prev.Created && samePath(prev.WorktreePath, setup.WorktreePath) {
+		// 同じ run が前に作り、まだ返していない作業ツリーを取り直した（interrupted からのやり直し等）なら、作ったのはこの run のまま。
+		// 印で同じ作業ツリーであることを確かめる（同じパスに別の run が作り直したものを自分のものにしない）。
+		if prev := u.Workspace; prev != nil && prev.Created && !prev.Released && samePath(prev.WorktreePath, setup.WorktreePath) &&
+			e.ownedBy(tools, setup.WorktreePath, u.Key) {
 			created = true
 			out.Detail = "reused the worktree this run created earlier; release removes it"
 		} else {
@@ -205,6 +225,11 @@ func (e *Engine) release(tools *stepTools, u *runstate.Unit, step *workflow.Step
 		out.Outcome, out.Detail = workflow.WorkspaceKept, "the worktree no longer exists; nothing to remove"
 		return finish()
 	}
+	if !e.ownedBy(tools, ws.WorktreePath, u.Key) {
+		out.Outcome = workflow.WorkspaceKept
+		out.Detail = "the worktree at this path does not carry this run's ownership mark (it was removed and re-created by someone else?); kept"
+		return finish()
+	}
 	// 作業ツリーの外（run を開始したディレクトリ）から消す。
 	argv := []string{"bash", filepath.Join(e.ScriptsDir, "worktree-cleanup.sh"), ws.WorktreePath, "--skip-if-dirty"}
 	r := tools.run(e.Cwd, argv...)
@@ -225,4 +250,37 @@ func (e *Engine) release(tools *stepTools, u *runstate.Unit, step *workflow.Step
 	ev.Removed = true
 	out.Outcome, out.Detail = workflow.WorkspaceReleased, "removed by worktree-cleanup"
 	return finish()
+}
+
+func (e *Engine) ownerMark(u string) string {
+	return e.Run.ID + " " + u + "\n"
+}
+
+// ownerPath は作業ツリーの git dir に置く印のパス（git dir が分からなければ空）。
+func (e *Engine) ownerPath(tools *stepTools, worktree string) string {
+	r := tools.run(worktree, e.gitBin(), "rev-parse", "--absolute-git-dir")
+	if !r.ok() {
+		return ""
+	}
+	dir := strings.TrimSpace(string(r.stdout))
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, ownerFile)
+}
+
+// markOwner は作業ツリーにこの run の印を書く。書けなければ偽（その作業ツリーは消さない側に倒す）。
+func (e *Engine) markOwner(tools *stepTools, worktree, unit string) bool {
+	p := e.ownerPath(tools, worktree)
+	return p != "" && os.WriteFile(p, []byte(e.ownerMark(unit)), 0o644) == nil
+}
+
+// ownedBy は作業ツリーがこの run（と unit）の印を持つか。
+func (e *Engine) ownedBy(tools *stepTools, worktree, unit string) bool {
+	p := e.ownerPath(tools, worktree)
+	if p == "" {
+		return false
+	}
+	data, err := os.ReadFile(p)
+	return err == nil && string(data) == e.ownerMark(unit)
 }

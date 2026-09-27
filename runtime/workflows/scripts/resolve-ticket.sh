@@ -16,11 +16,14 @@ set -u
 issue=""
 base_in=""
 base_given=false
+usage="usage: resolve-ticket.sh --issue <number> [--base <branch>]"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --issue) issue="${2:-}"; shift 2 ;;
-    --base) base_in="${2:-}"; base_given=true; shift 2 ;;
-    *) echo "Error: unknown argument '$1' (usage: resolve-ticket.sh --issue <number> [--base <branch>])" >&2; exit 2 ;;
+    --issue|--base)
+      if [ $# -lt 2 ]; then echo "Error: $1 needs a value ($usage)" >&2; exit 2; fi
+      if [ "$1" = "--issue" ]; then issue="$2"; else base_in="$2"; base_given=true; fi
+      shift 2 ;;
+    *) echo "Error: unknown argument '$1' ($usage)" >&2; exit 2 ;;
   esac
 done
 
@@ -41,7 +44,7 @@ valid_branch() {
   return 0
 }
 
-# base_lines は本文から `Base: <値>` 行の値を列挙する（HTML コメントの中は読まない。前後の空白と ` を除く）。
+# base_lines は本文から `Base: <値>` 行の値を列挙する（HTML コメントとコードブロック〔``` / ~~~〕の中は読まない。前後の空白と ` を除く）。
 base_lines() {
   tr -d '\r' | awk '
     {
@@ -58,6 +61,8 @@ base_lines() {
           out = out substr(line, 1, i - 1); line = substr(line, i + 4); incomment = 1
         }
       }
+      if (!incomment && out ~ /^[ \t]*(```|~~~)/) { infence = !infence; next }
+      if (infence) next
       if (out ~ /^[ \t]*Base:[ \t]*/) {
         sub(/^[ \t]*Base:[ \t]*/, "", out)
         sub(/[ \t]+$/, "", out)
@@ -113,7 +118,8 @@ else
 fi
 
 if [ "$outcome" = "ok" ] && [ "$base_kind" = "integration" ]; then
-  git ls-remote --exit-code --heads origin "$base" >/dev/null 2>&1
+  # パターンは refs/heads/<base> で完全に指す（ls-remote は末尾一致なので、素の <base> だと feature/<base> にも一致する）。
+  git ls-remote --exit-code --heads origin "refs/heads/${base}" >/dev/null 2>&1
   rc=$?
   case "$rc" in
     0) ;;

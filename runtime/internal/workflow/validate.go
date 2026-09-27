@@ -54,10 +54,12 @@ func Validate(wf *Workflow, opts Options) Problems {
 	for _, s := range wf.Steps {
 		v.stepKind(s)
 	}
-	// select の outcome は参照先の出力スキーマから決まるので、すべての出力スキーマを読んでから解決する。
+	// select の outcome は参照先の出力スキーマ（または参照先の select の outcome）から決まるので、
+	// すべての出力スキーマを読んでから、参照先を先に解決する順で解決する。
+	state := map[string]int{}
 	for _, s := range wf.Steps {
 		if s.Kind == "select" {
-			v.selectKind(s)
+			v.resolveSelect(s, state)
 		}
 	}
 	if len(wf.Steps) > 0 && wf.Steps[0].Kind == "gate" {
