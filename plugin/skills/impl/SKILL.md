@@ -120,7 +120,9 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 
 ### Phase 4: 設計＋TDD実装＋必須ゲート＋セルフレビュー（一気通貫）
 
-`feature-implementer` エージェントを **一度だけ呼び出し**、Step a〜e を一気通貫で実行させる（実装フェーズに人間ゲートは無い。Task ツールの `subagent_type` は plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定する。prefix 無しは名称解決エラーになる）。
+`feature-implementer` エージェントを **一度だけ呼び出し**、Step a〜e を一気通貫で実行させる（実装フェーズに人間ゲートは無い。Task ツールの `subagent_type` は plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定する。prefix 無しは名称解決エラーになる。あわせて `run_in_background: false` を明示する）。
+
+> **Task ツールの呼び出しには必ず `run_in_background: false` を明示する。** 省略するとバックグラウンド起動になり、返るのは結果ではなく起動通知（`Async agent launched` 等）だけになる。サブエージェントの中ではターンを終えた時点で呼び出し元へ返却され、後から届く結果は自分では受け取れない。**起動通知は結果ではない** — 求めた形式の結果を含まない応答を受け取ったら、ターンを終えず、同じ委譲を `run_in_background: false` で1回だけ起動し直す。それでも結果が得られなければ「合流できなかった」として扱う（黙って結果なしで先へ進まない）。
 
 要件チケット本文の **「クリティカル設計決定」セクション**をエージェントに渡し、その方針に従って実装するよう指示する。`--worktree` が渡されている場合は **worktree の絶対パスも必ず含め、すべての作業をその配下で行うよう指示する**。委譲プロンプトには**合流ゲート伝播条項**（`skills/para-impl/references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める。
 
@@ -144,6 +146,7 @@ git checkout -b {type}/issue-{番号}-{説明} origin/{base}
 |---|---|
 | 通常完了 | Phase 5（コミット）へ |
 | `failure`（`/quality-check` 3回反復しても通らない） | 当該チケットをスキップし、その事実を呼び出し元へ返す |
+| `self_review: incomplete`（`/self-review` のレビュアー等と合流できずに返却。`/self-review` の結果サマリーに `self_review:` 行が無い返却も同じ扱い） | **本スキルの実行主体が Skill ツールで `/self-review` を1回だけ最初から実行し直し**、その結果（`converged`・`residualFindings`）を Phase 4 の結果として Phase 5 へ進む。feature-implementer を再委譲しない（実装と `/quality-check` は完了しているため）。返却に含まれていた途中までの指摘は、やり直しの結果と混ぜない。やり直しも `self_review: incomplete` なら Phase 5 以降へ進まず、未回収の委譲先の名前と作業ツリーの状態（未コミット差分の所在）を呼び出し元へ返す |
 | `skip`（`/quality-check` のゲートが1つも実行されていない） | Phase 5 へ進んでよいが、**`pass` として扱わず**、未検証である事実と対象チケットを PR 本文・完了報告に明記する |
 | クリティカル設計の逸脱検知で Step b 停止 | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（headless の場合は「判断待ち」として完了報告・呼び出し元への返却に明記する） |
 
@@ -223,7 +226,7 @@ gh pr checks {PR番号} --watch
 
 1. 実装サマリー（変更ファイル・追加テスト件数）
 2. PR URL と CI ステータス
-3. `/quality-check` の結果と `/self-review` の `residualFindings` 全件（空でなければ `converged` の値に関わらず全件）
+3. `/quality-check` の結果と `/self-review` の `residualFindings` 全件（空でなければ `converged` の値に関わらず全件）。Phase 4 の例外ケースで `/self-review` をやり直した場合はその事実
 4. クリティカル設計の逸脱検知で判断を仰いだ場合はその結果（headless では「判断待ち」）
 5. E2E結果（対象機能の場合）。`--worktree` が渡されている場合は `/explain-e2e` 用のシナリオ一覧・完了条件トレーサビリティ表を含める
 6. クロスリポジトリ依存の確証結果（該当する場合）

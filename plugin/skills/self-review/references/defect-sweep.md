@@ -18,7 +18,7 @@ SKILL.md の **Step 1 と同じ手順**で `diff_file` を収集する（コマ�
 
 ## Step S2: 掃引の fan-out（1クラス1体）
 
-下表の**全クラス**について、Task ツールで `defect-sweeper`（`subagent_type: 'claude-harness:defect-sweeper'`）を **1クラス1体・1メッセージで並列**委譲する。クラスを間引かない（間引くと、間引いたクラスは「検出なし」ではなく「掃引していない」になるが、報告上は区別できなくなる）。
+下表の**全クラス**について、Task ツールで `defect-sweeper`（`subagent_type: 'claude-harness:defect-sweeper'`, `run_in_background: false`）を **1クラス1体・1メッセージで並列**委譲する（起動通知〔`Async agent launched` 等〕だけが返ったクラスは、Step S3 の前にそのクラスだけ `run_in_background: false` で1回起動し直す。起動通知は応答の受領ではないため、Step S3 の「再実行しない」には当たらない。起動し直しても結果が得られないクラスは、Step S3 の「構造化応答の受領: なし」として扱う）。クラスを間引かない（間引くと、間引いたクラスは「検出なし」ではなく「掃引していない」になるが、報告上は区別できなくなる）。
 
 | ID | 欠陥クラス |
 |---|---|
@@ -90,7 +90,7 @@ SKILL.md の **Step 1 と同じ手順**で `diff_file` を収集する（コマ�
 `toVerify` が空でなければ、各指摘について:
 
 1. SKILL.md **Step 3 と同じ hunk 抽出手順**で、その指摘の該当 diff hunk（＋前後3行）を抽出する（シェルクォート安全埋め込みの規律を含め、同 Step の規定をそのまま適用する）
-2. Task ツールで `finding-verifier`（`subagent_type: 'claude-harness:finding-verifier'`）を、**指摘ごとに1体だけ**委譲する（複数を1メッセージにまとめて並列 spawn してよい。各懐疑者は独立に判定し、他の懐疑者の判定は共有しない）
+2. Task ツールで `finding-verifier`（`subagent_type: 'claude-harness:finding-verifier'`, `run_in_background: false`）を、**指摘ごとに1体だけ**委譲する（起動通知だけが返った場合は `run_in_background: false` で1回だけ起動し直し、それでも結果が得られなければ手順5の terminal 失敗として扱う。複数を1メッセージにまとめて並列 spawn してよい。各懐疑者は独立に判定し、他の懐疑者の判定は共有しない）
 3. プロンプトには `findingId`（`file:line:defectClass`）・`file`・`line`・`severity`・`claim`・`evidence`・hunk 情報を渡し、`{verdicts: [{findingId, verdict: "confirmed"|"refuted"|"uncertain", reason}, ...]}` 形式での返却を課す（`findingId` は入力の値をそのまま使わせる）
 4. 判定の反映:
    - `confirmed` → 指摘維持

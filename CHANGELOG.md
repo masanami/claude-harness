@@ -8,6 +8,24 @@
 
 ---
 
+## 未リリース（版数は未定。リリース時に人が決める）
+
+### 修正
+
+- **`/impl` の中で feature-implementer が `/self-review` のレビュアーの結果を受け取る前に返却する問題を直した（Issue #262）。** サブエージェントの中から `run_in_background` を指定せずに Task ツールを呼ぶと、結果ではなく起動通知（`Async agent launched`）が返る。サブエージェントはターンを終えた時点で呼び出し元へ返却されるため、feature-implementer がレビュアーを起動したまま返却し、レビュアーの結果は上位のセッションへ後から届いていた（実測: Claude Code 2.1.283・headless で再現）。
+  - `/self-review`（標準モード・掃引モード）・feature-implementer・`/impl`・ticket-worker のサブエージェント起動に `run_in_background: false` を明示した。起動通知だけが返った場合は 1 回だけ起動し直し、それでも結果が得られなければ「合流できなかった」として扱う。合流ゲートの正本（`skills/para-impl/references/join-gate.md`）にも、起動通知の受領は終端返却ではないことを足した。
+  - **`/self-review` の報告の先頭に `self_review: complete | incomplete` の行を足した。** レビュアーと合流できずに終わった場合は `self_review: incomplete` と未回収の委譲先の名前（`unrecovered:`）を出す。この行が無い報告は `incomplete` として扱う。
+  - feature-implementer は `self_review: incomplete` を受けたら `/self-review` をやり直さず、その 2 行を先頭に置いて返す。`/impl` はそれを受けて `/self-review` を 1 回だけ最初から実行し直す（feature-implementer は再委譲しない）。やり直しも `incomplete` なら Phase 5 以降へ進まずに返す。
+  - `make check` に `plugin/scripts/tests/test-foreground-subagent-spawn.sh` を足した。経路上のファイルの起動箇所がすべて `run_in_background: false` を持つこと、`self_review: incomplete` の契約が出す側・転記する側・やり直す側でつながっていることを固定する。
+
+### 利用者が取る操作
+
+- **プラグインのファイルをそのまま使っている場合は何もしなくてよい。**
+- **`/self-review` の報告を機械的に読んでいる場合**は、先頭に `self_review:` 行と、`incomplete` のときの `unrecovered:` 行が増える。
+- **プロジェクトの `.claude/agents/` / `.claude/skills/` に `feature-implementer`・`self-review`・`impl` のオーバーライドを置いている場合**、この修正は自動では入らない。オーバーライドでサブエージェントを起動している箇所に `run_in_background: false` を足す。
+
+---
+
 ## 4.8.0
 
 ### 変更
