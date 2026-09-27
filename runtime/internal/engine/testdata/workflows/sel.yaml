@@ -1,0 +1,16 @@
+# select 種類（§3.2・Q12）: 前のステップの enum 値をそのまま outcome にする。
+schema: harness.workflow/v1
+id: sel
+inputs:
+  json: { type: string, required: true }
+steps:
+  route:
+    kind: command
+    run: emit
+    with: { json: $inputs.json }
+    output: schemas/choice.json
+    on: { ok: pick }
+  pick:
+    kind: select
+    value: $steps.route.choice
+    on: { left: { done: went_left }, right: { done: went_right } }

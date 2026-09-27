@@ -49,6 +49,14 @@ func RequiresTTY(gateType, decider string) bool {
 	return gateType == GateInput && decider == DeciderHuman
 }
 
+// observationInputs は観測が必要とするゲートの with の名前（読み込み時に渡されていることを検査する）。
+var observationInputs = map[string][]string{}
+
+// RegisterObservationInputs は観測が必要とする with の名前を登録する。
+func RegisterObservationInputs(name string, required ...string) {
+	observationInputs[name] = append([]string(nil), required...)
+}
+
 // observations は Go に登録された observe 型ゲートの観測（名前 → 返しうる outcome）。
 // 観測の実体は engine が持ち、登録は engine.RegisterObserver を通す（読み込み時に outcome の網羅を検査するため）。
 var observations = map[string][]string{}
@@ -185,12 +193,22 @@ type Step struct {
 	GateInputs      []string // input 型: resume で受け付ける値（そのまま outcome になる）
 	Observe         string   // observe 型: 登録された観測の名前
 
+	// select 種類（§3.2・Q12）: 参照 1 つ。その enum 値がそのまま outcome になる（読み込み時に SelectOutcomes へ解決する）
+	Value          *Ref
+	SelectOutcomes []string
+
+	// workspace 種類（§3.2・§5.4）: acquire | release
+	Action string
+
 	// 読み込み時に解決するもの
 	OutputSchema *OutputSchema
 }
 
 // Outcomes はステップが返しうる outcome（予約値を除く）を宣言順に返す。
 func (s *Step) Outcomes() []string {
+	if s.Kind == "select" {
+		return s.SelectOutcomes
+	}
 	if s.Kind == "gate" {
 		if s.GateType == GateObserve {
 			o, _ := Observation(s.Observe)

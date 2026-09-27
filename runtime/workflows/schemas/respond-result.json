@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "ticket ワークフローの respond（/pr-review-respond）の型付き出力",
+  "type": "object",
+  "required": ["outcome", "summary", "human_question"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["pushed", "no_change", "needs_human"] },
+    "summary": { "type": "string" },
+    "human_question": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "ticket ワークフローの fix（スコープ付き修正。W1）の型付き出力",
+  "type": "object",
+  "required": ["outcome", "summary", "deviation_report"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["pass", "failure", "deviation"] },
+    "summary": { "type": "string" },
+    "deviation_report": { "type": "string" }
+  },
+  "additionalProperties": false
+}

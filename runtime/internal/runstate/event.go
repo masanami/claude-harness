@@ -21,6 +21,7 @@ const (
 	EvGateOpened      = "gate_opened"    // unit がゲートで止まり、ラウンドが閉じた（§4.2）
 	EvGateResolved    = "gate_resolved"  // resume / approve がゲートを解決した（actor・channel を残す。§5.3）
 	EvRunnerStarted   = "runner_started" // resume / approve が run を進めるプロセスになった（runner の生存確認の対象を替える）
+	EvWorkspace       = "workspace"      // unit の作業ツリー（worktree）と PR の記録が変わった（§4.1 Workspace）
 )
 
 // Event は events.jsonl の 1 行。Type に対応するペイロードを 1 つだけ持つ。
@@ -41,6 +42,7 @@ type Event struct {
 	GateOpened      *GateOpened      `json:"gate_opened,omitempty"`
 	GateResolved    *GateResolved    `json:"gate_resolved,omitempty"`
 	RunnerStarted   *RunnerStarted   `json:"runner_started,omitempty"`
+	Workspace       *WorkspaceEvent  `json:"workspace,omitempty"`
 }
 
 // WorkflowRef は run が開始時に記録するワークフロー定義の同定情報（§7.3 の再開時照合の材料）。
@@ -195,4 +197,34 @@ type RunCancelled struct {
 	Actor   string `json:"actor"`
 	Channel string `json:"channel"`
 	Note    string `json:"note,omitempty"`
+}
+
+// Workspace の記録の変わり方。
+const (
+	WorkspaceAcquired = "acquired" // workspace 種類の acquire が作業ツリーを得た（provided / created / reused）
+	WorkspaceReleased = "released" // workspace 種類の release が終わった（削除した・残した）
+	WorkspacePR       = "pr"       // pull-request 種類が PR を作成・更新した
+)
+
+// WorkspaceEvent は unit の作業ツリーと PR の記録（§4.1 Workspace）。Action ごとに使うフィールドが違う:
+// acquired は RepoRoot〜Created、released は Removed・Detail、pr は PRNumber〜HeadSHA。
+type WorkspaceEvent struct {
+	Unit   string `json:"unit"`
+	Action string `json:"action"`
+
+	RepoRoot     string `json:"repo_root,omitempty"`
+	WorktreePath string `json:"worktree_path,omitempty"`
+	Branch       string `json:"branch,omitempty"`
+	Base         string `json:"base,omitempty"`
+	// ProvidedBy は作業ツリーを用意した主体（runtime / caller）。Created は、この run が作ったか
+	// （release が消してよいのは runtime が作ったものだけ。§5.4）。
+	ProvidedBy string `json:"provided_by,omitempty"`
+	Created    bool   `json:"created,omitempty"`
+
+	Removed bool   `json:"removed,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRURL    string `json:"pr_url,omitempty"`
+	HeadSHA  string `json:"head_sha,omitempty"`
 }

@@ -17,12 +17,18 @@ import (
 
 // Observer は observe 型ゲート（§3.2）の観測。resume のたびに外部の実状態を確かめ、その結果を outcome として返す
 // （人の申告を信じない）。with はゲートの with を解決した値。
-type Observer func(ctx context.Context, with map[string]json.RawMessage) (outcome string, observed json.RawMessage, err error)
+type Observer func(ctx context.Context, env ObserveEnv, with map[string]json.RawMessage) (outcome string, observed json.RawMessage, err error)
+
+// ObserveEnv は観測が外部を確かめる場所: unit のステップが動くディレクトリ（作業ツリー）と gh。
+type ObserveEnv struct {
+	Dir string
+	Gh  string
+}
 
 var observers = map[string]Observer{}
 
 // RegisterObserver は観測を登録する。outcomes は観測が返しうる値（読み込み時に on の網羅を検査する）。
-// PR の実状態を見る観測（pr-state）は pull-request 種類と一緒に PR-4 で登録する。
+// PR の実状態を見る観測（pr-state）は pullrequest.go が登録する。
 func RegisterObserver(name string, outcomes []string, fn Observer) {
 	workflow.RegisterObservation(name, outcomes)
 	observers[name] = fn
@@ -370,7 +376,12 @@ func (e *Engine) observe(ctx context.Context, st *runstate.State, u *runstate.Un
 		}
 		with[b.Name] = v
 	}
-	outcome, observed, err := fn(ctx, with)
+	dir := e.dirFor(u)
+	if _, err := os.Stat(dir); err != nil {
+		// 待っている間に作業ツリーが消された（マージの後など）: run を開始したディレクトリで確かめる。
+		dir = e.Cwd
+	}
+	outcome, observed, err := fn(ctx, ObserveEnv{Dir: dir, Gh: e.GhBin}, with)
 	if err != nil {
 		return "", nil, err
 	}

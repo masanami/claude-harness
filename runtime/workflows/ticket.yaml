@@ -1,0 +1,210 @@
+# 1 チケット（= 1 Issue）の実装フロー（docs/harness-runtime-design.md §3.4・Issue #269・PR-4）。
+# PR 作成後の CI・レビュー・マージのラウンドまでを含む。shadow run（§8 C3 の段階 A）の手順は docs/harness-runtime-shadow.md。
+#
+#   harness run ticket --input issue=<番号> [--input base=<ブランチ>] [--input worktree=<絶対パス>]
+#
+# 設計の書き下ろし（§3.4）からの差分（実装で要ったもの。設計の決定は変えていない）:
+#   - ci は plugin/scripts/ci-wait.sh を直接ではなく scripts/ci-wait-pr.sh 経由で呼ぶ（ci-wait.sh は位置引数、
+#     command 種類は --<名前> <値> で渡すため。PR が見つからない場合を ci: none と区別して止める）
+#   - human-merge（observe 型）に観測する PR の番号を with で渡す
+#   - publish に implement の unverified（未検証の事項）を渡す。respond・merge に PR 番号（と base）を渡す
+#   - ci に timeout（ci-wait.sh の既定の待ち 900 秒より長い 20 分）を付ける
+schema: harness.workflow/v1
+id: ticket
+description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
+inputs:
+  issue:    { type: integer, required: true }
+  base:     { type: string }        # 省略可。resolve-ticket が I2 の優先順で決める
+  worktree: { type: string }        # 呼び出し元がスロットを払い出した場合だけ（§5.4）
+limits:
+  budget_usd: 40                    # この unit 全ラウンドの累計上限（仮の値。shadow run で較正する。§12）
+  rework: 3                         # Phase 4→8 の差し戻し上限（W2・Q8）
+
+steps:
+  resolve:
+    kind: command
+    run: resolve-ticket             # scripts/resolve-ticket.sh: gh issue view＋Base: 行の抽出＋統合ブランチの remote 存在確認
+    with: { issue: $inputs.issue, base: $inputs.base }
+    output: schemas/resolve-ticket.json
+    timeout: 2m
+    on:
+      ok: analyze
+      base_missing: { fail: base_missing }          # I3: 作成を促して止まる（手順は output の message に載る）
+
+  analyze:
+    kind: llm
+    prompt: prompts/ticket-analyze.md
+    with: { issue: $inputs.issue }
+    output: schemas/ticket-analysis.json
+    budget_usd: 2
+    timeout: 20m
+    on: { ok: workspace }
+
+  workspace:
+    kind: workspace
+    action: acquire
+    with: { issue: $inputs.issue, branch: $steps.analyze.branch,
+            base: $steps.resolve.base, provided: $inputs.worktree }
+    on:
+      provided: implement
+      created:  implement
+      reused:   implement
+      conflict: { fail: worktree_conflict }         # 別ブランチの worktree・未登録ディレクトリ・別のリポジトリ
+
+  implement:
+    kind: llm
+    agent: claude-harness:feature-implementer
+    prompt: prompts/ticket-implement.md
+    session: new
+    with: { issue: $inputs.issue, critical_design: $steps.analyze.critical_design }
+    output: schemas/implement-result.json
+    budget_usd: 15
+    timeout: 90m
+    on:
+      pass:      commit
+      skip:      commit                             # I7: 未検証は pull-request が本文に明記する
+      failure:   { fail: quality_gate }             # W2: 初回 failure は再委譲しない
+      deviation: { gate: design-deviation }         # I8
+
+  fix:                                              # W1: スコープ付き修正（Step a〜e を開始しない）
+    kind: llm
+    agent: claude-harness:feature-implementer
+    prompt: prompts/ticket-fix.md
+    session: continue:implement                     # Q11: 差し戻し系の既定は continue（shadow の M1・M3 で見直す）
+    with: { failure: $edge.failure }
+    output: schemas/fix-result.json
+    budget_usd: 8
+    timeout: 60m
+    on:
+      pass:      commit
+      failure:   { fail: quality_gate }
+      deviation: { gate: design-deviation }         # W3: 逸脱は再試行しない
+
+  commit:
+    kind: llm
+    prompt: prompts/ticket-commit.md                # /commit を呼ぶ（safety net の /quality-check を含む）
+    session: continue:implement
+    output: schemas/commit-result.json
+    budget_usd: 2
+    timeout: 30m
+    on: { committed: e2e-route, failure: { fail: commit } }
+
+  e2e-route:
+    kind: select
+    value: $steps.analyze.e2e_target                # I10: 2 段前の値での分岐を select で解く
+    on: { yes: e2e, no: publish }
+
+  e2e:
+    kind: llm
+    prompt: prompts/ticket-e2e.md                   # /create-e2e まで。/explain-e2e は runtime の外（§3.7）
+    session: continue:implement
+    output: schemas/e2e-result.json
+    budget_usd: 8
+    timeout: 60m
+    on:
+      pass: publish
+      fail: { goto: fix, with: { failure: $steps.e2e.failure_summary },
+              limit: rework, exhausted: { fail: e2e } }             # I11 に上限 3 を与える（Q8）
+
+  publish:
+    kind: pull-request
+    with:
+      base: $steps.resolve.base
+      closes: $inputs.issue
+      title: $steps.implement.pr_title
+      summary: $steps.implement.summary
+      quality: $steps.implement.outcome
+      residual_findings: $steps.implement.residual_findings
+      unverified: $steps.implement.unverified
+      cross_repo: $steps.implement.cross_repo_attestation
+    on: { opened: ci, updated: ci }
+
+  ci:
+    kind: command
+    run: ci-wait-pr                                 # scripts/ci-wait-pr.sh → plugin/scripts/ci-wait.sh
+    with: { pr: $steps.publish.pr_number }
+    output: schemas/ci-wait.json
+    outcome_field: ci
+    timeout: 20m
+    on:
+      green: review
+      none:  review                                 # CI 未設定は green 相当
+      red:   { goto: fix, with: { failure: $steps.ci.failure_log_excerpt },
+               limit: rework, exhausted: { fail: ci_red } }
+      timeout: { retry: 1, exhausted: { gate: ci-pending } }   # Q10: 失敗にせずラウンドを区切る
+
+  ci-pending:                                       # CI を待ちきれなかった（新情報が無いので fix へは送らない。W1）
+    kind: gate
+    type: input
+    decider: any
+    requested_action: CI が時間内に終わらなかった。CI の完了後に recheck を渡して resume（止めるなら abort）
+    inputs: [recheck, abort]
+    on: { recheck: ci, abort: { fail: ci_timeout } }
+
+  review:                                           # ラウンドの区切り R1
+    kind: gate
+    type: input
+    decider: any
+    requested_action: PR のレビューを待つ。対応が要れば respond、マージしてよければ ready を渡して resume
+    inputs: [respond, ready]
+    on: { respond: respond, ready: merge-route }
+
+  respond:
+    kind: llm
+    prompt: prompts/ticket-respond.md               # /pr-review-respond を呼ぶ
+    session: new
+    with: { pr: $steps.publish.pr_number }
+    output: schemas/respond-result.json
+    budget_usd: 8
+    timeout: 60m
+    on:
+      pushed:      ci                               # R4: 修正 push 後は CI から
+      no_change:   review
+      needs_human: { gate: review-human }           # R2 qcFailed・R3 design_change/critical
+
+  review-human:
+    kind: gate
+    type: input
+    decider: human                                  # R2・R3 を 1 つのゲートのまま扱う（N2 で決定。PR-5 までに見直す）
+    requested_action: レビュー対応で人の判断が要る（内容は respond の出力を参照）
+    inputs: [respond, abort]
+    on: { respond: respond, abort: { fail: aborted_by_human } }
+
+  merge-route:
+    kind: select
+    value: $steps.resolve.base_kind
+    on: { integration: merge, default: human-merge }
+
+  merge:
+    kind: llm
+    prompt: prompts/ticket-merge.md                 # /pr-merge（統合ブランチ宛のみ。本番非反映・可逆）
+    session: new
+    with: { pr: $steps.publish.pr_number, base: $steps.resolve.base }
+    output: schemas/merge-result.json
+    budget_usd: 3
+    timeout: 30m
+    on: { merged: cleanup, blocked: { gate: review-human } }
+
+  human-merge:                                      # R5: 既定ブランチへのマージは runtime が行わない
+    kind: gate
+    type: observe
+    decider: human                                  # observe 型なので TTY を要求しない（N1 で決定）
+    observe: pr-state                               # resume 時に gh で PR の実状態を確認
+    with: { pr: $steps.publish.pr_number }
+    requested_action: 既定ブランチ宛 PR のマージは人が行う。マージ後に resume
+    on: { merged: cleanup, open: { gate: human-merge }, closed: { fail: pr_closed } }
+
+  design-deviation:
+    kind: gate
+    type: input
+    decider: human                                  # Q9: input 型の human ゲートは TTY 必須（§5.3）
+    requested_action: クリティカル設計の逸脱を検知（implement / fix の deviation_report を参照）
+    inputs: [follow-decision, abort]
+    on:
+      follow-decision: { goto: fix, with: { failure: $gate.note } }  # 人の指示文を修正ステップへ
+      abort: { fail: aborted_by_human }
+
+  cleanup:
+    kind: workspace
+    action: release                                 # 自分が作った worktree だけを消す（P12 の 3 条件は到達経路で満たされる）
+    on: { released: { done: merged }, kept: { done: merged }, dirty: { done: merged_worktree_dirty } }

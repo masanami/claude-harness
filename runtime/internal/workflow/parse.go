@@ -68,12 +68,17 @@ type kindSpec struct {
 	keys []string
 }
 
-// kinds は Go に登録されたステップ種類（§3.2）。PR-3 で llm と gate を足した。
+// kinds は Go に登録されたステップ種類（§3.2）。PR-3 で llm と gate、PR-4 で select・workspace・pull-request を足した。
 // 種類を足すときは、ここと engine の実行器の両方に足す。
 var kinds = map[string]kindSpec{
 	"command": {keys: []string{"kind", "description", "run", "with", "output", "outcome_field", "exit", "timeout", "on"}},
 	"llm":     {keys: []string{"kind", "description", "prompt", "agent", "session", "with", "output", "budget_usd", "timeout", "on"}},
 	"gate":    {keys: []string{"kind", "description", "type", "decider", "requested_action", "inputs", "observe", "with", "on"}},
+	// select は参照 1 つの enum 値をそのまま outcome にする（副作用なし）。with・output は持たない。
+	"select": {keys: []string{"kind", "description", "value", "on"}},
+	// workspace と pull-request は出力の形を Go が決める（output を書かせない。builtin.go）。
+	"workspace":    {keys: []string{"kind", "description", "action", "with", "on"}},
+	"pull-request": {keys: []string{"kind", "description", "with", "on"}},
 }
 
 // Kinds は登録済みの種類名を返す。
@@ -513,6 +518,10 @@ func (p *parser) step(id string, knode, n *yaml.Node) *Step {
 			s.GateInputs = p.outcomeList(f.val, fw)
 		case "observe":
 			s.Observe, _ = p.matched(f.val, fw, reOutcome)
+		case "value":
+			s.Value = p.reference(f.val, fw)
+		case "action":
+			s.Action, _ = p.matched(f.val, fw, reName)
 		case "on":
 			onNode = f.val
 		}
@@ -717,6 +726,24 @@ func (p *parser) bindings(n *yaml.Node, what string, nameRe *regexp.Regexp) []*B
 		}
 	}
 	return out
+}
+
+// reference は参照 1 つだけを受け付ける（select の value。リテラルは選ぶものが無いので拒否する）。
+func (p *parser) reference(n *yaml.Node, what string) *Ref {
+	s, ok := p.str(n, what)
+	if !ok {
+		return nil
+	}
+	if !strings.HasPrefix(s, "$") {
+		p.errf(n, "%s must be exactly one reference (a literal has nothing to select on)", what)
+		return nil
+	}
+	ref, err := ParseRef(s)
+	if err != nil {
+		p.errf(n, "%s: %v", what, err)
+		return nil
+	}
+	return ref
 }
 
 // value は with の値（参照 1 つ、またはリテラル）を読む。

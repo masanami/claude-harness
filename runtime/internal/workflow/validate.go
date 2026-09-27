@@ -54,6 +54,14 @@ func Validate(wf *Workflow, opts Options) Problems {
 	for _, s := range wf.Steps {
 		v.stepKind(s)
 	}
+	// select の outcome は参照先の出力スキーマ（または参照先の select の outcome）から決まるので、
+	// すべての出力スキーマを読んでから、参照先を先に解決する順で解決する。
+	state := map[string]int{}
+	for _, s := range wf.Steps {
+		if s.Kind == "select" {
+			v.resolveSelect(s, state)
+		}
+	}
 	if len(wf.Steps) > 0 && wf.Steps[0].Kind == "gate" {
 		v.errf(wf.Steps[0].Line, "steps.%s: the first step must not be a gate (a gate is opened by a transition into it)", wf.Steps[0].ID)
 	}
@@ -81,6 +89,8 @@ func (v *validator) stepKind(s *Step) {
 		v.llm(s)
 	case "gate":
 		v.gate(s)
+	case "workspace", "pull-request":
+		v.builtinKind(s)
 	}
 }
 
@@ -188,6 +198,16 @@ func (v *validator) gate(s *Step) {
 			v.errf(s.Line, "steps.%s: an observe gate needs observe (the name of a registered observation)", s.ID)
 		} else if _, ok := Observation(s.Observe); !ok {
 			v.errf(s.Line, "steps.%s: observe %q is not a registered observation", s.ID, s.Observe)
+		} else {
+			for _, name := range observationInputs[s.Observe] {
+				found := false
+				for _, b := range s.With {
+					found = found || b.Name == name
+				}
+				if !found {
+					v.errf(s.Line, "steps.%s: observation %s needs with.%s", s.ID, s.Observe, name)
+				}
+			}
 		}
 	case "":
 		v.errf(s.Line, "steps.%s: type is required for kind gate (input or observe)", s.ID)
@@ -214,8 +234,8 @@ func (v *validator) command(s *Step) {
 		v.errf(s.Line, "steps.%s: run is required for kind command", s.ID)
 	} else if v.opts.ScriptsDir == "" {
 		v.errf(s.Line, "steps.%s: cannot check run %q: scripts directory is not set", s.ID, s.Run)
-	} else if fi, err := os.Stat(filepath.Join(v.opts.ScriptsDir, s.Run+".sh")); err != nil || !fi.Mode().IsRegular() {
-		v.errf(s.Line, "steps.%s: run %q does not exist (%s)", s.ID, s.Run, filepath.Join(v.opts.ScriptsDir, s.Run+".sh"))
+	} else if _, err := ScriptPath(v.wf.Dir, v.opts.ScriptsDir, s.Run); err != nil {
+		v.errf(s.Line, "steps.%s: %v", s.ID, err)
 	}
 	if len(s.Exit) > 0 && s.OutcomeField != "" {
 		v.errf(s.Line, "steps.%s: outcome comes from either exit or outcome_field, not both", s.ID)
@@ -409,7 +429,13 @@ func (v *validator) references(g *graph) {
 				edgeNames[b.Value.Ref.Name] = true
 			}
 			if t != nil {
-				v.acceptable(s, t, b.Line, what)
+				v.acceptable(s, b.Name, t, b.Line, what)
+			}
+		}
+		if s.Kind == "select" && s.Value != nil && s.Value.Kind == RefSteps && s.Value.Step != s.ID {
+			// 選ぶ値は、その経路で必ず成功しているステップの出力でなければならない（値の無い経路を作らない）。
+			if !g.guaranteed(s.Value.Step, s.ID) {
+				v.errf(s.Line, "steps.%s.value: %s: step %q has not necessarily succeeded on every path that reaches %q", s.ID, s.Value.Raw, s.Value.Step, s.ID)
 			}
 		}
 		for _, e := range s.On {
@@ -580,8 +606,11 @@ func (v *validator) edgeSupply(g *graph, s *Step, read map[string]bool) {
 
 // acceptable は、種類がその型の値を受け取れるかを確かめる。command は argv（--<名前> <値>）へ写すので、
 // スカラーとスカラーの配列（フラグの繰り返し）だけを受け取れる。
-func (v *validator) acceptable(s *Step, t *Type, line int, what string) {
+func (v *validator) acceptable(s *Step, name string, t *Type, line int, what string) {
 	switch s.Kind {
+	case "workspace", "pull-request":
+		v.builtinAcceptable(s, name, t, line, what)
+		return
 	case "command":
 		if isScalar(t) || (t.Name == "array" && t.Items != nil && isScalar(t.Items)) {
 			return

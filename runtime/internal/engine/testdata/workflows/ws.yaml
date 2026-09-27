@@ -1,0 +1,20 @@
+# workspace 種類（§3.2・§5.4）: acquire で得た作業ツリーの中で後続のステップが動き、release は自分が作ったものだけを消す。
+schema: harness.workflow/v1
+id: ws
+inputs:
+  provided: { type: string }
+steps:
+  acquire:
+    kind: workspace
+    action: acquire
+    with: { issue: 7, branch: feature/issue-7-x, base: main, provided: $inputs.provided }
+    on: { provided: work, created: work, reused: work, conflict: { fail: conflict } }
+  work:
+    kind: command
+    run: pwd-json
+    output: schemas/dir.json
+    on: { ok: release }
+  release:
+    kind: workspace
+    action: release
+    on: { released: { done: released }, kept: { done: kept }, dirty: { done: dirty } }

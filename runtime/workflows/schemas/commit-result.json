@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "ticket ワークフローの commit（/commit）の型付き出力",
+  "type": "object",
+  "required": ["outcome", "commit_sha", "summary"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["committed", "failure"] },
+    "commit_sha": { "type": "string" },
+    "summary": { "type": "string" }
+  },
+  "additionalProperties": false
+}

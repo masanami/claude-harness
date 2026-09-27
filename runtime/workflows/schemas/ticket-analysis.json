@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "ticket ワークフローの analyze（Issue 分析）の型付き出力。branch は worktree-setup が形式を検証する",
+  "type": "object",
+  "required": ["outcome", "e2e_target", "e2e_reason", "branch", "critical_design"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["ok"] },
+    "e2e_target": { "type": "string", "enum": ["yes", "no"] },
+    "e2e_reason": { "type": "string" },
+    "branch": { "type": "string", "pattern": "^(feature|fix|refactor|docs|hotfix)/issue-[0-9]+-[a-z0-9][a-z0-9-]*$" },
+    "critical_design": { "type": "string" }
+  },
+  "additionalProperties": false
+}

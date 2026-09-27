@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "workspace 種類（action: acquire）の出力。runtime が生成する（docs/harness-runtime-design.md §3.2・§5.4）",
+  "type": "object",
+  "required": ["outcome", "worktree_path", "branch", "base", "provided_by", "detail"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["provided", "created", "reused", "conflict"] },
+    "worktree_path": { "type": "string" },
+    "branch": { "type": "string" },
+    "base": { "type": "string" },
+    "provided_by": { "type": "string", "enum": ["runtime", "caller"] },
+    "detail": { "type": "string" }
+  },
+  "additionalProperties": false
+}

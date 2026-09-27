@@ -1,0 +1,20 @@
+# workspace 種類: acquire と release の間でゲートに止まる（止まっている間に作業ツリーが入れ替わる場合を作る）。
+schema: harness.workflow/v1
+id: ws-gate
+steps:
+  acquire:
+    kind: workspace
+    action: acquire
+    with: { issue: 7, branch: feature/issue-7-x, base: main }
+    on: { provided: wait, created: wait, reused: wait, conflict: { fail: conflict } }
+  wait:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: go on
+    inputs: [go]
+    on: { go: release }
+  release:
+    kind: workspace
+    action: release
+    on: { released: { done: released }, kept: { done: kept }, dirty: { done: dirty } }

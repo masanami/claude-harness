@@ -400,6 +400,8 @@ steps:
     on: { released: { done: merged }, kept: { done: merged }, dirty: { done: merged_worktree_dirty } }
 ```
 
+> **PR-4 の実装（`runtime/workflows/ticket.yaml`）で上の書き下ろしから足したもの**（遷移表・決定は変えていない）: ① `ci` は `ci-wait` を直接ではなく、`runtime/workflows/scripts/ci-wait-pr.sh` 経由で呼ぶ（`ci-wait.sh` は位置引数を取り、`command` 種類は `--<名前> <値>` で渡すため。PR が見つからない〔`pr_exists: false`〕ときは `ci: none` と区別できないので失敗にする）。② `resolve-ticket` は `runtime/workflows/scripts/resolve-ticket.sh` に置いた（`command` の `run` は `<workflow-dir>/scripts/` と `plugin/scripts/` のどちらか一方にだけ在る名前を指す。S1 の埋め込み対象〔`runtime/workflows/`〕に含まれる）。③ `human-merge` に観測する PR の番号を `with: { pr: $steps.publish.pr_number }` で渡す。④ `publish` に `implement` の `unverified`（未検証の事項）を渡す。`respond`・`merge` に PR 番号（`merge` には base も）を渡す。⑤ `resolve`・`ci`・各 `llm` ステップに `timeout` を付けた。⑥ `workspace` で払い出した後のステップは作業ツリーの中で動く（§4.1 Workspace。`release` の後は run を開始したディレクトリに戻る）。
+>
 > `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す（§3.3。Q12 で決定）。
 >
 > `ci-pending` は `decider: any`（外部待ちで、解決に意思決定を含まない）なので TTY を要求しない。`recheck` で `ci` に戻ると、`retry` はラウンド単位で数えるため再び 1 回の再試行を持つ（§3.1）。`limit: rework` の累計は戻らない。
@@ -594,7 +596,7 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 
 ### 6.1 Go モジュールの配置
 
-**`runtime/` に独立した Go モジュールを置く**（`runtime/go.mod`、`runtime/cmd/harness/`、`runtime/internal/…`）。ワークフロー定義は `runtime/workflows/`、プロンプトは `runtime/workflows/prompts/`、出力スキーマは `runtime/workflows/schemas/`。配置の細部（ディレクトリ名）は可逆な内部構造なので本文書で決め、PR-2 で変えてよい。
+**`runtime/` に独立した Go モジュールを置く**（`runtime/go.mod`、`runtime/cmd/harness/`、`runtime/internal/…`）。ワークフロー定義は `runtime/workflows/`、プロンプトは `runtime/workflows/prompts/`、出力スキーマは `runtime/workflows/schemas/`、runtime が持つスクリプト（`resolve-ticket` 等。PR-4）は `runtime/workflows/scripts/`。配置の細部（ディレクトリ名）は可逆な内部構造なので本文書で決め、PR-2 で変えてよい。
 
 - X1（§6.2）の移動後のリポジトリ構成:
 
@@ -716,6 +718,8 @@ make check
 | C4 | 旧方式は対話専用として残し、headless（flywheel 経由）だけ CLI にする | 無期限 | flywheel の起動形は flywheel §10 の実装待ちで、今は入口が無い。二重管理が恒久化する |
 
 **採った案: C3**。(A) の終了条件は**件数と指標の両方**で置く（N4 でオーナーが決定・2026-09-21。例: shadow run が N 件・§9 の指標で劣化なし）。**N と「劣化なし」の閾値の数字は未決**で、PR-4 の shadow 開始時に導入前の値を測り直してから確定する（§11.2）。(B) の PR で `skills/impl/SKILL.md` ほかの縮小を §0.2 の 82,139 B に対する差分として示す。縮まない部分（メソドロジー・`feature-implementer` の内側・入れ子 Task の合流規律）は §3.7 のとおり明示して残す。
+
+段階 (A) の手順（人の端末から `ticket` ワークフローを実チケットに使う方法）と、§9 の指標の導入後の取り方は [`harness-runtime-shadow.md`](harness-runtime-shadow.md) に置いた（PR-4）。
 
 ### 8.1 移行時に利用者へ見える変更
 

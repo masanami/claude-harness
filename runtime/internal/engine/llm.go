@@ -136,7 +136,7 @@ func (e *Engine) executeLLM(ctx context.Context, st *runstate.State, u *runstate
 	defer stderr.Close()
 
 	cmd := exec.Command(e.claudeBin(), args...)
-	cmd.Dir = e.Cwd
+	cmd.Dir = e.dirFor(u)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr // プロンプトは stdin で渡す（argv の長さに縛られない）
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	started.Argv = cmd.Args
@@ -334,18 +334,9 @@ func (e *Engine) prompt(st *runstate.State, u *runstate.Unit, step *workflow.Ste
 	if err != nil {
 		return nil, err
 	}
-	inputs := map[string]json.RawMessage{}
-	for _, b := range step.With {
-		if r := b.Value.Ref; r != nil && r.Kind == workflow.RefInputs {
-			if _, given := st.Inputs[r.Name]; !given {
-				continue // 省略された任意の入力は渡さない
-			}
-		}
-		v, err := value(st, succeeded(u), u.Edge, b.Value)
-		if err != nil {
-			return nil, err
-		}
-		inputs[b.Name] = v
+	inputs, err := withValues(st, u, step) // 省略された任意の入力は渡さない
+	if err != nil {
+		return nil, err
 	}
 	r := u.CurrentRound()
 	session := "new"

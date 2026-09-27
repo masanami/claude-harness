@@ -19,7 +19,7 @@ import (
 
 // テスト用の観測: with.path のファイルの中身を outcome にする（PR の実状態を見る pr-state は PR-4）。
 func init() {
-	RegisterObserver("fake-state", []string{"merged", "open", "closed"}, func(_ context.Context, with map[string]json.RawMessage) (string, json.RawMessage, error) {
+	RegisterObserver("fake-state", []string{"merged", "open", "closed"}, func(_ context.Context, _ ObserveEnv, with map[string]json.RawMessage) (string, json.RawMessage, error) {
 		var path string
 		if err := json.Unmarshal(with["path"], &path); err != nil {
 			return "", nil, err

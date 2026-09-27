@@ -32,6 +32,9 @@ type Engine struct {
 
 	// ClaudeBin は llm 種類が起動する claude の実行ファイル（空なら PATH の claude）。テストは偽の claude を指す。
 	ClaudeBin string
+	// GitBin・GhBin は workspace・pull-request 種類と pr-state の観測が起動する git・gh（空なら PATH のもの）。
+	GitBin string
+	GhBin  string
 
 	// KillGrace は停止時に SIGTERM から SIGKILL までの猶予。PollInterval は cancel の印を見る間隔。
 	KillGrace    time.Duration
@@ -199,6 +202,9 @@ type result struct {
 	costUnknown     bool
 	costReportedUSD *float64
 	sessionID       string
+
+	// extra は step_finished の前に記録するイベント（workspace 種類・pull-request 種類の作業ツリーと PR の記録）。
+	extra []runstate.Event
 }
 
 // chargeUnknown は費用が得られなかった実行に、付与した上限額を消費したものとして数える（fail-closed。§4.3・Q15）。
@@ -214,11 +220,11 @@ func chargeUnknown(fin *runstate.StepFinished, granted *float64) {
 // decide は結果から step_finished と遷移のイベントを作る。予約値が on に無ければ run を失敗にする（fail-closed）。
 func (e *Engine) decide(st *runstate.State, u *runstate.Unit, step *workflow.Step, res result) ([]runstate.Event, error) {
 	// st は execute の前に読んだ状態なので、この実行の番号は result が持つ。
-	evs := []runstate.Event{{Type: runstate.EvStepFinished, StepFinished: &runstate.StepFinished{
+	evs := append(append([]runstate.Event{}, res.extra...), runstate.Event{Type: runstate.EvStepFinished, StepFinished: &runstate.StepFinished{
 		Unit: u.Key, Step: step.ID, Attempt: res.attempt, Outcome: res.outcome, Reserved: res.reserved,
 		Output: res.output, ExitCode: res.exitCode, Error: res.errText,
 		CostUSD: res.costUSD, CostUnknown: res.costUnknown, CostReportedUSD: res.costReportedUSD, SessionID: res.sessionID,
-	}}}
+	}})
 	// 遷移の with が $steps.<このステップ> を読むとき、いま得た出力を使う。
 	cur := succeeded(u)
 	if !res.reserved {

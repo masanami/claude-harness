@@ -60,6 +60,33 @@ type Unit struct {
 	Gate   *Gate    `json:"gate,omitempty"`
 	Gates  []*Gate  `json:"gates,omitempty"`
 	Rounds []*Round `json:"rounds"`
+	// Workspace は unit の作業ツリー（§4.1。workspace 種類の acquire で入り、release で Released になる）と PR。
+	Workspace *Workspace `json:"workspace,omitempty"`
+}
+
+// Workspace は unit の作業ツリーと PR（§4.1 Workspace）。HeadSHAs はラウンドごとの PR の head（pull-request 種類が push した時点）。
+type Workspace struct {
+	RepoRoot     string            `json:"repo_root,omitempty"`
+	WorktreePath string            `json:"worktree_path,omitempty"`
+	Branch       string            `json:"branch,omitempty"`
+	Base         string            `json:"base,omitempty"`
+	ProvidedBy   string            `json:"provided_by,omitempty"`
+	Created      bool              `json:"created"`
+	Released     bool              `json:"released,omitempty"`
+	Removed      bool              `json:"removed,omitempty"`
+	ReleaseNote  string            `json:"release_detail,omitempty"`
+	PRNumber     int               `json:"pr_number,omitempty"`
+	PRURL        string            `json:"pr_url,omitempty"`
+	HeadSHAs     map[string]string `json:"head_sha_by_round,omitempty"`
+}
+
+// ActiveWorkspace は、acquire 済みでまだ release していない作業ツリーのパス（無ければ空）。
+// 以降のステップ（llm・command・pull-request）はこのディレクトリで動く。
+func (u *Unit) ActiveWorkspace() string {
+	if u.Workspace == nil || u.Workspace.Released {
+		return ""
+	}
+	return u.Workspace.WorktreePath
 }
 
 // Budget は unit の累計（§4.1）。SpentUSD には費用が得られなかった実行の上限額も含む（fail-closed）。
@@ -480,6 +507,15 @@ func Apply(s *State, ev *Event) (*State, error) {
 		s.Status = StatusRunning
 	case EvRunnerStarted:
 		s.PID = ev.RunnerStarted.PID
+	case EvWorkspace:
+		p := ev.Workspace
+		u, err := unit(p.Unit)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyWorkspace(u, p, ev.Seq); err != nil {
+			return nil, err
+		}
 	case EvCancelRequested:
 		s.Cancel = ev.CancelRequested
 	case EvRunCancelled:
@@ -532,6 +568,7 @@ func checkPayload(ev *Event) error {
 		EvCancelRequested: ev.CancelRequested != nil, EvRunCancelled: ev.RunCancelled != nil,
 		EvStepProcess: ev.StepProcess != nil, EvGateOpened: ev.GateOpened != nil,
 		EvGateResolved: ev.GateResolved != nil, EvRunnerStarted: ev.RunnerStarted != nil,
+		EvWorkspace: ev.Workspace != nil,
 	}
 	n := 0
 	for _, v := range set {
@@ -545,6 +582,58 @@ func checkPayload(ev *Event) error {
 	}
 	if !has || n != 1 {
 		return fmt.Errorf("event %s (seq %d) must carry exactly its own payload", ev.Type, ev.Seq)
+	}
+	return nil
+}
+
+// applyWorkspace は workspace イベントを unit へ適用する。作業ツリーの記録はステップ実行の中で起きる（running のステップがある）。
+func applyWorkspace(u *Unit, p *WorkspaceEvent, seq int) error {
+	if u.Running() == nil {
+		return fmt.Errorf("workspace (seq %d) outside a running step", seq)
+	}
+	switch p.Action {
+	case WorkspaceAcquired:
+		if p.WorktreePath == "" || (p.ProvidedBy != "runtime" && p.ProvidedBy != "caller") {
+			return fmt.Errorf("workspace acquired (seq %d) needs worktree_path and provided_by runtime|caller", seq)
+		}
+		if p.ProvidedBy == "caller" && p.Created {
+			return fmt.Errorf("workspace acquired (seq %d): a worktree provided by the caller cannot be created by the runtime", seq)
+		}
+		prev := u.Workspace
+		u.Workspace = &Workspace{RepoRoot: p.RepoRoot, WorktreePath: p.WorktreePath, Branch: p.Branch, Base: p.Base,
+			ProvidedBy: p.ProvidedBy, Created: p.Created}
+		if prev != nil && prev.WorktreePath == p.WorktreePath {
+			// 同じ作業ツリーを取り直した（interrupted からのやり直し等）: PR の記録は持ち越す。
+			u.Workspace.PRNumber, u.Workspace.PRURL, u.Workspace.HeadSHAs = prev.PRNumber, prev.PRURL, prev.HeadSHAs
+		}
+	case WorkspaceReleased:
+		if u.Workspace == nil {
+			return fmt.Errorf("workspace released (seq %d) but the unit has no workspace", seq)
+		}
+		if p.Removed && !u.Workspace.Created {
+			return fmt.Errorf("workspace released (seq %d): removed a worktree the runtime did not create", seq)
+		}
+		u.Workspace.Released, u.Workspace.Removed, u.Workspace.ReleaseNote = true, p.Removed, p.Detail
+	case WorkspacePR:
+		if p.PRNumber <= 0 {
+			return fmt.Errorf("workspace pr (seq %d) needs pr_number", seq)
+		}
+		if u.Workspace == nil {
+			// 作業ツリーを払い出さないワークフロー（呼び出し元の作業ツリーで動く）でも PR は記録する。
+			u.Workspace = &Workspace{}
+		}
+		u.Workspace.PRNumber, u.Workspace.PRURL = p.PRNumber, p.PRURL
+		if p.Branch != "" {
+			u.Workspace.Branch = p.Branch
+		}
+		if p.HeadSHA != "" {
+			if u.Workspace.HeadSHAs == nil {
+				u.Workspace.HeadSHAs = map[string]string{}
+			}
+			u.Workspace.HeadSHAs[fmt.Sprint(u.CurrentRound().No)] = p.HeadSHA
+		}
+	default:
+		return fmt.Errorf("workspace action %q (seq %d) is unknown", p.Action, seq)
 	}
 	return nil
 }
