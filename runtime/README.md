@@ -141,7 +141,7 @@ steps:
 
 - `acquire`: `provided`（呼び出し元が渡した worktree。在るディレクトリ・作業ツリーの最上位・run を開始したリポジトリと同じリポジトリであることを確かめる）があれば `provided`。無ければ `plugin/scripts/worktree-setup.sh <issue> <branch> <base>` を呼んで `created` / `reused`。払い出し先が別ブランチの worktree・未登録のディレクトリ・別のリポジトリなら `conflict`。払い出しはプロセスの中で直列化する（スクリプトの mkdir ロックは第二層）。
 - 払い出した後のステップ（`command`・`llm`・`pull-request`・observe 型ゲートの観測）は作業ツリーの中で動く（`release` の後は run を開始したディレクトリに戻る）。
-- `release`: **この run が作ったものだけ**を `worktree-cleanup.sh <path> --skip-if-dirty` で消す（`released`）。呼び出し元が渡したもの・この run が作っていない再利用は消さない（`kept`）。未コミットの変更があれば消さない（`dirty`）。
+- `release`: **この run が作ったものだけ**を `worktree-cleanup.sh <path> --skip-if-dirty` で消す（`released`）。「この run が作った」は、作ったときに作業ツリーの git dir へ書いた印（`claude-harness-owner`: run id と unit）で確かめる（払い出し先のパスは同じ Issue の run どうしで同じなので、パスだけでは判定しない）。呼び出し元の作業ツリーが base そのもの・detached なら `conflict`。呼び出し元が渡したもの・この run が作っていない再利用は消さない（`kept`）。未コミットの変更があれば消さない（`dirty`）。
 - 出力（`$steps.<id>.worktree_path` 等）の形は Go が決める（`output` は書かない）。
 
 ## `pull-request` 種類の書き方
@@ -161,6 +161,6 @@ steps:
     on: { opened: ci, updated: ci }   # 出力: pr_number・pr_url・branch・head_sha
 ```
 
-- 作業ブランチを `git push -u origin <branch>` し、そのブランチの open な PR が在れば push だけで `updated`（本文は書き換えない。W4）、無ければ `gh pr create --body-file` で `opened`。作業ブランチが base そのもの・open な PR の base が違う・open な PR が複数、なら `step_error`（fail-closed）。
+- 作業ブランチを `git push -u origin refs/heads/<branch>:refs/heads/<branch>` し、そのブランチの open な PR（fork からの同名ブランチの PR は除く）が在れば push だけで `updated`（本文は書き換えない。W4）、無ければ `gh pr create --body-file` で `opened`。作業ブランチが base そのもの・リポジトリの既定ブランチ・open な PR の base が違う・open な PR が複数、なら push せず／作らず `step_error`（fail-closed）。
 - PR 本文（概要・品質ゲート・未検証・残指摘・クロスリポジトリ確証）は with の値から Go が決定的に作る。作った本文は run の `logs/<step>.<n>.body.md` に残る。
 - observe 型ゲートの観測 `pr-state`（`with: { pr: <PR 番号> }`）は `gh pr view` で PR の実状態を確かめ、`merged` / `open` / `closed` を返す。
