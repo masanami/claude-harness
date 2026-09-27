@@ -147,9 +147,20 @@ release_worktree_lock() {
 # git 呼び出し（外部作用あり。gh は呼ばない）
 # ---------------------------------------------------------------------------
 
+# origin に refs/heads/<branch> が完全一致で在るかを判定する。
+# ls-remote のパターンは末尾一致（パス要素単位）のため、素の <branch> を渡すと
+# feature/<branch> のような別ブランチにも一致して「在る」と誤判定する（#271）。
+# パターンを refs/heads/<branch> にしたうえで、出力の ref 列も完全一致で照合する
+# （refs/heads/x/refs/heads/<branch> のような末尾一致の残りも除くため）。
+remote_head_exists() {
+  local branch="$1"
+  git ls-remote --heads origin "refs/heads/${branch}" 2>/dev/null |
+    awk -v ref="refs/heads/${branch}" '$2 == ref { found = 1 } END { exit !found }'
+}
+
 verify_base_remote() {
   local base="$1"
-  git ls-remote --exit-code --heads origin "$base" >/dev/null 2>&1
+  remote_head_exists "$base"
 }
 
 fetch_base() {
@@ -169,7 +180,7 @@ local_branch_exists() {
 
 remote_branch_exists() {
   local branch="$1"
-  git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1
+  remote_head_exists "$branch"
 }
 
 # 指定パスが git worktree として登録済みなら、その worktree の branch名を返す

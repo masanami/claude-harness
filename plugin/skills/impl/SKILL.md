@@ -81,7 +81,9 @@ $ARGUMENTS
 base が既定ブランチ以外（統合ブランチ）の場合、**Phase 3 の前に remote での存在を確認する**。無ければ処理を止めてユーザーに作成を促す:
 
 ```bash
-if ! git ls-remote --exit-code --heads origin "{base}" >/dev/null 2>&1; then
+# ls-remote のパターンは末尾一致のため、refs/heads/{base} で指したうえで ref 列を完全一致で照合する
+# （素の {base} だと feature/{base} のような別ブランチにも一致する。Issue #271）
+if ! git ls-remote --heads origin "refs/heads/{base}" | awk '$2 == "refs/heads/{base}" { found = 1 } END { exit !found }'; then
   echo "エラー: 統合ブランチ {base} が remote に存在しません。先に作成してください:"
   DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')
   echo "  git checkout -b {base} \"origin/$DEFAULT_BRANCH\" && git push -u origin {base}"
