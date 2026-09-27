@@ -8,6 +8,21 @@
 
 ---
 
+## 未リリース（版数は未定。リリース時に人が決める）
+
+### 修正
+
+- **`scripts/worktree-setup.sh` が、統合ブランチ（base）や既存の作業ブランチが remote に無いのに「在る」と判定することがある問題を直した（Issue #271）。** `git ls-remote --heads origin <b>` のパターンは末尾一致（パス要素単位）のため、`<b>` が無くても `feature/<b>` のような別ブランチが在ると成功していた。base の存在確認（`verify_base_remote`）と既存リモートブランチの確認（`remote_branch_exists`）を、`refs/heads/<b>` と完全一致する ref があるかで判定するようにした。
+  - `/impl`・`/para-impl` の SKILL.md にある統合ブランチの存在確認の例も同じ判定に直した。
+  - `plugin/scripts/tests/test-worktree-setup.sh` に、末尾一致の別ブランチだけが remote に在る場合に base を「無い」と判定するケースを足した。
+
+### 利用者が取る操作
+
+- **プラグインのファイルをそのまま使っている場合は何もしなくてよい。**
+- **プロジェクトの `.claude/skills/` に `impl`・`para-impl` のオーバーライドを置いている場合**、この修正は自動では入らない。統合ブランチの存在確認を `git ls-remote --exit-code --heads origin "{base}"` のまま使っているなら、上の SKILL.md と同じ完全一致の判定に直す。
+
+---
+
 ## 4.8.1
 
 ### 修正

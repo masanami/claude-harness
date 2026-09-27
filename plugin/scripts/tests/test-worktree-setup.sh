@@ -189,6 +189,36 @@ echo "=== main(): 実際のgit worktree操作(一時リポジトリ) ==="
   assert_eq "存在しないbase: 非0 exit" "1" "$no_base_exit"
   assert_eq "存在しないbase: エラーメッセージにbase名を含む" "true" "$(echo "$no_base_stderr" | grep -q "nonexistent-base" && echo true || echo false)"
 
+  # --- remote のブランチ有無は refs/heads/<b> の完全一致で判定する（Issue #271 の回帰テスト:
+  #     旧実装は `git ls-remote --exit-code --heads origin <b>` で、ls-remote のパターンが
+  #     末尾一致のため feature/<b> のような別ブランチだけが在っても「在る」と誤判定していた） ---
+  (
+    cd "$REPO_DIR" || exit 1
+    git push -q origin "main:refs/heads/feature/integ-271"
+    git push -q origin "main:refs/heads/x/feature/issue-52-tail-only"
+  )
+  assert_eq "remote_branch_exists: 末尾一致の別ブランチ(feature/<b>)だけが在るなら無いと判定する" "false" "$(cd "$REPO_DIR" && remote_branch_exists "integ-271" && echo true || echo false)"
+  assert_eq "verify_base_remote: 末尾一致の別ブランチ(feature/<b>)だけが在るなら無いと判定する" "false" "$(cd "$REPO_DIR" && verify_base_remote "integ-271" && echo true || echo false)"
+  tail_base_stderr="$(cd "$REPO_DIR" && main 49 "feature/issue-49-tail-base" "integ-271" "$WORKTREE_ROOT" 2>&1 1>/dev/null)"
+  tail_base_exit=$?
+  assert_eq "末尾一致の別ブランチだけが在るbase: 非0 exit" "1" "$tail_base_exit"
+  assert_eq "末尾一致の別ブランチだけが在るbase: 存在しないbaseのエラーになる" "true" "$(echo "$tail_base_stderr" | grep -q "base branch 'integ-271' does not exist on remote" && echo true || echo false)"
+
+  output_tail_branch="$(cd "$REPO_DIR" && main 52 "feature/issue-52-tail-only" main "$WORKTREE_ROOT")"
+  assert_eq "末尾一致の別ブランチだけがremoteに在る作業ブランチ: 既存扱いせず新規作成する(branch_existed=false)" "false" "$(jq -r '.branch_existed' <<<"$output_tail_branch")"
+
+  # 完全一致のブランチが在れば「在る」と判定する既存挙動は保つ
+  (
+    cd "$REPO_DIR" || exit 1
+    git push -q origin "main:refs/heads/integ-271"
+    git push -q origin "main:refs/heads/feature/issue-51-remote-only"
+  )
+  assert_eq "remote_branch_exists: 完全一致のブランチが在れば在ると判定する" "true" "$(cd "$REPO_DIR" && remote_branch_exists "integ-271" && echo true || echo false)"
+  output_exact_base="$(cd "$REPO_DIR" && main 49 "feature/issue-49-tail-base" "integ-271" "$WORKTREE_ROOT")"
+  assert_eq "完全一致のbaseが在る: worktreeを新規作成できる" "true" "$(jq -r '.created' <<<"$output_exact_base")"
+  output_remote_branch="$(cd "$REPO_DIR" && main 51 "feature/issue-51-remote-only" main "$WORKTREE_ROOT")"
+  assert_eq "remoteにだけ在る作業ブランチ: 既存扱いする(branch_existed=true)" "true" "$(jq -r '.branch_existed' <<<"$output_remote_branch")"
+
   # --- 既存ローカルブランチがある場合の冪等作成（worktreeは未登録・ブランチのみ存在） ---
   (
     cd "$REPO_DIR" || exit 1

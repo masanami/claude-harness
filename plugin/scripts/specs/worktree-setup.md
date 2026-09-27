@@ -28,7 +28,8 @@ stdout JSON:
 挙動の要点:
 
 - `worktree_path` が**別ブランチ**の登録済みworktree、または**git worktreeに未登録の任意のディレクトリ**（stale等）の場合は、自動解決せず致命的エラーとして exit 非0（無条件の上書きはしない）
-- base の存在確認は `git ls-remote --exit-code --heads origin <base>` のみで行う（gh非依存）。存在しなければ exit 非0
+- base の存在確認は `git ls-remote --heads origin refs/heads/<base>` の出力に `refs/heads/<base>` と**完全一致する行があるか**だけで行う（gh非依存）。存在しなければ exit 非0。既存ブランチ（`branch_existed`）のリモート側の確認も同じ判定を使う
+  - ls-remote のパターンは末尾一致（パス要素単位）のため、素の `<base>` を渡すと `feature/<base>` のような別ブランチにも一致し、`<base>` が無くても「在る」と誤判定する（Issue #271）
 - gh呼び出しは一切行わない。git操作の失敗・jq不在は stderr にメッセージを出し exit 非0
 - **worktreeロック（CodeRabbit指摘対応。Issue #45）**: `git fetch`/`git worktree add` を含む共有 `.git` への書き込み区間を、mkdirのatomic性を使った簡易ロック（`<git-common-dir>/claude-harness-worktree-ops.lock`）で保護する。`scripts/worktree-cleanup.sh` の `git worktree remove` も同じロックディレクトリを取り合うため、両スクリプトが理論上同時に実行されても直列化される。既定で最大60秒待機し（`WORKTREE_LOCK_WAIT_SECONDS`）、120秒（`WORKTREE_LOCK_STALE_SECONDS`）を超えて保持されたロックはプロセスクラッシュ等による解放漏れとみなし奪取する。**一次的な保証は呼び出し側（リード）が各Issueについて逐次実行する運用規律**（`skills/para-impl/references/star-parallel.md`）であり、本ロックはその規律が守られなかった場合の防御第二層
 
