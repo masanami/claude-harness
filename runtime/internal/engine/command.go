@@ -18,7 +18,7 @@ import (
 // maxStdout は command の stdout として読む上限（出力規約は JSON 1 個。これを超えるものは不正な出力として扱う）。
 const maxStdout = 32 << 20
 
-// execute は command 種類（§3.2）を 1 回実行する: plugin/scripts/<run>.sh を argv で起動し、
+// execute はステップを 1 回実行する。command 種類（§3.2）は <workflow-dir>/scripts/<run>.sh か plugin/scripts/<run>.sh を argv で起動し、
 // stdout の JSON を output のスキーマで検証して outcome を得る。子プロセスは自分のプロセスグループで起動し、
 // timeout・cancel ではグループごと止める（スクリプトが起動した孫プロセスを残さない）。
 func (e *Engine) execute(ctx context.Context, st *runstate.State, u *runstate.Unit, step *workflow.Step) result {
@@ -29,6 +29,12 @@ func (e *Engine) execute(ctx context.Context, st *runstate.State, u *runstate.Un
 		res = e.executeAttempt(ctx, st, u, step, attempt)
 	case "llm":
 		res = e.executeLLM(ctx, st, u, step, attempt)
+	case "select":
+		res = e.executeSelect(ctx, st, u, step, attempt)
+	case "workspace":
+		res = e.executeWorkspace(ctx, st, u, step, attempt)
+	case "pull-request":
+		res = e.executePullRequest(ctx, st, u, step, attempt)
 	default:
 		res = result{err: fmt.Errorf("step %s: kind %s cannot be executed (a gate is opened by the transition into it)", step.ID, step.Kind)}
 	}
@@ -105,9 +111,16 @@ func (e *Engine) executeAttempt(ctx context.Context, st *runstate.State, u *runs
 	}
 	defer stderr.Close()
 
-	script := filepath.Join(e.ScriptsDir, step.Run+".sh")
+	script, err := workflow.ScriptPath(e.WF.Dir, e.ScriptsDir, step.Run)
+	if err != nil {
+		if rerr := record(); rerr != nil {
+			return result{err: rerr}
+		}
+		return fail("step_error", err.Error(), nil)
+	}
 	cmd := exec.Command("bash", append([]string{script}, args...)...)
-	cmd.Dir = e.Cwd
+	cmd.Dir = e.dirFor(u)
+	cmd.Env = e.childEnv()
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	started.Argv = cmd.Args

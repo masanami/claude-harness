@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "scripts/resolve-ticket.sh の出力（ticket ワークフローの resolve。I2・I3）",
+  "type": "object",
+  "required": ["outcome", "issue", "title", "state", "base", "base_kind", "base_source", "default_branch", "message"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["ok", "base_missing"] },
+    "issue": { "type": "integer" },
+    "title": { "type": "string" },
+    "state": { "type": "string" },
+    "base": { "type": "string" },
+    "base_kind": { "type": "string", "enum": ["integration", "default"] },
+    "base_source": { "type": "string", "enum": ["input", "issue", "default"] },
+    "default_branch": { "type": "string" },
+    "message": { "type": "string" }
+  },
+  "additionalProperties": false
+}

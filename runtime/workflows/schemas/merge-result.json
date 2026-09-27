@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "ticket ワークフローの merge（/pr-merge。統合ブランチ宛のみ）の型付き出力",
+  "type": "object",
+  "required": ["outcome", "summary"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["merged", "blocked"] },
+    "summary": { "type": "string" }
+  },
+  "additionalProperties": false
+}

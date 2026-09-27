@@ -93,6 +93,8 @@ commands:
 
 state directory: $HARNESS_STATE_DIR, else $XDG_STATE_HOME/claude-harness, else ~/.local/state/claude-harness
 claude executable for llm steps: $HARNESS_CLAUDE_BIN, else claude in PATH
+git / gh for workspace, pull-request and the pr-state observation: $HARNESS_GIT_BIN / $HARNESS_GH_BIN, else in PATH
+  (scripts run by command steps use git and gh from PATH)
 exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled
 `
 
@@ -298,7 +300,7 @@ func cmdRun(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "harness: cannot start the run: %v\n", err)
 		return ExitFailed
 	}
-	eng.ClaudeBin = env.Getenv("HARNESS_CLAUDE_BIN")
+	tools(eng, env)
 	fmt.Fprintf(env.Stderr, "harness: run %s started (%s)\n", eng.Run.ID, eng.Run.Dir)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
@@ -309,6 +311,13 @@ func cmdRun(args []string, env Env) int {
 	}
 	writeJSON(env.Stdout, view(eng.Run, st, nil))
 	return exitFor(st.Status)
+}
+
+// tools は run を進めるプロセスが起動する外部コマンドを環境変数から決める（空なら PATH のもの）。
+func tools(eng *engine.Engine, env Env) {
+	eng.ClaudeBin = env.Getenv("HARNESS_CLAUDE_BIN")
+	eng.GitBin = env.Getenv("HARNESS_GIT_BIN")
+	eng.GhBin = env.Getenv("HARNESS_GH_BIN")
 }
 
 func exitFor(status string) int {
@@ -659,7 +668,7 @@ func cmdResolve(actor string, args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
 		return ExitFailed
 	}
-	eng.ClaudeBin = env.Getenv("HARNESS_CLAUDE_BIN")
+	tools(eng, env)
 	req := engine.Resolution{
 		Unit: first(flags, "unit"), Input: first(flags, "input"), HasInput: hasInput, Note: first(flags, "note"), HasNote: hasNote,
 		Actor: actor, User: env.Getenv("USER"), Channel: channel,

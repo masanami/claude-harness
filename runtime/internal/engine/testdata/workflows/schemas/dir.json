@@ -1,0 +1,1 @@
+{"type":"object","required":["outcome","dir"],"properties":{"outcome":{"type":"string","enum":["ok"]},"dir":{"type":"string"},"scripts_dir":{"type":"string"}}}

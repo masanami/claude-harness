@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "workspace 種類（action: release）の出力。runtime が生成する（docs/harness-runtime-design.md §3.2・§5.4）",
+  "type": "object",
+  "required": ["outcome", "worktree_path", "detail"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["released", "kept", "dirty"] },
+    "worktree_path": { "type": "string" },
+    "detail": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -30,6 +30,11 @@ func LoadOutputSchema(path string) (*OutputSchema, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseOutputSchema(path, data)
+}
+
+// ParseOutputSchema は JSON Schema のバイト列をコンパイルする。path は報告と識別にだけ使う。
+func ParseOutputSchema(path string, data []byte) (*OutputSchema, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("output schema %s is not a JSON object: %v", path, err)
@@ -107,6 +112,35 @@ func (o *OutputSchema) FieldType(path []string) (*Type, error) {
 		node = next
 	}
 	return schemaType(node)
+}
+
+// FieldEnum は出力のフィールドパスが指す string の enum を返す（select 種類の outcome になる）。
+func (o *OutputSchema) FieldEnum(path []string) ([]string, error) {
+	node := o.raw
+	for i, name := range path {
+		props, _ := node["properties"].(map[string]any)
+		next, ok := props[name].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("output schema has no field %q", joinPath(path[:i+1]))
+		}
+		node = next
+	}
+	if t, _ := node["type"].(string); t != "string" {
+		return nil, fmt.Errorf("field %q is not a string", joinPath(path))
+	}
+	enum, ok := node["enum"].([]any)
+	if !ok || len(enum) == 0 {
+		return nil, fmt.Errorf("field %q declares no enum", joinPath(path))
+	}
+	var out []string
+	for _, e := range enum {
+		s, ok := e.(string)
+		if !ok || !reOutcome.MatchString(s) {
+			return nil, fmt.Errorf("enum value %v of field %q must be a string matching %s", e, joinPath(path), reOutcome.String())
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 func schemaType(node map[string]any) (*Type, error) {

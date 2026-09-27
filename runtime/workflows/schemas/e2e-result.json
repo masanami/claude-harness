@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "ticket ワークフローの e2e（/create-e2e まで。/explain-e2e は runtime の外）の型付き出力",
+  "type": "object",
+  "required": ["outcome", "failure_summary", "scenarios", "traceability"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["pass", "fail"] },
+    "failure_summary": { "type": "string" },
+    "scenarios": { "type": "array", "items": { "type": "string" } },
+    "traceability": { "type": "string" }
+  },
+  "additionalProperties": false
+}

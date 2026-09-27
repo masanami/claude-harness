@@ -1,0 +1,22 @@
+# pull-request 種類（§3.2）と pr-state の観測: push → PR 作成（既存なら push のみ）→ マージを観測する observe ゲート。
+schema: harness.workflow/v1
+id: pr
+inputs:
+  findings:   { type: array, required: true }
+  unverified: { type: array, required: true }
+  quality:    { type: string, required: true }
+steps:
+  publish:
+    kind: pull-request
+    with: { base: main, closes: 9, title: "feat: add the widget", summary: "Adds the widget.",
+            quality: $inputs.quality, residual_findings: $inputs.findings, unverified: $inputs.unverified,
+            cross_repo: "masanami/other#12: confirmed the API returns 404 (attested)" }
+    on: { opened: wait, updated: wait }
+  wait:
+    kind: gate
+    type: observe
+    decider: human
+    observe: pr-state
+    with: { pr: $steps.publish.pr_number }
+    requested_action: a person merges the PR; resume after the merge
+    on: { merged: { done: merged }, open: { gate: wait }, closed: { fail: pr_closed } }
