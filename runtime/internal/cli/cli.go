@@ -1,7 +1,7 @@
 // Package cli は harness コマンドの面（docs/harness-runtime-design.md §5.1 のうち PR-3 までの範囲:
-// run / status / runs / resume / approve / cancel / validate）。
+// run / status / runs / resume / approve / cancel / validate）と、flywheel の接続契約 v1 の面（contract。§5.6・contract.go）。
 //
-// 終了コード（harness 内部の割り当て。flywheel 向けの接続契約としては固定していない。§0.1・§5.6）:
+// 終了コード（人向けのコマンドの割り当て。contract は別で、JSON を出力できたかだけを表す。§5.2・§5.6）:
 //
 //	0 成功（run は succeeded）  1 失敗（run が failed・validate の違反・操作の失敗）
 //	2 使い方の誤り（run に渡したワークフロー定義が不正で run を始めなかった場合を含む）
@@ -90,12 +90,15 @@ commands:
       stop a run: stop its child process and record the stop
   validate [--workflow-dir DIR] [--scripts-dir DIR] [<workflow>...]
       statically check workflow definitions (all *.yaml in the workflow directory by default)
+  contract <start|status|resume|cancel> ...
+      the connection contract v1 for flywheel: prints one JSON document and exits 0 when it printed it
+      (the run's state is in the JSON; see harness contract help)
 
 state directory: $HARNESS_STATE_DIR, else $XDG_STATE_HOME/claude-harness, else ~/.local/state/claude-harness
 claude executable for llm steps: $HARNESS_CLAUDE_BIN, else claude in PATH
 git / gh for workspace, pull-request and the pr-state observation: $HARNESS_GIT_BIN / $HARNESS_GH_BIN, else in PATH
   (scripts run by command steps use git and gh from PATH)
-exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled
+exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled (except contract)
 `
 
 // Main は harness コマンドを実行して終了コードを返す。
@@ -120,6 +123,8 @@ func Main(args []string, env Env) int {
 		return cmdCancel(rest, env)
 	case "validate":
 		return cmdValidate(rest, env)
+	case "contract":
+		return cmdContract(rest, env)
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 		return ExitOK
@@ -301,7 +306,7 @@ func cmdRun(args []string, env Env) int {
 		return ExitFailed
 	}
 	tools(eng, env)
-	fmt.Fprintf(env.Stderr, "harness: run %s started (%s)\n", eng.Run.ID, eng.Run.Dir)
+	fmt.Fprintf(env.Stderr, startedMsg, eng.Run.ID, eng.Run.Dir)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	st, err := eng.Loop(ctx)
@@ -312,6 +317,9 @@ func cmdRun(args []string, env Env) int {
 	writeJSON(env.Stdout, view(eng.Run, st, nil))
 	return exitFor(st.Status)
 }
+
+// startedMsg は run を始めた知らせ（標準エラー）。contract start は、始めた後に内部エラーで止まった run をこの行で見つける。
+const startedMsg = "harness: run %s started (%s)\n"
 
 // tools は run を進めるプロセスが起動する外部コマンドを環境変数から決める（空なら PATH のもの）。
 func tools(eng *engine.Engine, env Env) {
