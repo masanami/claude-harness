@@ -162,3 +162,67 @@ jq -r '.run_id as $r | .units[0].rounds[] | .no as $n | .steps[] | select(.sessi
 - `worktree-setup` が払い出し先の衝突を知らせる手段は stderr の文言だけで、runtime はその文言で `conflict` を見分けている（一致しなければ `step_error`。fail-closed）。
 - `pull-request` 種類は、作業ブランチの open な PR が在れば push だけで終わり、本文を書き換えない（W4）。差し戻し後の残指摘の変化は PR 本文に反映されない。
 - 予算（`budget_usd: 40` とステップごとの上限）は仮の値（§12）。shadow の実績で較正する。
+- masanami/flywheel の Actions が Billing でジョブを起動しない間は、`ci` が `red` を返して `fix` へ差し戻し続ける（#278）。暫定で `red` の遷移を `review` へ替えた定義を使い、検証は親のローカルの `make check` で代える（§8.4）。
+- claude CLI 2.1.283 は `schemas/*.json` の draft 2020-12 の `"$schema"` 行を拒否し、llm ステップが起動しない（#279）。暫定で `"$schema"` 行を外した定義を使う（§8.4）。
+
+## 8. 親エージェント（flywheel の Tom）から回す場合
+
+§1〜§7 は人の端末から回す前提の手順。ここでは flywheel の親エージェント（Tom）が Bash から `harness` を回すときの差分を置く（#276）。書いていないことは §1〜§7 に従う。
+
+### 8.1 固定
+
+- shadow の期間中は claude-harness の `main` を別の作業ツリー（`git worktree add`）に固定し、そこから `go build` した `harness` を使う。`$HW`・`$HS` もこの作業ツリーを指す。
+- 固定したコミットを記録する。初回は `660de1e`。
+- 通常の開発に使うクローンとは分ける。PR-6 等の開発でクローンの `main` が動いても、固定した作業ツリーは動かさない（§2 の 1、§7.3）。
+
+### 8.2 状態の置き場
+
+`HARNESS_STATE_DIR` を親のワークスペースの Git 管理外に向ける（例: `.flywheel/shadow/state`）。
+
+### 8.3 対象
+
+- 親の課題台帳で計画承認（FR-13）済みの、masanami/flywheel の 1 チケット実装（従来 `/impl` で委譲していたもの）を承認順に回す。
+- 1 Issue につき 1 run（§3）。
+
+### 8.4 定義を変えるとき
+
+- 原則は固定した作業ツリーの定義をそのまま使う。
+- 変える必要があれば、定義ディレクトリを丸ごと別の場所へ写して書き換え、`--workflow-dir` でそちらを指す（§6 と同じやり方）。1 つの run の中では混ぜない。
+- **変更点と理由は run の記録（§5）に必ず書く**。
+
+初回（flywheel#85）で入れた変更は次の 3 点。
+
+| 変更 | 理由 |
+| --- | --- |
+| `limits.budget_usd` を 40 → 100、`implement` の `budget_usd` を 15 → 60 | その課題の承認済み予算上限に合わせる。L サイズは原本の値で打ち切られる見込みのため |
+| `ci` の `red` を `fix` への差し戻しから `review` へ | masanami/flywheel の Actions が Billing でジョブを起動しない間の暫定。検証は親のローカルの `make check` で代える（#278） |
+| `schemas/*.json` から `"$schema"` 行を外す | claude CLI 2.1.283 が draft 2020-12 の `$schema` を拒否して llm ステップが起動しない（#279） |
+
+### 8.5 予算の対応
+
+- 親の台帳の承認済みタスク案の「予算上限」（実装枠）を、unit の `budget_usd` に使う。
+- 親のサイクル予算の起動前評価には、実装枠＋レビュー対応枠の総枠で入れる。
+
+### 8.6 起動と記録
+
+- 親は `harness run`・`resume` を**ハーネスの追跡内のバックグラウンド実行**で起動する。終了（`0`／`1`／`3`／`4`）を受け取ってから次の操作をする。
+- 親の実行イベントログには `delegate_start`／`delegate_end` で挟んで 1 件とする。実行スキルは `harness run ticket`、結果に run id を書く。
+
+### 8.7 ゲートの対応（親の承認ゲートとの対応）
+
+| ゲート | 親がすること |
+| --- | --- |
+| `review` | 親が自分の検証（ローカルの品質ゲート）をしてから、オーナーの完了確認（FR-32）へ出す。オーナーが直しを求めたら PR にその内容を残してから `harness resume <run> --input respond`。承認されたら `--input ready` |
+| `human-merge` | オーナーの昇格承認（FR-22）を受けて親が既定ブランチへマージし、その後 `harness resume <run>`（runtime が実状態を確かめる） |
+| `design-deviation`・`review-human` | **オーナーが端末から `approve` する**（TTY 必須。親は代行しない）。Claude Code の対話セッションなら `! harness approve ...` で打てる |
+| `ci-pending` | CI の完了後に親が `harness resume <run> --input recheck` |
+| `interrupted` | 親が作業ツリーを確かめてから `harness resume <run> --input rerun` |
+
+### 8.8 記録の置き場と M1
+
+- run ごとの §5 の行は、親のサイクルジャーナルに書く。
+- M1（再開 1 回あたりの親側の消費）は、親セッションの transcript（`~/.claude/projects/<プロジェクト>/<セッション>.jsonl`）から取る。`harness` の終了を受け取ってから次の `resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和（§4 M1 の 2 つ目の箇条書きと同じ区切り）。
+
+### 8.9 実装前に止まった run
+
+§3 の規則どおり件数に数えず、§5 の記録に残す。初回は `analyze` で #279 により止まった run が 1 件ある。
