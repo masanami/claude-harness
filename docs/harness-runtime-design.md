@@ -26,6 +26,7 @@
 ### 0.1 本文書で**空けておく**もの
 
 - **flywheel が harness を呼ぶときの起動形（接続契約）**。flywheel `docs/architecture.md` §10（接続ツールの宣言。claude-flywheel#95）の実装が入ってから確定させる。先に決めると、flywheel 側が harness 固有の起動形を本体に抱える。本文書が決めるのは「runtime が**出せなければならない情報**」（§5.6）までで、その**書式・引数・終了コードの割り当て**は空ける。
+  - **2026-09-28 更新（#274）**: flywheel が `cli` 形態の接続ツールとの契約（接続契約 v1。flywheel `docs/features/m3-invoker-delegation.md` §クリティカル設計決定 3・決定 M3H2）を定めた。**契約は flywheel が定め、harness が合わせる**ので、flywheel に harness 固有の形を抱えさせないという上の趣旨はそのまま保たれる。harness は契約 v1 を `harness contract` の入口で出す（§5.6.1）。空けておくのは、契約 v1 に無いこと（v2 以降の形）だけになった。
 
 ### 0.2 実測値（本文書の数字はこのクローンで測り直した値。2026-09-21・`4483c52`）
 
@@ -589,6 +590,54 @@ flywheel §11 は「スロットを flywheel が払い出すか、接続ツー�
 ### 5.6 runtime が出せなければならない情報（書式は空ける）
 
 Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人に求める操作・成果物の参照・中止と再開に必要な情報**。runtime はこれらを `status --json` で必ず出せるようにする。**フィールド名・コマンドの引数・終了コードの割り当てを flywheel 向けの契約として固定するのは、flywheel §10 の実装後**とする。harness 固有の step id・判断値はこの面に出さない（`requested_action` は人が読む文と、汎用の操作種別だけ）。
+
+### 5.6.1 flywheel の接続契約 v1 との対応（#274・2026-09-28）
+
+正本は flywheel `docs/features/m3-invoker-delegation.md` §クリティカル設計決定 3・§IF / API（`.flywheel/connectors.json` の `form: cli`）。食い違えば flywheel 側が正。
+
+**入口**: 既存の `run`/`status`/`resume`/`cancel` とは別の `harness contract start|status|resume|cancel` にする。契約 v1 の終了コードは「JSON を出力できたか」だけを表し（0 = 出力した）、§5.2 の「待機・失敗・成功を終了コードで分ける」と意味が違う。同じコマンドにフラグで 2 つの意味を持たせると取り違えの元になるため、入口を分け、人向けの出力と終了コード（§5.1・§5.2）は変えない。`contract` の各コマンドは既存のコマンドをそのまま呼び（run の開始・再開・状態の畳み込みは共有）、その結果（`status --json` と同じ畳み込んだ状態）を写すだけである。
+
+| 契約 v1 のコマンド | harness | 引数（既存コマンドと同じ） |
+| --- | --- | --- |
+| `start` | `harness contract start` → `run` | `[--workflow-dir DIR] [--scripts-dir DIR] [--input NAME=VALUE]... <workflow>` |
+| `status` | `harness contract status` → `status --json` | `<run-id>` |
+| `resume` | `harness contract resume` → `resume` | `[--unit KEY] [--input VALUE] [--note TEXT] <run-id>` |
+| `cancel` | `harness contract cancel` → `cancel` | `<run-id>` |
+
+`cancel` の出力は契約 v1 が求めていないが、同じ形の JSON（停止後の状態）を出す。flywheel の宣言の引数の配列では、差し込む値（ワークフロー名・入力・run ID・回答）はすべて独立した要素になる。
+
+**出力**: `{"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}` を 1 つ出す。
+
+| フィールド | 写し方 |
+| --- | --- |
+| `run_id` | run の ID。run を始められなかった `start` と、引数から run ID を読めなかった場合は `null` |
+| `state` | run の汎用状態（§4.1 の `running`・`waiting`・`succeeded`・`failed`・`cancelled`）そのもの |
+| `summary` | `workflow <id>: <state>` に、終端の理由・待っているゲート・runner が居ないこと・費用不明の実行の数・コマンドが失敗した理由を添えた 1 行 |
+| `requested_action` | 終端でなく、ゲートで待っている unit があるときだけ（下の表）。それ以外は `null` |
+| `artifacts` | unit ごとに PR（`pr`。URL、無ければ `#<番号>`）・作業ブランチ（`branch`）・最新のラウンドで push した head（`commit`）。無ければ `[]` |
+| `cost_usd` | run の累計費用（unit の累計予算 `spent_usd` の和）。予算を持たない run（`llm` ステップが無い）は `0`。run の状態を読めなかった場合だけ `null` |
+
+**ゲート → `requested_action`**（ゲートの内部名は `text` の説明文にだけ入る。flywheel は `kind`・`decider` だけを値として読めばよい）:
+
+| ゲートの型 × decider | `kind` | `decider` | 本文の YAML の例 | `text` が案内する解決 |
+| --- | --- | --- | --- | --- |
+| `input` × `human`（TTY を要求する。§5.3） | `approve` | `human` | `design-deviation`・`review-human` | 人が端末から `harness approve <run> --unit <u> --input <値>` |
+| `input` × `parent` | `answer` | `parent` | — | `harness contract resume <run> --unit <u> --input <値>` |
+| `input` × `any` | `answer` | `parent` | `ci-pending`・`review`・組み込みの `interrupted` | 同上 |
+| `observe` × `human` | `observe` | `human` | `human-merge` | 人が外部で操作した後、`harness contract resume <run> --unit <u>` で観測し直す |
+| `observe` × `parent`・`any` | `observe` | `parent` | — | 同上（外部の状態の変化を待つ） |
+
+- `input` × `human` を `answer` でなく `approve` にするのは、解決の経路が端末からの `approve`（確認の入力つき）に限られるためである。どちらでも flywheel は回答しない（契約 v1）。
+- harness の `decider: any` は「TTY を要求しない・誰が resume してもよい」ゲートで、自走中に進めるのは呼び出し元（flywheel）である。そのため契約上は `parent` で出す（契約 v1 の `any` は使わない）。
+- 契約 v1 の `requested_action` は 1 つだけである。fan-out の run で複数の unit がゲートで待つ場合は、`approve` → `answer` → `observe` の順（同順位は unit の順）で 1 つを選び、ほかに待っている unit の数を `text` に添える（現行のワークフローの unit は 1 つなので、この場合は起きない）。
+
+**費用（`cost_usd`）と Q15**: 費用を得られなかった実行は、付与した上限額（`--max-budget-usd`）を消費したものとして unit の累計に入っている（§4.3・Q15 の fail-closed）。`cost_usd` はその累計のまま出し、`null` にしない。`null` にすると呼び出し元は「不明」を自分で上限額へ倒す手段を持たず、費用を少なく見る側へ倒れうるためである。費用不明の実行を含むこと（`unknown_cost_count`）は `summary` に書く。
+
+**JSON を出せない失敗の線引き**: 標準出力へ JSON を書けなかったときだけ非 0（1）で終わる。それ以外はすべて JSON を出して 0 で終わる。
+
+- run の状態を読めた場合は、コマンドが失敗しても `state` は run の状態のまま出す（失敗の理由は `summary` に添える）。例: `decider: human` のゲートへの `contract resume` は拒否され、`state: waiting` と `approve` の `requested_action` が返る。終わった run への `resume`・`cancel` は、その終端の状態が返る。コマンドの失敗で run の状態を `failed` と偽らないためである。
+- run の状態を読めない場合（引数の誤り・ワークフロー定義の誤り・run が見つからない・状態の読み込みの失敗）は `state: failed`・`cost_usd: null`・`requested_action: null` を出す。run を始める前の `start` の失敗の `run_id` は `null`、run ID を渡されたコマンド（見つからない run 等）はその ID。
+- 既存コマンドの標準エラー（人向けの説明）はそのまま標準エラーへ流す。
 
 ---
 

@@ -127,6 +127,21 @@ func TestTicketWorkflowEndToEnd(t *testing.T) {
 	if strings.Join(seq, " ") != want {
 		t.Fatalf("round 1 steps:\n got %s\nwant %s", strings.Join(seq, " "), want)
 	}
+	// 接続契約 v1 の面（contract status）は、同じ run を PR・ブランチ・最後に push した head と累計費用で返す。
+	// ci-pending は decider: any の input 型なので、呼び出し元が答える answer / parent になる。
+	cd, _ := h.contract("status", v.RunID)
+	arts, _ := json.Marshal(cd.Artifacts)
+	wantArts := fmt.Sprintf(`[{"kind":"pr","ref":%q},{"kind":"branch","ref":%q},{"kind":"commit","ref":%q}]`,
+		u.Workspace.PRURL, branch, u.Workspace.HeadSHAs["1"])
+	if cd.State != "waiting" || u.Workspace.PRURL == "" || string(arts) != wantArts {
+		t.Errorf("contract status = %+v, artifacts %s, want %s", cd, arts, wantArts)
+	}
+	if a := cd.RequestedAction; a == nil || a.Kind != "answer" || a.Decider != "parent" || !strings.Contains(a.Text, "gate ci-pending") {
+		t.Errorf("contract requested_action = %+v", a)
+	}
+	if cd.CostUSD == nil || !near(*cd.CostUSD, u.Budget.SpentUSD) || u.Budget.SpentUSD == 0 {
+		t.Errorf("contract cost_usd = %v, want the unit's spent %v", cd.CostUSD, u.Budget.SpentUSD)
+	}
 	// 実装・修正は払い出した作業ツリーの中で動き、修正は実装のセッションを --resume で引き継ぐ（Q11 の既定）。
 	for n := 2; n <= 5; n++ {
 		if pwd := strings.TrimSpace(readFile(t, filepath.Join(fdir, "calls", fmt.Sprintf("%d.pwd", n)))); pwd != wt {
