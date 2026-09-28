@@ -10,6 +10,12 @@
 
 ## 未リリース（版数は未定。リリース時に人が決める）
 
+### 追加
+
+- **harness runtime（`runtime/`。プラグインの配布物には含まれない）に、flywheel の接続契約 v1 の面 `harness contract start|status|resume|cancel` を足した（Issue #274）。** 契約は flywheel（`docs/features/m3-invoker-delegation.md` 決定 M3H2）が定め、harness が合わせる。各コマンドは `{"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}` の JSON を 1 つ出し、出力できたら終了コード 0 で終わる（待機・成功・失敗は `state` で表す）。
+  - ゲートは `requested_action` へ写す。`decider: human` の input 型ゲート（`design-deviation`・`review-human`）は `approve`／`human`、observe 型は `observe`、`ci-pending`・`review` のように resume で進められるものは `answer`／`parent`。対応表は `docs/harness-runtime-design.md` §5.6.1。
+  - 既存の `run`/`status`/`resume`/`cancel` の出力と終了コード（0 成功・1 失敗・2 使い方の誤り・3 待機・4 停止）は変えていない。
+
 ### 修正
 
 - **`scripts/worktree-setup.sh` が、統合ブランチ（base）や既存の作業ブランチが remote に無いのに「在る」と判定することがある問題を直した（Issue #271）。** `git ls-remote --heads origin <b>` のパターンは末尾一致（パス要素単位）のため、`<b>` が無くても `feature/<b>` のような別ブランチが在ると成功していた。base の存在確認（`verify_base_remote`）と既存リモートブランチの確認（`remote_branch_exists`）を、`refs/heads/<b>` と完全一致する ref があるかで判定するようにした。
