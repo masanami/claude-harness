@@ -330,3 +330,27 @@ func TestSetup(t *testing.T) {
 		})
 	}
 }
+
+// フラグを片方だけ渡した場合: 渡したほうはそれを使い、無いほうは埋め込みを展開して使う。定義が作業ツリーのものと
+// 混ざるので、run は埋め込みから始めたとは記録しない（N3 で開始時の版の定義として扱わない）。
+func TestDirsWithOneFlag(t *testing.T) {
+	data := t.TempDir()
+	env := Env{Getenv: func(k string) string { return map[string]string{"HARNESS_DATA_DIR": data}[k] }, Getwd: func() (string, error) { return t.TempDir(), nil }}
+	l, err := embeddedLayout(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd := abs(t, repoWorkflows)
+	src, err := dirs(map[string][]string{"workflow-dir": {wd}}, env)
+	if err != nil || src.embedded || src.wd != wd || src.sd != l.ScriptsDir {
+		t.Fatalf("--workflow-dir only: %+v %v", src, err)
+	}
+	src, err = dirs(map[string][]string{"scripts-dir": {wd}}, env)
+	if err != nil || src.embedded || src.wd != l.WorkflowDir || src.sd != wd {
+		t.Fatalf("--scripts-dir only: %+v %v", src, err)
+	}
+	src, err = dirs(map[string][]string{}, env)
+	if err != nil || !src.embedded || src.wd != l.WorkflowDir || src.sd != l.ScriptsDir {
+		t.Fatalf("no flags: %+v %v", src, err)
+	}
+}
