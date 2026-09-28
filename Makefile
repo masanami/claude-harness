@@ -103,7 +103,8 @@ check-validate: require-go bundle
 dist: require-go bundle
 	@if [ -z "$(VERSION)" ]; then echo "NG: make dist needs VERSION=X.Y.Z (the tag runtime/vX.Y.Z without runtime/v)"; exit 1; fi
 	@if ! printf '%s' "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$$'; then echo "NG: VERSION=$(VERSION) is not a semver X.Y.Z[-pre]"; exit 1; fi
-	@set -e; out="$$(mkdir -p "$(DIST_DIR)" && cd "$(DIST_DIR)" && pwd)"; \
+	@set -e; stage=""; trap 'if [ -n "$${stage}" ]; then rm -rf "$${stage}"; fi' EXIT; \
+	out="$$(mkdir -p "$(DIST_DIR)" && cd "$(DIST_DIR)" && pwd)"; \
 	rm -f "$${out}"/harness_*.tar.gz "$${out}/checksums.txt"; \
 	for p in $(PLATFORMS); do \
 	  os="$${p%/*}"; arch="$${p#*/}"; name="harness_$(VERSION)_$${os}_$${arch}"; \
@@ -112,7 +113,7 @@ dist: require-go bundle
 	  (cd $(RUNTIME_DIR) && CGO_ENABLED=0 GOOS="$${os}" GOARCH="$${arch}" \
 	    go build -trimpath -ldflags "-s -w -X $(VERSION_PKG).Version=$(VERSION)" -o "$${stage}/harness" ./cmd/harness); \
 	  tar -C "$${stage}" -czf "$${out}/$${name}.tar.gz" harness; \
-	  rm -rf "$${stage}"; \
+	  rm -rf "$${stage}"; stage=""; \
 	done; \
 	cd "$${out}" && if command -v sha256sum >/dev/null 2>&1; then sha256sum harness_*.tar.gz; else shasum -a 256 harness_*.tar.gz; fi > checksums.txt; \
 	echo "=== dist: $${out}"; ls -1 "$${out}"

@@ -715,6 +715,8 @@ make check
 
 **決定: S1**（開発時は `--workflow-dir` / `--scripts-dir` で作業ツリーを指せるようにする）。埋め込むのは `plugin/scripts/`（X1 後のパス）と `runtime/workflows/`。
 
+- **実装で分かった事実（PR-6・#275）**: `harness validate` は `agent:` の参照先（`plugin/agents/<名前>.md`）の実在を確かめるため、`plugin/agents/` も埋め込んで展開する。実行時の子の `claude -p` はこの写しを使わず、インストール済みのプラグインから解決する（下の段落のとおり）。`plugin/scripts/tests/` は埋め込まない。
+
 **S1 の帰結（決定③との関係を曖昧にしないための整理）**:
 
 | 決定③の要素 | S1 を採った後 |

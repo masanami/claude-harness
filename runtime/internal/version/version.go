@@ -30,6 +30,13 @@ const (
 	PluginMaxExclusive = "5.0.0"
 )
 
+// プラグインの marketplace（.claude-plugin/marketplace.json の name）と ID、marketplace の既定の登録元。
+const (
+	MarketplaceName   = "masanami-harness"
+	MarketplaceSource = "masanami/claude-harness"
+	PluginID          = "claude-harness@" + MarketplaceName
+)
+
 // WorkflowSchemas は CLI が読み込めるワークフロースキーマ版の集合。
 var WorkflowSchemas = []string{workflow.SchemaV1}
 
@@ -73,8 +80,8 @@ type Mismatch struct {
 
 func (m *Mismatch) Error() string {
 	if m.Update == "plugin" {
-		return fmt.Sprintf("plugin claude-harness %s is older than this harness CLI %s supports (%s); update the plugin: claude plugin update claude-harness@masanami-harness (or harness setup)",
-			m.Plugin, CLI(), PluginRange())
+		return fmt.Sprintf("plugin claude-harness %s is older than this harness CLI %s supports (%s); update the plugin: claude plugin update %s",
+			m.Plugin, CLI(), PluginRange(), PluginID)
 	}
 	return fmt.Sprintf("plugin claude-harness %s is newer than this harness CLI %s supports (%s); update the harness CLI to a release that supports it",
 		m.Plugin, CLI(), PluginRange())

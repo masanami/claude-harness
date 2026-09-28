@@ -354,3 +354,21 @@ func TestDirsWithOneFlag(t *testing.T) {
 		t.Fatalf("no flags: %+v %v", src, err)
 	}
 }
+
+// フラグ無しでも、定義をパスで渡した run（展開ディレクトリの外の定義）は埋め込みから始めたとは記録しない。
+func TestRunWithAWorkflowPathIsNotEmbedded(t *testing.T) {
+	h := newHarness(t, "HARNESS_STATE_DIR="+t.TempDir(), "HARNESS_DATA_DIR="+t.TempDir())
+	root := t.TempDir()
+	for _, name := range []string{"root", "run"} {
+		p := filepath.Join(abs(t, repoWorkflows), "list-tests.yaml")
+		args := []string{"run", "--input", "root=" + root, p}
+		if name == "run" {
+			args = []string{"run", "--input", "root=" + root, "list-tests"}
+		}
+		out, errOut, _ := h.run(args...)
+		v := decode[statusView](t, out)
+		if want := name == "run"; v.Embedded != want {
+			t.Errorf("%v: embedded %v, want %v\n%s", args, v.Embedded, want, errOut)
+		}
+	}
+}

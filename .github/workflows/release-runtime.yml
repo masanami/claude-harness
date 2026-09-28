@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # 書き込みの権限は最後の gh release だけが GH_TOKEN で使う
 
       - uses: actions/setup-go@v5
         with:

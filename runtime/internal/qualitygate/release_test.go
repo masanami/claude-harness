@@ -44,13 +44,22 @@ func TestReleaseWorkflowRunsOnlyOnRuntimeTags(t *testing.T) {
 	if !reflect.DeepEqual(wf.On, want) {
 		t.Fatalf("on = %#v, want %#v", wf.On, want)
 	}
-	// ほかのワークフローはリリースの成果物を作らない（このリポジトリの Actions はこれ 1 本）。
+	// ほかのワークフロー（人が PR CI を足した場合など）はリリースを作らない。
 	entries, err := os.ReadDir(filepath.Join(repoRoot(t), ".github", "workflows"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("workflows = %v; the release is expected to be the only one", entries)
+	for _, e := range entries {
+		if e.Name() == "release-runtime.yml" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "gh release") || strings.Contains(string(b), "runtime/v") {
+			t.Errorf("%s also publishes or reacts to runtime tags; the release is release-runtime.yml only", e.Name())
+		}
 	}
 }
 

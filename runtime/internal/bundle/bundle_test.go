@@ -142,7 +142,12 @@ func TestEmbeddedCopyMatchesTheWorkingTree(t *testing.T) {
 			if e.IsDir() && dir == "scripts" && rel == "tests" {
 				return filepath.SkipDir
 			}
-			if e.Type().IsRegular() && !strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(e.Name(), "_") {
+			if e.Type().IsRegular() && (strings.HasPrefix(e.Name(), ".") || strings.HasPrefix(e.Name(), "_")) && e.Name() != ".DS_Store" {
+				// go:embed は . と _ で始まる名前を埋め込まない。展開先で黙って欠けないように、そういう名前を置かせない。
+				t.Errorf("%s would not be embedded (go:embed drops names starting with . or _); rename it", path)
+				return nil
+			}
+			if e.Type().IsRegular() && e.Name() != ".DS_Store" {
 				b, err := os.ReadFile(path)
 				if err != nil {
 					return err

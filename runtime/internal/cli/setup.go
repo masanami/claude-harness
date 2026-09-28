@@ -17,11 +17,11 @@ import (
 	"github.com/masanami/claude-harness/runtime/internal/version"
 )
 
-// Marketplace は claude-harness の marketplace（.claude-plugin/marketplace.json の name）と、既定の登録元。
+// marketplace とプラグインの ID の正本は version（版の不一致の案内も同じ ID を使う）。
 const (
-	MarketplaceName   = "masanami-harness"
-	MarketplaceSource = "masanami/claude-harness"
-	PluginID          = "claude-harness@" + MarketplaceName
+	MarketplaceName   = version.MarketplaceName
+	MarketplaceSource = version.MarketplaceSource
+	PluginID          = version.PluginID
 )
 
 type marketplaceEntry struct {

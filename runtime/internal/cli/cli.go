@@ -344,7 +344,8 @@ func cmdRun(args []string, env Env) int {
 	}
 	eng, err := engine.Start(engine.StartParams{
 		RunsDir: rd, WF: wf, Inputs: inputs, ScriptsDir: sd, WorkflowDir: wd, Cwd: cwd, Origin: "cli",
-		CLIVersion: version.CLI(), Embedded: src.embedded,
+		// パスで渡した定義（./x.yaml 等）は展開ディレクトリの外なので、埋め込みから始めたとは記録しない（N3 の案内を誤らない）。
+		CLIVersion: version.CLI(), Embedded: src.embedded && filepath.Dir(path) == wd,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "harness: cannot start the run: %v\n", err)
