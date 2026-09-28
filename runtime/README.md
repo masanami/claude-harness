@@ -1,8 +1,8 @@
 # runtime/（harness CLI・開発中）
 
-`harness` は claude-harness の headless workflow runtime。設計は [`docs/harness-runtime-design.md`](../docs/harness-runtime-design.md)（Issue #201）が正本。**まだ配布していない**（配布形態・導入手順・`setup`・`version` は PR-6 の範囲。§10）。このディレクトリはプラグインの配布物（`plugin/`）の外にある。
+`harness` は claude-harness の headless workflow runtime。設計は [`docs/harness-runtime-design.md`](../docs/harness-runtime-design.md)（Issue #201）が正本。このディレクトリはプラグインの配布物（`plugin/`）の外にある。CLI はプラグインとは別に、GitHub Releases のバイナリで配る（§6.4。下の「導入」「リリース」）。
 
-## 現在の範囲（PR-2・Issue #259 ＋ PR-3・Issue #261 ＋ PR-4・Issue #269）
+## 現在の範囲（PR-2・Issue #259 ＋ PR-3・Issue #261 ＋ PR-4・Issue #269 ＋ PR-6・Issue #275）
 
 - ワークフロー定義（式を持たない YAML・§3.1〜§3.3）の読み込みと `harness validate`（§6.3）
 - イベントログ（`events.jsonl` が正本）と状態の畳み込み（`state.json`）・状態の置き場（§4・§4.6）
@@ -11,6 +11,7 @@
 - unit の累計予算と費用の fail-closed（§4.3）・ラウンド（ゲートとゲートの間。§4.2）
 - `run` / `status [--json]` / `runs [--json]` / `resume` / `approve` / `cancel`（§5.1）
 - runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）
+- 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 
 ## 構成
 
@@ -20,18 +21,63 @@
 | `internal/workflow/` | YAML の文法（許可リスト）と静的検証 |
 | `internal/runstate/` | イベント・畳み込み・run ディレクトリ（追記・原子的な `state.json`・mkdir ロック） |
 | `internal/engine/` | 状態機械・`command` / `llm` 種類の実行・ゲートの解決（resume / approve）・中断の検出 |
-| `internal/statedir/` | 状態の置き場の決定（L2） |
-| `internal/cli/` | コマンドの面（approve の TTY 判定を含む） |
+| `internal/statedir/` | 状態の置き場の決定（L2）と、埋め込んだ定義の展開先の決定 |
+| `internal/bundle/` | 埋め込んだ定義・スクリプト（`files/` は `make bundle` が作る写し）と、版ごとのディレクトリへの展開 |
+| `internal/version/` | CLI の版・対応するプラグイン版の範囲・読めるワークフロースキーマ版 |
+| `internal/cli/` | コマンドの面（approve の TTY 判定・`setup`・`version` を含む） |
 | `internal/qualitygate/` | ルートの `Makefile` の検査（go が無ければ失敗すること） |
 | `workflows/` | ワークフロー定義（`schemas/` は出力の JSON Schema、`prompts/` は `llm` のプロンプト、`scripts/` は runtime が持つスクリプト） |
 
+## 導入
+
+1. GitHub Releases のタグ `runtime/vX.Y.Z` から、OS・アーキテクチャに合うアーカイブを取り、`checksums.txt` で確かめてから `harness` を PATH の通った場所へ置く。
+
+   ```bash
+   v=X.Y.Z; a=darwin_arm64                     # darwin_amd64・linux_amd64・linux_arm64
+   gh release download "runtime/v$v" -R masanami/claude-harness -p "harness_${v}_${a}.tar.gz" -p checksums.txt
+   grep "harness_${v}_${a}.tar.gz" checksums.txt | shasum -a 256 -c -
+   tar -xzf "harness_${v}_${a}.tar.gz" && install -m 0755 harness "$HOME/.local/bin/harness"
+   ```
+
+2. `harness setup` でプラグインを整える（`claude plugin marketplace add masanami/claude-harness` と `claude plugin install claude-harness@masanami-harness` を、済んでいなければ呼ぶ。`--scope user|project|local`・`--marketplace <登録元>` を渡せる）。導入済みのプラグインの版が CLI の対応範囲外なら、どちらを更新すべきかを表示して終了コード 5 で終わる（更新はしない）。
+3. `harness version` で CLI の版・対応するプラグイン版の範囲・読めるスキーマ版・定義の展開先を確かめる。
+
+- `go install github.com/masanami/claude-harness/runtime/cmd/harness@runtime/vX.Y.Z` でも入るが、**そのバイナリは定義とスクリプトを持たない**（`go:embed` はモジュールの外の `plugin/scripts` を指せず、埋め込む写しは `make bundle` がビルドの前に作るため。`--workflow-dir` / `--scripts-dir` が要る）。自動更新は持たない。
+
+## 定義とスクリプトの置き場（S1）
+
+- リリースのバイナリは `runtime/workflows/`・`plugin/scripts/`（`tests/` を除く）・`plugin/agents/` を埋め込んでいる（`agents/` は `validate` が `agent:` の参照先を確かめるためだけに使う。子の `claude -p` はインストール済みのプラグインから解決する）。
+- 初回の `run` / `validate` で `<data>/runtime/<CLI の版>/` へ展開して使う。`<data>` は `$HARNESS_DATA_DIR`、無ければ `$XDG_DATA_HOME/claude-harness`、無ければ `~/.local/share/claude-harness`。展開したファイルは読み取り専用で、印（`.bundle-sha256`）の中身が違うディレクトリは上書きせずに止まる。版を持たないビルドは `dev-<中身の sha256 の先頭 12 桁>` に展開する。
+- `--workflow-dir` / `--scripts-dir`（開発用）を渡せばそちらを使う。埋め込んでいないバイナリは、作業ツリーの中なら作業ツリーの `runtime/workflows`・`plugin/scripts` を探して使い、外なら 2 つのフラグを求めて止まる。
+
+## 版の照合（§7.3）
+
+- CLI は独立した semver（タグ `runtime/vX.Y.Z`）。対応するプラグイン版の範囲（現在 `>=4.8.0 <5.0.0`）と、読めるワークフロースキーマ版（`harness.workflow/v1`）を内蔵する。
+- 呼び出し元（薄いスキル）は自分のプラグイン版を環境変数 `HARNESS_PLUGIN_VERSION` で渡す。設定されていれば `run`・`resume`・`approve`（`contract start`・`contract resume` を含む）は何もする前に照合し、範囲外なら更新すべき側（プラグイン／CLI）を標準エラーに出して終了コード 5 で終わる。設定されていなければ照合しない（スキルを通さない起動）。
+- run は開始時の CLI の版（`cli_version`）と、定義を埋め込みから読んだか（`embedded`）を記録する。ゲートで待っている run を CLI の更新後に `resume` すると、**開始時の版の展開ディレクトリの定義・スクリプトで続ける**（N3。新しい版の定義には切り替えない）。そのディレクトリが無い・スキーマ版を読めない・この CLI が定義を読み込めない場合は、状態を変えずに終了コード 5 で止まり、「開始時の版の harness で `resume` する」か「`harness cancel <run>`」を案内する。開始時と同じ版なら、消えた展開ディレクトリを作り直して続ける。
+
+## リリース（§6.4）
+
+タグ `runtime/vX.Y.Z` の push（**タグを打つのは人**）で `.github/workflows/release-runtime.yml` が起動し、`make check` → `make dist VERSION=X.Y.Z` → GitHub Release の作成を行う。PR・ブランチの push・手動では起動しない。成果物:
+
+| ファイル | 中身 |
+| --- | --- |
+| `harness_<X.Y.Z>_darwin_arm64.tar.gz` | macOS（Apple Silicon）の `harness` |
+| `harness_<X.Y.Z>_darwin_amd64.tar.gz` | macOS（Intel）の `harness` |
+| `harness_<X.Y.Z>_linux_amd64.tar.gz` | Linux（x86_64。WSL を含む）の `harness` |
+| `harness_<X.Y.Z>_linux_arm64.tar.gz` | Linux（arm64）の `harness` |
+| `checksums.txt` | 上の 4 つの sha256（`sha256sum` の書式） |
+
+- 各アーカイブの中身は `harness` の 1 ファイル（`CGO_ENABLED=0`・`-trimpath`・版は `-ldflags` で埋める）。定義とスクリプトは埋め込み済み。
+- 手元で作るときは `make dist VERSION=X.Y.Z`（`DIST_DIR`・`PLATFORMS` で置き場と対象を変えられる）。
+
 ## 開発時の使い方
 
-品質ゲートはリポジトリのルートで `make check`（bash テスト・gofmt・`go vet`・`go test`・`harness validate`）。
+品質ゲートはリポジトリのルートで `make check`（bash テスト・gofmt・`go vet`・`go test`・`harness validate`）。`make check` は先に `make bundle`（埋め込む写しを `internal/bundle/files/` へ作る）を行う。`runtime/` で `go test` を直接実行する場合も、定義やスクリプトを変えたら `make bundle` をやり直す（写しが作業ツリーと違えば `internal/bundle` のテストが落ちる）。
 
 ```bash
 cd runtime
-go run ./cmd/harness validate                       # runtime/workflows/*.yaml を検証
+go run ./cmd/harness validate --workflow-dir workflows --scripts-dir ../plugin/scripts  # 作業ツリーの定義を検証（フラグ無しなら埋め込んだ写し）
 go run ./cmd/harness run list-tests --input root=.. # command 種類だけのサンプルを実行
 go run ./cmd/harness runs --json
 go run ./cmd/harness status <run-id> --json
@@ -41,10 +87,10 @@ go run ./cmd/harness cancel <run-id>
 go run ./cmd/harness contract status <run-id>        # flywheel の接続契約 v1 の JSON（start・status・resume・cancel）
 ```
 
-- ワークフロー定義とスクリプトの置き場は `--workflow-dir` / `--scripts-dir` で指す。省略時は、カレントディレクトリから上へ `runtime/workflows` と `plugin/scripts` を持つディレクトリ（この作業ツリー）を探す。
+- ワークフロー定義とスクリプトの置き場は `--workflow-dir` / `--scripts-dir` で指す。省略時は埋め込んだ写し（`make bundle` の時点の作業ツリーの内容）を展開して使う（上の「定義とスクリプトの置き場」）。
 - 状態は `$HARNESS_STATE_DIR`、無ければ `$XDG_STATE_HOME/claude-harness`、無ければ `~/.local/state/claude-harness` の `runs/<run-id>/` に置かれる（`events.jsonl`・`state.json`・`logs/`）。試すときは `HARNESS_STATE_DIR` を一時ディレクトリへ向けるとよい。
 - `llm` 種類が起動する `claude` は `$HARNESS_CLAUDE_BIN`、無ければ PATH の `claude`。`workspace`・`pull-request` 種類と `pr-state` の観測が起動する `git`・`gh` は `$HARNESS_GIT_BIN`・`$HARNESS_GH_BIN`、無ければ PATH のもの（`command` 種類のスクリプトは PATH の `git`・`gh` を使う）。
-- 終了コード（0 成功・1 失敗・2 使い方の誤り／定義の不正・3 待機〔ゲートで止まった〕・4 停止）は人向けのコマンドの割り当てである。flywheel 向けの接続契約 v1 は別の入口 `harness contract start|status|resume|cancel` が担い、JSON（`contract_version: 1`）を出力できたら終了コード 0 で終わる。待機・成功・失敗は JSON の `state` で表す（§5.6）。
+- 終了コード（0 成功・1 失敗・2 使い方の誤り／定義の不正・3 待機〔ゲートで止まった〕・4 停止・5 版の不一致）は人向けのコマンドの割り当てである。flywheel 向けの接続契約 v1 は別の入口 `harness contract start|status|resume|cancel` が担い、JSON（`contract_version: 1`）を出力できたら終了コード 0 で終わる。待機・成功・失敗は JSON の `state` で表す（§5.6）。
 - 待機（3）のとき stdout の JSON の `waiting[]` に、ゲート・決める主体・要求操作（`requested_action`）・受け付ける値・`requires_tty`・再開のコマンドが入る（§5.2）。
 
 ## `command` 種類の書き方

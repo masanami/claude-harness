@@ -1,11 +1,12 @@
-// Package cli は harness コマンドの面（docs/harness-runtime-design.md §5.1 のうち PR-3 までの範囲:
-// run / status / runs / resume / approve / cancel / validate）と、flywheel の接続契約 v1 の面（contract。§5.6・contract.go）。
+// Package cli は harness コマンドの面（docs/harness-runtime-design.md §5.1: run / status / runs / resume / approve / cancel /
+// validate / setup / version）と、flywheel の接続契約 v1 の面（contract。§5.6・contract.go）。
 //
 // 終了コード（人向けのコマンドの割り当て。contract は別で、JSON を出力できたかだけを表す。§5.2・§5.6）:
 //
 //	0 成功（run は succeeded）  1 失敗（run が failed・validate の違反・操作の失敗）
 //	2 使い方の誤り（run に渡したワークフロー定義が不正で run を始めなかった場合を含む）
 //	3 待機（run がゲートで止まった。状態・要求操作・再開方法を JSON で返す。§5.2）  4 停止（run が cancelled）
+//	5 版の不一致（プラグイン版が CLI の対応範囲外・run を始めた版の定義で続けられない。どちらを更新するかを標準エラーに出す。§7.3）
 package cli
 
 import (
@@ -25,9 +26,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/masanami/claude-harness/runtime/internal/bundle"
 	"github.com/masanami/claude-harness/runtime/internal/engine"
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
 	"github.com/masanami/claude-harness/runtime/internal/statedir"
+	"github.com/masanami/claude-harness/runtime/internal/version"
 	"github.com/masanami/claude-harness/runtime/internal/workflow"
 )
 
@@ -38,6 +41,7 @@ const (
 	ExitUsage     = 2
 	ExitWaiting   = 3
 	ExitCancelled = 4
+	ExitVersion   = 5
 )
 
 // Env は CLI が外界から受け取るもの（テストで差し替える）。
@@ -90,15 +94,23 @@ commands:
       stop a run: stop its child process and record the stop
   validate [--workflow-dir DIR] [--scripts-dir DIR] [<workflow>...]
       statically check workflow definitions (all *.yaml in the workflow directory by default)
+  setup [--scope user|project|local] [--marketplace SOURCE]
+      add the marketplace and install the claude-harness plugin with claude plugin, then check its version
+  version [--json]
+      the CLI version, the plugin versions it supports and the workflow schemas it reads
   contract <start|status|resume|cancel> ...
       the connection contract v1 for flywheel: prints one JSON document and exits 0 when it printed it
       (the run's state is in the JSON; see harness contract help)
 
+workflows and scripts: embedded in the binary and extracted to <data>/runtime/<version>/
+  (<data>: $HARNESS_DATA_DIR, else $XDG_DATA_HOME/claude-harness, else ~/.local/share/claude-harness);
+  --workflow-dir / --scripts-dir point elsewhere (development)
+plugin version check: $HARNESS_PLUGIN_VERSION (set by the calling skill; exit 5 when this CLI does not support it)
 state directory: $HARNESS_STATE_DIR, else $XDG_STATE_HOME/claude-harness, else ~/.local/state/claude-harness
 claude executable for llm steps: $HARNESS_CLAUDE_BIN, else claude in PATH
 git / gh for workspace, pull-request and the pr-state observation: $HARNESS_GIT_BIN / $HARNESS_GH_BIN, else in PATH
   (scripts run by command steps use git and gh from PATH)
-exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled (except contract)
+exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled, 5 version mismatch (except contract)
 `
 
 // Main は harness コマンドを実行して終了コードを返す。
@@ -125,6 +137,10 @@ func Main(args []string, env Env) int {
 		return cmdValidate(rest, env)
 	case "contract":
 		return cmdContract(rest, env)
+	case "setup":
+		return cmdSetup(rest, env)
+	case "version", "--version":
+		return cmdVersion(rest, env)
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 		return ExitOK
@@ -197,45 +213,69 @@ func usageErr(env Env, err error) int {
 	return ExitUsage
 }
 
-// dirs はワークフロー定義とスクリプトの置き場を決める。指定が無ければ、作業ツリーの中から
-// runtime/workflows と plugin/scripts を持つディレクトリを上へ探す（開発時の作業ツリーを指す。§6.5 の
-// --workflow-dir / --scripts-dir。バイナリへの埋め込み〔S1〕は PR-6 の範囲）。
-func dirs(flags map[string][]string, env Env) (string, string, error) {
+// source はワークフロー定義とスクリプトの置き場。embedded は両方をこの版の展開ディレクトリ（§6.5 の S1）から得たこと。
+type source struct {
+	wd, sd   string
+	embedded bool
+}
+
+// dirs はワークフロー定義とスクリプトの置き場を決める。--workflow-dir / --scripts-dir（開発用）があればそれを使い、
+// 無いほうはバイナリに埋め込んだ定義・スクリプトを <data>/runtime/<版>/ へ展開して使う。埋め込んでいないバイナリ
+// （make bundle を経ないビルド）では、作業ツリーの中から runtime/workflows と plugin/scripts を持つディレクトリを上へ探す。
+func dirs(flags map[string][]string, env Env) (source, error) {
 	wd, sd := first(flags, "workflow-dir"), first(flags, "scripts-dir")
+	embedded := false
 	if wd == "" || sd == "" {
-		cwd, err := env.Getwd()
-		if err != nil {
-			return "", "", err
-		}
-		root := ""
-		for d := cwd; ; d = filepath.Dir(d) {
-			if isDir(filepath.Join(d, "runtime", "workflows")) && isDir(filepath.Join(d, "plugin", "scripts")) {
-				root = d
-				break
+		l, err := embeddedLayout(env)
+		switch {
+		case err == nil:
+			embedded = wd == "" && sd == ""
+			if wd == "" {
+				wd = l.WorkflowDir
 			}
-			if filepath.Dir(d) == d {
-				break
+			if sd == "" {
+				sd = l.ScriptsDir
 			}
-		}
-		if root == "" {
-			return "", "", errors.New("cannot find runtime/workflows and plugin/scripts above the current directory; pass --workflow-dir and --scripts-dir")
-		}
-		if wd == "" {
-			wd = filepath.Join(root, "runtime", "workflows")
-		}
-		if sd == "" {
-			sd = filepath.Join(root, "plugin", "scripts")
+		case errors.Is(err, bundle.ErrNotEmbedded):
+			root, ok := worktreeRoot(env)
+			if !ok {
+				return source{}, err
+			}
+			if wd == "" {
+				wd = filepath.Join(root, "runtime", "workflows")
+			}
+			if sd == "" {
+				sd = filepath.Join(root, "plugin", "scripts")
+			}
+		default:
+			return source{}, err
 		}
 	}
 	wd, err := filepath.Abs(wd)
 	if err != nil {
-		return "", "", err
+		return source{}, err
 	}
 	sd, err = filepath.Abs(sd)
 	if err != nil {
-		return "", "", err
+		return source{}, err
 	}
-	return wd, sd, nil
+	return source{wd: wd, sd: sd, embedded: embedded}, nil
+}
+
+// worktreeRoot はカレントディレクトリから上へ、runtime/workflows と plugin/scripts を持つディレクトリ（開発時の作業ツリー）を探す。
+func worktreeRoot(env Env) (string, bool) {
+	cwd, err := env.Getwd()
+	if err != nil {
+		return "", false
+	}
+	for d := cwd; ; d = filepath.Dir(d) {
+		if isDir(filepath.Join(d, "runtime", "workflows")) && isDir(filepath.Join(d, "plugin", "scripts")) {
+			return d, true
+		}
+		if filepath.Dir(d) == d {
+			return "", false
+		}
+	}
 }
 
 func isDir(p string) bool {
@@ -271,10 +311,14 @@ func cmdRun(args []string, env Env) int {
 	if len(pos) != 1 {
 		return usageErr(env, errors.New("run takes exactly one workflow"))
 	}
-	wd, sd, err := dirs(flags, env)
+	if code := checkPlugin(env); code >= 0 {
+		return code
+	}
+	src, err := dirs(flags, env)
 	if err != nil {
 		return usageErr(env, err)
 	}
+	wd, sd := src.wd, src.sd
 	path, err := workflowPath(wd, pos[0])
 	if err != nil {
 		return usageErr(env, err)
@@ -300,6 +344,7 @@ func cmdRun(args []string, env Env) int {
 	}
 	eng, err := engine.Start(engine.StartParams{
 		RunsDir: rd, WF: wf, Inputs: inputs, ScriptsDir: sd, WorkflowDir: wd, Cwd: cwd, Origin: "cli",
+		CLIVersion: version.CLI(), Embedded: src.embedded,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "harness: cannot start the run: %v\n", err)
@@ -651,6 +696,9 @@ func cmdResolve(actor string, args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, "harness: approve refused: stdin is not a terminal. A gate decided by a person is approved by that person from a terminal.")
 		return ExitFailed
 	}
+	if code := checkPlugin(env); code >= 0 {
+		return code
+	}
 	run, err := openRun(env, pos[0])
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
@@ -671,8 +719,15 @@ func cmdResolve(actor string, args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
 		return ExitFailed
 	}
-	eng, err := engine.Reopen(run, st)
+	eng, err := reopen(env, run, st)
 	if err != nil {
+		var ve *versionError
+		if errors.As(err, &ve) {
+			// 状態は変えていないので、現在地（待っているゲート）も JSON で返す。
+			fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+			writeJSON(env.Stdout, view(run, st, nil))
+			return ExitVersion
+		}
 		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
 		return ExitFailed
 	}
@@ -823,10 +878,11 @@ func cmdValidate(args []string, env Env) int {
 	if err != nil {
 		return usageErr(env, err)
 	}
-	wd, sd, err := dirs(flags, env)
+	src, err := dirs(flags, env)
 	if err != nil {
 		return usageErr(env, err)
 	}
+	wd, sd := src.wd, src.sd
 	var paths []string
 	if len(pos) == 0 {
 		paths, err = filepath.Glob(filepath.Join(wd, "*.yaml"))

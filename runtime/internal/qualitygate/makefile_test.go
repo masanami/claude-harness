@@ -22,7 +22,7 @@ func TestGoGatesFailWithoutGo(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "Makefile")); err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"check-go", "check-validate"} {
+	for _, target := range []string{"check-go", "check-validate", "dist"} {
 		t.Run(target, func(t *testing.T) {
 			cmd := exec.Command(makeBin, "--no-print-directory", "-C", root, target)
 			cmd.Env = []string{"PATH=" + t.TempDir(), "HOME=" + t.TempDir()}

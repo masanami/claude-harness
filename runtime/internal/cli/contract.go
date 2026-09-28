@@ -141,10 +141,10 @@ type innerResult struct {
 	runID  string // 標準エラーの run の開始の知らせから読んだ run ID
 }
 
-// note は要約に添える文。既存コマンドが失敗の終了コード（1・2）で終わったときだけ、その理由を返す。
+// note は要約に添える文。既存コマンドが失敗の終了コード（1・2・5）で終わったときだけ、その理由を返す。
 // run が failed で終わった場合の 1 は、理由が状態にあるので何も添えない（標準エラーに理由が無い）。
 func (r innerResult) note() string {
-	if r.code != ExitFailed && r.code != ExitUsage {
+	if r.code != ExitFailed && r.code != ExitUsage && r.code != ExitVersion {
 		return ""
 	}
 	if r.errMsg == "" {

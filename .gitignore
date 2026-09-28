@@ -24,3 +24,7 @@ out/
 
 # Logs
 *.log
+
+# harness runtime: make bundle が作る埋め込み用の写し（runtime/internal/bundle/files/README.md 以外）
+runtime/internal/bundle/files/*
+!runtime/internal/bundle/files/README.md

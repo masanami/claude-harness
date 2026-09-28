@@ -701,6 +701,7 @@ make check
 - 置き場: **GitHub Releases**（本リポジトリは public）。
 - 起動: **タグの push をトリガーにした GitHub Actions**（GoReleaser 等でクロスビルド・チェックサム付き）。**タグを打つのは人**である。本リポジトリの `.claude/settings.json` の `ask` に `git tag`・`git push --tags`・`gh release`・`gh workflow` が入っており、headless の子セッションからは実行できない（それが意図どおり）。
 - 導入: リリースのバイナリを置く（手順は README）＋ `go install github.com/masanami/claude-harness/runtime/cmd/harness@runtime/vX.Y.Z` の併記。その後 `harness setup`。自動更新は持たない（`harness version` が新しい版の存在を案内するところまで。後回し）。
+- **実装で分かった事実（PR-6・#275）**: `go:embed` はパッケージのディレクトリより上（`../plugin/scripts`）を指せない（`invalid pattern syntax`。実測）。そのため §6.5 のとおり、ビルドの前に `make bundle` が写しをモジュールの中（`runtime/internal/bundle/files/`。git には入れない）へ作る。**`go install …@runtime/vX.Y.Z` はモジュールの中のコミット済みのファイルからビルドするので、写しを含まず、定義とスクリプトを持たないバイナリになる**（`harness version` が `embedded: false` を示し、`--workflow-dir` / `--scripts-dir` を求める）。上の「`go install` の併記」をどう扱うかは #275 の PR で問いとして上げた（本文書の決定は書き換えていない）。
 
 ### 6.5 CLI が `scripts/` とワークフロー定義をどこから得るか（Q4 でオーナーが決定: S1＝バイナリに埋め込む）
 
