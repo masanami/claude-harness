@@ -54,7 +54,8 @@ func TestContractResumeRefusedByVersionIsDistinguishable(t *testing.T) {
 		if err := os.Rename(old, old+".moved"); err != nil {
 			t.Fatal(err)
 		}
-		waiting := v2.contractRaw("status", id)
+		// 比べる相手は、同じ run を続けられる版（開始時と同じ 1.0.0。消えた定義は展開し直せる）から見た status。
+		waiting := v1.contractRaw("status", id)
 		refused := v2.contractRaw("resume", "--input", "recheck", id)
 		if reflect.DeepEqual(waiting, refused) {
 			t.Errorf("the refused resume looks the same as a waiting run apart from summary:\n%s", refused)

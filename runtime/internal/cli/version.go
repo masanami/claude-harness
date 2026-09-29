@@ -91,24 +91,40 @@ func versionErrorf(st *runstate.State, format string, args ...any) error {
 		fmt.Sprintf("; resume run %s with %s, or stop it with harness cancel %s", st.RunID, startedBy(st), st.RunID)}
 }
 
+// definitionsUsable は reopen の判定のうち、定義を読み込まずにできるもの（スキーマ版と、埋め込みから始めた run の
+// 展開ディレクトリの有無）。続けられなければ versionError を返す。gone は、展開ディレクトリが消えているが開始時と
+// 同じ版なので展開し直せば続けられること。何も書かない（環境変数・埋め込みの中身・os.Stat を読むだけ）ので、
+// contract status からも呼ぶ。
+func definitionsUsable(env Env, st *runstate.State) (gone bool, err error) {
+	if !version.SupportsSchema(st.Workflow.Schema) {
+		return false, versionErrorf(st, "run %s uses workflow schema %q, which this harness %s does not read (supported: %v)",
+			st.RunID, st.Workflow.Schema, version.CLI(), version.WorkflowSchemas)
+	}
+	if !st.Embedded {
+		return false, nil
+	}
+	if _, err := os.Stat(st.Workflow.Path); !errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	root, _, rerr := embeddedRoot(env)
+	if rerr != nil || filepath.Clean(root) != filepath.Clean(filepath.Dir(st.WorkflowDir)) {
+		return false, versionErrorf(st, "the definitions run %s started with (%s) are gone", st.RunID, filepath.Dir(st.WorkflowDir))
+	}
+	return true, nil
+}
+
 // reopen は run を開始時の定義で開き直す（N3）。埋め込みから始めた run は、開始時の版の展開ディレクトリ
 // （<data>/runtime/<開始時の版>/）の定義を、この CLI がそのスキーマ版を読めれば読んで続ける。そのディレクトリが無く、
 // 開始時の版がこの CLI と同じなら展開し直す。読めなければ versionError で止まる。
 func reopen(env Env, run *runstate.Run, st *runstate.State) (*engine.Engine, error) {
-	if !version.SupportsSchema(st.Workflow.Schema) {
-		return nil, versionErrorf(st, "run %s uses workflow schema %q, which this harness %s does not read (supported: %v)",
-			st.RunID, st.Workflow.Schema, version.CLI(), version.WorkflowSchemas)
+	gone, err := definitionsUsable(env, st)
+	if err != nil {
+		return nil, err
 	}
-	if st.Embedded {
-		if _, err := os.Stat(st.Workflow.Path); errors.Is(err, os.ErrNotExist) {
-			root, _, rerr := embeddedRoot(env)
-			if rerr != nil || filepath.Clean(root) != filepath.Clean(filepath.Dir(st.WorkflowDir)) {
-				return nil, versionErrorf(st, "the definitions run %s started with (%s) are gone", st.RunID, filepath.Dir(st.WorkflowDir))
-			}
-			// 開始時と同じ版（同じ中身）の CLI: 消された展開ディレクトリを作り直す。
-			if _, err := embeddedLayout(env); err != nil {
-				return nil, err
-			}
+	if gone {
+		// 開始時と同じ版（同じ中身）の CLI: 消された展開ディレクトリを作り直す。
+		if _, err := embeddedLayout(env); err != nil {
+			return nil, err
 		}
 	}
 	eng, err := engine.Reopen(run, st)

@@ -10,6 +10,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
+	"github.com/masanami/claude-harness/runtime/internal/version"
 	"github.com/masanami/claude-harness/runtime/internal/workflow"
 )
 
@@ -86,12 +88,12 @@ func cmdContract(args []string, env Env) int {
 	case "start":
 		return contractStart(rest, env)
 	case "status":
-		return contractByRun(rest, env, func(a []string, e Env) int { return cmdStatus(append(a, "--json"), e) })
+		return contractByRun(rest, env, func(a []string, e Env) int { return cmdStatus(append(a, "--json"), e) }, statusBlock)
 	case "resume":
-		return contractByRun(rest, env, func(a []string, e Env) int { return cmdResolve("resume", a, e) },
+		return contractByRun(rest, env, func(a []string, e Env) int { return cmdResolve("resume", a, e) }, resumeBlock,
 			flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true})
 	case "cancel":
-		return contractByRun(rest, env, cmdCancel)
+		return contractByRun(rest, env, cmdCancel, nil)
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, contractUsage)
 		return ExitOK
@@ -118,20 +120,71 @@ func contractStart(args []string, env Env) int {
 
 // contractByRun は run ID を取るコマンド（status・resume・cancel）。コマンドが状態を出さなかった（run が終わっていて
 // resume できない・cancel した等）ときは状態を読み直して出す。run を読めなければ、渡された ID で failed を出す。
-func contractByRun(args []string, env Env, f func([]string, Env) int, specs ...flagSpec) int {
+// block は、この CLI の版では run を続けられない理由（無ければ空）。nil なら調べない。
+func contractByRun(args []string, env Env, f func([]string, Env) int, block blockFunc, specs ...flagSpec) int {
 	out, res := captured(env, f, args)
-	if v, ok := decodeView(out); ok {
-		return contractOut(env, contractFromView(v, res.note()))
+	v, ok := decodeView(out)
+	if !ok {
+		_, pos, err := parseArgs(args, specs...)
+		if err != nil || len(pos) != 1 {
+			return contractOut(env, failedDoc(nil, res.note()))
+		}
+		id := pos[0]
+		if v, ok = loadView(env, id); !ok {
+			return contractOut(env, failedDoc(&id, res.note()))
+		}
 	}
-	_, pos, err := parseArgs(args, specs...)
-	if err != nil || len(pos) != 1 {
-		return contractOut(env, failedDoc(nil, res.note()))
+	d := contractFromView(v, res.note())
+	if block != nil && !runstate.Terminal(v.State.Status) {
+		if why := block(env, v.State, res); why != "" {
+			if res.note() == "" {
+				d.Summary += "; " + why
+			}
+			d.RequestedAction = versionAction(v.State.RunID, why)
+		}
 	}
-	id := pos[0]
-	if v, ok := loadView(env, id); ok {
-		return contractOut(env, contractFromView(v, res.note()))
+	return contractOut(env, d)
+}
+
+// blockFunc は、この CLI の版では run を続けられない理由を返す（続けられれば空）。
+type blockFunc func(env Env, st *runstate.State, res innerResult) string
+
+// resumeBlock: resume が版の不一致（プラグイン版の範囲外・開始時の版の定義を使えない）で止まった（ExitVersion）なら、その理由。
+func resumeBlock(_ Env, _ *runstate.State, res innerResult) string {
+	if res.code != ExitVersion {
+		return ""
 	}
-	return contractOut(env, failedDoc(&id, res.note()))
+	return res.note()
+}
+
+// statusBlock: 待機中の run を resume したら版の不一致で止まるかを、何も書かずに確かめる。プラグイン版の照合と、定義を
+// 読み込まない判定（definitionsUsable）まで。定義の読み込みでしか分からない不一致は、resume したときに resumeBlock が
+// 拾う。実行中の run は runner が進めているので、呼び出し元に操作を求めない（runner が居なければ resume が拾う）。
+func statusBlock(env Env, st *runstate.State, _ innerResult) string {
+	if st.Status != runstate.StatusWaiting {
+		return ""
+	}
+	if p := env.Getenv(PluginVersionEnv); p != "" {
+		var m *version.Mismatch
+		if err := version.CheckPlugin(p); errors.As(err, &m) {
+			return m.Error()
+		}
+	}
+	var ve *versionError
+	if _, err := definitionsUsable(env, st); errors.As(err, &ve) {
+		return ve.Error()
+	}
+	return ""
+}
+
+// versionAction は版の不一致で run を続けられないときの requested_action（§5.6.1）。state は waiting 等の run の状態の
+// まま、ゲートの操作の代わりに「人が更新してから確かめ直す」を出す。ゲートの操作を出すと、呼び出し元はそれに従って
+// 同じ resume を繰り返し、同じ拒否に当たり続ける（版の不一致は CLI かプラグインを更新するまで解消しない）。
+func versionAction(runID, why string) *requestedAction {
+	return &requestedAction{Kind: actionObserve, Decider: contractHuman, Text: fmt.Sprintf(
+		"this harness cannot go on with run %s: %s. A person does that outside the contract; then check again with "+
+			"harness contract status %s and follow the requested_action it returns (or harness contract resume %s)",
+		runID, why, runID, runID)}
 }
 
 // innerResult は取り込んだ既存コマンドの終わり方。
