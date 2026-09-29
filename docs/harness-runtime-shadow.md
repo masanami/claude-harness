@@ -164,6 +164,38 @@ jq -r '.run_id as $r | .units[0].rounds[] | .no as $n | .steps[] | select(.sessi
 - 予算（`budget_usd: 40` とステップごとの上限）は仮の値（§12）。shadow の実績で較正する。
 - masanami/flywheel の Actions が Billing でジョブを起動しない間は、`ci` が `red` を返して `fix` へ差し戻し続ける（#278）。暫定で `red` の遷移を `review` へ替えた定義を使い、検証は親のローカルの `make check` で代える（§8.4）。
 - claude CLI 2.1.283 は `schemas/*.json` の draft 2020-12 の `"$schema"` 行を拒否し、llm ステップが起動しない（#279）。暫定で `"$schema"` 行を外した定義を使う（§8.4）。
+- `agent:` を持つ llm ステップ（`implement`・`fix`）は、エージェントの `tools` に `StructuredOutput` が無いと `structured_output` を返さず `invalid_output` で終わる（#282。§7.1）。子の `claude -p` はインストール済みのプラグインからエージェントを解決するため、`feature-implementer` の `tools` を直した版のプラグインを入れるまでは直らない。CLI の版照合の下限（`runtime/internal/version` の `PluginMin`）はまだ直す前の版を受け入れる。
+
+### 7.1 `--agent` と `--json-schema` の組み合わせ（#282 の実測）
+
+2026-09-29・`claude` 2.1.284。空の一時ディレクトリで、ファイルを触らない小さなプロンプト（`outcome` と `note` を返す）を `claude -p --output-format json --max-budget-usd 1 --json-schema <schema>` に渡した。スキーマは `"$schema"` 行を外したもの。`probe` は `--agents` で渡した一時的なエージェント定義。
+
+| # | 追加した引数 | エージェントの `tools` | `structured_output` |
+| --- | --- | --- | --- |
+| 1 | なし | —（主体は既定） | 有る |
+| 2 | `--agent claude-harness:feature-implementer` | `Read, Glob, Grep, Edit, Write, Bash, Task, Skill` | 無い（result に Markdown で書いて終わる） |
+| 3 | `--agent probe` | `Read, Bash` | 無い |
+| 4 | `--agent probe` | `Read, Bash, StructuredOutput` | 有る |
+| 5 | `--agent probe --allowedTools StructuredOutput` | `Read, Bash` | 無い |
+| 6 | `--json-schema` を付けず、主体に Agent ツールで `probe` を起動させた | `Read, StructuredOutput` | —（サブエージェントに `StructuredOutput` が無く、エラーにもならない） |
+| 7 | `--plugin-dir <tools を直したプラグインの写し> --agent <写しの名前>:feature-implementer` | 2 に `StructuredOutput` を足したもの | 有る |
+
+いずれも `subtype` は `success`・終了コードは 0。分かったこと:
+
+- 型付きの出力は `StructuredOutput` ツールで返る。エージェントの `tools` は許可リストで、無ければ使えない（2・3 と 4 の差）。
+- runtime 側の `--allowedTools` ではエージェントの許可リストを広げられない（5）。直す場所はエージェントの定義。
+- `--json-schema` の無い起動にはこのツールが無い。6 では、サブエージェントが使えたのは `Read` と引き渡し用のツールだけで、エラーにならなかった。`/impl`・`/para-impl` の Phase 4 から使う `feature-implementer` の振る舞いは変わらない。
+
+確かめ直す手順（プラグインを入れ替えた後）: 空の一時ディレクトリで次を回し、結果に `structured_output` が有ることを見る。
+
+```bash
+claude -p --output-format json --max-budget-usd 1 \
+  --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["pass","failure"]},"note":{"type":"string"}},"required":["outcome","note"],"additionalProperties":false}' \
+  --agent claude-harness:feature-implementer <<< 'Reply with outcome "pass" and note "hello". Do not use any file tools.' \
+  | jq '{subtype, has_so: has("structured_output")}'
+```
+
+`runtime/workflows/*.yaml` の `agent:` が指すエージェントが `StructuredOutput` を使えることは `plugin/scripts/tests/test-runtime-agent-structured-output.sh` が固定する。
 
 ## 8. 親エージェント（flywheel の Tom）から回す場合
 

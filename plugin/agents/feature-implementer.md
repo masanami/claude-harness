@@ -1,7 +1,9 @@
 ---
 name: feature-implementer
 description: "機能の実装（新規追加・既存変更・バグ修正）を行う。Triggers on: '〇〇機能を実装して', '〇〇を新しく作って', '〇〇機能を追加して', '〇〇機能を修正して', '〇〇を変更して', '〇〇のバグを直して'"
-tools: Read, Glob, Grep, Edit, Write, Bash, Task, Skill
+# StructuredOutput: runtime が --agent と --json-schema で起動したとき、型付きの出力を返すツール。
+# tools に無いと構造化出力が付かない（#282）。--json-schema の無い起動（サブエージェント等）にはこのツールが無く、影響しない。
+tools: Read, Glob, Grep, Edit, Write, Bash, Task, Skill, StructuredOutput
 skills:
   - tdd-impl
 model: sonnet
