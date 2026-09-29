@@ -125,7 +125,7 @@ steps:
     prompt: prompts/ticket-implement.md         # 本文。with の値と現在地は JSON のデータブロックとして添えて stdin で渡す
     session: new                      # new（--session-id を事前採番）| continue:<step>（その最新の session_id へ --resume）
     with: { issue: $inputs.issue }
-    output: schemas/implement-result.json       # --json-schema に渡し、structured_output をこのスキーマで検証する
+    output: schemas/implement-result.json       # --json-schema に渡し（最上位の $schema は落とす）、structured_output をこのスキーマで検証する
     budget_usd: 15                    # --max-budget-usd = min(budget_usd, 残予算)
     timeout: 90m
     on:
