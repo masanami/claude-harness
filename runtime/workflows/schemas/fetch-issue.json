@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "scripts/fetch-issue.sh の出力（conflict-predict-issue の fetch）",
+  "type": "object",
+  "required": ["outcome", "issue", "title", "state", "body"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["ok"] },
+    "issue": { "type": "integer" },
+    "title": { "type": "string" },
+    "state": { "type": "string" },
+    "body": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,33 @@
+# 1 Issue の衝突の予測（Issue #288・docs/harness-runtime-design.md §5.4）。harness predict-conflicts が Issue ごとに 1 run を起動し、
+# 組の突き合わせ（共有ファイル・依存の向き）は Go で決定的に行う。このワークフローは予測を 1 件返すだけで、何も変更しない。
+#
+#   harness run conflict-predict-issue --input issue=<番号>
+#
+#   - fetch: gh issue view で Issue を読む（予測エージェントは gh を持たないため、本文をここで渡す）
+#   - predict: issue-conflict-predictor（道具は Read・Glob・Grep だけ）が、起動したディレクトリのチェックアウトを探索して予測する
+schema: harness.workflow/v1
+id: conflict-predict-issue
+description: 1 Issue について、実装で触りそうなファイルと依存する Issue を予測する（読み取り専用）
+inputs:
+  issue: { type: integer, required: true }
+limits:
+  budget_usd: 1                     # 1 件分の上限。predict-conflicts はこの値を 1 件分として口全体の予算から割り当てる
+
+steps:
+  fetch:
+    kind: command
+    run: fetch-issue                # scripts/fetch-issue.sh: gh issue view（読み取りだけ）
+    with: { issue: $inputs.issue }
+    output: schemas/fetch-issue.json
+    timeout: 2m
+    on: { ok: predict }
+
+  predict:
+    kind: llm
+    agent: claude-harness:issue-conflict-predictor
+    prompt: prompts/conflict-predict.md
+    with: { issue: $inputs.issue, title: $steps.fetch.title, body: $steps.fetch.body }
+    output: schemas/conflict-prediction.json
+    budget_usd: 1
+    timeout: 20m
+    on: { ok: { done: predicted } }

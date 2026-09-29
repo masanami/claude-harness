@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "conflict-predict-issue の predict の型付き出力（issue-conflict-predictor の出力に outcome を足したもの）",
+  "type": "object",
+  "required": ["outcome", "predicted_files", "depends_on"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["ok"] },
+    "predicted_files": { "type": "array", "items": { "type": "string" } },
+    "depends_on": { "type": "array", "items": { "type": "integer" } }
+  },
+  "additionalProperties": false
+}

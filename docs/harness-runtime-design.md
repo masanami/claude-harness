@@ -595,7 +595,37 @@ flywheel §11 は「スロットを flywheel が払い出すか、接続ツー�
 
 **2026-09-29 更新（§11.4）**: 複数 Issue の並列実行は flywheel の責務になった。flywheel が同じリポジトリに複数の作業ツリー（worktree のスロット）を払い出し、課題ごとに `harness run ticket` を 1 本ずつ起動して `inputs.worktree` を渡す。**これが並列の通常の経路になる**。runtime は複数 Issue のスケジューリング（並列度・直列化・fan-out）を持たない。`workspace` 種類は渡された作業ツリーを `provided` で受け、`release` でも消さない（現行の実装どおり）。スロットの解放は払い出した flywheel が行う。
 
-並列にするかの判断材料として、harness は**衝突の予測だけを返す読み取り専用の口**を用意する（#288）。決定は flywheel、材料の提供は harness という分担である。口の形（接続契約 v1 に足すか、別のコマンドにするか）は #288 で決める。
+並列にするかの判断材料として、harness は**衝突の予測だけを返す読み取り専用の口**を用意する（#288）。決定は flywheel、材料の提供は harness という分担である。口の形は #288 で決めた（§5.4.1・§11.5）。**flywheel 側の呼び出しの宣言（`connectors.json` のどこに書き、invoker がいつ呼ぶか）は未定**で、flywheel の S2 以降の分解で決まる。
+
+#### 5.4.1 衝突の予測の口 `harness predict-conflicts`（#288）
+
+```text
+harness predict-conflicts [--max-budget-usd USD] [--workflow-dir DIR] [--scripts-dir DIR] <issue> <issue>...
+```
+
+- **入口は接続契約 v1 と別のコマンドにする**。予測は委譲（run の開始・再開）ではなく、契約 v1 の出力（`artifacts` 等）には予測を載せる場所が無い。`run`・`status`・`contract` の出力と終了コードは変えない。終了コードは契約 v1 と同じく「JSON を出力できたか」だけを表す（0 = 出力した。標準出力へ書けなかったときだけ 1）。
+- **flywheel が契約として定めたら、harness が `contract` 側に合わせた入口を足す**（§5.6.1 と同じ流れ。契約は flywheel が定め、harness が合わせる）。それまでの出力は harness が定めるが、汎用の語彙だけにする（harness の step id・ワークフロー名・判断値を出さない）。形の版は `schema` に持つ。
+- **読み取り専用**: 作業ツリー・ブランチ・Issue を変更しない。探索は起動した cwd が属するチェックアウトの現状（ルートで行う）に対して行い、fetch も switch もしない。読んだ HEAD を `head_sha` に出す。対象のリポジトリは cwd の GitHub リポジトリ（`gh repo view`）。
+- **実装**: Issue ごとに `conflict-predict-issue` ワークフローの run を 1 本起動する（`command` の `fetch-issue` で `gh issue view` → `llm` で `agent: claude-harness:issue-conflict-predictor`。道具は Read・Glob・Grep だけなので、予測のステップは構造上ファイルを変更できない）。同時に 4 本まで。組の突き合わせと依存の向きは Go で決定的に出す。run は状態の置き場（§4.6）に残り、失敗した Issue の `detail` の run ID から `harness status` で辿れる。
+- **入力**: Issue 番号 2〜20 件（正の整数・重複なし。`#12` も可）。範囲外・不正な値・不正な `--max-budget-usd` は何も起動せず、`error` を入れた JSON を返す。
+- **予算**: `--max-budget-usd` は口全体の上限で、既定は件数 × 1 件分（1 件分はワークフローの `limits.budget_usd` の 1 USD）。**起動前に 1 件分ずつ確保**し、残りが 1 件分を下回った Issue は起動せず `budget_exhausted` にする（fail-closed）。1 run の費用は付与した上限（1 件分）を超えないので、合計は上限を超えない。費用が得られなかった実行は付与した上限額を消費したものとして数える（§4.3・Q15）。
+
+**出力**（`schema: harness.conflict-prediction/v1`）:
+
+| フィールド | 中身 |
+| --- | --- |
+| `schema` | `harness.conflict-prediction/v1` |
+| `repository`・`head_sha` | 対象のリポジトリ（`<owner>/<name>`）と、探索したチェックアウトの HEAD。解決できなかったら `null` |
+| `complete` | 全 Issue の予測が得られたか |
+| `error` | 口全体を実行できなかった理由（そのとき run は起動していない）。それ以外は `null` |
+| `issues[]` | 入力の順。`issue`・`status`（`predicted` / `failed` / `budget_exhausted`）・`predicted_files`（リポジトリルート相対。先頭の `./` と重複を除く）・`depends_on`（本文が挙げた他 Issue。自分自身と重複を除く）・`detail`（`predicted` 以外の理由）・`cost_usd` |
+| `pairs[]` | 入力の順の全組。`issues`（2 つ）・`status`（両方の予測があれば `predicted`、無ければ `unknown`＝判断できない）・`shared_files[]`（両方の予測に現れるファイル。**除外せずすべて出す**。lockfile 等のマージが容易なベース名には `merge_friendly: true`。除外するかは呼び出し元が決める）・`dependency`（`stated[]` はどちらの予測の `depends_on` が相手を挙げたか、`first` は片方向だけのとき先に入れるべき側。無い・相互なら `null`）・`evidence[]`（根拠: 双方の予測そのもの） |
+| `budget` | `limit_usd`（口全体の上限）・`per_issue_usd`（1 件分） |
+| `cost_usd`・`unknown_cost_count` | 合計の費用と、費用不明の実行の数 |
+
+確からしさ（`confidence`）は v1 に入れない。エージェントの出力を変えることになり、子の `claude` はインストール済みのプラグインからエージェントを解決するので、プラグインのリリースまで届かない（§11.5）。
+
+**散文の `/para-impl` との関係**: 独立に並べ、エージェント定義（`issue-conflict-predictor`）だけを共有する。**`/para-impl` はこの口を呼ばない**（`references/star-parallel.md` の「衝突予測ヒント」はそのまま。§11.4 D4）。`merge_friendly` の対象は `/para-impl` が交差から除く lockfile の例と同じ系統だが、口は除外せず印を付けるだけである。
 
 ### 5.5 観測
 
@@ -838,7 +868,7 @@ make check
 | PR-6 | リリース用の GitHub Actions とビルド設定（タグは人が打つ）・S1 の埋め込みと展開・`setup`・`version`・版照合（N3 を含む） | PR-2〜 | 自動更新 |
 | PR-7 | 切替（C3 の段階 B。メジャー版）: `/impl` を薄いスキルへ（`/impl` の散文の制御フローを削除）、構造テスト（`test-impl-primitive.sh` 等）の組み替え、CHANGELOG に §8.1 の V1〜V8（V5 を除く）。**確かめる事項**: 散文の `/para-impl` の worker（`ticket-worker`）が呼ぶ `/impl` が薄いスキルになっても動くこと（`--worktree` で渡された作業ツリーを `workspace` の `provided` で受ける） | 段階 A の終了条件（N4） | `/para-impl`・`ticket-worker` の変更（散文のまま残す。§11.4） |
 
-PR-5（`fanout`・`plan-parallel` 種類、`para-impl` ワークフロー、P11 のコンフリクト解決）は 2026-09-29 に実装を見送った（§11.3・§11.4）。表から外し、PR の番号は詰めない。衝突の予測を返す読み取り専用の口は #288 で別に扱う。
+PR-5（`fanout`・`plan-parallel` 種類、`para-impl` ワークフロー、P11 のコンフリクト解決）は 2026-09-29 に実装を見送った（§11.3・§11.4）。表から外し、PR の番号は詰めない。衝突の予測を返す読み取り専用の口は #288 で別に扱った（`harness predict-conflicts`。§5.4.1）。
 
 **後回しにするもの**: クラッシュ復旧の作り込み（§4.5 の `interrupted` ゲート以上のもの）・run 横断の索引・自動更新・`/self-review` の内側の移行・`/pr-review-respond` の内部手順の移行（本設計では 1 つの `llm` ステップとして呼ぶだけ）・flywheel 向け接続契約の固定（flywheel §10 の実装待ち）・UI。
 
@@ -902,6 +932,20 @@ D4 の帰結として、PR-7 から `/para-impl` の置き換えと `ticket-work
 - U1: Q6 の「`ticket-worker` は廃止」を今後どう扱うか。`/para-impl` が散文のまま残る限り `ticket-worker` も要る。
 - U2: 薄い `/impl` が `ticket` ワークフロー全体（CI・レビュー・マージのラウンドまで）を動かす場合、`ticket-worker` の外側ループ（§2.3 の W1〜W4。CI の loop-until-green）と重なる。`ticket-worker` から呼ばれたときに `/impl` がどこで返るか（`review` ゲートで `waiting` になったときの扱いを含む）を PR-7 までに決める。
 - U3: M5（§9）の測り方。縮まない `/para-impl` の 3 ファイルと `ticket-worker` を比較の対象に含めたままにするか。
+
+### 11.5 衝突の予測の口の形（#288・2026-09-29）
+
+§11.4 D3 の「口の形は #288 で決める」の決定。委譲元（親）の回答。反映先はすべて §5.4.1。
+
+| # | 問い | 採った案 | 決めた人 |
+| --- | --- | --- | --- |
+| P1 | 入口: 接続契約 v1 の面に足すか、別のコマンドにするか | 別のコマンド `harness predict-conflicts`。出力は汎用の語彙だけにし、`schema` に版を持つ。flywheel が契約として定めたら harness が `contract` 側の入口を足す | 親 |
+| P2 | 予測の実装: 既存のエージェントを呼ぶか、ワークフローに書くか | 1 Issue ＝ 1 run の小さなワークフロー（本文の取得 → `issue-conflict-predictor`）を口が N 回起動し、組の突き合わせと依存の向きは Go で決定的に出す | 親 |
+| P3 | 散文の `/para-impl` との関係 | 独立に並べ、エージェント定義だけを共有する。`/para-impl` は口を呼ばない | 親 |
+| P4 | 出力の確からしさと lockfile | 共有ファイルは除外せずすべて出し、lockfile 等に `merge_friendly` の印。根拠は双方の予測と `depends_on` の出どころ。`confidence` は v1 に入れない（エージェントを変えない） | 親 |
+| P5 | 予算・入力の上限・対象のチェックアウト | 口全体の上限（既定は件数 × 1 USD）・1 件分に満たなければ起動せず `budget_exhausted`・入力 2〜20 件・cwd のチェックアウトの現状を探索し `head_sha` を出す | 親 |
+
+**flywheel 側の呼び出しの宣言は未定**（flywheel の M3 仕様 M3P20 は「計画の前に接続ツールへ衝突を予測させる」案を見送ったままで、masanami/flywheel#73 のオーナー方針〔2026-09-29〕との差分は flywheel の S2 以降の分解で仕様へ入る）。
 
 ---
 

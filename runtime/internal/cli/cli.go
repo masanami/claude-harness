@@ -1,7 +1,8 @@
 // Package cli は harness コマンドの面（docs/harness-runtime-design.md §5.1: run / status / runs / resume / approve / cancel /
-// validate / setup / version）と、flywheel の接続契約 v1 の面（contract。§5.6・contract.go）。
+// validate / setup / version）と、flywheel の接続契約 v1 の面（contract。§5.6・contract.go）と、衝突の予測だけを返す
+// 読み取り専用の口（predict-conflicts。§5.4・predict.go）。
 //
-// 終了コード（人向けのコマンドの割り当て。contract は別で、JSON を出力できたかだけを表す。§5.2・§5.6）:
+// 終了コード（人向けのコマンドの割り当て。contract・predict-conflicts は別で、JSON を出力できたかだけを表す。§5.2・§5.6）:
 //
 //	0 成功（run は succeeded）  1 失敗（run が failed・validate の違反・操作の失敗）
 //	2 使い方の誤り（run に渡したワークフロー定義が不正で run を始めなかった場合を含む）
@@ -101,6 +102,9 @@ commands:
   contract <start|status|resume|cancel> ...
       the connection contract v1 for flywheel: prints one JSON document and exits 0 when it printed it
       (the run's state is in the JSON; see harness contract help)
+  predict-conflicts [--max-budget-usd USD] <issue> <issue>...
+      read-only: predict which files 2 to 20 issues of the checked-out repository would touch and which pairs may
+      conflict or depend on each other; prints one JSON document and exits 0 when it printed it (see its --help)
 
 workflows and scripts: embedded in the binary and extracted to <data>/runtime/<version>/
   (<data>: $HARNESS_DATA_DIR, else $XDG_DATA_HOME/claude-harness, else ~/.local/share/claude-harness);
@@ -110,7 +114,8 @@ state directory: $HARNESS_STATE_DIR, else $XDG_STATE_HOME/claude-harness, else ~
 claude executable for llm steps: $HARNESS_CLAUDE_BIN, else claude in PATH
 git / gh for workspace, pull-request and the pr-state observation: $HARNESS_GIT_BIN / $HARNESS_GH_BIN, else in PATH
   (scripts run by command steps use git and gh from PATH)
-exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled, 5 version mismatch (except contract)
+exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled, 5 version mismatch
+  (except contract and predict-conflicts)
 `
 
 // Main は harness コマンドを実行して終了コードを返す。
@@ -137,6 +142,8 @@ func Main(args []string, env Env) int {
 		return cmdValidate(rest, env)
 	case "contract":
 		return cmdContract(rest, env)
+	case "predict-conflicts":
+		return cmdPredictConflicts(rest, env)
 	case "setup":
 		return cmdSetup(rest, env)
 	case "version", "--version":
