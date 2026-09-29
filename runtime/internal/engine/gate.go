@@ -131,14 +131,23 @@ func sessionProcesses(sid string) []int {
 func Reopen(run *runstate.Run, st *runstate.State) (*Engine, error) {
 	wf, err := workflow.LoadAndValidate(st.Workflow.Path, workflow.Options{ScriptsDir: st.ScriptsDir})
 	if err != nil {
-		return nil, fmt.Errorf("cannot load the workflow the run started with (%s): %v", st.Workflow.Path, err)
+		return nil, &ReopenError{Load: true, Msg: fmt.Sprintf("cannot load the workflow the run started with (%s): %v", st.Workflow.Path, err)}
 	}
 	if wf.Hash != st.Workflow.Hash {
-		return nil, fmt.Errorf("workflow %s changed since the run started (sha256 %s, now %s); the run is not continued with a different definition",
-			st.Workflow.Path, st.Workflow.Hash, wf.Hash)
+		return nil, &ReopenError{Msg: fmt.Sprintf("workflow %s changed since the run started (sha256 %s, now %s); the run is not continued with a different definition",
+			st.Workflow.Path, st.Workflow.Hash, wf.Hash)}
 	}
 	return &Engine{WF: wf, Run: run, ScriptsDir: st.ScriptsDir, Cwd: st.Cwd}, nil
 }
+
+// ReopenError は run を記録した定義で開き直せないこと。Load は定義を読み込めなかった（無い・この CLI が読めない）、
+// そうでなければ定義が開始時から変わっていた。
+type ReopenError struct {
+	Load bool
+	Msg  string
+}
+
+func (e *ReopenError) Error() string { return e.Msg }
 
 // Resolution はゲートの解決の要求（resume / approve）。
 type Resolution struct {

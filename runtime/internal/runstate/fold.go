@@ -34,6 +34,8 @@ type State struct {
 	PID         int                        `json:"pid"`
 	ScriptsDir  string                     `json:"scripts_dir"`
 	WorkflowDir string                     `json:"workflow_dir"`
+	CLIVersion  string                     `json:"cli_version,omitempty"`
+	Embedded    bool                       `json:"embedded,omitempty"`
 	LastSeq     int                        `json:"last_seq"`
 	Cancel      *CancelRequested           `json:"cancel_requested,omitempty"`
 	Cancelled   *RunCancelled              `json:"cancelled,omitempty"`
@@ -272,7 +274,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		s = &State{
 			RunID: p.RunID, Workflow: p.Workflow, Inputs: p.Inputs, Limits: p.Limits,
 			Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID,
-			ScriptsDir: p.ScriptsDir, WorkflowDir: p.WorkflowDir, Units: []*Unit{},
+			ScriptsDir: p.ScriptsDir, WorkflowDir: p.WorkflowDir, CLIVersion: p.CLIVersion, Embedded: p.Embedded, Units: []*Unit{},
 		}
 		for _, k := range p.Units {
 			u := &Unit{Key: k, Status: StatusRunning, CurrentStep: p.EntryStep, Rounds: []*Round{}}

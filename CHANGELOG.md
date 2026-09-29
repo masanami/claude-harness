@@ -16,6 +16,12 @@
   - ゲートは `requested_action` へ写す。`decider: human` の input 型ゲート（`design-deviation`・`review-human`）は `approve`／`human`、observe 型は `observe`、`ci-pending`・`review` のように resume で進められるものは `answer`／`parent`。対応表は `docs/harness-runtime-design.md` §5.6.1。
   - 既存の `run`/`status`/`resume`/`cancel` の出力と終了コード（0 成功・1 失敗・2 使い方の誤り・3 待機・4 停止）は変えていない。
 
+- **harness runtime の配布の仕組みを入れた（Issue #275・設計 §6.4・§6.5・§7）。** プラグインの配布物（`plugin/`）は変わらない。
+  - 定義とスクリプト（`runtime/workflows/`・`plugin/scripts/`〔`tests/` を除く〕・`plugin/agents/`）をバイナリへ埋め込み、初回の `run` / `validate` で `~/.local/share/claude-harness/runtime/<CLI の版>/`（`$HARNESS_DATA_DIR`・`$XDG_DATA_HOME` で変えられる）へ展開して使う。`--workflow-dir`・`--scripts-dir` は開発用として残る。
+  - `harness setup`（`claude plugin marketplace add` / `claude plugin install` を済んでいなければ呼び、導入済みのプラグインの版を照合する）と `harness version [--json]` を足した。
+  - 版の照合: 呼び出し元が `HARNESS_PLUGIN_VERSION` でプラグイン版を渡すと、CLI の対応範囲（現在 `>=4.8.0 <5.0.0`）の外なら更新すべき側を示して終了コード 5 で止まる。run は開始時の CLI の版を記録し、CLI を更新した後の `resume` は開始時の版の展開ディレクトリの定義で続ける（無ければ止めて、開始時の版での `resume` か `cancel` を案内する）。
+  - リリース用の GitHub Actions（`.github/workflows/release-runtime.yml`）。タグ `runtime/vX.Y.Z` の push でのみ起動し、`darwin/arm64`・`darwin/amd64`・`linux/amd64`・`linux/arm64` のアーカイブと `checksums.txt` を GitHub Release に置く。タグは人が打つ。成果物の一覧と導入手順は `runtime/README.md`。
+
 ### 修正
 
 - **`scripts/worktree-setup.sh` が、統合ブランチ（base）や既存の作業ブランチが remote に無いのに「在る」と判定することがある問題を直した（Issue #271）。** `git ls-remote --heads origin <b>` のパターンは末尾一致（パス要素単位）のため、`<b>` が無くても `feature/<b>` のような別ブランチが在ると成功していた。base の存在確認（`verify_base_remote`）と既存リモートブランチの確認（`remote_branch_exists`）を、`refs/heads/<b>` と完全一致する ref があるかで判定するようにした。

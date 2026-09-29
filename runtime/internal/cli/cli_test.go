@@ -15,6 +15,7 @@ import (
 
 	"github.com/masanami/claude-harness/runtime/internal/engine"
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
+	"github.com/masanami/claude-harness/runtime/internal/version"
 )
 
 // テストバイナリ自身を harness として起動する（別プロセスの run と cancel を実際に走らせるため）。
@@ -24,6 +25,10 @@ func TestMain(m *testing.M) {
 		return "merged", nil, nil
 	})
 	if os.Getenv("HARNESS_CLI_TEST_MAIN") == "1" {
+		// リリースのビルドが -ldflags で埋める CLI の版を、テストでは環境変数で差し替える（版をまたぐ resume の検査。N3）。
+		if v := os.Getenv("HARNESS_TEST_CLI_VERSION"); v != "" {
+			version.Version = v
+		}
 		os.Exit(Main(os.Args[1:], DefaultEnv()))
 	}
 	os.Exit(m.Run())

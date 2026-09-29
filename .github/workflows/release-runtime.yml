@@ -1,0 +1,58 @@
+# harness CLI（runtime/）のリリース（docs/harness-runtime-design.md §6.4）。
+# 起動はタグ runtime/vX.Y.Z の push だけ（タグを打つのは人。PR・ブランチの push・手動実行では起動しない）。
+# 成果物（make dist）: harness_<X.Y.Z>_<os>_<arch>.tar.gz（darwin/arm64・darwin/amd64・linux/amd64・linux/arm64）と checksums.txt。
+# 一覧と導入手順は runtime/README.md「リリース」。
+name: release-runtime
+
+on:
+  push:
+    tags:
+      - "runtime/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # 書き込みの権限は最後の gh release だけが GH_TOKEN で使う
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: runtime/go.mod
+          cache-dependency-path: runtime/go.sum
+
+      - name: Read the version from the tag
+        id: version
+        run: |
+          v="${GITHUB_REF_NAME#runtime/v}"
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "tag ${GITHUB_REF_NAME} is not runtime/vX.Y.Z" >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Quality gates
+        run: make check
+
+      - name: Build the release archives
+        run: make dist VERSION="${{ steps.version.outputs.version }}" DIST_DIR=dist
+
+      - name: Check the built version
+        run: |
+          tar -xzf "dist/harness_${{ steps.version.outputs.version }}_linux_amd64.tar.gz" -C "$RUNNER_TEMP" harness
+          "$RUNNER_TEMP/harness" version --json | tee "$RUNNER_TEMP/version.json"
+          grep -q "\"cli_version\": \"${{ steps.version.outputs.version }}\"" "$RUNNER_TEMP/version.json"
+          grep -q '"embedded": true' "$RUNNER_TEMP/version.json"
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/harness_*.tar.gz dist/checksums.txt \
+            --verify-tag --latest=false \
+            --title "harness ${{ steps.version.outputs.version }}" \
+            --notes "harness CLI ${{ steps.version.outputs.version }}. Install: runtime/README.md (Release)."

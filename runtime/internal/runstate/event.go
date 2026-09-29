@@ -64,8 +64,12 @@ type RunStarted struct {
 	PID         int                        `json:"pid"`
 	ScriptsDir  string                     `json:"scripts_dir"`
 	WorkflowDir string                     `json:"workflow_dir"`
-	Units       []string                   `json:"units"`
-	EntryStep   string                     `json:"entry_step"`
+	// CLIVersion は run を始めた CLI の版、Embedded は定義・スクリプトをその版の展開ディレクトリ（埋め込み）から読んだか
+	// （--workflow-dir / --scripts-dir で指した場合は false）。resume で別の版の CLI が続けるときの照合の材料（§7.3・N3）。
+	CLIVersion string   `json:"cli_version,omitempty"`
+	Embedded   bool     `json:"embedded,omitempty"`
+	Units      []string `json:"units"`
+	EntryStep  string   `json:"entry_step"`
 }
 
 // Trigger はラウンドの開始の契機（§4.1 Round。§5.5 の「中断」と「計画された再開」の区別）。

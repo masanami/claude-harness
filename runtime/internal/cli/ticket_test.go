@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
+	"github.com/masanami/claude-harness/runtime/internal/version"
 )
 
 // gitIdentity は一時リポジトリでコミットするための作者情報（利用者の git 設定を読まない・書かない）。
@@ -60,10 +61,18 @@ func check(name, bucket string) string {
 	return fmt.Sprintf(`[{"name":%q,"state":%q,"bucket":%q,"description":"","workflow":"CI","link":"https://github.com/o/r/actions/runs/555/job/1"}]`, name, strings.ToUpper(bucket), bucket)
 }
 
-// 同梱の ticket ワークフロー（runtime/workflows/ticket.yaml）を、偽の claude・gh と一時リポジトリで通す（Issue #269 の完了条件）:
-// 実装 → PR → CI の観測（red で fix へ差し戻し・既存 PR へ push）→ CI が時間内に終わらず ci-pending ゲート → resume で CI の
-// 再確認から続ける → レビュー待ち → 既定ブランチ宛なので人のマージを観測するゲート → マージを観測して作業ツリーを片付ける。
-func TestTicketWorkflowEndToEnd(t *testing.T) {
+// ticketFixture は ticket ワークフローを偽の claude・gh と一時リポジトリで通す準備（Issue #269）。1 回目の CI は red、
+// 2 回目以降は pending（時間内に終わらない）。偽の claude は 5 回分（analyze・implement・commit・fix・commit）の応答を持つ。
+type ticketFixture struct {
+	h                    *harness
+	root, repo, origin   string
+	fdir, ghDir, dataDir string
+	branch               string
+	write                func(name, content string)
+}
+
+func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
+	t.Helper()
 	root, repo, origin := tempRepo(t)
 	fdir, fenv := fakeClaude(t)
 	ghDir := t.TempDir()
@@ -94,19 +103,48 @@ func TestTicketWorkflowEndToEnd(t *testing.T) {
 	respond(t, fdir, 4, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed the failing test", "deviation_report": ""}, 5.25))
 	respond(t, fdir, 5, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "def", "summary": "committed"}, 5.5))
 
-	state := t.TempDir()
+	state, data := t.TempDir(), t.TempDir()
 	env := append(append(fenv, gitIdentity...),
-		"HARNESS_STATE_DIR="+state, "FAKE_GH_DIR="+ghDir, "POLL_SLEEP_CMD=true",
+		"HARNESS_STATE_DIR="+state, "HARNESS_DATA_DIR="+data, "FAKE_GH_DIR="+ghDir, "POLL_SLEEP_CMD=true",
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	h := newHarness(t, env...)
+	h := newHarness(t, append(env, extraEnv...)...)
 	h.cwd = repo
+	return &ticketFixture{h: h, root: root, repo: repo, origin: origin, fdir: fdir, ghDir: ghDir, dataDir: data, branch: branch, write: write}
+}
+
+// 同梱の ticket ワークフロー（runtime/workflows/ticket.yaml）を、偽の claude・gh と一時リポジトリで通す（Issue #269 の完了条件）:
+// 実装 → PR → CI の観測（red で fix へ差し戻し・既存 PR へ push）→ CI が時間内に終わらず ci-pending ゲート → resume で CI の
+// 再確認から続ける → レビュー待ち → 既定ブランチ宛なので人のマージを観測するゲート → マージを観測して作業ツリーを片付ける。
+// 定義とスクリプトは、作業ツリー（--workflow-dir / --scripts-dir）とバイナリに埋め込んだもの（S1。フラグ無し）の両方で通す。
+func TestTicketWorkflowEndToEnd(t *testing.T) {
+	t.Run("working tree definitions", func(t *testing.T) { ticketEndToEnd(t, false) })
+	t.Run("embedded definitions", func(t *testing.T) { ticketEndToEnd(t, true) })
+}
+
+func ticketEndToEnd(t *testing.T, embedded bool) {
+	f := newTicketFixture(t)
+	h, root, repo, origin, fdir, ghDir, branch, write := f.h, f.root, f.repo, f.origin, f.fdir, f.ghDir, f.branch, f.write
+	args := []string{"run", "--input", "issue=42", "ticket"}
+	if !embedded {
+		args = append(args, "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts))
+	}
 
 	// ラウンド 1: 実装 → PR → CI red → fix → 既存 PR へ push → CI が終わらない（retry 1 回の後）→ ci-pending
-	out, errOut, code := h.run("run", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "--input", "issue=42", "ticket")
+	out, errOut, code := h.run(args...)
 	if code != ExitWaiting {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
+	// 埋め込みから始めた run は、この版の展開ディレクトリの定義・スクリプトを使い、そのことと CLI の版を記録する（N3 の材料）。
+	if v.Embedded != embedded || v.CLIVersion != version.CLI() {
+		t.Fatalf("embedded %v cli_version %q", v.Embedded, v.CLIVersion)
+	}
+	if embedded {
+		rt := filepath.Join(f.dataDir, "runtime") + string(filepath.Separator)
+		if !strings.HasPrefix(v.Workflow.Path, rt) || !strings.HasPrefix(v.ScriptsDir, rt) {
+			t.Fatalf("workflow %s scripts %s are not under %s", v.Workflow.Path, v.ScriptsDir, rt)
+		}
+	}
 	if len(v.Waiting) != 1 || v.Waiting[0].Gate != "ci-pending" || v.Waiting[0].RequiresTTY {
 		t.Fatalf("waiting = %+v", v.Waiting)
 	}

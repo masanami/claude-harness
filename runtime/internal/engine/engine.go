@@ -57,6 +57,9 @@ type StartParams struct {
 	WorkflowDir string
 	Cwd         string
 	Origin      string
+	// CLIVersion・Embedded は run_started に記録する（§7.3・N3）。
+	CLIVersion string
+	Embedded   bool
 }
 
 // Start は run ディレクトリを作り、run_started とラウンド 1 の開始を記録する。
@@ -84,6 +87,8 @@ func Start(p StartParams) (*Engine, error) {
 			PID:         os.Getpid(),
 			ScriptsDir:  p.ScriptsDir,
 			WorkflowDir: p.WorkflowDir,
+			CLIVersion:  p.CLIVersion,
+			Embedded:    p.Embedded,
 			Units:       []string{MainUnit},
 			EntryStep:   p.WF.Steps[0].ID,
 		}},
