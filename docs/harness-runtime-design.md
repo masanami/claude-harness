@@ -614,7 +614,7 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 | `run_id` | run の ID。run を始められなかった `start` と、引数から run ID を読めなかった場合は `null` |
 | `state` | run の汎用状態（§4.1 の `running`・`waiting`・`succeeded`・`failed`・`cancelled`）そのもの |
 | `summary` | `workflow <id>: <state>` に、終端の理由・待っているゲート・runner が居ないこと・費用不明の実行の数・コマンドが失敗した理由を添えた 1 行 |
-| `requested_action` | 終端でなく、ゲートで待っている unit があるときだけ（下の表）。それ以外は `null` |
+| `requested_action` | 終端でなく、ゲートで待っている unit があるときだけ（下の表。版の不一致で続けられないときは下の線引き）。それ以外は `null` |
 | `artifacts` | unit ごとに PR（`pr`。URL、無ければ `#<番号>`）・作業ブランチ（`branch`）・最新のラウンドで push した head（`commit`）。無ければ `[]` |
 | `cost_usd` | run の累計費用（unit の累計予算 `spent_usd` の和）。予算を持たない run（`llm` ステップが無い）は `0`。run の状態を読めなかった場合だけ `null` |
 
@@ -637,6 +637,7 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 **JSON を出せない失敗の線引き**: 標準出力へ JSON を書けなかったときだけ非 0（1）で終わる。それ以外はすべて JSON を出して 0 で終わる。
 
 - run の状態を読めた場合は、コマンドが失敗しても `state` は run の状態のまま出す（失敗の理由は `summary` に添える）。例: `decider: human` のゲートへの `contract resume` は拒否され、`state: waiting` と `approve` の `requested_action` が返る。終わった run への `resume`・`cancel` は、その終端の状態が返る。コマンドの失敗で run の状態を `failed` と偽らないためである。
+- 版の不一致（プラグイン版が範囲外・開始時の版の定義を使えない。§7.3・N3。既存コマンドは終了コード 5）で run を続けられない場合も `state` は run の状態のまま出すが、`requested_action` はゲートの操作でなく `{kind: observe, decider: human}` にする（#283）。`text` は何をすべきか（プラグインか CLI の更新。N3 なら開始時の版での `resume` か `cancel`）と、その後に `harness contract status <run>`（または `resume`）で確かめ直すことを案内し、理由は `summary` にも添える。ゲートの操作を出したままだと、呼び出し元はそれに従って同じ `resume` を繰り返し、更新するまで解消しない同じ拒否に当たり続けるためである。拒否された `contract resume` に加え、`contract status` も待機中の run には同じ判定をする（プラグイン版の照合と、定義を読み込まずにできる判定＝スキーマ版と展開ディレクトリの有無まで。何も書かない）。定義の読み込みでしか分からない不一致は `resume` したときに出る。実行中の run の `status` には出さず（runner が進めている。runner が居なければ `resume` で出る）、終わった run には出さない。
 - run の状態を読めない場合（引数の誤り・ワークフロー定義の誤り・run が見つからない・状態の読み込みの失敗）は `state: failed`・`cost_usd: null`・`requested_action: null` を出す。run を始める前の `start` の失敗の `run_id` は `null`、run ID を渡されたコマンド（見つからない run 等）はその ID。
 - 既存コマンドの標準エラー（人向けの説明）はそのまま標準エラーへ流す。
 
