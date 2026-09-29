@@ -9,6 +9,7 @@
 #   - human-merge（observe 型）に観測する PR の番号を with で渡す
 #   - publish に implement の unverified（未検証の事項）を渡す。respond・merge に PR 番号（と base）を渡す
 #   - ci に timeout（ci-wait.sh の既定の待ち 900 秒より長い 20 分）を付ける
+#   - ci の red_no_log（red で失敗ログが空。CI が実行されずに失敗した等）を fix へ送らず ci-pending で止める（#278）
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -131,9 +132,10 @@ steps:
       none:  review                                 # CI 未設定は green 相当
       red:   { goto: fix, with: { failure: $steps.ci.failure_log_excerpt },
                limit: rework, exhausted: { fail: ci_red } }
+      red_no_log: { gate: ci-pending }              # #278: 何を直すかの入力が無いので fix へ送らない（W1）
       timeout: { retry: 1, exhausted: { gate: ci-pending } }   # Q10: 失敗にせずラウンドを区切る
 
-  ci-pending:                                       # CI を待ちきれなかった（新情報が無いので fix へは送らない。W1）
+  ci-pending:                                       # CI を待ちきれなかった・失敗ログの無い red（新情報が無いので fix へは送らない。W1）
     kind: gate
     type: input
     decider: any

@@ -8,7 +8,7 @@
 #                           以後の pr list が作った PR を返すよう pr-list を書く
 #   pr view <n>           → pr-missing があれば exit 1。state は pr-state（無ければ OPEN）
 #   pr checks             → checks.<n>（n 回目の呼び出し）、無ければ checks（無ければ []）
-#   run view <id>         → 失敗ログの代わりの 1 行
+#   run view <id>         → 失敗ログの代わりの 1 行（run-log-empty があれば何も出さない＝CI が実行されずに失敗した）
 set -u
 dir="$FAKE_GH_DIR"
 ( IFS=$'\t'; printf '%s\n' "$*" ) >> "$dir/calls"
@@ -43,6 +43,7 @@ case "$1 ${2:-}" in
     n=$(( $(cat "$dir/checks.count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$dir/checks.count"
     if [ -f "$dir/checks.$n" ]; then cat "$dir/checks.$n"; else cat "$dir/checks" 2>/dev/null || echo '[]'; fi ;;
   "run view")
+    [ -f "$dir/run-log-empty" ] && exit 0
     echo "log of run $3: assertion failed in test_widget" ;;
   *)
     echo "fake gh: unsupported: $*" >&2; exit 1 ;;

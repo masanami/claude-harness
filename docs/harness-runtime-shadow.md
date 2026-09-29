@@ -46,7 +46,7 @@ harness run --workflow-dir "$HW" --scripts-dir "$HS" --input issue=<番号> tick
 
 | 止まる場所（ゲート） | 何を待っているか | 解決のしかた |
 | --- | --- | --- |
-| `ci-pending` | CI が時間内（`ci-wait` の 900 秒×2 回）に終わらなかった | CI が終わってから `harness resume <run> --input recheck`（やめるなら `abort`） |
+| `ci-pending` | CI が時間内（`ci-wait` の 900 秒×2 回）に終わらなかった。または CI が失敗ログの無い失敗で終わった（`ci: red_no_log`。CI が実行されなかった等。#278） | CI が終わってから（`red_no_log` なら原因を解消して CI を再実行してから）`harness resume <run> --input recheck`（やめるなら `abort`） |
 | `review` | PR のレビュー（R1） | 対応が要れば `harness resume <run> --input respond`、マージしてよければ `--input ready` |
 | `human-merge` | 既定ブランチ宛 PR の人によるマージ（R5。runtime はマージしない） | 人が GitHub でマージしてから `harness resume <run>`（observe 型: runtime が `gh pr view` で実状態を確かめる。open のままならまた待つ） |
 | `review-human` | レビュー対応で人の判断が要る（R2・R3。N2） | **端末から** `harness approve <run> --input respond --note <指示>`（やめるなら `abort`） |
@@ -162,7 +162,7 @@ jq -r '.run_id as $r | .units[0].rounds[] | .no as $n | .steps[] | select(.sessi
 - `worktree-setup` が払い出し先の衝突を知らせる手段は stderr の文言だけで、runtime はその文言で `conflict` を見分けている（一致しなければ `step_error`。fail-closed）。
 - `pull-request` 種類は、作業ブランチの open な PR が在れば push だけで終わり、本文を書き換えない（W4）。差し戻し後の残指摘の変化は PR 本文に反映されない。
 - 予算（`budget_usd: 40` とステップごとの上限）は仮の値（§12）。shadow の実績で較正する。
-- masanami/flywheel の Actions が Billing でジョブを起動しない間は、`ci` が `red` を返して `fix` へ差し戻し続ける（#278）。暫定で `red` の遷移を `review` へ替えた定義を使い、検証は親のローカルの `make check` で代える（§8.4）。
+- masanami/flywheel の Actions が Billing でジョブを起動しない間は、`ci` が `red` を返して `fix` へ差し戻し続ける（#278）。暫定で `red` の遷移を `review` へ替えた定義を使い、検証は親のローカルの `make check` で代える（§8.4）。#278 の修正後は、失敗ログが空の `red` は `ci-wait-pr.sh` が `red_no_log` に替え、`fix` へ送らず `ci-pending` で止まる（固定したコミットがこの修正を含むときは、この暫定の変更は要らない）。
 - claude CLI 2.1.283 は `schemas/*.json` の draft 2020-12 の `"$schema"` 行を拒否し、llm ステップが起動しない（#279）。暫定で `"$schema"` 行を外した定義を使う（§8.4）。
 
 ## 8. 親エージェント（flywheel の Tom）から回す場合

@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "plugin/scripts/ci-wait.sh の出力（scripts/specs/ci-wait.md。ci-wait-pr.sh 経由）。outcome は ci フィールド",
+  "description": "plugin/scripts/ci-wait.sh の出力（scripts/specs/ci-wait.md。ci-wait-pr.sh 経由）。outcome は ci フィールド。red_no_log は ci-wait-pr.sh が足す値（red で失敗ログが空）",
   "type": "object",
   "required": ["ci", "failed_checks", "failure_log_excerpt", "pr_url", "pr_number", "pr_exists"],
   "properties": {
-    "ci": { "type": "string", "enum": ["green", "red", "timeout", "none"] },
+    "ci": { "type": "string", "enum": ["green", "red", "red_no_log", "timeout", "none"] },
     "failed_checks": { "type": "array" },
     "failure_log_excerpt": { "type": "string" },
     "pr_url": { "type": "string" },

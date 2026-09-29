@@ -4,6 +4,9 @@
 # plugin/scripts/ci-wait.sh（位置引数: <PR> [timeout] [interval]）を、command 種類の引数の形（--<名前> <値>）で呼ぶための薄い包み。
 # ci-wait.sh の JSON（scripts/specs/ci-wait.md）をそのまま stdout に出す。ただし PR が見つからなかった（pr_exists: false）場合は
 # CI 未設定（ci: none）と区別できないので、非 0 で終わる（PR を作った直後に呼ぶので、見つからないのは異常。fail-closed）。
+# また ci: red で failure_log_excerpt が空（空白だけを含む）なら ci を red_no_log に替える（#278）。CI が実行されずに失敗した
+# （例: Actions が Billing でジョブを起動しない。steps が 0 件で --log-failed が空）ものは、何を直すかの入力が無いので
+# fix へ送らない。ci-wait.sh の出力（スキルも読む）は変えず、runtime の包みの中だけで区別する。
 # ci-wait.sh の置き場は runtime が HARNESS_SCRIPTS_DIR で渡す。
 
 set -u
@@ -49,5 +52,8 @@ fi
 if [ "$(jq -r '.pr_exists' <<<"$out" 2>/dev/null)" != "true" ]; then
   echo "Error: PR #${pr} was not found by ci-wait.sh (pr_exists is not true); not treating it as 'no CI'" >&2
   exit 1
+fi
+if [ "$(jq -r '.ci' <<<"$out")" = "red" ] && [ -z "$(jq -r '.failure_log_excerpt' <<<"$out" | tr -d '[:space:]')" ]; then
+  out="$(jq -c '.ci = "red_no_log"' <<<"$out")" || exit 1
 fi
 printf '%s\n' "$out"
