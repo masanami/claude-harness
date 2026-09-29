@@ -73,6 +73,7 @@
 - `feature-implementer` の**内側のループ**（`/quality-check` 最大 3 回・`/self-review` の反復・`design-deviation-verifier` の多数決）は、最初の段階では**エージェント定義の散文に残す**。これらは 1 つの Claude セッション内の Task ネストで閉じており、外へ出すには `/self-review` 自体の移行（Issue 本文の旧 Phase 2 相当）が要る。今回の主対象（ラウンドをまたぐ状態）には効かない。
 - 外側のループ（Phase 4→8 の差し戻し・CI 待ち・レビュー待ち・人の承認待ち・合流）は**すべて runtime へ移す**。ここが「再開のたびに親が組み立て直している」部分である。
 - 帰結として **`ticket-worker` は廃止する**（責務は「`/impl` を呼ぶ」「CI の loop-until-green」「返却」で、いずれも runtime が持つ）。Task ネストは `ticket-worker`（深度1）→ `feature-implementer`（深度2）→ `code-reviewer`（深度3）から、`feature-implementer` がセッションの主体（深度0）になる形へ 1 段浅くなる。`claude -p --agent claude-harness:feature-implementer` で**主体に据えられることを PR-3 で実測した**（2026-09-26・`claude` 2.1.283・インストール済みのプラグインを名前空間付きで指定。空のディレクトリで「作業はせず、あなたのエージェント名だけを答えて」に「機能実装エージェント（feature-implementer）」と答え、結果の `modelUsage` のモデルがセッション既定〔`claude-opus-5-5`〕ではなくエージェント定義の `model: sonnet` に当たる `claude-sonnet-5` だった）。
+  - **実測で分かった事実（#282）**: `--agent` と `--json-schema` を併せて使うと、エージェントの `tools` に `StructuredOutput` が無い限り `structured_output` が付かない（2026-09-29・`claude` 2.1.284。runtime 側の `--allowedTools` では足せない）。`feature-implementer` の `tools` に足した。実測の記録は docs/harness-runtime-shadow.md §7.1。
 
 ---
 
