@@ -139,9 +139,9 @@ steps:
     kind: gate
     type: input
     decider: any
-    requested_action: CI が時間内に終わらなかった。CI の完了後に recheck を渡して resume（止めるなら abort）
+    requested_action: CI の結果から直すべき失敗を読み取れなかった（時間内に終わらなかった、または失敗ログが空だった）。CI を確かめてから recheck を渡して resume（止めるなら abort）
     inputs: [recheck, abort]
-    on: { recheck: ci, abort: { fail: ci_timeout } }
+    on: { recheck: ci, abort: { fail: ci_timeout } }   # #278: 失敗ログが空で止まった場合も ci_timeout（呼び出し側から見える値なので据え置く）
 
   review:                                           # ラウンドの区切り R1
     kind: gate

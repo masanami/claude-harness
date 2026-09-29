@@ -33,6 +33,10 @@ func ticketCIRedWithoutLog(t *testing.T, embedded bool) {
 	if len(v.Waiting) != 1 || v.Waiting[0].Gate != "ci-pending" {
 		t.Fatalf("waiting = %+v", v.Waiting)
 	}
+	// ゲートの要求操作は、時間切れだけでなく失敗ログが空の場合にも通じる文言になっている。
+	if !strings.Contains(v.Waiting[0].RequestedAction, "失敗ログが空") {
+		t.Errorf("requested_action = %q", v.Waiting[0].RequestedAction)
+	}
 	u := v.Unit("main")
 	var seq []string
 	for _, x := range u.Rounds[0].Steps {
@@ -107,5 +111,25 @@ func TestCIWaitPRMarksRedWithoutLog(t *testing.T) {
 				t.Errorf("the other fields changed: %s", out)
 			}
 		})
+	}
+}
+
+// 失敗ログが空の red で ci-pending に止まった run を abort すると、終了の理由は ci_timeout のまま（呼び出し側から見える値
+// なので据え置く。Issue #278）。
+func TestTicketCIRedWithoutLogAbortKeepsCITimeout(t *testing.T) {
+	f := newTicketFixture(t)
+	f.write("run-log-empty", "")
+	out, errOut, code := f.h.run("run", "--input", "issue=42", "ticket", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts))
+	if code != ExitWaiting {
+		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
+	}
+	v := decode[statusView](t, out)
+	out, errOut, code = f.h.run("resume", v.RunID, "--input", "abort")
+	if code != ExitFailed {
+		t.Fatalf("resume abort exit %d\n%s\n%s", code, out, errOut)
+	}
+	v = decode[statusView](t, out)
+	if v.State.Status != "failed" || v.State.Reason != "ci_timeout" {
+		t.Fatalf("status = %s (%s)", v.State.Status, v.State.Reason)
 	}
 }
