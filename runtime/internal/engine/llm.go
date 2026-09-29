@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -99,7 +100,7 @@ func (e *Engine) executeLLM(ctx context.Context, st *runstate.State, u *runstate
 		args = append(args, "--session-id", started.SessionID)
 	}
 	args = append(args, "--max-budget-usd", formatUSD(granted))
-	schema, err := compactJSONFile(step.OutputSchema.Path)
+	schema, err := claudeSchemaArg(step.OutputSchema.Path)
 	if err != nil {
 		return notLaunched("step_error", "cannot read the output schema: "+err.Error())
 	}
@@ -295,15 +296,53 @@ func envelopeSummary(env *envelope) string {
 	return fmt.Sprintf(" (subtype=%q is_error=%t result=%q)", env.subtype, env.isError, r)
 }
 
-func compactJSONFile(path string) (string, error) {
+// claudeSchemaArg は --json-schema に渡す文字列を作る: 出力スキーマを 1 行に詰め、最上位の $schema を落とす。
+// claude CLI（2.1.283 で実測）は draft 2020-12 の $schema を持つスキーマを
+// 「no schema with key or ref "https://json-schema.org/draft/2020-12/schema"」で拒否して起動しない（#279）。
+// 定義のファイルは変えない（runtime 側の検証は $schema のあるまま 2020-12 で行う）。キーの順は保つ。
+func claudeSchemaArg(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return "", fmt.Errorf("output schema %s is not a JSON object", path)
+	}
 	var buf bytes.Buffer
-	if err := json.Compact(&buf, data); err != nil {
+	buf.WriteByte('{')
+	first := true
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return "", err
+		}
+		key, _ := tok.(string)
+		var val json.RawMessage
+		if err := dec.Decode(&val); err != nil {
+			return "", err
+		}
+		if key == "$schema" {
+			continue
+		}
+		if !first {
+			buf.WriteByte(',')
+		}
+		first = false
+		k, _ := json.Marshal(key)
+		buf.Write(k)
+		buf.WriteByte(':')
+		if err := json.Compact(&buf, val); err != nil {
+			return "", err
+		}
+	}
+	if _, err := dec.Token(); err != nil {
 		return "", err
 	}
+	if _, err := dec.Token(); err != io.EOF {
+		return "", fmt.Errorf("output schema %s has trailing data after the object", path)
+	}
+	buf.WriteByte('}')
 	return buf.String(), nil
 }
 

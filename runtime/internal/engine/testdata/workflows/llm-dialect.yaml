@@ -1,0 +1,18 @@
+# 出力スキーマが $schema（draft 2020-12）を持つ llm ステップ: --json-schema へは $schema を落として渡す（#279）。
+schema: harness.workflow/v1
+id: llm-dialect
+inputs:
+  issue: { type: integer, required: true }
+limits:
+  budget_usd: 5
+steps:
+  implement:
+    kind: llm
+    prompt: prompts/implement.md
+    session: new
+    with: { issue: $inputs.issue }
+    output: schemas/impl-dialect.json
+    budget_usd: 2
+    on:
+      pass: { done: implemented }
+      failure: { fail: implement_failed }

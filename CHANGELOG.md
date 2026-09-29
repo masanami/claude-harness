@@ -24,6 +24,8 @@
 
 ### 修正
 
+- **harness runtime の llm ステップが、同梱の出力スキーマを claude CLI に拒否されて起動しない問題を直した（Issue #279）。** 同梱スキーマ（`runtime/workflows/schemas/*.json`）は先頭に `"$schema": "https://json-schema.org/draft/2020-12/schema"` を持ち、claude CLI（2.1.283）は `--json-schema` に渡したそれを `no schema with key or ref ...` で拒否していた。`--json-schema` へ渡す前に最上位の `$schema` だけを落とすようにした。定義のファイルは変えていないため、run が記録する定義は変わらず、runtime 側の structured_output の検証は従来どおり draft 2020-12 で行う。
+
 - **`scripts/worktree-setup.sh` が、統合ブランチ（base）や既存の作業ブランチが remote に無いのに「在る」と判定することがある問題を直した（Issue #271）。** `git ls-remote --heads origin <b>` のパターンは末尾一致（パス要素単位）のため、`<b>` が無くても `feature/<b>` のような別ブランチが在ると成功していた。base の存在確認（`verify_base_remote`）と既存リモートブランチの確認（`remote_branch_exists`）を、`refs/heads/<b>` と完全一致する ref があるかで判定するようにした。
   - `/impl`・`/para-impl` の SKILL.md にある統合ブランチの存在確認の例も同じ判定に直した。
   - `plugin/scripts/tests/test-worktree-setup.sh` に、末尾一致の別ブランチだけが remote に在る場合に base を「無い」と判定するケースを足した。
