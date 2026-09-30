@@ -22,6 +22,16 @@
   - 版の照合: 呼び出し元が `HARNESS_PLUGIN_VERSION` でプラグイン版を渡すと、CLI の対応範囲（現在 `>=4.8.0 <5.0.0`）の外なら更新すべき側を示して終了コード 5 で止まる。run は開始時の CLI の版を記録し、CLI を更新した後の `resume` は開始時の版の展開ディレクトリの定義で続ける（無ければ止めて、開始時の版での `resume` か `cancel` を案内する）。
   - リリース用の GitHub Actions（`.github/workflows/release-runtime.yml`）。タグ `runtime/vX.Y.Z` の push でのみ起動し、`darwin/arm64`・`darwin/amd64`・`linux/amd64`・`linux/arm64` のアーカイブと `checksums.txt` を GitHub Release に置く。タグは人が打つ。成果物の一覧と導入手順は `runtime/README.md`。
 
+- **harness runtime に、衝突の予測だけを返す読み取り専用の口 `harness predict-conflicts` を足した（Issue #288）。** 同じリポジトリの複数 Issue（2〜20 件）について、実装で触りそうなファイルと、組ごとの共有ファイル・依存の向きを予測し、JSON（`schema: harness.conflict-prediction/v1`）を 1 つ出して終了コード 0 で終わる。並列にするかは決めない（決定は呼び出し元の flywheel）。作業ツリー・ブランチ・Issue は変更しない。
+  - Issue ごとに `issue-conflict-predictor` を 1 回起動し、組の突き合わせは runtime が決定的に行う。共有ファイルは除外せず、lockfile 等に `merge_friendly`、git が無視するパスに `ignored` の印を付ける。
+  - `--max-budget-usd` は口全体の上限（既定は件数 × 1 USD）。1 件分に満たない Issue は起動せず `budget_exhausted` として出す。
+  - 出力の形は `docs/harness-runtime-design.md` §5.4.1。`/para-impl` はこの口を呼ばない（散文のまま。予測は従来どおり Task で `issue-conflict-predictor` を呼ぶ）。
+
+### 変更
+
+- **エージェント `issue-conflict-predictor` の `tools` に `StructuredOutput` を足した（Issue #288）。** runtime は `claude -p --agent claude-harness:issue-conflict-predictor --json-schema ...` で起動し、`tools` に `StructuredOutput` が無いと型付きの出力が付かず予測が失敗していた（`feature-implementer` の #282 と同じ）。`/para-impl` の呼び方（Task）では使わない道具が 1 つ増えるだけで、振る舞いは変わらない。
+  - `harness predict-conflicts` が実物で予測を返すのは、この変更を含む版のプラグインを導入してから（子の `claude` はインストール済みのプラグインからエージェントを解決する）。
+
 ### 修正
 
 - **harness runtime の llm ステップが、同梱の出力スキーマを claude CLI に拒否されて起動しない問題を直した（Issue #279）。** 同梱スキーマ（`runtime/workflows/schemas/*.json`）は先頭に `"$schema": "https://json-schema.org/draft/2020-12/schema"` を持ち、claude CLI（2.1.283）は `--json-schema` に渡したそれを `no schema with key or ref ...` で拒否していた。`--json-schema` へ渡す前に最上位の `$schema` だけを落とすようにした。定義のファイルは変えていないため、run が記録する定義は変わらず、runtime 側の structured_output の検証は従来どおり draft 2020-12 で行う。
