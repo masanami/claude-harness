@@ -99,7 +99,7 @@ func TestVersion(t *testing.T) {
 	}
 	// 呼び出し元がプラグイン版を渡せば照合の結果も返す（終了コードは 0 のまま）。
 	for pv, want := range map[string]pluginCheck{
-		"4.8.1": {Version: "4.8.1", Compatible: true},
+		"4.9.0": {Version: "4.9.0", Compatible: true},
 		"4.7.0": {Version: "4.7.0", Update: "plugin"},
 		"5.0.0": {Version: "5.0.0", Update: "cli"},
 	} {
@@ -110,7 +110,7 @@ func TestVersion(t *testing.T) {
 		}
 	}
 	out, _, code = h.run("version")
-	if code != ExitOK || !strings.Contains(out, "harness 1.2.3") || !strings.Contains(out, ">=4.8.0 <5.0.0") {
+	if code != ExitOK || !strings.Contains(out, "harness 1.2.3") || !strings.Contains(out, ">=4.9.0 <5.0.0") {
 		t.Errorf("version text: %d\n%s", code, out)
 	}
 }
@@ -140,8 +140,8 @@ func TestPluginVersionMismatchStops(t *testing.T) {
 		t.Fatalf("a run was started despite the mismatch: %v", ids)
 	}
 	// 範囲内なら動く。
-	if _, errOut, code := h.with(PluginVersionEnv + "=4.8.1").run(args...); code != ExitOK {
-		t.Fatalf("plugin 4.8.1: exit %d %s", code, errOut)
+	if _, errOut, code := h.with(PluginVersionEnv + "=4.9.0").run(args...); code != ExitOK {
+		t.Fatalf("plugin 4.9.0: exit %d %s", code, errOut)
 	}
 	// contract start は run を始めず、理由を summary に入れた failed を出す（終了コードは 0）。
 	d, _ := h.with(PluginVersionEnv + "=4.7.0").contract(append([]string{"start"}, args[1:]...)...)
@@ -274,11 +274,11 @@ func TestSetup(t *testing.T) {
 		stdout, errs string
 	}{
 		{"fresh install", nil,
-			map[string]string{"marketplaces.json": `[]`, "plugins.1.json": `[]`, "plugins.json": plugins("4.8.1")},
+			map[string]string{"marketplaces.json": `[]`, "plugins.1.json": `[]`, "plugins.json": plugins("4.9.0")},
 			ExitOK, []string{"plugin marketplace list --json", "plugin marketplace add masanami/claude-harness", "plugin list --json", "plugin install " + PluginID, "plugin list --json"},
 			"supported by harness", ""},
 		{"scope and source", []string{"--scope", "project", "--marketplace", "/src/claude-harness"},
-			map[string]string{"marketplaces.json": `[]`, "plugins.1.json": `[]`, "plugins.json": plugins("4.8.1")},
+			map[string]string{"marketplaces.json": `[]`, "plugins.1.json": `[]`, "plugins.json": plugins("4.9.0")},
 			ExitOK, []string{"plugin marketplace list --json", "plugin marketplace add /src/claude-harness --scope project", "plugin list --json", "plugin install " + PluginID + " --scope project", "plugin list --json"},
 			"installed", ""},
 		{"already set up", nil,

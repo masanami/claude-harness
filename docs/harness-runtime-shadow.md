@@ -164,7 +164,7 @@ jq -r '.run_id as $r | .units[0].rounds[] | .no as $n | .steps[] | select(.sessi
 - 予算（`budget_usd: 40` とステップごとの上限）は仮の値（§12）。shadow の実績で較正する。
 - masanami/flywheel の Actions が Billing でジョブを起動しない間は、`ci` が `red` を返して `fix` へ差し戻し続ける（#278）。暫定で `red` の遷移を `review` へ替えた定義を使い、検証は親のローカルの `make check` で代える（§8.4）。#278 の修正後は、失敗ログが空の `red` は `ci-wait-pr.sh` が `red_no_log` に替え、`fix` へ送らず `ci-pending` で止まる（`abort` した場合の理由は `ci_timeout` のまま。固定したコミットがこの修正を含むときは、この暫定の変更は要らない）。
 - claude CLI 2.1.283 は `schemas/*.json` の draft 2020-12 の `"$schema"` 行を拒否し、llm ステップが起動しない（#279）。暫定で `"$schema"` 行を外した定義を使う（§8.4）。
-- `agent:` を持つ llm ステップ（`implement`・`fix`）は、エージェントの `tools` に `StructuredOutput` が無いと `structured_output` を返さず `invalid_output` で終わる（#282。§7.1）。子の `claude -p` はインストール済みのプラグインからエージェントを解決するため、`feature-implementer` の `tools` を直した版のプラグインを入れるまでは直らない。CLI の版照合の下限（`runtime/internal/version` の `PluginMin`）はまだ直す前の版を受け入れる。
+- `agent:` を持つ llm ステップ（`implement`・`fix`）は、エージェントの `tools` に `StructuredOutput` が無いと `structured_output` を返さず `invalid_output` で終わる（#282。§7.1）。子の `claude -p` はインストール済みのプラグインからエージェントを解決するため、`feature-implementer` の `tools` を直した版のプラグインを入れるまでは直らない。直した版は 4.9.0 で、CLI の版照合の下限（`runtime/internal/version` の `PluginMin`）も 4.9.0 に上げた（4.8.x のプラグインでは終了コード 5 で止まる）。
 
 ### 7.1 `--agent` と `--json-schema` の組み合わせ（#282 の実測）
 

@@ -45,7 +45,7 @@ func TestContractPluginMismatchAsksAPersonToUpdate(t *testing.T) {
 			if after := eventTypes(t, filepath.Join(state, "runs", id)); after != before {
 				t.Errorf("the refused resume recorded events:\n%s\n%s", before, after)
 			}
-			ok, _ := h.with(PluginVersionEnv+"=4.8.1").contract("status", id)
+			ok, _ := h.with(PluginVersionEnv+"=4.9.0").contract("status", id)
 			if *ok.RequestedAction != *start.RequestedAction {
 				t.Errorf("in range: action = %+v, want %+v", ok.RequestedAction, start.RequestedAction)
 			}
