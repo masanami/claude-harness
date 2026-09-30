@@ -606,7 +606,7 @@ harness predict-conflicts [--max-budget-usd USD] [--workflow-dir DIR] [--scripts
 - **入口は接続契約 v1 と別のコマンドにする**。予測は委譲（run の開始・再開）ではなく、契約 v1 の出力（`artifacts` 等）には予測を載せる場所が無い。`run`・`status`・`contract` の出力と終了コードは変えない。終了コードは契約 v1 と同じく「JSON を出力できたか」だけを表す（0 = 出力した。標準出力へ書けなかったときだけ 1）。
 - **flywheel が契約として定めたら、harness が `contract` 側に合わせた入口を足す**（§5.6.1 と同じ流れ。契約は flywheel が定め、harness が合わせる）。それまでの出力は harness が定めるが、汎用の語彙だけにする（harness の step id・ワークフロー名・判断値を出さない）。形の版は `schema` に持つ。
 - **読み取り専用**: 作業ツリー・ブランチ・Issue を変更しない。探索は起動した cwd が属するチェックアウトの現状（ルートで行う）に対して行い、fetch も switch もしない。読んだ HEAD を `head_sha` に出す。対象のリポジトリは cwd の GitHub リポジトリ（`gh repo view`）。
-- **実装**: Issue ごとに `conflict-predict-issue` ワークフローの run を 1 本起動する（`command` の `fetch-issue` で `gh issue view` → `llm` で `agent: claude-harness:issue-conflict-predictor`。道具は Read・Glob・Grep だけなので、予測のステップは構造上ファイルを変更できない）。同時に 4 本まで。組の突き合わせと依存の向きは Go で決定的に出す。run は状態の置き場（§4.6）に残り、失敗した Issue の `detail` の run ID から `harness status` で辿れる。
+- **実装**: Issue ごとに `conflict-predict-issue` ワークフローの run を 1 本起動する（`command` の `fetch-issue` で `gh issue view` → `llm` で `agent: claude-harness:issue-conflict-predictor`。道具は Read・Glob・Grep と型付きの出力を返す StructuredOutput だけなので、予測のステップは構造上ファイルを変更できない。StructuredOutput は `--agent` と `--json-schema` の併用で型付きの出力を得るために要る〔§1.1・#282〕）。同時に 4 本まで（止められたら、まだ起動していない Issue は起動せず `failed` にする）。組の突き合わせと依存の向きは Go で決定的に出す。run は状態の置き場（§4.6）に残り、失敗した Issue の `detail` の run ID から `harness status` で辿れる。
 - **入力**: Issue 番号 2〜20 件（正の整数・重複なし。`#12` も可）。範囲外・不正な値・不正な `--max-budget-usd` は何も起動せず、`error` を入れた JSON を返す。
 - **予算**: `--max-budget-usd` は口全体の上限で、既定は件数 × 1 件分（1 件分はワークフローの `limits.budget_usd` の 1 USD）。**起動前に 1 件分ずつ確保**し、残りが 1 件分を下回った Issue は起動せず `budget_exhausted` にする（fail-closed）。1 run の費用は付与した上限（1 件分）を超えないので、合計は上限を超えない。費用が得られなかった実行は付与した上限額を消費したものとして数える（§4.3・Q15）。
 
@@ -619,13 +619,13 @@ harness predict-conflicts [--max-budget-usd USD] [--workflow-dir DIR] [--scripts
 | `complete` | 全 Issue の予測が得られたか |
 | `error` | 口全体を実行できなかった理由（そのとき run は起動していない）。それ以外は `null` |
 | `issues[]` | 入力の順。`issue`・`status`（`predicted` / `failed` / `budget_exhausted`）・`predicted_files`（リポジトリルート相対。先頭の `./` と重複を除く）・`depends_on`（本文が挙げた他 Issue。自分自身と重複を除く）・`detail`（`predicted` 以外の理由）・`cost_usd` |
-| `pairs[]` | 入力の順の全組。`issues`（2 つ）・`status`（両方の予測があれば `predicted`、無ければ `unknown`＝判断できない）・`shared_files[]`（両方の予測に現れるファイル。**除外せずすべて出す**。lockfile 等のマージが容易なベース名には `merge_friendly: true`。除外するかは呼び出し元が決める）・`dependency`（`stated[]` はどちらの予測の `depends_on` が相手を挙げたか、`first` は片方向だけのとき先に入れるべき側。無い・相互なら `null`）・`evidence[]`（根拠: 双方の予測そのもの） |
+| `pairs[]` | 入力の順の全組。`issues`（2 つ）・`status`（両方の予測があれば `predicted`、無ければ `unknown`＝判断できない）・`shared_files[]`（両方の予測に現れるファイル。**除外せずすべて出す**。lockfile 等のマージが容易なベース名には `merge_friendly: true`、git が無視するパス〔`git check-ignore`。生成物の写し等。追跡されているファイルは当たらない〕には `ignored: true`。除外するかは呼び出し元が決める）・`dependency`（`stated[]` はどちらの予測の `depends_on` が相手を挙げたか、`first` は片方向だけのとき先に入れるべき側。無い・相互なら `null`）・`evidence[]`（根拠: 双方の予測そのもの） |
 | `budget` | `limit_usd`（口全体の上限）・`per_issue_usd`（1 件分） |
 | `cost_usd`・`unknown_cost_count` | 合計の費用と、費用不明の実行の数 |
 
-確からしさ（`confidence`）は v1 に入れない。エージェントの出力を変えることになり、子の `claude` はインストール済みのプラグインからエージェントを解決するので、プラグインのリリースまで届かない（§11.5）。
+確からしさ（`confidence`）は v1 に入れない。エージェントの出力の形を変えることになり、子の `claude` はインストール済みのプラグインからエージェントを解決するので、プラグインのリリースまで届かない（§11.5）。
 
-**散文の `/para-impl` との関係**: 独立に並べ、エージェント定義（`issue-conflict-predictor`）だけを共有する。**`/para-impl` はこの口を呼ばない**（`references/star-parallel.md` の「衝突予測ヒント」はそのまま。§11.4 D4）。`merge_friendly` の対象は `/para-impl` が交差から除く lockfile の例と同じ系統だが、口は除外せず印を付けるだけである。
+**散文の `/para-impl` との関係**: 独立に並べ、エージェント定義（`issue-conflict-predictor`）だけを共有する。**`/para-impl` はこの口を呼ばない**（`references/star-parallel.md` の「衝突予測ヒント」はそのまま。§11.4 D4）。`merge_friendly` の対象は `/para-impl` が交差から除く lockfile の例と同じ系統だが、口は除外せず印を付けるだけである。エージェントの `tools` に足した StructuredOutput は、`/para-impl` の呼び方（Task）では使わない道具が 1 つ増えるだけである（`feature-implementer` と同じ。#282）。
 
 ### 5.5 観測
 
@@ -942,8 +942,10 @@ D4 の帰結として、PR-7 から `/para-impl` の置き換えと `ticket-work
 | P1 | 入口: 接続契約 v1 の面に足すか、別のコマンドにするか | 別のコマンド `harness predict-conflicts`。出力は汎用の語彙だけにし、`schema` に版を持つ。flywheel が契約として定めたら harness が `contract` 側の入口を足す | 親 |
 | P2 | 予測の実装: 既存のエージェントを呼ぶか、ワークフローに書くか | 1 Issue ＝ 1 run の小さなワークフロー（本文の取得 → `issue-conflict-predictor`）を口が N 回起動し、組の突き合わせと依存の向きは Go で決定的に出す | 親 |
 | P3 | 散文の `/para-impl` との関係 | 独立に並べ、エージェント定義だけを共有する。`/para-impl` は口を呼ばない | 親 |
-| P4 | 出力の確からしさと lockfile | 共有ファイルは除外せずすべて出し、lockfile 等に `merge_friendly` の印。根拠は双方の予測と `depends_on` の出どころ。`confidence` は v1 に入れない（エージェントを変えない） | 親 |
+| P4 | 出力の確からしさと lockfile | 共有ファイルは除外せずすべて出し、lockfile 等に `merge_friendly` の印。根拠は双方の予測と `depends_on` の出どころ。`confidence` は v1 に入れない（エージェントの出力の形を変えない） | 親 |
 | P5 | 予算・入力の上限・対象のチェックアウト | 口全体の上限（既定は件数 × 1 USD）・1 件分に満たなければ起動せず `budget_exhausted`・入力 2〜20 件・cwd のチェックアウトの現状を探索し `head_sha` を出す | 親 |
+| P6 | `--agent` と `--json-schema` の併用で型付きの出力が付かない（実物の `claude` 2.1.284 で予測が `invalid_output` になった。§1.1 の #282 と同じ） | `issue-conflict-predictor` の `tools` に StructuredOutput を足す（#282 と同じ直し方）。子の `claude` はインストール済みのプラグインからエージェントを解決するため、口が実物で動くのはこの変更を含むプラグインのリリース後 | 親 |
+| P7 | git が無視するパス（生成物の写し）が予測に入る | 除外せず、`git check-ignore` で判定して `ignored: true` の印を付ける | 親 |
 
 **flywheel 側の呼び出しの宣言は未定**（flywheel の M3 仕様 M3P20 は「計画の前に接続ツールへ衝突を予測させる」案を見送ったままで、masanami/flywheel#73 のオーナー方針〔2026-09-29〕との差分は flywheel の S2 以降の分解で仕様へ入る）。
 

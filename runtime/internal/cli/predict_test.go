@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
 )
@@ -128,7 +130,7 @@ func predictThree(t *testing.T, embedded bool) {
 	}
 	p := d.Pairs[0] // 10 × 11: a.go と go.sum（lockfile の印）を共有し、10 が 11 に依存する（11 が先）
 	if p.Issues != [2]int{10, 11} || p.Status != pairPredicted ||
-		jsonOf(t, p.SharedFiles) != `[{"path":"a.go","merge_friendly":false},{"path":"go.sum","merge_friendly":true}]` ||
+		jsonOf(t, p.SharedFiles) != `[{"path":"a.go","merge_friendly":false,"ignored":false},{"path":"go.sum","merge_friendly":true,"ignored":false}]` ||
 		p.Dependency.First == nil || *p.Dependency.First != 11 || jsonOf(t, p.Dependency.Stated) != `[{"issue":10,"depends_on":11}]` ||
 		len(p.Evidence) != 2 || p.Evidence[0].Issue != 10 || p.Evidence[1].Issue != 11 || jsonOf(t, p.Evidence[1].PredictedFiles) != `["a.go","c.go","go.sum"]` {
 		t.Fatalf("pair 10x11 = %s", jsonOf(t, p))
@@ -291,6 +293,86 @@ func TestPredictConflictsRejectsInput(t *testing.T) {
 			t.Fatalf("got\n%s", raw)
 		}
 	})
+}
+
+// git が無視するパス（生成物の写し等）の共有ファイルには ignored の印を付ける。除外はしない。
+// 無視の規則に当たっても追跡されているファイルは ignored にしない（git check-ignore の判定どおり）。
+func TestPredictConflictsMarksIgnored(t *testing.T) {
+	f := newPredictFixture(t)
+	if err := os.WriteFile(filepath.Join(f.repo, ".gitignore"), []byte("gen/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.repo, "gen"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.repo, "gen", "tracked.go"), []byte("package gen\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, f.repo, "add", ".gitignore")
+	git(t, f.repo, "add", "-f", "gen/tracked.go")
+	git(t, f.repo, "commit", "-q", "-m", "ignore gen")
+	shared := []string{"gen/copy.go", "a.go", "gen/tracked.go"}
+	for _, n := range []int{1, 2} {
+		f.issue(t, n, "body")
+		f.predicts(t, n, shared, []int{}, 0.1)
+	}
+	d, raw := f.predict(t, false, "1", "2")
+	want := `[{"path":"gen/copy.go","merge_friendly":false,"ignored":true},{"path":"a.go","merge_friendly":false,"ignored":false},` +
+		`{"path":"gen/tracked.go","merge_friendly":false,"ignored":false}]`
+	if d.Error != nil || len(d.Pairs) != 1 || jsonOf(t, d.Pairs[0].SharedFiles) != want {
+		t.Fatalf("shared files\n got %s\nwant %s\n%s", jsonOf(t, d.Pairs), want, raw)
+	}
+}
+
+// 止められたら（SIGTERM）、まだ起動していない Issue は起動しない。起動済みの予測は failed として出し、JSON は出す。
+func TestPredictConflictsInterrupted(t *testing.T) {
+	f := newPredictFixture(t)
+	for n := 1; n <= predictParallelism+1; n++ {
+		f.issue(t, n, "body")
+		if err := os.WriteFile(filepath.Join(f.fdir, "responses", fmt.Sprintf("%d.sleep", n)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := []string{"predict-conflicts", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts)}
+	for n := 1; n <= predictParallelism+1; n++ {
+		args = append(args, fmt.Sprint(n))
+	}
+	c := f.h.cmd(args...)
+	var out strings.Builder
+	c.Stdout = &out
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for len(f.claudeCalls(t)) < predictParallelism {
+		if time.Now().After(deadline) {
+			_ = c.Process.Kill()
+			t.Fatalf("only %d predictions started", len(f.claudeCalls(t)))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := c.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Wait(); err != nil {
+		t.Fatalf("exit: %v\n%s", err, out.String())
+	}
+	d := decode[predictionDoc](t, out.String())
+	last := d.Issues[predictParallelism]
+	if d.Complete || last.Status != issueFailed || last.Detail != "not launched: the prediction was interrupted" {
+		t.Fatalf("issues = %s", jsonOf(t, d.Issues))
+	}
+	for _, p := range d.Issues[:predictParallelism] {
+		if p.Status != issueFailed {
+			t.Fatalf("issues = %s", jsonOf(t, d.Issues))
+		}
+	}
+	if n := len(f.claudeCalls(t)); n != predictParallelism {
+		t.Fatalf("claude launched %d times, want %d", n, predictParallelism)
+	}
+	if n := len(f.runs(t)); n != predictParallelism {
+		t.Fatalf("runs = %d, want %d", n, predictParallelism)
+	}
 }
 
 // 依存の向き: 片方向だけなら挙げられた側が先、相互なら決めない（first は null）。

@@ -97,6 +97,7 @@ type pairPrediction struct {
 type sharedFile struct {
 	Path          string `json:"path"`
 	MergeFriendly bool   `json:"merge_friendly"`
+	Ignored       bool   `json:"ignored"`
 }
 
 // pairDependency は依存の見込み。Stated はどちらの予測の depends_on が相手を挙げたか。First は先に入れるべき側で、
@@ -250,8 +251,13 @@ func predict(args []string, env Env) predictionDoc {
 	var wg sync.WaitGroup
 	var mu sync.Mutex // env.Stderr への書き込みを直列化する
 	for _, i := range launch {
-		wg.Add(1)
 		sem <- struct{}{}
+		if ctx.Err() != nil { // 止められた後は新しく起動しない（起動済みの run は engine が止めて記録する）
+			<-sem
+			d.Issues[i].Status, d.Issues[i].Detail = issueFailed, "not launched: the prediction was interrupted"
+			continue
+		}
+		wg.Add(1)
 		go func(p *issuePrediction) {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -270,6 +276,9 @@ func predict(args []string, env Env) predictionDoc {
 	}
 	d.CostUSD = roundUSD(d.CostUSD)
 	d.Pairs = pairsOf(d.Issues)
+	if err := markIgnored(d.Pairs, top, toolBin(env, "HARNESS_GIT_BIN", "git")); err != nil {
+		fmt.Fprintf(env.Stderr, "harness: cannot tell which shared files git ignores (they are reported with ignored: false): %v\n", err)
+	}
 	return d
 }
 
@@ -365,6 +374,44 @@ func shared(a, b []string) []sharedFile {
 		}
 	}
 	return out
+}
+
+// markIgnored は git が無視するパス（生成物の写し等）の共有ファイルに ignored の印を付ける（git check-ignore。読むだけ）。
+// 除外はしない（除外するかは呼び出し元が決める）。追跡されているファイルは無視の規則に当たっても ignored にならない。
+func markIgnored(pairs []pairPrediction, top, gitBin string) error {
+	var paths []string
+	seen := map[string]bool{}
+	for _, p := range pairs {
+		for _, f := range p.SharedFiles {
+			if !seen[f.Path] {
+				seen[f.Path] = true
+				paths = append(paths, f.Path)
+			}
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	cmd := exec.Command(gitBin, "check-ignore", "--stdin", "-z")
+	cmd.Dir = top
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
+	out, err := cmd.Output()
+	var ee *exec.ExitError
+	if err != nil && !(errors.As(err, &ee) && ee.ExitCode() == 1) { // 1 は「どれも無視されていない」
+		return err
+	}
+	ignored := map[string]bool{}
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			ignored[f] = true
+		}
+	}
+	for i := range pairs {
+		for j := range pairs[i].SharedFiles {
+			pairs[i].SharedFiles[j].Ignored = ignored[pairs[i].SharedFiles[j].Path]
+		}
+	}
+	return nil
 }
 
 // dependency は組の依存の見込み: 片方だけが相手を depends_on に挙げていれば、挙げられた側が先。

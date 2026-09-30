@@ -2,6 +2,7 @@
 # テスト用の偽の claude（predict-conflicts 用。並列に起動されるので、応答は起動順でなく Issue 番号で引く）。
 # FAKE_CLAUDE_DIR の下で動く。stdin（プロンプト）の添付データの "issue": <n> を読み、
 #   responses/<n> を応答にする: 1 行目が終了コード、2 行目以降が stdout（@SID@ は --session-id の値に置き換える）。
+#   responses/<n>.sleep があれば、応答せずに眠る（止められた場合を作る）。
 #   受け取った argv を calls/<n>.argv（1 行 1 引数）、stdin を calls/<n>.stdin、カレントディレクトリを calls/<n>.pwd に残す。
 set -u
 dir="$FAKE_CLAUDE_DIR"
@@ -19,6 +20,11 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
+if [ -e "$dir/responses/$n.sleep" ]; then   # 止められる場合を作る（runtime が止めるまで眠る）
+  sleep 60 &
+  wait
+  exit 0
+fi
 resp="$dir/responses/$n"
 [ -f "$resp" ] || { echo "fake claude: no response for issue $n" >&2; exit 1; }
 code=$(head -n 1 "$resp")

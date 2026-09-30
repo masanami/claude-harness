@@ -2,7 +2,7 @@
 
 `harness` は claude-harness の headless workflow runtime。設計は [`docs/harness-runtime-design.md`](../docs/harness-runtime-design.md)（Issue #201）が正本。このディレクトリはプラグインの配布物（`plugin/`）の外にある。CLI はプラグインとは別に、GitHub Releases のバイナリで配る（§6.4。下の「導入」「リリース」）。
 
-## 現在の範囲（PR-2・Issue #259 ＋ PR-3・Issue #261 ＋ PR-4・Issue #269 ＋ PR-6・Issue #275）
+## 現在の範囲（PR-2・Issue #259 ＋ PR-3・Issue #261 ＋ PR-4・Issue #269 ＋ PR-6・Issue #275 ＋ Issue #288）
 
 - ワークフロー定義（式を持たない YAML・§3.1〜§3.3）の読み込みと `harness validate`（§6.3）
 - イベントログ（`events.jsonl` が正本）と状態の畳み込み（`state.json`）・状態の置き場（§4・§4.6）
@@ -12,6 +12,7 @@
 - `run` / `status [--json]` / `runs [--json]` / `resume` / `approve` / `cancel`（§5.1）
 - runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
+- 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
 
 ## 構成
 
@@ -87,12 +88,28 @@ go run ./cmd/harness resume <run-id> --input <値>    # ゲートを解決して
 go run ./cmd/harness approve <run-id> --input <値>   # 人が端末から解決するゲート（decider: human の input 型）
 go run ./cmd/harness cancel <run-id>
 go run ./cmd/harness contract status <run-id>        # flywheel の接続契約 v1 の JSON（start・status・resume・cancel）
+go run ./cmd/harness predict-conflicts 12 13         # 衝突の予測（読み取り専用。JSON を 1 つ出す）
 ```
 
 - ワークフロー定義とスクリプトの置き場は `--workflow-dir` / `--scripts-dir` で指す。省略時は埋め込んだ写し（`make bundle` の時点の作業ツリーの内容）を展開して使う（上の「定義とスクリプトの置き場」）。
 - 状態は `$HARNESS_STATE_DIR`、無ければ `$XDG_STATE_HOME/claude-harness`、無ければ `~/.local/state/claude-harness` の `runs/<run-id>/` に置かれる（`events.jsonl`・`state.json`・`logs/`）。試すときは `HARNESS_STATE_DIR` を一時ディレクトリへ向けるとよい。
 - `llm` 種類が起動する `claude` は `$HARNESS_CLAUDE_BIN`、無ければ PATH の `claude`。`workspace`・`pull-request` 種類と `pr-state` の観測が起動する `git`・`gh` は `$HARNESS_GIT_BIN`・`$HARNESS_GH_BIN`、無ければ PATH のもの（`command` 種類のスクリプトは PATH の `git`・`gh` を使う）。
 - 終了コード（0 成功・1 失敗・2 使い方の誤り／定義の不正・3 待機〔ゲートで止まった〕・4 停止・5 版の不一致）は人向けのコマンドの割り当てである。flywheel 向けの接続契約 v1 は別の入口 `harness contract start|status|resume|cancel` が担い、JSON（`contract_version: 1`）を出力できたら終了コード 0 で終わる。待機・成功・失敗は JSON の `state` で表す（§5.6）。
+- `predict-conflicts` も終了コードは「JSON を出力できたか」だけを表す（0 = 出力した）。
+
+## 衝突の予測（`predict-conflicts`。§5.4.1・Issue #288）
+
+同じリポジトリの複数 Issue（2〜20 件）について、実装で触りそうなファイルと、組ごとの共有ファイル・依存の向きを予測して JSON（`schema: harness.conflict-prediction/v1`）で返す。並列にするかは決めない（決定は呼び出し元）。作業ツリー・ブランチ・Issue は変更しない。
+
+```bash
+harness predict-conflicts [--max-budget-usd USD] <issue> <issue>...   # cwd のチェックアウトとその GitHub リポジトリが対象
+```
+
+- Issue ごとに `conflict-predict-issue` ワークフローの run を 1 本起動する（`fetch-issue.sh` で `gh issue view` → `issue-conflict-predictor` が cwd のチェックアウトのルートを探索）。同時に 4 本まで。run は状態の置き場に残る。
+- `--max-budget-usd` は口全体の上限（既定は件数 × 1 USD）。1 件分（1 USD）ずつ起動前に確保し、確保できない Issue は起動せず `budget_exhausted` にする。
+- 出力の主なフィールド: `repository`・`head_sha`・`complete`・`error`（口全体を実行できなかったときだけ）・`issues[]`（`status` は `predicted` / `failed` / `budget_exhausted`）・`pairs[]`（`shared_files[]` は除外せずすべて出し、lockfile 等に `merge_friendly`、git が無視するパスに `ignored` の印。`dependency.first` は先に入れるべき側）・`cost_usd`。表は設計 §5.4.1。
+- エージェントはインストール済みのプラグインから解決される。`issue-conflict-predictor` の `tools` に `StructuredOutput` が無い版のプラグインでは、予測が型付きの出力を返せず `failed` になる（#282 と同じ）。
+
 - 待機（3）のとき stdout の JSON の `waiting[]` に、ゲート・決める主体・要求操作（`requested_action`）・受け付ける値・`requires_tty`・再開のコマンドが入る（§5.2）。
 
 ## `command` 種類の書き方
