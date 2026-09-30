@@ -8,7 +8,7 @@
 
 ---
 
-## 未リリース（版数は未定。リリース時に人が決める）
+## 4.9.0
 
 ### 追加
 
@@ -19,7 +19,7 @@
 - **harness runtime の配布の仕組みを入れた（Issue #275・設計 §6.4・§6.5・§7）。** プラグインの配布物（`plugin/`）は変わらない。
   - 定義とスクリプト（`runtime/workflows/`・`plugin/scripts/`〔`tests/` を除く〕・`plugin/agents/`）をバイナリへ埋め込み、初回の `run` / `validate` で `~/.local/share/claude-harness/runtime/<CLI の版>/`（`$HARNESS_DATA_DIR`・`$XDG_DATA_HOME` で変えられる）へ展開して使う。`--workflow-dir`・`--scripts-dir` は開発用として残る。
   - `harness setup`（`claude plugin marketplace add` / `claude plugin install` を済んでいなければ呼び、導入済みのプラグインの版を照合する）と `harness version [--json]` を足した。
-  - 版の照合: 呼び出し元が `HARNESS_PLUGIN_VERSION` でプラグイン版を渡すと、CLI の対応範囲（現在 `>=4.8.0 <5.0.0`）の外なら更新すべき側を示して終了コード 5 で止まる。run は開始時の CLI の版を記録し、CLI を更新した後の `resume` は開始時の版の展開ディレクトリの定義で続ける（無ければ止めて、開始時の版での `resume` か `cancel` を案内する）。
+  - 版の照合: 呼び出し元が `HARNESS_PLUGIN_VERSION` でプラグイン版を渡すと、CLI の対応範囲（4.9.0 から `>=4.9.0 <5.0.0`）の外なら更新すべき側を示して終了コード 5 で止まる。run は開始時の CLI の版を記録し、CLI を更新した後の `resume` は開始時の版の展開ディレクトリの定義で続ける（無ければ止めて、開始時の版での `resume` か `cancel` を案内する）。
   - リリース用の GitHub Actions（`.github/workflows/release-runtime.yml`）。タグ `runtime/vX.Y.Z` の push でのみ起動し、`darwin/arm64`・`darwin/amd64`・`linux/amd64`・`linux/arm64` のアーカイブと `checksums.txt` を GitHub Release に置く。タグは人が打つ。成果物の一覧と導入手順は `runtime/README.md`。
 
 - **harness runtime に、衝突の予測だけを返す読み取り専用の口 `harness predict-conflicts` を足した（Issue #288）。** 同じリポジトリの複数 Issue（2〜20 件）について、実装で触りそうなファイルと、組ごとの共有ファイル・依存の向きを予測し、JSON（`schema: harness.conflict-prediction/v1`）を 1 つ出して終了コード 0 で終わる。並列にするかは決めない（決定は呼び出し元の flywheel）。作業ツリー・ブランチ・Issue は変更しない。
@@ -29,10 +29,18 @@
 
 ### 変更
 
+- **harness runtime が対応するプラグイン版の下限を 4.9.0 に上げた（`PluginMin`）。** 4.8.x のプラグインは下の #279・#282 の修正を含まず、runtime の `ticket` ワークフローが実装の段で完走しないため。範囲外のプラグインでは `run`・`resume`（`contract` を含む）が終了コード 5 で止まり、プラグインの更新を案内する。
+
+- **エージェント `feature-implementer` の `tools` に `StructuredOutput` を足した（Issue #282）。** runtime は implement・fix を `claude -p --json-schema --agent claude-harness:feature-implementer` で起動する。エージェントの `tools` は許可リストとして働き、`StructuredOutput` が無いと型付きの出力が付かず `invalid_output` で失敗していた（`--allowedTools` では足せない）。`/impl`・`/para-impl` からの通常の呼び出し（`--json-schema` なし）には影響しない。
+
 - **エージェント `issue-conflict-predictor` の `tools` に `StructuredOutput` を足した（Issue #288）。** runtime は `claude -p --agent claude-harness:issue-conflict-predictor --json-schema ...` で起動し、`tools` に `StructuredOutput` が無いと型付きの出力が付かず予測が失敗していた（`feature-implementer` の #282 と同じ）。`/para-impl` の呼び方（Task）では使わない道具が 1 つ増えるだけで、振る舞いは変わらない。
   - `harness predict-conflicts` が実物で予測を返すのは、この変更を含む版のプラグインを導入してから（子の `claude` はインストール済みのプラグインからエージェントを解決する）。
 
 ### 修正
+
+- **harness runtime の `ticket` ワークフローで、失敗ログが空の CI の red（ジョブが起動しなかった等）を `fix` へ差し戻さず、`ci-pending` ゲートで止めるようにした（Issue #278）。** これまでは直すべき失敗が無いまま実装の修正に回っていた。
+
+- **harness runtime の `contract status`・`contract resume` で、版の不一致で続けられない run の `requested_action` を `observe` × `human` にした（Issue #283）。** これまでは元のゲートの操作のまま理由が `summary` にしか出ず、呼び出し側が同じ操作を繰り返しえた。
 
 - **harness runtime の llm ステップが、同梱の出力スキーマを claude CLI に拒否されて起動しない問題を直した（Issue #279）。** 同梱スキーマ（`runtime/workflows/schemas/*.json`）は先頭に `"$schema": "https://json-schema.org/draft/2020-12/schema"` を持ち、claude CLI（2.1.283）は `--json-schema` に渡したそれを `no schema with key or ref ...` で拒否していた。`--json-schema` へ渡す前に最上位の `$schema` だけを落とすようにした。定義のファイルは変えていないため、run が記録する定義は変わらず、runtime 側の structured_output の検証は従来どおり draft 2020-12 で行う。
 
@@ -43,6 +51,7 @@
 ### 利用者が取る操作
 
 - **プラグインのファイルをそのまま使っている場合は何もしなくてよい。**
+- **harness runtime（`harness` CLI）を使う場合は、プラグインを 4.9.0 以上へ更新する**（`/plugin marketplace update masanami-harness` の後に `/plugin update claude-harness@masanami-harness`）。4.8.x のままだと CLI が終了コード 5 で止まる。
 - **プロジェクトの `.claude/skills/` に `impl`・`para-impl` のオーバーライドを置いている場合**、この修正は自動では入らない。統合ブランチの存在確認を `git ls-remote --exit-code --heads origin "{base}"` のまま使っているなら、上の SKILL.md と同じ完全一致の判定に直す。
 
 ---

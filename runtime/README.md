@@ -53,7 +53,7 @@
 
 ## 版の照合（§7.3）
 
-- CLI は独立した semver（タグ `runtime/vX.Y.Z`）。対応するプラグイン版の範囲（現在 `>=4.8.0 <5.0.0`）と、読めるワークフロースキーマ版（`harness.workflow/v1`）を内蔵する。
+- CLI は独立した semver（タグ `runtime/vX.Y.Z`）。対応するプラグイン版の範囲（現在 `>=4.9.0 <5.0.0`）と、読めるワークフロースキーマ版（`harness.workflow/v1`）を内蔵する。
 - 呼び出し元（薄いスキル）は自分のプラグイン版を環境変数 `HARNESS_PLUGIN_VERSION` で渡す。設定されていれば `run`・`resume`・`approve`（`contract start`・`contract resume` を含む）は何もする前に照合し、範囲外なら更新すべき側（プラグイン／CLI）を標準エラーに出して終了コード 5 で終わる。設定されていなければ照合しない（スキルを通さない起動）。
 - run は開始時の CLI の版（`cli_version`）と、定義を埋め込みから読んだか（`embedded`）を記録する。ゲートで待っている run を CLI の更新後に `resume` すると、**開始時の版の展開ディレクトリの定義・スクリプトで続ける**（N3。新しい版の定義には切り替えない）。そのディレクトリが無い・スキーマ版を読めない・この CLI が定義を読み込めない場合は、状態を変えずに終了コード 5 で止まり、「開始時の版の harness で `resume` する」か「`harness cancel <run>`」を案内する。開始時と同じ版なら、消えた展開ディレクトリを作り直して続ける。
 - 終了コード 5 の標準出力: プラグイン版の不一致は run を読む前に止まるので何も出さない（理由は標準エラー）。版をまたぐ `resume` の拒否は、状態を変えていない run の現在地（`status --json` と同じ JSON）を出す。`contract` の面では、`contract resume` と `contract status` は run の状態（`waiting` 等）のまま、`requested_action` をゲートの操作でなく `observe` × `human`（何を更新すべきかと、その後に `contract status` で確かめ直すことの案内）にし、理由を `summary` に添える（#283。設計 §5.6.1）。`contract start` は run を始めないので `state: failed`・`run_id: null` を出して理由を `summary` に入れる。

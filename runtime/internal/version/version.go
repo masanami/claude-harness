@@ -26,7 +26,7 @@ const Dev = "dev"
 // [PluginMin, PluginMaxExclusive)。子の claude -p が使う agents/ はインストール済みのプラグインから解決されるため、
 // 範囲外のプラグインでは動き続けない（§7.3）。
 const (
-	PluginMin          = "4.8.0"
+	PluginMin          = "4.9.0"
 	PluginMaxExclusive = "5.0.0"
 )
 
