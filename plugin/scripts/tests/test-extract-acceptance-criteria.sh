@@ -163,6 +163,49 @@ assert_eq "issueフィールドがnull" "null" "$(jq -r '.issue' <<<"$CLI_OUTPUT
 assert_eq "parse_statusがok" "ok" "$(jq -r '.parse_status' <<<"$CLI_OUTPUT")"
 assert_eq "criteriaが2件" "2" "$(jq '.criteria | length' <<<"$CLI_OUTPUT")"
 
+echo "=== test: 括弧付きの見出しは抽出せず excluded_headings に控える（#273） ==="
+read -r -d '' FIXTURE_PAREN_HEADINGS <<'EOF'
+## 受入基準（S2）
+
+- [ ] S2 の基準
+
+## 受入基準 (S1・昇格済み)
+
+- [x] S1 の基準
+
+## 完了条件（旧）
+
+- [ ] 旧い条件
+
+## 受入基準の粒度
+
+- [ ] 見出しの一部が一致するだけの節
+EOF
+parse_acceptance_criteria "$FIXTURE_PAREN_HEADINGS"
+assert_eq "括弧付き見出しだけ: parse_status は no_checklist_found（受理しない）" "no_checklist_found" "$PARSE_STATUS"
+assert_eq "括弧付き見出しだけ: criteria は空" "0" "$(jq 'length' <<<"$CRITERIA_JSON")"
+assert_eq "括弧付き見出しを全角・半角とも 3 件控える（括弧の無い近似見出しは含めない）" "3" "$(jq 'length' <<<"$EXCLUDED_HEADINGS_JSON")"
+assert_eq "控えた見出しは行そのまま（1件目）" "## 受入基準（S2）" "$(jq -r '.[0]' <<<"$EXCLUDED_HEADINGS_JSON")"
+assert_eq "控えた見出しは行そのまま（2件目・半角括弧）" "## 受入基準 (S1・昇格済み)" "$(jq -r '.[1]' <<<"$EXCLUDED_HEADINGS_JSON")"
+
+echo "=== test: 括弧なしの見出しと併存するとき、括弧なしだけを抽出する ==="
+FIXTURE_MIXED=$(printf '## 受入基準（S1・昇格済み）\n\n- [x] S1 の基準\n\n## 受入基準\n\n- [ ] S2 の基準\n')
+parse_acceptance_criteria "$FIXTURE_MIXED"
+assert_eq "併存: parse_status が ok" "ok" "$PARSE_STATUS"
+assert_eq "併存: 括弧なしの節の 1 件だけを抽出する" "1" "$(jq 'length' <<<"$CRITERIA_JSON")"
+assert_eq "併存: 抽出したのは括弧なしの節の基準" "S2 の基準" "$(jq -r '.[0].text' <<<"$CRITERIA_JSON")"
+assert_eq "併存: 括弧付き見出しは excluded_headings に 1 件" "1" "$(jq 'length' <<<"$EXCLUDED_HEADINGS_JSON")"
+
+echo "=== test: 括弧付き見出しが無ければ excluded_headings は空配列 ==="
+parse_acceptance_criteria "$FIXTURE_FEATURE_SPEC"
+assert_eq "excluded_headings は空配列" "[]" "$EXCLUDED_HEADINGS_JSON"
+
+echo "=== test: CLIレベルで excluded_headings を出力する ==="
+CLI_PAREN_OUTPUT=$(printf '%s' "$FIXTURE_PAREN_HEADINGS" | "$TARGET_SCRIPT" --stdin)
+assert_eq "CLI: parse_status は no_checklist_found" "no_checklist_found" "$(jq -r '.parse_status' <<<"$CLI_PAREN_OUTPUT")"
+assert_eq "CLI: excluded_headings が 3 件" "3" "$(jq '.excluded_headings | length' <<<"$CLI_PAREN_OUTPUT")"
+assert_eq "CLI: 括弧付き見出しが無い本文では空配列" "[]" "$(jq -c '.excluded_headings' <<<"$CLI_OUTPUT")"
+
 echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"

@@ -40,12 +40,16 @@ fetch_fallback_issues_json() {
     --limit "$CSC_FALLBACK_SEARCH_LIMIT" --json number,title,state 2>/dev/null
 }
 
-# 子Issueをcloseした merged PR の番号を検索する。見つからなければ空文字を返す。
+# 子Issueを本文で参照する merged PR の番号を検索する。
 # 引数: child_issue_number, owner, repo
-# 戻り値: stdout にPR番号（見つかった最初の1件）、または空文字
+# 戻り値: 照会に成功したら 0 を返し、stdout にPR番号（見つかった最初の1件）、見つからなければ空文字。
+#         gh が失敗したら非0を返す（呼び出し側は「未マージ」と「取得失敗」を区別する）。
+# マージ済みの絞り込みは --merged を使う。--state が受け付けるのは open|closed だけで、
+# --state に merged を渡すと gh 2.67.0 で invalid argument になる（#273）。stderr は捨てない
+# （失敗の理由を利用者が読めるようにする。stdout の JSON には混ざらない）。
 fetch_merged_pr_number() {
   local child="$1" owner="$2" repo="$3"
-  gh search prs --repo "${owner}/${repo}" --state merged "#${child} in:body" --json number --jq '.[0].number // empty' 2>/dev/null
+  gh search prs "#${child} in:body" --repo "${owner}/${repo}" --merged --limit 1 --json number --jq '.[0].number // empty'
 }
 
 # --- 純粋関数（gh を呼ばない） ---
@@ -67,17 +71,31 @@ normalize_fallback_issues_json() {
 }
 
 # 1件の子Issueエントリを組み立てる。
-# 引数: number, title, state, merged_pr（空文字なら未検出=null）
+# 引数: number, title, state, merged_pr（空文字なら未検出=null）,
+#       merged_pr_lookup（"found" | "not_found" | "failed" | "skipped"。省略時は merged_pr の有無から決める）
 # 戻り値: stdout にJSONオブジェクト
 build_child_entry() {
-  local number="$1" title="$2" state="$3" merged_pr="$4"
-  if [ -n "$merged_pr" ]; then
-    jq -n --argjson number "$number" --arg title "$title" --arg state "$state" --argjson mergedPr "$merged_pr" \
-      '{number: $number, title: $title, state: $state, mergedPr: $mergedPr}'
-  else
-    jq -n --argjson number "$number" --arg title "$title" --arg state "$state" \
-      '{number: $number, title: $title, state: $state, mergedPr: null}'
+  local number="$1" title="$2" state="$3" merged_pr="$4" lookup="${5:-}"
+  if [ -z "$lookup" ]; then
+    if [ -n "$merged_pr" ]; then lookup="found"; else lookup="not_found"; fi
   fi
+  if [ -n "$merged_pr" ]; then
+    jq -n --argjson number "$number" --arg title "$title" --arg state "$state" --argjson mergedPr "$merged_pr" --arg lookup "$lookup" \
+      '{number: $number, title: $title, state: $state, mergedPr: $mergedPr, mergedPrLookup: $lookup}'
+  else
+    jq -n --argjson number "$number" --arg title "$title" --arg state "$state" --arg lookup "$lookup" \
+      '{number: $number, title: $title, state: $state, mergedPr: null, mergedPrLookup: $lookup}'
+  fi
+}
+
+# children配列から未クローズ（state が CLOSED でない）子Issueの番号一覧を返す。
+# 統合ブランチ（既定ブランチ以外）へのマージでは closing keyword が働かず子Issueが
+# OPEN のまま残るため、/promote-verify が報告に列挙する入力にする（自動クローズはしない）。
+# 引数: children_json
+# 戻り値: stdout に番号のJSON配列
+compute_unclosed_children() {
+  local children_json="$1"
+  jq -c '[.[] | select(.state != "CLOSED") | .number]' <<<"$children_json"
 }
 
 # children配列（mergedPr込み）から allMerged を判定する。
@@ -175,18 +193,42 @@ main() {
     if [ "$source" = "parent_label_fallback" ] && [ "$children_count" -ge "$CSC_FALLBACK_SEARCH_LIMIT" ]; then
       status="fallback_truncated"
     fi
-    local idx number title state entry merged_pr
+    # merged PR の照会は子の state を問わず行う。OPEN の子に merged PR があれば、統合ブランチ
+    # へのマージで closing keyword が働かなかった可能性を報告で示せる（allMerged の条件は
+    # 従来どおり state == CLOSED を要求し、ここでは変えない）。
+    # 照会の失敗は「未マージ（not_found）」に丸めず failed として記録し、1件でもあれば
+    # status を merged_pr_lookup_failed にする（allMerged は false）。
+    local merged_pr_lookup_failed="false"
+    local idx number title state entry merged_pr lookup
     for ((idx = 0; idx < children_count; idx++)); do
       number=$(jq -r ".[$idx].number" <<<"$children_json")
       title=$(jq -r ".[$idx].title" <<<"$children_json")
       state=$(jq -r ".[$idx].state" <<<"$children_json")
       merged_pr=""
-      if [ "$status" = "ok" ] && [ "$state" = "CLOSED" ]; then
-        merged_pr=$(fetch_merged_pr_number "$number" "$owner" "$repo")
+      lookup="skipped"
+      if [ "$status" = "ok" ]; then
+        if merged_pr=$(fetch_merged_pr_number "$number" "$owner" "$repo"); then
+          if [ -z "$merged_pr" ]; then
+            lookup="not_found"
+          elif [[ "$merged_pr" =~ ^[0-9]+$ ]]; then
+            lookup="found"
+          else
+            # 数値でない出力は照会結果として解釈できない（取得失敗として扱う）
+            merged_pr=""
+            lookup="failed"
+          fi
+        else
+          merged_pr=""
+          lookup="failed"
+        fi
+        [ "$lookup" = "failed" ] && merged_pr_lookup_failed="true"
       fi
-      entry=$(build_child_entry "$number" "$title" "$state" "$merged_pr")
+      entry=$(build_child_entry "$number" "$title" "$state" "$merged_pr" "$lookup")
       final_children=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$final_children")
     done
+    if [ "$merged_pr_lookup_failed" = "true" ]; then
+      status="merged_pr_lookup_failed"
+    fi
   fi
 
   local all_merged="false"
@@ -194,13 +236,17 @@ main() {
     all_merged="true"
   fi
 
+  local unclosed
+  unclosed=$(compute_unclosed_children "$final_children")
+
   jq -n \
     --argjson parent "$parent" \
     --arg source "$source" \
     --arg status "$status" \
     --argjson children "$final_children" \
     --argjson allMerged "$all_merged" \
-    '{parent: $parent, source: $source, status: $status, children: $children, allMerged: $allMerged}'
+    --argjson unclosedChildren "$unclosed" \
+    '{parent: $parent, source: $source, status: $status, children: $children, allMerged: $allMerged, unclosedChildren: $unclosedChildren}'
 
   return 0
 }
