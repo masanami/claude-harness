@@ -11,6 +11,10 @@
 #   (b) sub_issues API経路で一部未マージ
 #   (c) フォールバック経路（sub_issues APIが失敗）
 #   (d) 子Issue0件（両経路とも空）
+#   (f) merged PR の照会失敗（「未マージ」と「取得失敗」を区別する。#273）
+#   (g) 未クローズの子Issueの列挙（統合ブランチへのマージで閉じない子。#273）
+# 実関数の fetch_merged_pr_number は gh をシェル関数で差し替えて、渡す引数（--merged）と
+# 失敗の伝播を検証する（gh 2.67.0 は --state merged を invalid argument で拒否する）。
 #
 # 実行方法: bash scripts/tests/test-check-subtask-completion.sh
 
@@ -84,6 +88,61 @@ echo "=== compute_all_merged ==="
   assert_eq "空配列 -> false（空集合の論理的真=trueの罠を避ける）" "false" "$r"
 }
 
+echo "=== compute_unclosed_children ==="
+{
+  assert_eq "CLOSED以外の番号だけを返す" "[62,63]" \
+    "$(compute_unclosed_children '[{"number":60,"state":"CLOSED"},{"number":62,"state":"OPEN"},{"number":63,"state":"OPEN"}]')"
+  assert_eq "全件CLOSEDなら空配列" "[]" "$(compute_unclosed_children '[{"number":60,"state":"CLOSED"}]')"
+  assert_eq "空配列なら空配列" "[]" "$(compute_unclosed_children '[]')"
+}
+
+# --- 実関数 fetch_merged_pr_number: gh をシェル関数で差し替えて検証 ---
+# main() 用のスタブで上書きする前に、実関数を別名で退避する。
+eval "real_$(declare -f fetch_merged_pr_number)"
+
+GH_ARGS_LOG=""
+GH_FAKE_EXIT=0
+GH_FAKE_OUT=""
+# gh 2.67.0 の振る舞いを模す: --state は open|closed だけを受け付ける。
+# shellcheck disable=SC2329  # real_fetch_merged_pr_number から間接的に呼ばれる
+gh() {
+  GH_ARGS_LOG="$*"
+  local prev=""
+  local a
+  for a in "$@"; do
+    if [ "$prev" = "--state" ] && [ "$a" != "open" ] && [ "$a" != "closed" ]; then
+      echo "invalid argument \"${a}\" for \"--state\" flag: valid values are {open|closed}" >&2
+      return 1
+    fi
+    prev="$a"
+  done
+  printf '%s' "$GH_FAKE_OUT"
+  return "$GH_FAKE_EXIT"
+}
+
+echo "=== 実関数 fetch_merged_pr_number（gh 差し替え） ==="
+{
+  GH_FAKE_EXIT=0
+  GH_FAKE_OUT="61"
+  out=$(real_fetch_merged_pr_number "60" "o" "r" 2>/dev/null)
+  rc=$?
+  assert_eq "gh 2.67 相当で照会に成功する（--state merged を渡さない）" "0" "$rc"
+  assert_eq "PR番号を返す" "61" "$out"
+  real_fetch_merged_pr_number "60" "o" "r" >/dev/null 2>&1
+  case " ${GH_ARGS_LOG} " in *" --merged "*) r="yes" ;; *) r="no" ;; esac
+  assert_eq "--merged で絞り込む" "yes" "$r"
+  case " ${GH_ARGS_LOG} " in *" #60 in:body "*) r="yes" ;; *) r="no" ;; esac
+  assert_eq "子Issue番号を本文検索する" "yes" "$r"
+
+  GH_FAKE_EXIT=1
+  GH_FAKE_OUT=""
+  real_fetch_merged_pr_number "60" "o" "r" >/dev/null 2>&1
+  rc=$?
+  assert_eq "gh の失敗を非0で返す（空文字＝未マージに化けさせない）" "1" "$rc"
+  GH_FAKE_EXIT=0
+}
+unset -f gh
+
 # --- main(): gh呼び出し関数をスタブに差し替えて分岐を検証 ---
 
 # デフォルトスタブ
@@ -112,16 +171,22 @@ fetch_fallback_issues_json() {
   return "$FALLBACK_ISSUES_EXIT"
 }
 
-# child番号 -> merged PR番号 の対応表(スペース区切りの "child:pr" ペア)
+# child番号 -> merged PR番号 の対応表(スペース区切りの "child:pr" ペア)。
+# pr に FAIL を書くと照会失敗（非0）を返す。それ以外の値はそのまま出力する。
 MERGED_PR_MAP=""
+MERGED_PR_CALLS=""
 # shellcheck disable=SC2329
 fetch_merged_pr_number() {
   local child="$1"
+  MERGED_PR_CALLS="${MERGED_PR_CALLS} ${child}"
   local pair
   for pair in $MERGED_PR_MAP; do
     local c="${pair%%:*}"
     local p="${pair##*:}"
     if [ "$c" = "$child" ]; then
+      if [ "$p" = "FAIL" ]; then
+        return 1
+      fi
       printf '%s' "$p"
       return 0
     fi
@@ -136,6 +201,7 @@ reset_stubs() {
   FALLBACK_ISSUES_RESULT="[]"
   FALLBACK_ISSUES_EXIT=0
   MERGED_PR_MAP=""
+  MERGED_PR_CALLS=""
 }
 
 echo "=== main: (a) sub_issues API経路で全マージ済み ==="
@@ -151,6 +217,8 @@ echo "=== main: (a) sub_issues API経路で全マージ済み ==="
   assert_eq "allMergedはtrue" "true" "$(jq -r '.allMerged' <<<"$output")"
   assert_eq "1件目のmergedPrは100" "100" "$(jq -r '.children[0].mergedPr' <<<"$output")"
   assert_eq "parentは52" "52" "$(jq -r '.parent' <<<"$output")"
+  assert_eq "mergedPrLookupはfound" "found" "$(jq -r '.children[0].mergedPrLookup' <<<"$output")"
+  assert_eq "unclosedChildrenは空配列" "[]" "$(jq -c '.unclosedChildren' <<<"$output")"
 }
 
 echo "=== main: (b) sub_issues API経路で一部未マージ(OPEN混在) ==="
@@ -162,7 +230,10 @@ echo "=== main: (b) sub_issues API経路で一部未マージ(OPEN混在) ==="
   output=$(main "52")
   assert_eq "sourceはsub_issues_api" "sub_issues_api" "$(jq -r '.source' <<<"$output")"
   assert_eq "allMergedはfalse(1件OPEN)" "false" "$(jq -r '.allMerged' <<<"$output")"
-  assert_eq "OPEN側のmergedPrはnull(closeでないためfetch_merged_pr_numberを呼ばない)" "null" "$(jq -r '.children[1].mergedPr' <<<"$output")"
+  assert_eq "OPEN側のmergedPrはnull(merged PRが見つからない)" "null" "$(jq -r '.children[1].mergedPr' <<<"$output")"
+  assert_eq "OPEN側のmergedPrLookupはnot_found" "not_found" "$(jq -r '.children[1].mergedPrLookup' <<<"$output")"
+  assert_eq "statusはok(未マージは取得失敗ではない)" "ok" "$(jq -r '.status' <<<"$output")"
+  assert_eq "unclosedChildrenにOPENの子が載る" "[62]" "$(jq -c '.unclosedChildren' <<<"$output")"
 }
 
 echo "=== main: (b') sub_issues API経路でCLOSEDだがmerged PRが見つからない場合はallMerged=false ==="
@@ -271,6 +342,9 @@ echo "=== main: (e) フォールバック件数=上限は fallback_truncated（�
   assert_eq "打ち切り時はmergedPrを判定しない（CLOSEDでもnull）" "null" \
     "$(jq -r '.children[] | select(.number == 1000) | .mergedPr' <<<"$output")"
   assert_eq "allMergedはfalse（不完全な一覧を完全成功にしない）" "false" "$(jq -r '.allMerged' <<<"$output")"
+  assert_eq "打ち切り時はmerged PRを照会しない" "" "$MERGED_PR_CALLS"
+  assert_eq "打ち切り時のmergedPrLookupはskipped" "skipped" \
+    "$(jq -r '.children[] | select(.number == 1000) | .mergedPrLookup' <<<"$output")"
 }
 
 echo "=== main: (e') 上限未満のフォールバックは従来どおり ok（後方互換） ==="
@@ -284,6 +358,57 @@ echo "=== main: (e') 上限未満のフォールバックは従来どおり ok�
   output=$(main "52")
   assert_eq "上限未満ならstatusはok" "ok" "$(jq -r '.status' <<<"$output")"
   assert_eq "children件数は取得どおり" "$((CSC_FALLBACK_SEARCH_LIMIT - 1))" "$(jq '.children | length' <<<"$output")"
+}
+
+echo "=== main: (f) merged PR の照会失敗は未マージと区別する（#273） ==="
+{
+  reset_stubs
+  SUB_ISSUES_RESULT='[{"number":60,"title":"Sub A","state":"closed"},{"number":61,"title":"Sub B","state":"closed"}]'
+  MERGED_PR_MAP="60:100 61:FAIL"
+
+  output=$(main "52")
+  assert_eq "照会失敗を含むとstatusはmerged_pr_lookup_failed" "merged_pr_lookup_failed" "$(jq -r '.status' <<<"$output")"
+  assert_eq "失敗した子のmergedPrLookupはfailed" "failed" "$(jq -r '.children[1].mergedPrLookup' <<<"$output")"
+  assert_eq "失敗した子のmergedPrはnull" "null" "$(jq -r '.children[1].mergedPr' <<<"$output")"
+  assert_eq "成功した子のmergedPrは保持する" "100" "$(jq -r '.children[0].mergedPr' <<<"$output")"
+  assert_eq "allMergedはfalse" "false" "$(jq -r '.allMerged' <<<"$output")"
+
+  # 数値でない出力は照会結果として解釈できない＝取得失敗
+  reset_stubs
+  SUB_ISSUES_RESULT='[{"number":60,"title":"Sub A","state":"closed"}]'
+  MERGED_PR_MAP="60:oops"
+  output=$(main "52")
+  assert_eq "数値でない出力: statusはmerged_pr_lookup_failed" "merged_pr_lookup_failed" "$(jq -r '.status' <<<"$output")"
+  assert_eq "数値でない出力: mergedPrLookupはfailed" "failed" "$(jq -r '.children[0].mergedPrLookup' <<<"$output")"
+
+  # 全件の照会が失敗しても exit 0 で JSON を返す（失敗は status で表す）
+  reset_stubs
+  SUB_ISSUES_RESULT='[{"number":60,"title":"Sub A","state":"closed"}]'
+  MERGED_PR_MAP="60:FAIL"
+  output=$(main "52")
+  rc=$?
+  assert_eq "照会失敗でもexit 0" "0" "$rc"
+  assert_eq "全件失敗: statusはmerged_pr_lookup_failed" "merged_pr_lookup_failed" "$(jq -r '.status' <<<"$output")"
+}
+
+echo "=== main: (g) 統合ブランチへマージ済みだが未クローズの子を列挙する（#273） ==="
+{
+  reset_stubs
+  SUB_ISSUES_RESULT='[{"number":60,"title":"Sub A","state":"closed"},{"number":61,"title":"Sub B","state":"open"}]'
+  # 61 は統合ブランチへマージ済み（merged PR あり）だが closing keyword が働かず OPEN のまま
+  MERGED_PR_MAP="60:100 61:101"
+
+  output=$(main "52")
+  assert_eq "OPENの子もmerged PRを照会する" "101" "$(jq -r '.children[1].mergedPr' <<<"$output")"
+  assert_eq "OPENの子のmergedPrLookupはfound" "found" "$(jq -r '.children[1].mergedPrLookup' <<<"$output")"
+  assert_eq "unclosedChildrenに列挙する" "[61]" "$(jq -c '.unclosedChildren' <<<"$output")"
+  assert_eq "allMergedの条件は変えない（OPENが残ればfalse）" "false" "$(jq -r '.allMerged' <<<"$output")"
+  assert_eq "statusはok" "ok" "$(jq -r '.status' <<<"$output")"
+}
+
+echo "=== 実関数: gh search prs に --state merged を渡さない（#273 の再発防止） ==="
+{
+  assert_eq "--state merged を使っていない" "0" "$(grep -c -- '--state merged' "$TARGET_SCRIPT")"
 }
 
 echo "=== 実関数: 暗黙のページング・件数上限を明示している（打ち切りの再発防止） ==="

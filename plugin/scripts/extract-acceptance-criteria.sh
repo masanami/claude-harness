@@ -30,7 +30,8 @@ fetch_issue_body() {
 }
 
 # 本文テキストから「## 受入基準」「## 完了条件」セクション配下の
-# チェックリスト行を抽出し、結果をグローバル変数 PARSE_STATUS / CRITERIA_JSON に格納する。
+# チェックリスト行を抽出し、結果をグローバル変数 PARSE_STATUS / CRITERIA_JSON /
+# EXCLUDED_HEADINGS_JSON に格納する。
 # gh を呼ばない純粋関数。引数または stdin で本文テキストを受け取る。
 #
 # 使い方:
@@ -59,6 +60,13 @@ parse_acceptance_criteria() {
     capture { print }
   ')
 
+  # 見出しは完全一致だけを抽出対象にする。括弧付きの見出し（「## 受入基準（S2）」等）は
+  # 対象外だが、0 件で止まったときに原因が読めるよう、見出し行を控えて報告に出す（#273）。
+  local excluded_headings_json
+  excluded_headings_json=$(printf '%s\n' "$body" | awk '
+    /^## (受入基準|完了条件)[[:space:]]*(（|\()/ { print }
+  ' | jq -R -s -c 'split("\n") | map(select(length > 0))')
+
   local criteria_json="[]"
   local idx=0
   local status="no_checklist_found"
@@ -83,6 +91,7 @@ parse_acceptance_criteria() {
 
   PARSE_STATUS="$status"
   CRITERIA_JSON="$criteria_json"
+  EXCLUDED_HEADINGS_JSON="$excluded_headings_json"
 }
 
 print_usage() {
@@ -124,7 +133,8 @@ main() {
   parse_acceptance_criteria "$body"
 
   jq -n --argjson issue "$issue_json" --argjson criteria "$CRITERIA_JSON" --arg status "$PARSE_STATUS" \
-    '{issue: $issue, criteria: $criteria, parse_status: $status}'
+    --argjson excluded "$EXCLUDED_HEADINGS_JSON" \
+    '{issue: $issue, criteria: $criteria, parse_status: $status, excluded_headings: $excluded}'
 }
 
 # `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。

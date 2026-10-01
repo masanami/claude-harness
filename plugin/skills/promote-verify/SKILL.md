@@ -76,10 +76,11 @@ $ARGUMENTS
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run extract-acceptance-criteria <親Issue番号>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/extract-acceptance-criteria.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/extract-acceptance-criteria.sh" <親Issue番号>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-Bash で上記コマンドを実行し、標準出力の JSON（`{issue, criteria, parse_status}`）をそのまま以降のステップで使う。
+Bash で上記コマンドを実行し、標準出力の JSON（`{issue, criteria, parse_status, excluded_headings}`）をそのまま以降のステップで使う。フィールド定義の正本はプラグイン配下の `scripts/specs/extract-acceptance-criteria.md`（ここには複製しない）。Readする場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/extract-acceptance-criteria.md` として解決すること。
 
 - コマンドが非ゼロ終了した場合、**処理全体を中断**し、失敗内容を報告する
 - `parse_status` が `"no_checklist_found"` である、または `criteria` が空配列の場合も、**処理全体を中断**し、その旨を明示的な報告として返す（**中断する理由**: ここで空の受入基準のまま処理を継続すると、後段 Step 7 の `readyForPromotion` 算出で「全criterionが consistent」という条件が空配列に対して論理的に真になってしまい〈受入基準ゼロ件でも昇格可能と誤判定する〉罠がある。受入基準が無いまま昇格前チェックリストを作ること自体が無意味なため、ここで明示的に止める。将来この防御的チェックを安易に削除しないこと）
+  - この中断の報告では、`excluded_headings` が非空なら「**括弧付きの受入基準見出しが N 件あるが対象外**」と件数と見出し行をそのまま列挙し、当該スライスの受入基準を括弧なしの `## 受入基準` に置き直してから再実行するよう案内する（見出しは完全一致だけを受理する。括弧付きの見出しを代わりに読んで続行しない）
 
 #### 3-2. 昇格コンテキスト（diff）の収集
 
@@ -96,7 +97,10 @@ Bash で上記コマンドを実行し、標準出力の JSON（`{base, integrat
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run check-subtask-completion <親Issue番号>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/check-subtask-completion.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/check-subtask-completion.sh" <親Issue番号>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-Bash で上記コマンドを実行し、標準出力の JSON（`{parent, source, status, children, allMerged}`）をそのまま以降のステップで使う。
+Bash で上記コマンドを実行し、標準出力の JSON（`{parent, source, status, children, allMerged, unclosedChildren}`）をそのまま以降のステップで使う。フィールド定義の正本はプラグイン配下の `scripts/specs/collect-promotion-context.md`（ここには複製しない）。Readする場合はスキル起動時の「Base directory for this skill」を起点に `<base>/../../scripts/specs/collect-promotion-context.md` として解決すること。
+
+- `status` が `merged_pr_lookup_failed` のときは、merged PR の照会に失敗した子（`mergedPrLookup: "failed"`）を「未マージ」と書かず「マージ状況を取得できなかった」として報告する（`allMerged` は `false` のまま）
+- `unclosedChildren` が非空なら、Step 9 の報告で未クローズの子Issueを**全件**列挙する。統合ブランチ（既定ブランチ以外）へのマージでは closing keyword が働かず子Issueが OPEN のまま残るため、`mergedPr` が非nullの子は「マージ済みだが未クローズ（手動クローズの候補）」、null の子は「未マージ」として分けて書く。**本スキルは子Issueを閉じない**（クローズするかは人間が判断する）
 
 - コマンドが非ゼロ終了した場合、**処理全体を中断**し、失敗内容を報告する（この場合も、3-2 で既に `diff_file` を取得済みであれば Step 8 でクリーンアップすること）
 
@@ -241,8 +245,9 @@ Step 3-2 で取得した `diff_file` があれば、`rm -f "<diff_fileの絶対�
 
 - 取得経路: {source}
 - ステータス: {status}
-- 子Issue: {children の一覧（番号・タイトル・state・mergedPr）}
+- 子Issue: {children の一覧（番号・タイトル・state・mergedPr・mergedPrLookup）}
 - 全サブタスクマージ済み: {allMerged ? "✅" : "❌"}
+- 未クローズの子Issue: {unclosedChildren が空なら「なし」。非空なら全件を列挙し、mergedPr が非nullの子は「#番号 タイトル — マージ済み（PR #mergedPr）だが未クローズ。統合ブランチへのマージでは closing keyword が働かないため手動クローズの候補」、mergedPrLookup が failed の子は「#番号 タイトル — マージ状況を取得できなかった」、それ以外は「#番号 タイトル — 未マージ」}
 
 ### 品質チェック（QC）
 
