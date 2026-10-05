@@ -44,6 +44,13 @@ fetch_run_log_failed() {
   gh run view "$run_id" --log-failed 2>/dev/null
 }
 
+# run の状態（GitHub Actions の status。例: completed / in_progress / queued）を返す。取れなければ空文字。
+# --log-failed は run 全体が completed になるまでログを返さない（#295）ため、取得前の待ちに使う。
+fetch_run_status() {
+  local run_id="$1"
+  gh run view "$run_id" --json status --jq '.status' 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
 # 純粋関数（gh を呼ばない。source して直接テスト可能）
 # ---------------------------------------------------------------------------
@@ -149,6 +156,27 @@ extract_run_ids() {
   done < <(jq -r '.[].link // empty' <<<"$failed_checks_json")
 }
 
+# run の status がまだ完了していない（--log-failed がログを返さない）ものかを判定する。
+# 未完了と明示された値だけを真とする（空・未知の値・gh の失敗は待たずにログ取得へ進む＝従来の挙動）。
+run_status_is_unfinished() {
+  case "$1" in
+    queued | in_progress | waiting | requested | pending) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# run_ids（改行区切り）のうち、まだ完了していない run_id を改行区切りで返す（gh を呼ぶ）。
+list_unfinished_runs() {
+  local run_ids="$1"
+  local run_id
+  while IFS= read -r run_id; do
+    [ -z "$run_id" ] && continue
+    if run_status_is_unfinished "$(fetch_run_status "$run_id")"; then
+      echo "$run_id"
+    fi
+  done <<<"$run_ids"
+}
+
 # テキストの末尾 n 行を返す（純粋なテキスト処理）。
 tail_lines() {
   local text="$1" n="$2"
@@ -248,6 +276,23 @@ main() {
 
   if [ "$final_status" = "red" ]; then
     failed_checks_json="$(build_failed_checks_json "$checks_json")"
+    local run_ids
+    run_ids="$(extract_run_ids "$failed_checks_json")"
+
+    # fail は確定でも、同じ run の他のジョブが走っている間は --log-failed がログを返さない（#295）。
+    # 失敗した run の完了を、ポーリングの残りの試行回数（同じ timeout の枠）の範囲で待ってからログを取る。
+    # 枠を使い切っても未完了なら、ログは空のまま（従来どおり）で stderr に知らせる。
+    local unfinished
+    unfinished="$(list_unfinished_runs "$run_ids")"
+    while [ -n "$unfinished" ] && [ "$attempt" -lt "$max_attempts" ]; do
+      "$POLL_SLEEP_CMD" "$poll_interval"
+      attempt=$((attempt + 1))
+      unfinished="$(list_unfinished_runs "$unfinished")"
+    done
+    if [ -n "$unfinished" ]; then
+      echo "Warning: failed run(s) still in progress, failure log not available yet: $(tr '\n' ' ' <<<"$unfinished")" >&2
+    fi
+
     local run_id
     local combined=""
     while IFS= read -r run_id; do
@@ -260,7 +305,7 @@ main() {
       combined="${combined}--- run ${run_id} ---
 ${tail}
 "
-    done < <(extract_run_ids "$failed_checks_json")
+    done <<<"$run_ids"
     failure_log_excerpt="$(truncate_to_budget "$combined" "$LOG_CHAR_BUDGET")"
   fi
 
