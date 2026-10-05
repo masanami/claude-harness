@@ -3,7 +3,8 @@
 # scripts/ci-wait.sh の純粋関数（classify_checks / ci_wait_decision / extract_run_id /
 # extract_run_ids / build_failed_checks_json / tail_lines / truncate_to_budget）と、
 # gh呼び出し関数をスタブで上書きした main() の分岐（pr_exists false / green / red /
-# timeout / none 確定・attempt=1でのsingle-shotモード）を検証する。
+# timeout / none 確定・attempt=1でのsingle-shotモード / 1ジョブ失敗・他ジョブ実行中で run の完了を
+# 待ってからログを取る〔#295〕）を検証する。
 #
 # 実行方法: bash scripts/tests/test-ci-wait.sh
 
@@ -79,6 +80,16 @@ echo "=== build_failed_checks_json ==="
   failed_count="$(jq 'length' <<<"$failed")"
   assert_eq "fail/cancelのみ抽出(2件)" "2" "$failed_count"
   assert_eq "1件目の名前はb" "b" "$(jq -r '.[0].name' <<<"$failed")"
+}
+
+echo ""
+echo "=== run_status_is_unfinished ==="
+{
+  for st in queued in_progress waiting requested pending; do
+    assert_eq "${st} -> 未完了(待つ)" "true" "$(run_status_is_unfinished "$st" && echo true || echo false)"
+  done
+  assert_eq "completed -> 完了(待たない)" "false" "$(run_status_is_unfinished completed && echo true || echo false)"
+  assert_eq "空(取得失敗) -> 待たない(従来どおりログ取得へ進む)" "false" "$(run_status_is_unfinished "" && echo true || echo false)"
 }
 
 echo ""
@@ -191,6 +202,77 @@ echo "=== main(): timeout=0 は single-shot(ポーリングせず1回で確定) 
 
   output="$(main "13" 0 30)"
   assert_eq "timeout=0でpending -> stop:timeout相当(1回で確定)" "timeout" "$(jq -r '.ci' <<<"$output")"
+}
+
+# 1ジョブ失敗・他ジョブ実行中（#295）用の状態ディレクトリ。main は $(...) のサブシェルで動くため、
+# 呼び出し回数はファイルで数える。
+STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/test-ci-wait.XXXXXX")"
+trap 'rm -rf "$STATE_DIR"' EXIT
+
+# 偽の GitHub: run 999 は status を run-finish-after 回目の照会で completed にする。--log-failed は
+# 本物と同じく run が completed になるまで何も返さない（stderr にだけ出す）。
+reset_run_state() {
+  rm -f "$STATE_DIR"/*
+  echo "$1" > "$STATE_DIR/run-finish-after"
+}
+fetch_run_status() {
+  local n
+  n=$(( $(cat "$STATE_DIR/status.count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE_DIR/status.count"
+  if [ "$n" -ge "$(cat "$STATE_DIR/run-finish-after")" ]; then
+    : > "$STATE_DIR/run-completed"
+    echo completed
+  else
+    echo in_progress
+  fi
+}
+fetch_run_log_failed() {
+  if [ -f "$STATE_DIR/run-completed" ]; then
+    printf 'line1\nFAIL: test_widget (ubuntu)\n'
+  else
+    echo "run $1 is still in progress; logs will be available when it is complete" >&2
+  fi
+}
+counting_sleep() {
+  echo x >> "$STATE_DIR/sleeps"
+}
+sleep_count() { grep -c x "$STATE_DIR/sleeps" 2>/dev/null || echo 0; }
+
+echo ""
+echo "=== main(): 1ジョブ失敗・他ジョブ実行中 -> run の完了を待ってからログを取る(#295) ==="
+{
+  fetch_pr_view() {
+    PR_VIEW_JSON='{"number":15,"url":"https://github.com/o/r/pull/15","state":"OPEN"}'
+    return 0
+  }
+  fetch_pr_checks() { echo '[{"name":"test (ubuntu-latest)","state":"FAILURE","bucket":"fail","description":"","workflow":"CI","link":"https://github.com/o/r/actions/runs/999/job/1"},{"name":"test (macos-latest)","state":"IN_PROGRESS","bucket":"pending","description":"","workflow":"CI","link":"https://github.com/o/r/actions/runs/999/job/2"}]'; }
+  POLL_SLEEP_CMD=counting_sleep
+
+  # 3回目の照会で completed（2回 sleep してから取れる）。
+  reset_run_state 3
+  output="$(main "15" 900 30)"
+  assert_eq "ci: red(失敗は確定のまま)" "red" "$(jq -r '.ci' <<<"$output")"
+  assert_eq "failed_checks: 失敗したジョブ1件のみ" "1" "$(jq '.failed_checks | length' <<<"$output")"
+  assert_eq "run の完了後のログが failure_log_excerpt に入る(空にならない)" "true" "$(jq -r '.failure_log_excerpt' <<<"$output" | grep -q 'FAIL: test_widget' && echo true || echo false)"
+  assert_eq "run が完了するまで poll 間隔で待った(2回)" "2" "$(sleep_count)"
+
+  # 既に completed の run は待たない。
+  reset_run_state 1
+  output="$(main "15" 900 30)"
+  assert_eq "完了済みの run: 待たずにログを取る(sleep 0回)" "0" "$(sleep_count)"
+  assert_eq "完了済みの run: ログが入る" "true" "$(jq -r '.failure_log_excerpt' <<<"$output" | grep -q 'FAIL: test_widget' && echo true || echo false)"
+
+  # timeout の枠（max_attempts = 60/30+1 = 3）を超えては待たない。枠内で終わらなければ従来どおりログは空。
+  reset_run_state 100
+  output="$(main "15" 60 30 2>/dev/null)"
+  assert_eq "枠を使い切ったら待つのをやめる(sleep は max_attempts-1 = 2回まで)" "2" "$(sleep_count)"
+  assert_eq "枠内に完了しなければ ci は red のまま" "red" "$(jq -r '.ci' <<<"$output")"
+  assert_eq "枠内に完了しなければログは空(従来どおり)" "" "$(jq -r '.failure_log_excerpt' <<<"$output")"
+  assert_eq "枠内に完了しなければ stderr で知らせる" "true" "$(main "15" 60 30 2>&1 >/dev/null | grep -q 'still in progress' && echo true || echo false)"
+
+  # single-shot（timeout=0）は待たない。
+  reset_run_state 100
+  main "15" 0 30 >/dev/null 2>&1
+  assert_eq "timeout=0: 待たない(sleep 0回)" "0" "$(sleep_count)"
 }
 
 echo ""
