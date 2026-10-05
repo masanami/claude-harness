@@ -53,7 +53,7 @@
 
 ## 版の照合（§7.3）
 
-- CLI は独立した semver（タグ `runtime/vX.Y.Z`）。対応するプラグイン版の範囲（現在 `>=4.9.0 <5.0.0`）と、読めるワークフロースキーマ版（`harness.workflow/v1`）を内蔵する。
+- CLI は独立した semver（タグ `runtime/vX.Y.Z`）。対応するプラグイン版の範囲（現在 `>=4.9.0 <6.0.0`。上限は薄い `/impl` を載せるプラグイン 5.x を受けるため。#299）と、読めるワークフロースキーマ版（`harness.workflow/v1`）を内蔵する。
 - 呼び出し元（薄いスキル）は自分のプラグイン版を環境変数 `HARNESS_PLUGIN_VERSION` で渡す。設定されていれば `run`・`resume`・`approve`（`contract start`・`contract resume` を含む）は何もする前に照合し、範囲外なら更新すべき側（プラグイン／CLI）を標準エラーに出して終了コード 5 で終わる。設定されていなければ照合しない（スキルを通さない起動）。
 - run は開始時の CLI の版（`cli_version`）と、定義を埋め込みから読んだか（`embedded`）を記録する。ゲートで待っている run を CLI の更新後に `resume` すると、**開始時の版の展開ディレクトリの定義・スクリプトで続ける**（N3。新しい版の定義には切り替えない）。そのディレクトリが無い・スキーマ版を読めない・この CLI が定義を読み込めない場合は、状態を変えずに終了コード 5 で止まり、「開始時の版の harness で `resume` する」か「`harness cancel <run>`」を案内する。開始時と同じ版なら、消えた展開ディレクトリを作り直して続ける。
 - 終了コード 5 の標準出力: プラグイン版の不一致は run を読む前に止まるので何も出さない（理由は標準エラー）。版をまたぐ `resume` の拒否は、状態を変えていない run の現在地（`status --json` と同じ JSON）を出す。`contract` の面では、`contract resume` と `contract status` は run の状態（`waiting` 等）のまま、`requested_action` をゲートの操作でなく `observe` × `human`（何を更新すべきかと、その後に `contract status` で確かめ直すことの案内）にし、理由を `summary` に添える（#283。設計 §5.6.1）。`contract start` は run を始めないので `state: failed`・`run_id: null` を出して理由を `summary` に入れる。
@@ -93,7 +93,7 @@ go run ./cmd/harness predict-conflicts 12 13         # 衝突の予測（読み�
 
 - ワークフロー定義とスクリプトの置き場は `--workflow-dir` / `--scripts-dir` で指す。省略時は埋め込んだ写し（`make bundle` の時点の作業ツリーの内容）を展開して使う（上の「定義とスクリプトの置き場」）。
 - 状態は `$HARNESS_STATE_DIR`、無ければ `$XDG_STATE_HOME/claude-harness`、無ければ `~/.local/state/claude-harness` の `runs/<run-id>/` に置かれる（`events.jsonl`・`state.json`・`logs/`）。試すときは `HARNESS_STATE_DIR` を一時ディレクトリへ向けるとよい。
-- `llm` 種類が起動する `claude` は `$HARNESS_CLAUDE_BIN`、無ければ PATH の `claude`。`workspace`・`pull-request` 種類と `pr-state` の観測が起動する `git`・`gh` は `$HARNESS_GIT_BIN`・`$HARNESS_GH_BIN`、無ければ PATH のもの（`command` 種類のスクリプトは PATH の `git`・`gh` を使う）。
+- `llm` 種類が起動する `claude` は `$HARNESS_CLAUDE_BIN`、無ければ PATH の `claude`。`$HARNESS_CLAUDE_PERMISSION_MODE` が設定されていれば、その値を `claude` に `--permission-mode` でそのまま渡す（設定されていなければ渡さず、`claude` の既定と利用者の settings の allow で動く）。run には記録しないので、run を進めるプロセス（`run`・`resume`・`approve`・`contract start`・`contract resume`・`predict-conflicts`）ごとに設定する。薄い `/impl` は既定で `auto` を渡す（#299）。`workspace`・`pull-request` 種類と `pr-state` の観測が起動する `git`・`gh` は `$HARNESS_GIT_BIN`・`$HARNESS_GH_BIN`、無ければ PATH のもの（`command` 種類のスクリプトは PATH の `git`・`gh` を使う）。
 - 終了コード（0 成功・1 失敗・2 使い方の誤り／定義の不正・3 待機〔ゲートで止まった〕・4 停止・5 版の不一致）は人向けのコマンドの割り当てである。flywheel 向けの接続契約 v1 は別の入口 `harness contract start|status|resume|cancel` が担い、JSON（`contract_version: 1`）を出力できたら終了コード 0 で終わる。待機・成功・失敗は JSON の `state` で表す（§5.6）。
 - `predict-conflicts` も終了コードは「JSON を出力できたか」だけを表す（0 = 出力した）。
 

@@ -3,42 +3,17 @@ name: impl
 description: "単一 Issue の1チケット実装フローを、実装フェーズの人間ゲートなしで実行する。複数Issueの並列化・並列度の決定は担わない。Triggers on: '/impl', 'このIssueを実装して', 'Issueを1件実装して'"
 argument-hint: "<Issue番号> [--base <統合ブランチ>] [--worktree <worktreeの絶対パス>]"
 model: opus
-# effort: 設計〜TDD実装〜PRの自走フローを担うが、Opus 5.5 では既定の medium で足りる（深い検討はレビュー agent 側の high で担保）。
+# effort: 手順は harness の ticket ワークフローが持ち、本スキルは起動・合流・結果の読み取りだけを担うが、返却の書き分けに判断が要るため既定の medium。
 effort: medium
 ---
 
-# 1チケットの実装フロー（Phase 3〜8）
+# 1チケットの実装フロー（`harness` の `ticket` ワークフローを呼ぶ）
 
-**あなたは1つの Issue を最後まで実装する実行主体です。**
+**あなたは1つの Issue の実装を `harness` CLI に実行させ、その結果を呼び出し元へ返す主体です。**
 
-本スキルは **1チケット（= 1 Issue）の実装フローの正本**である。設計→TDD実装（必須ゲート＋セルフレビュー内包）→コミット→E2E→PR→CI の順で進める。**クリティカル設計の意思決定は要件チケット側で完了している前提**のため、実装フェーズには人間ゲートを置かない。**1チケット = 1ブランチ = 1PR**。
+1チケット（= 1 Issue）の実装フロー（ブランチ準備 → 設計＋TDD実装＋必須ゲート＋セルフレビュー → コミット → E2E → PR → CI → レビュー → マージ）の手順・分岐・差し戻しの上限は、**`harness` CLI の `ticket` ワークフローが持つ**。本スキルは手順を持たず、**起動・合流・結果の読み取りと返却だけ**を行う。**1チケット = 1ブランチ = 1PR**。
 
-```text
-凡例: ↓ 次の Phase へ進む ／ ↺ 同じ Phase 内での反復（上限あり） ／ ✗ 反復では解消しない失敗の分岐
-
-Phase 3 ブランチ準備
-   ↓
-Phase 4 設計 + TDD実装 + 必須ゲート + セルフレビュー（feature-implementer 一気通貫）
-   ↺ 必須ゲート（`/quality-check`）が `pass` にならない間、feature-implementer が内側で修正して再実行（最大3回）
-   ✗ 3回反復しても `pass` にならない → feature-implementer が `failure` を返却
-       → 当該チケットをスキップし、その事実を呼び出し元（並列経路ではリード）へ返す。Phase 5 以降へは進まない
-   ↓ `pass`
-Phase 5 コミット（safety net QC + Conventional Commits）
-   ↓
-Phase 6 E2E実装（E2E対象の場合）
-   ✗ E2E失敗 → Phase 4 へ戻る
-   ↓
-Phase 7 プッシュ・PR作成
-   ↓
-Phase 8 CI確認（必須ゲート）
-   ✗ CI失敗 → Phase 4 へ戻る
-   ↓
-完了報告
-```
-
-> **クリティカル設計レビューは要件チケット段階で完了済み**。要件チケットの「クリティカル設計決定」セクションに従って実装する。
->
-> **E2Eシナリオ設計レビュー**は AI セルフレビュー（完了条件↔シナリオのトレーサビリティ確認）で完結。人間の E2E チェックは Phase 6 後の `/explain-e2e`（テストシナリオ解説 + 独立検証）で行う。
+**`harness` が使えないときに、実装フローを自分で組み立てて代わりに進めない**（フローの正本は `ticket` ワークフローだけ。手順を2箇所に持つと必ずずれる）。
 
 ---
 
@@ -50,15 +25,13 @@ Phase 8 CI確認（必須ゲート）
 
 ## 呼び出し元（実行主体）
 
-本スキルは単独でも呼べるが、定常フローでは次の経路から呼ばれる。**どの経路でも本スキルが「1チケットの実装フロー」の正本**であり、**呼び出し元は手順を再掲・注入せず本スキルを呼ぶ**（手順を2箇所に持つと必ずずれるため）。
+| 経路 | 呼び出し元 ＝ 本スキルの実行主体 | `--worktree` | 返る場所 |
+|---|---|---|---|
+| **単一 Issue 経路** | `/para-impl` のリードエージェント（メインセッション。Issue が1件のとき） | 渡されない | 最初のゲートか終端（下記「結果の読み取り」） |
+| **並列経路（star 型）** | **`ticket-worker` サブエージェント**（リードから割り当てられた worktree 内） | **渡される** | `review` ゲート（PR 作成・CI 確認の後）か終端 |
+| **人間が直接** | メインセッション（`/impl 123`） | 渡されない | 単一 Issue 経路と同じ |
 
-| 経路 | 呼び出し元 ＝ 本スキルの実行主体 | `--worktree` | Phase 3 | Phase 6 |
-|---|---|---|---|---|
-| **単一 Issue 経路** | `/para-impl` のリードエージェント（メインセッション。Issue が1件のとき） | 渡されない | **本スキルが実施** | `/create-e2e` → `/explain-e2e` まで**本スキルが実施** |
-| **並列経路（star 型）** | **`ticket-worker` サブエージェント**（リードから割り当てられた worktree 内） | **渡される** | 呼び出し元（リード）が `worktree-setup` で実施済み → **スキップ** | **`/create-e2e` まで**。`/explain-e2e` は Phase 1 が対話前提のため、worker 完了後に**リードがメインセッションで実施**する |
-| **人間が直接** | メインセッション（`/impl 123`） | 渡されない | 本スキルが実施 | 単一 Issue 経路と同じ |
-
-**経路の分岐は `--worktree` の有無ただ1つで決まる**（経路名で分岐しない ── 2つ目の判定材料を持たないため。`--worktree` が在れば Phase 3 をスキップし Phase 6 を `/create-e2e` までに切る、無ければ両方を自分で実施する）。
+**経路の分岐は `--worktree` の有無ただ1つで決まる**（経路名で分岐しない）。`--worktree` が在れば、その作業ツリーを `ticket` ワークフローへ渡し（runtime は呼び出し元の作業ツリーとブランチをそのまま使い、消さない）、無ければ runtime が `<リポジトリの1つ上>/<リポジトリ名>-worktrees/issue-<番号>` に作業ツリーを作る（メインのチェックアウトは触らない）。
 
 ---
 
@@ -66,201 +39,114 @@ Phase 8 CI確認（必須ゲート）
 
 $ARGUMENTS
 
-### パース方法
-
 - **数値**: Issue 番号として扱う。**ちょうど1件**。2件以上なら上記「責務外」に従い停止する
-- **`--base <統合ブランチ>`**: 実装 base（ブランチ分岐元・PR の宛先）
-- **`--worktree <絶対パス>`**: 作業 worktree の絶対パス。指定された場合の扱いは上表のとおり
-
-### base の決定
-
-1. **`--base` オプション**が指定されていれば、それを base にする
-2. 無指定でも、Issue 本文に `Base: {統合ブランチ}` 行があれば（`/create-ticket --base` が記録）それを base にする
-3. どちらも無ければ **base = リポジトリの既定ブランチ**（通常 `main`。従来動作）
-
-base が既定ブランチ以外（統合ブランチ）の場合、**Phase 3 の前に remote での存在を確認する**。無ければ処理を止めてユーザーに作成を促す:
-
-```bash
-# ls-remote のパターンは末尾一致のため、refs/heads/{base} で指したうえで ref 列を完全一致で照合する
-# （素の {base} だと feature/{base} のような別ブランチにも一致する。Issue #271）
-if ! git ls-remote --heads origin "refs/heads/{base}" | awk '$2 == "refs/heads/{base}" { found = 1 } END { exit !found }'; then
-  echo "エラー: 統合ブランチ {base} が remote に存在しません。先に作成してください:"
-  DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')
-  echo "  git checkout -b {base} \"origin/$DEFAULT_BRANCH\" && git push -u origin {base}"
-fi
-```
-
-統合ブランチへのサブタスク PR マージは本番影響がなく可逆のため**人間承認不要で自律マージできる**（既定ブランチへの昇格のみが人間ゲート）。以降のフローで **`{base}` は上記で決定した base ブランチ**を指す。
+- **`--base <統合ブランチ>`**: 実装 base（ブランチ分岐元・PR の宛先）。省略時は Issue 本文の `Base:` 行、無ければリポジトリの既定ブランチを runtime が使う
+- **`--worktree <絶対パス>`**: 作業 worktree の絶対パス
 
 ---
 
-## Phase 1〜2 相当: Issue分析（要件理解）
+## 手順
+
+### 1. `harness` の確認
 
 ```bash
-gh issue view {番号} --json title,body,state,labels,number
+command -v harness
 ```
 
-- Issue の**要件・完了条件・受入基準**を把握する
-- **E2E対象判定**: 認証フロー、権限制御、クリティカルパスなどの場合は E2E対象とする
+見つからなければ**その場で停止**し、`harness` の導入（GitHub Releases の `runtime/vX.Y.Z` のバイナリ。手順は claude-harness リポジトリの `runtime/README.md`「導入」）と `harness setup` を案内する。
 
-> 呼び出し元が既に Issue を分析して要件・E2E対象判定・「クリティカル設計決定」セクションを渡している場合は、それを使い再取得を省いてよい。
+### 2. プラグイン版の取得
 
----
+スキル起動時にコンテキストへ与えられる「Base directory for this skill」は `<プラグインルート>/skills/impl` である。Read ツールで `<プラグインルート>/.claude-plugin/plugin.json` を読み、`version` の値を得る（以下 `{プラグイン版}`）。CLI はこの版が自分の対応範囲かを照合する。**読めなければ推測で埋めず、その場で停止して報告する**。
 
-### Phase 3: ブランチ準備
+### 3. 起動
 
-**`--worktree` が渡されている場合はこの Phase をスキップする**（呼び出し元が worktree と作業ブランチを作成済み）。以降のすべてのコマンド・ファイル操作を、渡された worktree の絶対パス配下で行う。
-
-`--worktree` が無い場合、`{base}` から作業ブランチを切る:
+`--worktree` があればその絶対パス、無ければ現在のリポジトリのルートを `{起点}` として、Bash ツールで **`run_in_background: true`** を指定して起動する（`ticket` は数十分〜数時間かかり、前面の Bash の上限 10 分に収まらない）:
 
 ```bash
-git fetch origin {base}
-git checkout -b {type}/issue-{番号}-{説明} origin/{base}
+cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}" harness run --input issue={番号} ticket
 ```
 
-依存関係のインストールが必要であれば実施する（CLAUDE.md または package.json の構成に従う）。
+- `--base` があれば `--input base={base}`、`--worktree` があれば `--input worktree={worktreeの絶対パス}` を `ticket` の前に足す
+- `HARNESS_CLAUDE_PERMISSION_MODE` は runtime が起動する `claude -p` に `--permission-mode` で渡るモード。利用者が環境変数で設定していればその値、無ければ `auto` になる（コマンドの `${...:-auto}` のまま渡す。値を自分で書き換えない）
 
-### Phase 4: 設計＋TDD実装＋必須ゲート＋セルフレビュー（一気通貫）
+起動したタスクの出力の標準エラーに `harness: run <run-id> started (<run ディレクトリ>)` の行が出る。この `<run-id>` を以降で使う。この行が出ずにタスクが終わった場合は、終了コードで分ける:
 
-`feature-implementer` エージェントを **一度だけ呼び出し**、Step a〜e を一気通貫で実行させる（実装フェーズに人間ゲートは無い。Task ツールの `subagent_type` は plugin namespace prefix 付きの **`claude-harness:feature-implementer`** を指定する。prefix 無しは名称解決エラーになる。あわせて `run_in_background: false` を明示する）。
+| 終了コード | 意味 | 本スキルの動作 |
+|---|---|---|
+| 5 | プラグインと CLI の版が合わない | 停止。標準エラーの文言（どちらを更新すべきか）をそのまま報告する |
+| 2 | 使い方の誤り・ワークフロー定義の不正 | 停止。標準エラーをそのまま報告する |
+| その他 | run を始められなかった | 停止。標準エラーをそのまま報告する |
 
-> **Task ツールの呼び出しには必ず `run_in_background: false` を明示する。** 省略するとバックグラウンド起動になり、返るのは結果ではなく起動通知（`Async agent launched` 等）だけになる。サブエージェントの中ではターンを終えた時点で呼び出し元へ返却され、後から届く結果は自分では受け取れない。**起動通知は結果ではない** — 求めた形式の結果を含まない応答を受け取ったら、ターンを終えず、同じ委譲を `run_in_background: false` で1回だけ起動し直す。それでも結果が得られなければ「合流できなかった」として扱う（黙って結果なしで先へ進まない）。
+### 4. 合流（run がゲートか終端に達するまでターンを終えない）
 
-要件チケット本文の **「クリティカル設計決定」セクション**をエージェントに渡し、その方針に従って実装するよう指示する。`--worktree` が渡されている場合は **worktree の絶対パスも必ず含め、すべての作業をその配下で行うよう指示する**。委譲プロンプトには**合流ゲート伝播条項**（`skills/para-impl/references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める。
+**`harness run` が終わる前に最終応答・返却をしない**（サブエージェントの中では、ターンを終えた時点で呼び出し元へ返却され、後から届く完了通知は受け取れない）。次のコマンドを Bash ツールの前面で（`timeout: 600000` を指定して）、出力が `running` 以外になるまで繰り返す:
 
-エージェントから受け取る返却内容:
-
-- **変更ファイル一覧 / 追加テスト件数 / TDDサイクルの概要**
-- **`/quality-check` の最終結果**（`pass` / `skip` / `failure`）
-- **`/self-review` の結果サマリー**（反復回数・`converged`・**残指摘（`residualFindings`）の全件**（`file:line`・`severity`・`claim`・`reason`）。完了条件達成・スコープ確認の観点も含む）
-- **E2Eシナリオ一覧と完了条件トレーサビリティ表**（E2E対象の場合、Phase 6 で使う）
-
-```text
-| 完了条件 / 受入基準 | 対応E2Eシナリオ |
-|-------------------|---------------|
-| {完了条件1} | {シナリオ名} |
-| ... | ... |
+```bash
+end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)" != running ] || [ $SECONDS -ge $end ]; do sleep 10; done; harness status {run-id} --json | jq -r .status
 ```
 
-#### 例外ケース
+- 先頭が `sleep` のコマンドは拒否される。上の形（上限付きの `until` ループ）のまま使う
+- 起動したタスクの完了通知が先に届いたら、そこで繰り返しをやめてよい
+- `harness status {run-id} --json` の `runner_alive` が `false` のまま `running` なら、run を進めるプロセスが落ちている。繰り返しをやめ、`harness status {run-id}` が示す状態（`interrupted` ゲート）を下の表に従って扱う
+- 合流できないまま返却せざるを得ない場合は、**run を取り消さず**、`<run-id>` と回収手段（`harness status {run-id} --json`）と「合流できていない」事実を返却に明記する
 
-| エージェントの返却 | 本スキルの動作 |
+### 5. 結果の読み取り
+
+`harness status {run-id} --json` を読む（正本はこの JSON。標準出力の途中経過から組み立て直さない）。使う場所:
+
+| 値 | 場所 |
 |---|---|
-| 通常完了 | Phase 5（コミット）へ |
-| `failure`（`/quality-check` 3回反復しても通らない） | 当該チケットをスキップし、その事実を呼び出し元へ返す |
-| `self_review: incomplete`（`/self-review` のレビュアー等と合流できずに返却。`/self-review` の結果サマリーに `self_review:` 行が無い返却も同じ扱い） | **本スキルの実行主体が Skill ツールで `/self-review` を1回だけ最初から実行し直し**、その結果（`converged`・`residualFindings`）を Phase 4 の結果として Phase 5 へ進む。feature-implementer を再委譲しない（実装と `/quality-check` は完了しているため）。返却に含まれていた途中までの指摘は、やり直しの結果と混ぜない。やり直しも `self_review: incomplete` なら Phase 5 以降へ進まず、未回収の委譲先の名前と作業ツリーの状態（未コミット差分の所在）を呼び出し元へ返す |
-| `skip`（`/quality-check` のゲートが1つも実行されていない） | Phase 5 へ進んでよいが、**`pass` として扱わず**、未検証である事実と対象チケットを PR 本文・完了報告に明記する |
-| クリティカル設計の逸脱検知で Step b 停止 | エージェントの警告内容をユーザーに提示し、判断を仰ぐ（headless の場合は「判断待ち」として完了報告・呼び出し元への返却に明記する） |
+| run の状態・失敗の理由 | `.status`（`waiting` / `failed` / `succeeded` / `cancelled`）・`.reason`・`.units[0].reason` |
+| 待っているゲート | `.waiting[0]`（`gate`・`requested_action`・`inputs`・`requires_tty`・`resume_command`） |
+| PR | `.units[0].workspace.pr_url`・`.units[0].workspace.pr_number` |
+| 作業ツリーとブランチ | `.units[0].workspace.worktree_path`・`.units[0].workspace.branch` |
+| 実装の結果 | `.units[0].outputs.implement`（`outcome`・`summary`・`residual_findings`・`unverified`・`cross_repo_attestation`・`deviation_report`） |
+| CI | `.units[0].outputs.ci`（`ci`・`failure_log_excerpt`）。差し戻しに使った回数は `.units[0].limits_used.rework` |
+| E2E | `.units[0].outputs.e2e`（`scenarios`・`traceability`。E2E 対象のときだけ在る） |
+| 費用 | `.units[0].budget`（`spent_usd`・`limit_usd`） |
 
-### Phase 5: コミット
+状態ごとの扱い:
 
-```text
-/commit
-```
+| run の状態 | `--worktree` あり（並列経路） | `--worktree` なし |
+|---|---|---|
+| `waiting` で `review` ゲート | **通常完了**として返す | 完了として報告し、下記「次のアクションの案内」を出す |
+| `waiting` で `design-deviation` ゲート | **判断待ち**として返す（`deviation_report` を添える） | `deviation_report` をユーザーに提示し、判断は端末から `harness approve` で行うよう案内する |
+| `waiting` で `ci-pending` ゲート | **`failure`** として返す（CI を待ちきれなかった。または CI が失敗ログの無い失敗で終わった） | 状態を報告し、CI を確かめてから `harness resume {run-id} --input recheck`（やめるなら `abort`）を案内する |
+| `waiting` でその他のゲート（`interrupted` 等） | **`failure`** として返す（ゲート名と `requested_action` を添える） | 状態と `resume_command` を報告する |
+| `failed` | **`failure`** として返す（`reason` を添える） | 同左を報告する |
+| `cancelled` | **`failure`** として返す | 同左を報告する |
+| `succeeded` | 完了として返す | 完了として報告する |
 
-`/commit` は **コミット規約に従ったコミット実行に責務を絞った**スキル。内部では safety net として `/quality-check` を再走させ、Conventional Commits 形式でコミットを作成する。Phase 4 で必須ゲート・`/self-review` を通過済みのため、ここでの `/quality-check` は通過前提で速やかに完了する。
+`failed` の主な `reason`: `quality_gate`（必須ゲートを通過できない）・`self_review_incomplete`（セルフレビューのレビュアーと合流できなかった）・`ci_red`（CI の red を差し戻しの上限まで直しても green にならない）・`e2e`（E2E の失敗を差し戻しの上限まで直しても通らない）・`base_missing`（統合ブランチが remote に無い。`.units[0].outputs.resolve` の案内に従い作成を促す）・`worktree_conflict`（渡された・既存の作業ツリーが使えない）。
 
-> コード簡潔化が必要な場合は **`/simplify`** を Phase 5 の前に別途呼ぶ（必須ではない）。
-
-### Phase 6: E2E実装と独立検証（E2E対象の場合）
-
-E2E対象機能の場合、Phase 4 で feature-implementer が返した E2Eシナリオ一覧に基づき実装する:
-
-1. `/create-e2e` — 設計（Phase 4 のシナリオを根拠）→ 実装 → 全テスト実行
-2. `/explain-e2e` — Phase 1（テストシナリオ解説）はメインセッションで対話的に、Phase 2（独立検証）は Task ツールによる直接委譲（Verify段階のfan-out・Mutation段階の逐次処理）で実施
-
-- E2E失敗 → **Phase 4 に戻る**
-
-> **`--worktree` が渡されている場合（並列経路）**: 本スキルは **`/create-e2e` までを実施し、`/explain-e2e` は実施しない**（Phase 1 が対話前提のため、worker 完了後にリードがメインセッションで実施する）。`/explain-e2e` に必要なシナリオ一覧・完了条件トレーサビリティ表を呼び出し元への返却に含めること。
-
-非E2E対象の場合、このフェーズはスキップする。
-
-### Phase 7: プッシュ・PR作成
-
-PR を作成し、本文に `Closes #番号`（バグ修正は `Fixes #番号`）を含める。Phase 4 で必須ゲート・セルフレビューを通過済みのため、**通常PR（非ドラフト）で開く**（AI レビューを即時起動し `/pr-review-respond` へ繋ぐ）。`/explain-e2e` は PR 作成の前提条件ではない。
-
-feature-implementer が**残指摘（`residualFindings`）**を返した場合は、その全件をそのまま PR 本文に転記する。`converged: true` でも省略しない——`/self-review` は自動修正の対象外にした指摘を `converged: true` のまま返すため、`converged` で分岐すると引き取り手のいない指摘が PR に載らないまま消える。
-
-feature-implementer が**クロスリポジトリ依存の確証結果**を返した場合は、そのまま PR 本文に転記する（確証の規律・形式は feature-implementer / code-reviewer 側に定義）。
-
-**PR の base は冒頭で決定した `{base}`**（既定はリポジトリの既定ブランチ・通常 `main`、統合ブランチ方式では統合ブランチ）にする:
-
-```bash
-git push -u origin {ブランチ名}
-gh pr create --title "{タイトル}" --body "{本文}" --base {base}
-```
-
-> 「まだ詰め切れていない」状態で意図的に保留したい場合のみ `--draft` を付けるか、ラベル `hold` を活用する。
->
-> **統合ブランチ方式**: base が統合ブランチの場合、この PR は既定ブランチを触らないため `/pr-merge` で自律マージできる（人間承認不要）。全サブタスク完了後の統合 → 既定ブランチ昇格が唯一の人間ゲート。
-
-### Phase 8: CI確認（必須ゲート）
-
-PR作成後、CIの完了を確認する:
-
-```bash
-gh pr checks {PR番号} --watch
-```
-
-> CI の所要時間が長い場合、`--watch` はコマンドのタイムアウトで中断されることがある。**中断は CI 失敗ではない**ので、`gh pr checks {PR番号}` を再実行して最新状態を確認する。
->
-> **`--worktree` が渡されている場合（並列経路）**: `ticket-worker` のエージェント定義が定める `ci-wait` による CI 確認と loop-until-green（上限3回）の規律が優先する。
-
-- CI失敗 → 失敗内容を確認して **Phase 4 に戻る**
-- CIパス → 完了報告へ
-
----
-
-## 合流ゲート（最終応答前の未合流確認）
-
-**サブエージェント・バックグラウンド処理を1つでも起動した場合（Phase 4 の `feature-implementer` は常に該当する）、最終応答・呼び出し元への返却の前に合流ゲートを必ず評価する。**
-
-**定義の正本は `skills/para-impl/references/join-gate.md`**（本スキルは複製を持たない ── 同じ規律を2つの正本で読まないため）。用語（起動台帳・有限タスク／常駐サービス・終端返却・合流済み・未合流・ネスト未解消）・spawn 時手順・合流ゲート伝播条項（委譲プロンプトへ逐語転記する条項の正本）・決定表・中断報告の出力契約は、すべて参照ファイル側にある。**サブエージェント・バックグラウンド処理を起動する前に必ず後掲の配送経路で読み出すこと**（`claude-harness-run read-plugin-doc "skills/para-impl/references/join-gate.md"`。Read 直読みは後掲の注記のとおりランチャー未導入時のフォールバックに限る）。
-
-> **参照ファイルの読み出し（重要）**: 参照ファイルは導入先プロジェクトではなく**プラグイン配下**にある。プラグイン配下は導入先プロジェクトの作業ディレクトリの外にあるため、Read ツールでの読み出しは利用側に allow 設定が無いと拒否される（headless 委譲では許可する相手がいないため、既定で読めない）。読み出しは allowlist 済みの配送経路`claude-harness-run read-plugin-doc "<読む対象のプラグインルート相対パス>"`（**読む箇所で指定されたパスをそのまま渡すこと — 特定の1本に決め打ちしない**）で行い、stdout に出た本文を使う。**非0 終了は「読まなくてよかった」ではない** — 本文を得られていないまま手順を推測して続行せず、stderr のメッセージを添えてその場で停止し報告すること（読めないまま完走すると、書式や停止条件だけが外れた成果物が「成功」に見える）。**exit 0 でも終端マーカー `=== read-plugin-doc END ... complete ===` が無ければ本文は完結していない** — `MORE` マーカーが出ていれば示された `--from-line` で続きを取得し、END も MORE も無ければ出力が切り詰められたとみなして同様に停止すること。**BEGIN マーカーの `root=` が「Base directory for this skill」の親ツリー（`<root>/skills/<スキル名>` が Base directory）と一致しなければ、別バージョンの本文が届いている** — ランチャーは同居する最大バージョンを選ぶため旧版 SKILL.md ＋ 新版参照ファイルの混成になりうるので、手順へ進まず同様に停止して報告すること。`=== read-plugin-doc ... ===` の行と `read-plugin-doc:` で始まる行は配送の制御情報であり本文ではない（テンプレートを埋めて書き出す際に成果物へ含めない）。`claude-harness-run: command not found` の場合のみ Read ツールへフォールバックし、スキル起動時にコンテキストへ与えられる「Base directory for this skill」を起点に `<base>/<読む対象のスキル相対パス>` として解決する（Read も拒否された場合は同様に停止して報告し、ランチャー導入を案内すること）。
-<!-- 正本: docs/plugin-path-conventions.md -->
+**`decider: human` のゲート（`requires_tty: true`）を自分で解決しない**（`harness approve` は端末からしか通らない。Claude に解決させない設計）。**`review` ゲートに `ready` を自動で渡さない**（統合ブランチ宛では runtime がマージまで進む。マージ順は呼び出し元の判断）。
 
 ---
 
 ## 完了報告 / 呼び出し元への返却
 
-**完了報告・返却の前に上記「合流ゲート」を通過すること**（未合流のサブエージェント・バックグラウンド処理が0件であることの確認）。
+**`harness run` との合流（上記 4）を済ませてから返す。**
 
-1. 実装サマリー（変更ファイル・追加テスト件数）
-2. PR URL と CI ステータス
-3. `/quality-check` の結果と `/self-review` の `residualFindings` 全件（空でなければ `converged` の値に関わらず全件）。Phase 4 の例外ケースで `/self-review` をやり直した場合はその事実
-4. クリティカル設計の逸脱検知で判断を仰いだ場合はその結果（headless では「判断待ち」）
-5. E2E結果（対象機能の場合）。`--worktree` が渡されている場合は `/explain-e2e` 用のシナリオ一覧・完了条件トレーサビリティ表を含める
-6. クロスリポジトリ依存の確証結果（該当する場合）
-7. **次のアクションの案内**（`--worktree` が無い場合）:
-   - レビュー対応: `/pr-review-respond {PR番号}`
-   - マージ: `/pr-merge {PR番号}`
-
----
-
-## 成果物
-
-- プロダクションコード
-- テストコード（単体・結合・E2E）
-- 設計内容（クリティカル/E2E対象時の人間レビュー記録を含む）
-- Pull Request（1チケットにつき1つ、通常PR→CI緑＋AIレビュー対応→マージ）
+1. run ID と run の状態（待っているゲート、または終端の理由）
+2. 実装サマリー（`outputs.implement.summary`）
+3. PR URL と CI ステータス（`outputs.ci.ci`）
+4. `/quality-check` の結果（`outputs.implement.outcome`。`skip` は `pass` として扱わず、未検証である事実を明記する）と `/self-review` の `residualFindings`（`outputs.implement.residual_findings`）の**全件**。空でなければ件数へ丸めず全件を載せる（`converged: true` でも省略しない）。未検証の事項（`unverified`）も全件
+5. クリティカル設計の逸脱を検知した場合はその内容（`deviation_report`。並列経路では「判断待ち」）
+6. E2E結果（対象機能の場合）。`outputs.e2e` のシナリオ一覧・完了条件トレーサビリティ表
+7. クロスリポジトリ依存の確証結果（`cross_repo_attestation`。該当する場合）
+8. **`--worktree` がある場合**: 「CI の red の差し戻しは runtime の中で最大3回まで済ませた（使った回数 `limits_used.rework`）。`ci_red` で失敗した場合は、同じ修正を差し戻しても直らない」と明記する。run は `review` ゲートで待たせたまま残す（取り消さない）
+9. **次のアクションの案内**（`--worktree` が無い場合）:
+   - レビュー対応: `harness resume {run-id} --input respond`
+   - マージへ進める: `harness resume {run-id} --input ready`（統合ブランチ宛は runtime がマージする。既定ブランチ宛は人がマージした後に `harness resume {run-id}`）
+   - 人の判断が要るゲート: 端末から `harness approve {run-id} --input <値> [--note <指示>]`
+   - E2E 対象だった場合: `/explain-e2e`（テストシナリオ解説と独立検証。本スキルは実施しない）
 
 ---
 
 ## 禁止事項
 
-- スコープ外の機能追加
-- 設計フェーズ（Phase 4 の設計成果物出力）の省略
-- 要件チケットの「クリティカル設計決定」を無視した実装
-- テストなしでのコード追加
+- `harness` を使わずに実装フローを自分で進めること
 - **複数 Issue を受け取って自分で並列化すること**（並列化は `/para-impl` の責務）
-
----
-
-## ユーザーへの確認タイミング
-
-- Issueの要件が不明確な場合
-- 複数の実装アプローチが考えられる場合
-- スコープの拡大が必要と判断した場合
-- **Phase 4: クリティカル設計の逸脱検知時**（feature-implementer の警告を受けて判断を仰ぐ）
-- 実装完了後のレビュー依頼時
+- `decider: human` のゲートの解決、`review` ゲートへの `ready` の自動投入
+- 合流前の返却、合流できない場合の run の取り消し

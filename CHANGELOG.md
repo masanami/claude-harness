@@ -8,6 +8,44 @@
 
 ---
 
+## 未リリース（版数は未定。リリース時に人が決める）
+
+### 破壊的変更
+
+- **`/impl` を、散文の制御フローを持たず `harness` CLI の `ticket` ワークフローを呼ぶ薄いスキルにした（Issue #299・設計 `docs/harness-runtime-design.md` の段階 B〔PR-7〕）。** 実装フローの手順・分岐・差し戻しの上限は `runtime/workflows/ticket.yaml` が持つ。`/impl` は `harness run ... ticket` をバックグラウンドで起動し、run がゲートか終端に達するまで合流してから結果を返す。`harness` が見つからなければ止まり、散文の手順で代わりに進めることはしない。`/para-impl` と `ticket-worker` は散文のまま残る。以下は利用者に見える変更である。
+  - **V1: 単一 Issue の `/impl`（と `/para-impl` に 1 件だけ渡した場合）も worktree で作業する。** これまでは作業ツリー（メインのチェックアウト）で `git checkout -b` していたが、`<リポジトリの 1 つ上>/<リポジトリ名>-worktrees/issue-<番号>` に作業ブランチが置かれ、メインのチェックアウトは触られない。手元で続きを編集するときは worktree へ移動する。
+  - **V2: 単一経路でも、E2E の失敗による差し戻しが最大 3 回で打ち切られる**（これまで上限の記載が無かった）。CI の red による差し戻しも同じ上限を共有する。
+  - **V3: CI が時間内に終わらなかったとき（または失敗ログの無い失敗で終わったとき）、失敗で終わらず `ci-pending` ゲートで止まる。** `harness resume <run> --input recheck` で CI の再確認から続けられる。
+  - **V4: 単一経路でも `/explain-e2e` を自動では実施しない。** E2E 対象だった場合、`/impl` が次の操作として案内する。
+  - **V6: 実装委譲の状態が `~/.local/state/claude-harness/`（`$XDG_STATE_HOME` があればその配下。`HARNESS_STATE_DIR` で変えられる）に残る。** 不要になった run のディレクトリは利用者が消す。
+  - **V7: `harness` CLI の導入が要る。** CLI とプラグインの版が合わないと、`/impl` は CLI の終了コード 5 で止まり、どちらを更新すべきかを表示する。
+  - **V8: 人間が決めるゲート（設計の逸脱・レビュー対応で人の判断が要る場合）は、端末から `harness approve` で解決する。** Claude に指示して解決させることはできない。
+  - **`/impl` の返り方が変わった。** これまでは PR 作成と CI の確認で終わり、`/pr-review-respond`・`/pr-merge` を案内していた。今後は run の最初のゲートか終端で返る。人が直接使ったとき（`--worktree` なし）は、PR・CI の結果と run ID を報告し、レビュー対応は `harness resume <run> --input respond`、マージへ進めるのは `--input ready`（統合ブランチ宛は runtime がマージし、既定ブランチ宛は人がマージした後に `harness resume <run>`）、人の判断が要るゲートは端末からの `harness approve` を案内する。`/impl` は再開用の引数を持たない。
+  - **`ticket-worker`（`/para-impl` の並列経路）から呼ばれたとき**（`--worktree` あり）、`/impl` は CI の確認の後の `review` ゲートで通常完了として返り、run は `review` で待ったまま残る（取り消さない）。`design-deviation` は判断待ち、`ci-pending`・その他のゲート・失敗（`quality_gate`・`ci_red`・`e2e`・`self_review_incomplete` 等）は `failure` として返る。CI の red の差し戻しは runtime の中で最大 3 回まで済ませており、返却にもそう書く。
+
+- **runtime が起動する `claude -p` は、利用者の対話での許可を受けられない。** 子プロセスは `HARNESS_CLAUDE_PERMISSION_MODE` のモード（`/impl` の既定は `auto`）と、利用者の settings の allow で動く。
+
+### 追加
+
+- **harness runtime に、`llm` 種類が起動する `claude` へ渡す permission mode の設定を足した（環境変数 `HARNESS_CLAUDE_PERMISSION_MODE`。Issue #299）。** 設定されていれば値をそのまま `--permission-mode` で渡し、設定されていなければ渡さない（これまでどおり `claude` の既定）。値は検査しない（受け付けるモードは `claude` の版が決め、不正な値は `claude` が起動時に拒否する）。run には記録しないので、`run`・`resume`・`approve`（`contract start`・`contract resume`・`predict-conflicts` を含む）のプロセスごとに設定する。渡したモードは各ステップの記録（`argv`）に残る。薄い `/impl` は利用者が設定していなければ `auto` を渡す。
+
+### 変更
+
+- **harness runtime が対応するプラグイン版の上限を 6.0.0 に上げた（`PluginMaxExclusive`。範囲は `>=4.9.0 <6.0.0`）。** 薄い `/impl` を載せるプラグイン 5.x を受けるため。下限は 4.9.0 のまま。
+- **`ticket` ワークフローの実装ステップ（`implement`）が、`/self-review` の `self_review: incomplete`（レビュアーと合流できなかった。#262）を `review_incomplete` として返し、PR へ進めず失敗（`self_review_incomplete`）で止まるようにした（Issue #299）。** これまで runtime はこの返却を区別しておらず、合流できなかった実装が `pass` のまま PR へ進みえた。旧 `/impl` が行っていた `/self-review` のやり直しは持たない（やり直すときは run を新しく始める）。
+- **`/para-impl`・`references/star-parallel.md`・`references/join-gate.md`・`ticket-worker` の文面を、薄い `/impl` に合わせた（Issue #299）。** 旧 `/impl` の Phase 番号への参照と「`/explain-e2e` まで `/impl` が実施する」等の記述を直しただけで、リードと worker の役割分担・ループ・返却の分類は変えていない。
+
+### 利用者が取る操作
+
+- **リリースの順序**: この変更を含む `main` のマージの後、(1) 人が `runtime/vX.Y.Z` のタグを打ち、`harness` CLI を Release で配る（Actions が動かない間は `make dist VERSION=X.Y.Z` と手動の Release）→ (2) プラグイン 5.0.0 のリリース PR、の順に出す。プラグインだけ先に 5.0.0 へ更新すると、`/impl` は `harness` が無い・版が合わないことで止まる。
+- **`/impl` を使う前に `harness` CLI を導入する**（`runtime/README.md`「導入」。GitHub Releases の `runtime/vX.Y.Z` のバイナリを PATH へ置き、`harness setup`・`harness version` で確かめる）。CLI は `>=4.9.0 <6.0.0` のプラグインに対応する版を使う。
+- **`auto` が使えない環境・アカウントでは、`HARNESS_CLAUDE_PERMISSION_MODE` に使えるモードを設定する**（例: `acceptEdits`。`claude --help` の `--permission-mode` の選択肢から選ぶ）。`auto` を使わず settings の allow だけで動かしたい場合も同じ環境変数で上書きする。子プロセスが拒否された操作は、対話での許可を求められずに失敗する。
+- **`/impl` を対話で使い、レビュー対応・マージを `/pr-review-respond`・`/pr-merge` で行っていた場合**、`/impl` の案内に従い `harness resume <run> --input respond|ready` を使う（`/pr-review-respond`・`/pr-merge` を直接呼ぶこともできるが、その場合 run は `review` で待ったまま残る）。
+- **不要になった run の状態**（`~/.local/state/claude-harness/runs/<run-id>/`）は `harness runs` で確かめ、`harness cancel <run>` で止めてから消す。
+- **プロジェクトの `.claude/skills/` に `impl` のオーバーライドを置いている場合**、そのオーバーライドは散文の旧フローのまま動き続ける。薄い `/impl` に合わせるかを判断する。
+
+---
+
 ## 4.9.0
 
 ### 追加

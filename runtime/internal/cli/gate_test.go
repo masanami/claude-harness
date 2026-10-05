@@ -42,6 +42,38 @@ func runArgs(t *testing.T, workflow string, inputs ...string) []string {
 	return append(args, workflow)
 }
 
+// HARNESS_CLAUDE_PERMISSION_MODE は run を進めるプロセスごとに読まれ、claude に --permission-mode で渡る（#299）。
+// run には記録しないので、resume のプロセスに渡さなければ渡らない。
+func TestPermissionModeEnvIsReadByEachProcess(t *testing.T) {
+	fdir, fenv := fakeClaude(t)
+	respond(t, fdir, 1, 0, passResult(0.4))
+	respond(t, fdir, 2, 0, passResult(0.4))
+	state := t.TempDir()
+	h := newHarness(t, append(fenv, "HARNESS_STATE_DIR="+state, PermissionModeEnv+"=auto")...)
+	out, errOut, code := h.run(runArgs(t, "llm", "issue=5")...)
+	if code != ExitWaiting {
+		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
+	}
+	runID := decode[statusView](t, out).RunID
+	argv := func(n int) string {
+		b, err := os.ReadFile(filepath.Join(fdir, "calls", fmt.Sprintf("%d.argv", n)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	if !strings.Contains(argv(1), "--permission-mode\nauto\n") {
+		t.Fatalf("run: argv does not pass the mode:\n%s", argv(1))
+	}
+	h2 := newHarness(t, append(fenv, "HARNESS_STATE_DIR="+state)...)
+	if out, errOut, code := h2.run("resume", runID, "--input", "respond"); code != ExitWaiting {
+		t.Fatalf("resume exit %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(argv(2), "--permission-mode") {
+		t.Fatalf("resume without the variable passed a mode:\n%s", argv(2))
+	}
+}
+
 // ゲートに達した run は、非対話で構造化 JSON と「待機中」の終了コード（3）を返して終わる（§5.2）。
 // resume は次のラウンドへ進め、閉じたラウンドのステップを再実行しない。
 func TestRunWaitsAtGateAndResumes(t *testing.T) {

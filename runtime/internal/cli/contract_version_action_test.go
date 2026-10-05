@@ -27,7 +27,7 @@ func wantVersionAction(t *testing.T, what string, d contractDoc, why string) {
 // プラグイン版が範囲外なら、contract status も contract resume も、ゲートの操作の代わりに「人が更新してから確かめ直す」を
 // 出す。human のゲート（approve）でも同じ。範囲内に戻れば元のゲートの操作に戻る。終わった run には出さない。
 func TestContractPluginMismatchAsksAPersonToUpdate(t *testing.T) {
-	for _, c := range []struct{ plugin, why string }{{"4.7.0", "update the plugin"}, {"5.1.0", "update the harness CLI"}} {
+	for _, c := range []struct{ plugin, why string }{{"4.7.0", "update the plugin"}, {"6.1.0", "update the harness CLI"}} {
 		for _, gate := range []string{"parent", "human"} {
 			state := t.TempDir()
 			h := newHarness(t, "HARNESS_STATE_DIR="+state, "HARNESS_DATA_DIR="+t.TempDir())

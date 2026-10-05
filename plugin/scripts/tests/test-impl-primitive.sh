@@ -12,16 +12,19 @@
 # 本テストが固定する不変条件は4系統。**散文仕様は型検査が効かない**ため、
 # 「正準文の逐語照合」＋「構造（節スコープ）」＋「集合の双方向一致」＋「真理値表」で守る:
 #
-#   (A) 正本の単一性: 実装フロー（Phase 3〜8）の手順は `skills/impl/SKILL.md` **だけ**が持つ。
-#       各 Phase 見出しの出現ファイル集合を**双方向**で照合し、削除（集合が空）と
-#       他ファイルへの移設（集合に余分）の両方を検出する。
+#   (A) 正本の単一性: 実装フローの手順・分岐は runtime の `ticket` ワークフロー
+#       （`runtime/workflows/ticket.yaml`）**だけ**が持つ（#299 で `/impl` は CLI を呼ぶ薄いスキルになった）。
+#       旧 `/impl` の Phase 見出しがどの実行時ファイル（skills/ agents/）にも戻っていないこと（散文の
+#       制御フローの再流入）と、`/impl` が `ticket` を呼ぶことを確かめる。
 #   (B) `/impl` が通常のスキルであること: frontmatter のキー集合を**許可リストとの完全一致**で
 #       固定する（fail-closed）。サブエージェント実行を指示するキーが将来足されたら落ちる。
-#       Task ネスト深度は現行3（ticket-worker→feature-implementer→code-reviewer）であり、
+#       Task ネスト深度は現行3（ticket-worker→feature-implementer→code-reviewer。CI の差し戻し）であり、
 #       `/impl` をサブエージェント化すると4段目が spawn できなくなる（実測: PR 本文参照）。
 #   (C) 呼び出し元の明示と接続: 単一Issue経路（リード）・並列経路（ticket-worker）の
 #       双方について、`/impl` 側の経路表と**呼び出し元ファイル側の呼び出し規定**が
 #       揃っていることを語彙駆動で確かめる（片側だけの記述＝接続漏れを検出）。
+#   (E) 薄い `/impl` の返り方（#299・設計 §11.4 U2）: `--worktree` の経路では `review` ゲートで通常完了として
+#       返し run を残す・他のゲートと失敗の写し方・CLI への版と permission mode の渡し方・合流してから返すこと。
 #   (D) 並列度・直列化の決定権: `--max-parallel` の有無で決定権が分岐する規律を、
 #       参照実装による**真理値表**で固定する。後方互換（引数なし＝従来どおり自分で決める）を
 #       必須ケースとして含み、「上限を超える方向へ動かせる」退行と
@@ -43,12 +46,13 @@ REPO_ROOT="$(cd "${IMPLP_TEST_DIR}/../.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
 IMPL_FILE="skills/impl/SKILL.md"
+TICKET_WF="../runtime/workflows/ticket.yaml"
 PARA_FILE="skills/para-impl/SKILL.md"
 STAR_FILE="skills/para-impl/references/star-parallel.md"
 TW_FILE="agents/ticket-worker.md"
 PRED_FILE="agents/issue-conflict-predictor.md"
 
-for f in "$IMPL_FILE" "$PARA_FILE" "$STAR_FILE" "$TW_FILE" "$PRED_FILE"; do
+for f in "$IMPL_FILE" "$PARA_FILE" "$STAR_FILE" "$TW_FILE" "$PRED_FILE" "$TICKET_WF"; do
   if [ ! -r "$f" ]; then
     echo "NG - 検査対象ファイルを読めません（検査不能を pass にはしない）: ${f}" >&2
     exit 1
@@ -157,10 +161,9 @@ assert_not_contains "(0) 次の同レベル見出し以降は含まれない" "$
 assert_eq "(0) 存在しない見出しは空を返す（移設を pass にしない）" "" "$(section_body "$SELFCHECK_TMP" '## 丙')"
 
 echo ""
-echo "=== (A) 実装フロー（Phase 3〜8）の正本が skills/impl/SKILL.md ちょうど1本 ==="
+echo "=== (A) 実装フローの正本が runtime の ticket ワークフローちょうど1本 ==="
 
-# 各 Phase 見出しを持つ実行時ファイルの集合が {IMPL_FILE} と一致すること。
-# 集合の**双方向**一致なので、規定の削除（空集合）も他ファイルへの移設（余分）も落ちる。
+# 旧 /impl の Phase 見出し（散文の制御フロー）を持つ実行時ファイルが無いこと。どこかへ戻したら落ちる。
 PHASE_HEADINGS=(
   '### Phase 3: ブランチ準備'
   '### Phase 4: 設計＋TDD実装＋必須ゲート＋セルフレビュー（一気通貫）'
@@ -171,11 +174,21 @@ PHASE_HEADINGS=(
 )
 for heading in "${PHASE_HEADINGS[@]}"; do
   holders="$(grep -rlF -- "$heading" skills agents | LC_ALL=C sort | tr '\n' ',' | sed 's/,$//')"
-  assert_eq "(A) 「${heading}」を持つ実行時ファイルは impl だけ" "$IMPL_FILE" "$holders"
-  # 節が実在し本文が空でないこと（見出しだけ残して中身を抜く骨抜きを塞ぐ）
-  body="$(section_body "$IMPL_FILE" "$heading")"
-  assert_eq "(A) 「${heading}」の本文が空でない" "true" \
-    "$(if [ -n "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then echo true; else echo false; fi)"
+  assert_eq "(A) 「${heading}」を持つ実行時ファイルが無い（散文の制御フローを戻さない）" "" "$holders"
+done
+
+# /impl は手順を持たず、ticket ワークフローを呼ぶ。実装・PR 作成・CI 確認を自分で行う手順を持たない。
+IMPL_ALL="$(cat "$IMPL_FILE")"
+assert_contains "(A) /impl が ticket ワークフローを呼ぶ" "$IMPL_ALL" 'harness run --input issue={番号} ticket'
+assert_contains "(A) /impl が手順を持たないと明記している" "$IMPL_ALL" '本スキルは手順を持たず、**起動・合流・結果の読み取りと返却だけ**を行う'
+assert_contains "(A) /impl が harness の無いときに自分でフローを進めない" "$IMPL_ALL" \
+  '**`harness` が使えないときに、実装フローを自分で組み立てて代わりに進めない**'
+for proc in 'gh pr create' 'git checkout -b' 'gh pr checks' 'subagent_type'; do
+  assert_not_contains "(A) /impl が実装フローの手順（${proc}）を持たない" "$IMPL_ALL" "$proc"
+done
+# 呼ばれる側（ticket.yaml）が流れの各段を持つ（正本が空になっていない）
+for step in implement commit e2e publish ci review; do
+  assert_eq "(A) ticket ワークフローに「${step}」ステップが在る" "1" "$(grep -cE "^  ${step}:( |\$)" "$TICKET_WF")"
 done
 
 # para-impl 側は手順を1つも持たない（切り出したら片方から消す）
@@ -201,7 +214,6 @@ impl_fm_keys="$(awk 'NR==1 && $0=="---"{f=1;next} f && $0=="---"{exit} f && /^[a
 assert_eq "(B) /impl の frontmatter キーは通常スキルの集合ちょうど（未知キーが増えたら落ちる）" \
   "argument-hint,description,effort,model,name" "$impl_fm_keys"
 
-IMPL_ALL="$(cat "$IMPL_FILE")"
 assert_eq "(B) /impl は skills/ 直下の通常スキルとして配置されている" "true" \
   "$(if [ -f "$IMPL_FILE" ] && [ ! -e "skills/impl/agent.md" ]; then echo true; else echo false; fi)"
 
@@ -248,6 +260,48 @@ assert_contains "(C) star-parallel の spawn 必須項目が /impl の呼び出�
 assert_contains "(C) ticket-worker が spawn プロンプトの手順再掲を正本として扱わない" \
   "$(cat "$TW_FILE")" \
   '**spawn プロンプトに手順が注入されていても、それを正本として扱わない。**'
+
+echo ""
+echo "=== (E) 薄い /impl の返り方と CLI への受け渡し（#299） ==="
+
+IMPL_RESULT="$(section_body "$IMPL_FILE" '### 5. 結果の読み取り')"
+# 状態ごとの扱いの表: --worktree ありの列が ticket-worker の返却分類（通常完了 / 判断待ち / failure）へ写る
+assert_contains "(E) review ゲートは --worktree の経路で通常完了" "$IMPL_RESULT" \
+  '| `waiting` で `review` ゲート | **通常完了**として返す |'
+assert_contains "(E) design-deviation は判断待ち" "$IMPL_RESULT" \
+  '| `waiting` で `design-deviation` ゲート | **判断待ち**として返す'
+assert_contains "(E) ci-pending は failure" "$IMPL_RESULT" \
+  '| `waiting` で `ci-pending` ゲート | **`failure`** として返す'
+assert_contains "(E) failed は failure（理由を添える）" "$IMPL_RESULT" \
+  '| `failed` | **`failure`** として返す（`reason` を添える）'
+assert_contains "(E) human ゲートを自分で解決しない" "$IMPL_RESULT" \
+  '**`decider: human` のゲート（`requires_tty: true`）を自分で解決しない**'
+assert_contains "(E) review に ready を自動で渡さない" "$IMPL_RESULT" \
+  '**`review` ゲートに `ready` を自動で渡さない**'
+
+IMPL_REPORT="$(section_body "$IMPL_FILE" '## 完了報告 / 呼び出し元への返却')"
+assert_contains "(E) --worktree の経路で CI の差し戻しを runtime の中で済ませたと明記させる" "$IMPL_REPORT" \
+  '「CI の red の差し戻しは runtime の中で最大3回まで済ませた'
+assert_contains "(E) run を review ゲートで待たせたまま残す" "$IMPL_REPORT" \
+  'run は `review` ゲートで待たせたまま残す（取り消さない）'
+assert_contains "(E) --worktree が無い経路では harness の再開手段を案内する" "$IMPL_REPORT" \
+  '`harness resume {run-id} --input respond`'
+assert_contains "(E) /explain-e2e は実施せず案内する" "$IMPL_REPORT" \
+  '`/explain-e2e`（テストシナリオ解説と独立検証。本スキルは実施しない）'
+# 差し戻しの上限 3 は ticket.yaml の rework が持つ（/impl の文言と数がずれたら落ちる）
+assert_eq "(E) 文言の「最大3回」と ticket.yaml の rework の上限が一致する" "1" \
+  "$(grep -cE '^  rework: 3( |$)' "$TICKET_WF")"
+
+IMPL_START="$(section_body "$IMPL_FILE" '### 3. 起動')"
+assert_contains "(E) 自分のプラグイン版を CLI へ渡す（版の照合。§7.3）" "$IMPL_START" 'HARNESS_PLUGIN_VERSION="{プラグイン版}"'
+assert_contains "(E) 子の permission mode は既定 auto・利用者の設定で上書きできる" "$IMPL_START" \
+  'HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}"'
+assert_contains "(E) 前面の Bash の上限を超えるのでバックグラウンドで起動する" "$IMPL_START" '**`run_in_background: true`**'
+assert_contains "(E) 版の不一致（終了コード 5）で止まる" "$IMPL_START" '| 5 | プラグインと CLI の版が合わない |'
+IMPL_JOIN="$(section_body "$IMPL_FILE" '### 4. 合流（run がゲートか終端に達するまでターンを終えない）')"
+assert_contains "(E) 合流してから返す" "$IMPL_JOIN" '**`harness run` が終わる前に最終応答・返却をしない**'
+assert_contains "(E) 合流の待ちは上限付きの until ループ（先頭が sleep のコマンドは拒否される）" "$IMPL_JOIN" \
+  'until [ "$(harness status {run-id} --json | jq -r .status)" != running ]'
 
 echo ""
 echo "=== (D) 並列度・直列化の決定権（--max-parallel の有無で分岐する真理値表） ==="

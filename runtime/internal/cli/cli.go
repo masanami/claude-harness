@@ -112,6 +112,8 @@ workflows and scripts: embedded in the binary and extracted to <data>/runtime/<v
 plugin version check: $HARNESS_PLUGIN_VERSION (set by the calling skill; exit 5 when this CLI does not support it)
 state directory: $HARNESS_STATE_DIR, else $XDG_STATE_HOME/claude-harness, else ~/.local/state/claude-harness
 claude executable for llm steps: $HARNESS_CLAUDE_BIN, else claude in PATH
+permission mode for llm steps: $HARNESS_CLAUDE_PERMISSION_MODE, passed to claude as --permission-mode
+  (unset: not passed, so claude uses its default; read by each process that advances a run, so set it for resume too)
 git / gh for workspace, pull-request and the pr-state observation: $HARNESS_GIT_BIN / $HARNESS_GH_BIN, else in PATH
   (scripts run by command steps use git and gh from PATH)
 exit codes: 0 succeeded, 1 failed, 2 usage, 3 waiting at a gate, 4 cancelled, 5 version mismatch
@@ -374,9 +376,15 @@ func cmdRun(args []string, env Env) int {
 // startedMsg は run を始めた知らせ（標準エラー）。contract start は、始めた後に内部エラーで止まった run をこの行で見つける。
 const startedMsg = "harness: run %s started (%s)\n"
 
+// PermissionModeEnv は llm 種類が起動する claude に --permission-mode で渡すモード。run を進めるプロセス（run・resume・
+// approve・contract start/resume・predict-conflicts）がそれぞれ読む（run には記録しない。各ステップの argv には残る）。
+// 薄い /impl は既定で auto を渡す（#299）。設定されていなければ渡さない。
+const PermissionModeEnv = "HARNESS_CLAUDE_PERMISSION_MODE"
+
 // tools は run を進めるプロセスが起動する外部コマンドを環境変数から決める（空なら PATH のもの）。
 func tools(eng *engine.Engine, env Env) {
 	eng.ClaudeBin = env.Getenv("HARNESS_CLAUDE_BIN")
+	eng.PermissionMode = env.Getenv(PermissionModeEnv)
 	eng.GitBin = env.Getenv("HARNESS_GIT_BIN")
 	eng.GhBin = env.Getenv("HARNESS_GH_BIN")
 }

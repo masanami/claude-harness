@@ -409,7 +409,7 @@ steps:
     on: { released: { done: merged }, kept: { done: merged }, dirty: { done: merged_worktree_dirty } }
 ```
 
-> **PR-4 の実装（`runtime/workflows/ticket.yaml`）で上の書き下ろしから足したもの**（遷移表・決定は変えていない）: ① `ci` は `ci-wait` を直接ではなく、`runtime/workflows/scripts/ci-wait-pr.sh` 経由で呼ぶ（`ci-wait.sh` は位置引数を取り、`command` 種類は `--<名前> <値>` で渡すため。PR が見つからない〔`pr_exists: false`〕ときは `ci: none` と区別できないので失敗にする）。② `resolve-ticket` は `runtime/workflows/scripts/resolve-ticket.sh` に置いた（`command` の `run` は `<workflow-dir>/scripts/` と `plugin/scripts/` のどちらか一方にだけ在る名前を指す。S1 の埋め込み対象〔`runtime/workflows/`〕に含まれる）。③ `human-merge` に観測する PR の番号を `with: { pr: $steps.publish.pr_number }` で渡す。④ `publish` に `implement` の `unverified`（未検証の事項）を渡す。`respond`・`merge` に PR 番号（`merge` には base も）を渡す。⑤ `resolve`・`ci`・各 `llm` ステップに `timeout` を付けた。⑥ `workspace` で払い出した後のステップは作業ツリーの中で動く（§4.1 Workspace。`release` の後は run を開始したディレクトリに戻る）。
+> **PR-4 の実装（`runtime/workflows/ticket.yaml`）で上の書き下ろしから足したもの**（遷移表・決定は変えていない）: ① `ci` は `ci-wait` を直接ではなく、`runtime/workflows/scripts/ci-wait-pr.sh` 経由で呼ぶ（`ci-wait.sh` は位置引数を取り、`command` 種類は `--<名前> <値>` で渡すため。PR が見つからない〔`pr_exists: false`〕ときは `ci: none` と区別できないので失敗にする）。② `resolve-ticket` は `runtime/workflows/scripts/resolve-ticket.sh` に置いた（`command` の `run` は `<workflow-dir>/scripts/` と `plugin/scripts/` のどちらか一方にだけ在る名前を指す。S1 の埋め込み対象〔`runtime/workflows/`〕に含まれる）。③ `human-merge` に観測する PR の番号を `with: { pr: $steps.publish.pr_number }` で渡す。④ `publish` に `implement` の `unverified`（未検証の事項）を渡す。`respond`・`merge` に PR 番号（`merge` には base も）を渡す。⑤ `resolve`・`ci`・各 `llm` ステップに `timeout` を付けた。⑥ `workspace` で払い出した後のステップは作業ツリーの中で動く（§4.1 Workspace。`release` の後は run を開始したディレクトリに戻る）。 ⑦ `implement` の出力に `review_incomplete`（`/self-review` が `self_review: incomplete` で終わった）を足し、`{ fail: self_review_incomplete }` へ送る（#299。§11.6 の E6）。
 >
 > `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す（§3.3。Q12 で決定）。
 >
@@ -930,7 +930,7 @@ D4 の帰結として、PR-7 から `/para-impl` の置き換えと `ticket-work
 **未決（この決定の反映で生じた問い）**:
 
 - U1: Q6 の「`ticket-worker` は廃止」を今後どう扱うか。`/para-impl` が散文のまま残る限り `ticket-worker` も要る。
-- U2: 薄い `/impl` が `ticket` ワークフロー全体（CI・レビュー・マージのラウンドまで）を動かす場合、`ticket-worker` の外側ループ（§2.3 の W1〜W4。CI の loop-until-green）と重なる。`ticket-worker` から呼ばれたときに `/impl` がどこで返るか（`review` ゲートで `waiting` になったときの扱いを含む）を PR-7 までに決める。
+- U2: 薄い `/impl` が `ticket` ワークフロー全体（CI・レビュー・マージのラウンドまで）を動かす場合、`ticket-worker` の外側ループ（§2.3 の W1〜W4。CI の loop-until-green）と重なる。`ticket-worker` から呼ばれたときに `/impl` がどこで返るか（`review` ゲートで `waiting` になったときの扱いを含む）を PR-7 までに決める。→ **2026-10-05 に決定（§11.6 の E1）**。
 - U3: M5（§9）の測り方。縮まない `/para-impl` の 3 ファイルと `ticket-worker` を比較の対象に含めたままにするか。
 
 ### 11.5 衝突の予測の口の形（#288・2026-09-29）
@@ -951,11 +951,25 @@ D4 の帰結として、PR-7 から `/para-impl` の置き換えと `ticket-work
 
 ---
 
+### 11.6 PR-7（段階 B の切替）で決めたこと（#299・2026-10-05）
+
+PR-7 の着手前に上げた問いの決定。§11.1〜§11.5 の記録は書き換えていない。
+
+| # | 問い | 採った案 | 決めた人 |
+| --- | --- | --- | --- |
+| E1 | U2: `ticket-worker` から呼ばれた薄い `/impl` はどこで返るか | どの経路でも、最初のゲートか終端で返る。`--worktree` の経路では `review` ゲートを通常完了として返し、run は `review` で待たせたまま残す（取り消さない）。返却には「CI の red の差し戻しは runtime の中で最大 3 回まで済ませた」と書く。`design-deviation` は判断待ち、`ci-pending` とその他のゲート・`failed`（`quality_gate`・`ci_red`・`e2e` 等）・`cancelled` は `failure` として返す。`--worktree` が無ければ最初のゲートで返り、`harness status`・`resume`・`approve` を案内する。`/impl` に再開用の引数は足さない | 親 |
+| E2 | 版の照合と CLI のリリースの順序 | `PluginMaxExclusive` を `6.0.0` に上げ、`PluginMin` は `4.9.0` のまま。順序は「PR-7 をマージ → 人が `runtime/vX.Y.Z` のタグと手動の Release で CLI を配る → プラグイン 5.0.0 のリリース PR」。CLI の版の番号はリリースのときに人が決める | 人間 |
+| E3 | 版を上げる場所 | 慣行どおり。PR-7 では `plugin.json` を触らず、CHANGELOG の「未リリース」節に書く | 親 |
+| E4 | runtime が起動する `claude -p` の permission mode | runtime に設定（環境変数 `HARNESS_CLAUDE_PERMISSION_MODE`。値をそのまま `--permission-mode` で渡す）を足し、薄い `/impl` は既定で `auto` を渡す。利用者は環境変数で上書きできる | 人間 |
+| E5 | 薄い `/impl` で古くなる `/para-impl`・`ticket-worker` の文面 | 実態に合わせる最小限の文面の修正だけを許す（§11.4 の「散文のまま残す」を、この範囲に限って緩める）。挙動（役割分担・ループ・返却の分類）は変えない | 人間 |
+| E6 | `self_review: incomplete`（#262）を runtime で扱うか | PR-7 に含める。`implement` の出力に `review_incomplete` を足し、PR へ進めず失敗（`self_review_incomplete`）で止める。旧 `/impl` が行っていた `/self-review` のやり直しは持たない | 人間 |
+| E7 | サブエージェント（`ticket-worker`）の中で、数時間かかる `harness run` と合流できるか | 着手前に実測した: サブエージェントの中で 660 秒のバックグラウンド処理を起動し、上限付きの `until` ループ（1 回 60 秒）で状態を確かめ続けて最後まで合流でき、完了通知もターンの内側で届いた。先頭が `sleep` のコマンドは拒否される。runtime に切り離して実行する口は足さない | 親（実測） |
+
 ## 12. 未検証事項
 
 - ~~`claude -p --agent claude-harness:feature-implementer` でプラグインのエージェントをセッションの主体に据えられるか~~ → PR-3 で実測済み（§1.1）。
 - ~~`claude -p --output-format json` の結果に含まれる費用・`session_id` のフィールド名~~ → PR-3 で実測済み（§4.3）。
-- 散文の `/para-impl` の worker が呼ぶ `/impl` が、薄いスキルになっても動くこと（`--worktree` で渡された作業ツリーを `workspace` の `provided` で受ける）。PR-7 で確かめる（§10）。
+- 散文の `/para-impl` の worker が呼ぶ `/impl` が、薄いスキルになっても動くこと（`--worktree` で渡された作業ツリーを `workspace` の `provided` で受ける）。PR-7 で確かめる（§10）。→ **PR-7 で一部を確かめた**: リードが作った作業ツリーの中から `--input worktree=` で `ticket` を起動すると `provided` で受け、リードのブランチのまま PR を作って `review` で止まる（偽の claude・gh での Go テスト `TestTicketRunsInAWorktreeProvidedByTheLead`）。サブエージェントの中で 10 分を超える処理と合流できる（§11.6 の E7）。**実物の claude で `ticket-worker` → `/impl` → `harness run` を通した確認はしていない**。
 - `--plugin-dir` で読ませたプラグインと、インストール済みの同名プラグインが併存したときの挙動。
 - プラグインのキャッシュへのコピー範囲・除外機構が無いことは公式ドキュメントの記述に基づく（実機でのコピー範囲は未確認）。
 - X1（`plugin/` への移動）が導入済みの環境に与える影響（再インストールの要否）。PR-1 で実測する。

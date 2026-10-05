@@ -111,6 +111,12 @@ func flag(argv []string, name string) (string, bool) {
 // start は run を開始して最初のゲートか終端まで進める。
 func start(t *testing.T, name string, inputs map[string]any) (*runstate.State, *Engine) {
 	t.Helper()
+	return startWith(t, name, inputs, nil)
+}
+
+// startWith は start と同じだが、進める前に configure で Engine を設定する。
+func startWith(t *testing.T, name string, inputs map[string]any, configure func(*Engine)) (*runstate.State, *Engine) {
+	t.Helper()
 	scripts := testdata(t, "scripts")
 	wf, err := workflow.LoadAndValidate(testdata(t, "workflows", name+".yaml"), workflow.Options{ScriptsDir: scripts})
 	if err != nil {
@@ -127,6 +133,9 @@ func start(t *testing.T, name string, inputs map[string]any) (*runstate.State, *
 	}
 	e.ClaudeBin = testdata(t, "scripts", "fake-claude.sh")
 	e.KillGrace, e.PollInterval = time.Second, 20*time.Millisecond
+	if configure != nil {
+		configure(e)
+	}
 	t.Setenv("FAKE_CLAUDE_EVENTS", filepath.Join(e.Run.Dir, runstate.EventsFile))
 	st, err := e.Loop(context.Background())
 	if err != nil {
@@ -237,6 +246,9 @@ func TestLLMLaunchAndGate(t *testing.T) {
 	if _, ok := flag(argv, "--resume"); ok {
 		t.Error("a new session must not be resumed")
 	}
+	if _, ok := flag(argv, "--permission-mode"); ok {
+		t.Error("--permission-mode must not be passed when no mode is set (claude uses its default)")
+	}
 	stdin := f.file(1, "stdin")
 	if !strings.Contains(stdin, "Issue を実装し") || !strings.Contains(stdin, `"issue": 42`) || !strings.Contains(stdin, `"granted_usd": 2`) {
 		t.Fatalf("prompt:\n%s", stdin)
@@ -246,6 +258,24 @@ func TestLLMLaunchAndGate(t *testing.T) {
 	}
 	if u.Gate == nil || u.Gate.Gate != "review" || u.Rounds[0].EndedBy != "gate:review" || u.Gate.RequiresTTY {
 		t.Fatalf("gate = %+v rounds = %+v", u.Gate, u.Rounds[0])
+	}
+}
+
+// PermissionMode を設定すると、claude に --permission-mode でそのまま渡し、argv の記録に残る（#299）。
+func TestPermissionModeIsPassedToClaude(t *testing.T) {
+	f := newFake(t)
+	f.respond(1, 0, claudeResult("pass", 0.4))
+	st, _ := startWith(t, "llm", map[string]any{"issue": 42}, func(e *Engine) { e.PermissionMode = "auto" })
+	if st.Status != runstate.StatusWaiting {
+		t.Fatalf("status = %s (%s)", st.Status, st.Reason)
+	}
+	argv := f.argv(1)
+	if got, ok := flag(argv, "--permission-mode"); !ok || got != "auto" {
+		t.Fatalf("--permission-mode = %q (present %v), want auto (argv %v)", got, ok, argv)
+	}
+	x := st.Unit(MainUnit).Rounds[0].Steps[0]
+	if !strings.Contains(strings.Join(x.Argv, " "), "--permission-mode auto") {
+		t.Fatalf("the recorded argv does not show the mode: %v", x.Argv)
 	}
 }
 

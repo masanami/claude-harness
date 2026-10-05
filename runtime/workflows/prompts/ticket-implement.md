@@ -9,7 +9,7 @@
 
 返す値（型は runtime が強制する）:
 
-- `outcome`: `pass`（必須ゲートとセルフレビューを通過）/ `skip`（品質ゲートの一部を実行できなかったが、実装は完了した。pass ではない）/ `failure`（必須ゲートを通過できない）/ `deviation`（上記）。
+- `outcome`: `pass`（必須ゲートとセルフレビューを通過）/ `skip`（品質ゲートの一部を実行できなかったが、実装は完了した。pass ではない）/ `failure`（必須ゲートを通過できない）/ `deviation`（上記）/ `review_incomplete`（`/self-review` の報告が `self_review: incomplete`、または `self_review:` 行が無い。レビュアーと合流できていないので `pass`・`skip` にしない。`/self-review` はやり直さず、未回収の委譲先の名前を `unverified` に書く）。
 - `pr_title`: PR の題名（Conventional Commits 形式の 1 行。`deviation` で止まる場合も、この Issue の PR の題名として埋める〔人の判断の後の修正でそのまま使われる〕）。`summary`: PR の概要（何を・なぜ。数段落まで）。**PR 本文の他の節は runtime が下の値から作るので、summary に残指摘や未検証を書き写さない**。
 - `residual_findings`: `/self-review` の `residualFindings` の**全件**（`converged` の値に関わらず。件数へ丸めない・severity で間引かない）。各要素は `location`（file:line）・`severity`・`claim`・`reason`。
 - `unverified`: 未検証の事項（skip の理由・実行できなかったゲート・確かめられなかった前提）を 1 件 1 要素で。無ければ空配列。

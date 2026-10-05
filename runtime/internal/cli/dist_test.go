@@ -101,7 +101,8 @@ func TestVersion(t *testing.T) {
 	for pv, want := range map[string]pluginCheck{
 		"4.9.0": {Version: "4.9.0", Compatible: true},
 		"4.7.0": {Version: "4.7.0", Update: "plugin"},
-		"5.0.0": {Version: "5.0.0", Update: "cli"},
+		"5.0.0": {Version: "5.0.0", Compatible: true},
+		"6.0.0": {Version: "6.0.0", Update: "cli"},
 	} {
 		out, _, code := h.with(PluginVersionEnv+"="+pv).run("version", "--json")
 		c := decode[versionView](t, out).Plugin
@@ -110,7 +111,7 @@ func TestVersion(t *testing.T) {
 		}
 	}
 	out, _, code = h.run("version")
-	if code != ExitOK || !strings.Contains(out, "harness 1.2.3") || !strings.Contains(out, ">=4.9.0 <5.0.0") {
+	if code != ExitOK || !strings.Contains(out, "harness 1.2.3") || !strings.Contains(out, ">=4.9.0 <6.0.0") {
 		t.Errorf("version text: %d\n%s", code, out)
 	}
 }
@@ -123,7 +124,7 @@ func TestPluginVersionMismatchStops(t *testing.T) {
 	state := t.TempDir()
 	h := newHarness(t, "HARNESS_STATE_DIR="+state, "HARNESS_DATA_DIR="+t.TempDir())
 	args := []string{"run", "--workflow-dir", abs(t, testWorkflows), "--scripts-dir", abs(t, testScripts), "--input", `json={"outcome":"ok"}`, "--input", "code=0", "emit"}
-	for pv, want := range map[string]string{"4.7.0": "update the plugin", "5.1.0": "update the harness CLI"} {
+	for pv, want := range map[string]string{"4.7.0": "update the plugin", "6.1.0": "update the harness CLI"} {
 		out, errOut, code := h.with(PluginVersionEnv + "=" + pv).run(args...)
 		if code != ExitVersion || !strings.Contains(errOut, want) || out != "" {
 			t.Errorf("plugin %s: exit %d\n%s\n%s", pv, code, out, errOut)
@@ -290,7 +291,7 @@ func TestSetup(t *testing.T) {
 			ExitVersion, []string{"plugin marketplace list --json", "plugin list --json"},
 			"not supported", "update the plugin"},
 		{"installed plugin is too new", nil,
-			map[string]string{"marketplaces.json": `[{"name":"masanami-harness"}]`, "plugins.json": plugins("5.0.0")},
+			map[string]string{"marketplaces.json": `[{"name":"masanami-harness"}]`, "plugins.json": plugins("6.0.0")},
 			ExitVersion, []string{"plugin marketplace list --json", "plugin list --json"},
 			"not supported", "update the harness CLI"},
 		{"install fails", nil,
