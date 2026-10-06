@@ -10,7 +10,7 @@
 
 ## Step S1: 掃引対象 diff の収集
 
-SKILL.md の **Step 1 と同じ手順**で `diff_file` を収集する（コマンド・base の解決規則・後始末の規律をそのまま用いる）。掃引モードは反復しないため、2周目以降の再収集は無い。ループを抜けたら（Step S6 の後）`diff_file` を `rm -f` で後始末する。
+SKILL.md の **Step 1 と同じ手順**で `diff_file` を収集する（コマンド・base の解決規則・後始末の規律をそのまま用いる）。掃引モードは反復しないため、2周目以降の再収集は無い。ループを抜けたら（Step S6 の後）`diff_file` を SKILL.md Step 1 と同じ `claude-harness-run cleanup-review-diff "<diff_file>"` で後始末する（素の `rm -f` は headless 委譲で permission 拒否されて差分が残るため使わない。Issue #293）。
 
 収集と同時に、`diff_file` から**変更対象の集合（`sweepTargets`）を確定する**。これが Step S3 で各掃引結果の `sweptScope` を照合する基準になる（基準を持たずに掃引を始めると、掃引者の自己申告を検証する手段が無くなる）。
 

@@ -42,8 +42,14 @@ Bash で上記コマンドを実行し、レビュー対象diffを収集する:
 
 - `base` は省略可。省略時はスクリプト内部で `gh pr view --json baseRefName` → `gh repo view --json defaultBranchRef` の順にフォールバック解決される（`main` 決め打ちにしない）。呼び出し元が base を把握している場合（例: `/pr-merge` や `para-impl` から base が既知の場合）は明示的に渡してよい
 - 標準出力の JSON（`base`, `merge_base`, `commits`, `files`, `diff_file`）をそのまま以降のプロンプトで使う。diff本文をプロンプトに直貼りせず、`diff_file` のパスをレビューエージェントに渡して Read させること（コンテキスト削減のため）
-- **2周目以降**（Step 4 で修正を適用した後の再収集時）は、直前の `diff_file` を `rm -f` してから本コマンドを再実行する。修正エージェントはコミットしない設計のため、行番号は周回間で動く。次周のレビュー・hunk抽出は、このスナップショットのみを基準にし、前周の指摘の行番号は持ち越さない
-- ループを抜けたら（Step 5 の後）、最後に使った `diff_file` を `rm -f` で後始末する
+- **2周目以降**（Step 4 で修正を適用した後の再収集時）は、直前の `diff_file` を後述の `cleanup-review-diff` で削除してから本コマンドを再実行する。修正エージェントはコミットしない設計のため、行番号は周回間で動く。次周のレビュー・hunk抽出は、このスナップショットのみを基準にし、前周の指摘の行番号は持ち越さない
+- ループを抜けたら（Step 5 の後）、最後に使った `diff_file` を後述の `cleanup-review-diff` で後始末する。途中で中断する場合も同じ手順で消す
+- **`diff_file` の削除に素の `rm -f` を使わない**。`rm` は allowlist できる形にならず、headless 委譲では毎回 permission で拒否されて、レビュー対象の差分が `$TMPDIR` に残り続ける（Issue #293）。後始末は次のランチャー経由の形だけで行う
+
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run cleanup-review-diff "<diff_file>"` の形式（先頭トークンと target には**パス・バージョン・引用符を付けない**。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる。**引数として渡すパスは引用符で囲む**。引数側の引用符は allowlist のマッチに影響しない）を用い、相対パス `scripts/cleanup-review-diff.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/cleanup-review-diff.sh" "<diff_file>"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+`cleanup-review-diff` は `collect-review-diff` が作った一時ファイル（`${TMPDIR:-/tmp}` 直下の `collect-review-diff.*`）だけを消し、それ以外のパスは何も消さずに exit 64 で拒否する。既に無いファイルは成功扱い（exit 0）。exit 非0 でも、レビュー結果の報告をこの失敗で上書きせず、残ったパスを報告に添える。
 
 ### Step 2: 並列レビュー
 
