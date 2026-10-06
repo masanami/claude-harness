@@ -26,7 +26,7 @@ Issue番号（省略可能）: $ARGUMENTS
 
 ## Step 2: Issue/PR context
 
-`mktemp`で一時ファイルを作り、Issue番号が指定された場合は次をJSONで保存する。
+`mktemp "${TMPDIR:-/tmp}/codex-review-context.XXXXXX"`で一時ファイル（context ファイル）を作り、Issue番号が指定された場合は次をJSONで保存する。名前と置き場所はこの形に固定する（Step 4 の `cleanup-review-diff` は `${TMPDIR:-/tmp}` 直下の `codex-review-context.*` しか消さないため、引数なしの `mktemp` や別の名前で作ると後始末できない）。
 
 ```bash
 gh issue view <Issue番号> --json number,title,body,url
@@ -69,4 +69,9 @@ Phase 0/1の比較実行として依頼された場合は、同一`representativ
 
 `complete`かつfindings 0件の場合のみ「Codex reviewでは指摘なし」と表現できる。これは実装全体の品質保証や既存`/self-review`の収束を意味しない。
 
-最後にcontext一時ファイルと`diff_file`を削除する。失敗経路でも残さない。
+最後にcontext一時ファイルと`diff_file`を、次のランチャー経由の形で削除する。失敗経路（runner の exit 非0・Step 2 での停止を含む）でも残さない。**素の `rm -f` は使わない**（allowlist できる形にならず、headless 委譲では毎回 permission で拒否されて差分と Issue 本文が `$TMPDIR` に残り続ける。Issue #293）。
+
+> **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run cleanup-review-diff "<diff_file>" "<context_file>"` の形式（先頭トークンと target には**パス・バージョン・引用符を付けない**。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる。**引数として渡すパスは引用符で囲む**。引数側の引用符は allowlist のマッチに影響しない）を用い、相対パス `scripts/cleanup-review-diff.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/cleanup-review-diff.sh" "<diff_file>" "<context_file>"` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
+<!-- 正本: docs/plugin-path-conventions.md -->
+
+まだ作っていないファイルは引数から外す（どちらか一方だけでもよい）。`cleanup-review-diff` は `${TMPDIR:-/tmp}` 直下の `collect-review-diff.*` / `codex-review-context.*` だけを消し、それ以外のパスが1つでも混じると何も消さずに exit 64 で拒否する。既に無いファイルは成功扱い（exit 0）。exit 非0 でもレビュー結果の報告をこの失敗で上書きせず、残ったパスを報告に添える。runner 自身が作る作業ディレクトリ（`codex-review.*`）は runner の `trap` が消すため、ここでは扱わない。

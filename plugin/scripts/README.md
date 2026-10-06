@@ -7,7 +7,7 @@
 | pr-merge-preflight.sh | `scripts/specs/pr-merge-preflight.md` |
 | quality-check-runner.sh | `scripts/specs/quality-check-runner.md` |
 | extract-acceptance-criteria.sh / check-e2e-traceability.sh | `scripts/specs/extract-acceptance-criteria.md` |
-| collect-review-diff.sh / extract-hunk.sh | `scripts/specs/collect-review-diff.md` |
+| collect-review-diff.sh / extract-hunk.sh / cleanup-review-diff.sh | `scripts/specs/collect-review-diff.md` |
 | spec-lint.sh | `scripts/specs/spec-lint.md` |
 | mutation-run.sh | `scripts/specs/mutation-run.md` |
 | collect-promotion-context.sh / check-subtask-completion.sh | `scripts/specs/collect-promotion-context.md` |
