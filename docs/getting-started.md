@@ -93,7 +93,7 @@ codex --version
 jq --version
 ```
 
-Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。`codex` / `jq` / 同梱schemaの未導入は実行前提エラー（`result: "failed"`、exit 69）、Codexの実行失敗・認証失敗は実行失敗（`result: "failed"`、`errors[].code: "codex_failed"`、exit 4）、部分失敗は`result: "partial"`（exit 3）として区別されます。いずれも完了・指摘ゼロとしては扱われず、独立に報告されます。
+Codex CLIのmodel・認証・利用上限は実行者環境の設定を使います。`codex` / `jq` / 同梱schemaの未導入は実行前提エラー（`result: "failed"`、exit 69）、Codexの実行失敗・認証失敗は実行失敗（`result: "failed"`、`errors[].code: "codex_failed"`、exit 4。Codexの利用上限で止まった場合は時間を置けば直る失敗として`errors[].code: "codex_usage_limit"`、exit 4）、部分失敗は`result: "partial"`（exit 3）として区別されます。いずれも完了・指摘ゼロとしては扱われず、独立に報告されます。
 
 `/codex-task` は調査・雑務の委譲用で、モードでsandboxが切り替わります。
 

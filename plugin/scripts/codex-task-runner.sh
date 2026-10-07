@@ -78,7 +78,7 @@ emit_failure() {
         retry_count: 0,
         schema_valid: false,
         output_bytes: 0,
-        terminal_failure: ($error_code == "codex_failed" or $error_code == "codex_timeout")
+        terminal_failure: ($error_code == "codex_failed" or $error_code == "codex_usage_limit" or $error_code == "codex_timeout")
       },
       errors: [{code: $error_code, message: $message}]
     }'
@@ -87,6 +87,25 @@ emit_failure() {
 read_codex_diagnostic() {
   local stderr_file="$1"
   tail -n 20 "$stderr_file" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//'
+}
+
+# stderr が空のまま codex exec が非0で終わったときの診断を、stdout の JSONL イベント列から採る。
+# ChatGPT アカウントの利用上限のような理由は stderr に出ず、イベント列にだけ出るため（Issue #294）。
+# 採るのは最後の `error` / `turn.failed` イベントの文面。JSON でない行は読み飛ばす。
+read_codex_event_error() {
+  local events_file="$1"
+  jq -nRr '
+    [inputs | fromjson? | objects
+      | select(.type == "error" or .type == "turn.failed")
+      | (.message // .error.message // empty) | strings | select(length > 0)]
+    | last // empty
+  ' "$events_file" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//'
+}
+
+# 利用上限の文面か。codex 0.145.0 のバイナリにある文面は "You've hit your usage limit." と
+# "Usage limit reached." で、どちらも "usage limit" を含む（大文字小文字を区別しない）。
+is_codex_usage_limit() {
+  printf '%s' "$1" | grep -qi 'usage limit'
 }
 
 # `git status --porcelain` から、作業ツリーが汚れているパスの集合をソート済み行で返す。
@@ -506,7 +525,14 @@ main() {
     if [ -n "$diagnostic" ]; then
       emit_failure "codex_failed" "codex exec failed: ${diagnostic}" "$mode" "$duration_seconds" "$codex_exit"
     else
-      emit_failure "codex_failed" "codex exec failed without a diagnostic" "$mode" "$duration_seconds" "$codex_exit"
+      diagnostic="$(read_codex_event_error "$events_file")"
+      if [ -z "$diagnostic" ]; then
+        emit_failure "codex_failed" "codex exec failed without a diagnostic" "$mode" "$duration_seconds" "$codex_exit"
+      elif is_codex_usage_limit "$diagnostic"; then
+        emit_failure "codex_usage_limit" "codex exec failed: ${diagnostic}" "$mode" "$duration_seconds" "$codex_exit"
+      else
+        emit_failure "codex_failed" "codex exec failed: ${diagnostic}" "$mode" "$duration_seconds" "$codex_exit"
+      fi
     fi
     exit "$CODEX_TASK_EX_FAILED"
   fi

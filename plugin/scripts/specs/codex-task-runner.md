@@ -156,6 +156,8 @@ outerの`result`はこれらとタスク自己申告`status`から**ランナー
 
 Codexのstdout JSONLとstderrは分離する。terminal failure時はstderr末尾20行を`errors[].message`へ含め、一時ログを削除しても失敗原因を失わない。
 
+codex execが非0で終わりstderrが空のときは、stdout JSONLの最後の`error` / `turn.failed`イベントの文面を`errors[].message`へ含める（ChatGPTアカウントの利用上限のような理由はstderrに出ず、イベント列にだけ出るため）。その文面が利用上限を示す（大文字小文字を区別せず`usage limit`を含む）ときはerror codeを`codex_failed`ではなく`codex_usage_limit`にする。終了コードは同じexit 4で、呼び出し側はerror codeで区別する。`codex_usage_limit`は時間を置けば直る失敗であり、設定の見直しは要らない。イベント列にもエラー系イベントが無ければ`codex exec failed without a diagnostic`のままにする。
+
 ## 終了コード
 
 | code | 意味 |

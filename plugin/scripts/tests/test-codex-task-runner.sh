@@ -104,6 +104,7 @@ printf '# reference\n%s\n' "$INPUT_BODY_MARKER" >"$INPUT_FILE"
 # fake codex: 引数・prompt を記録し、FAKE_CODEX_FINAL を -o のパスへコピーする。
 # FAKE_CODEX_TOUCH（空白区切り）が指定されていれば対象 repo にそのパスを作る（chore の疑似編集）。
 # FAKE_CODEX_COMMIT が非空なら commit まで行う（commit 禁止契約の違反を再現する）。
+# FAKE_CODEX_EVENTS が指定されていれば、stdout のイベント列としてそのファイルの中身を出す。
 cat >"${FAKE_BIN}/codex" <<'EOF'
 #!/bin/bash
 set -u
@@ -138,7 +139,11 @@ fi
 if [ -n "${FAKE_CODEX_FINAL:-}" ] && [ -n "$out" ]; then
   cp "$FAKE_CODEX_FINAL" "$out"
 fi
-printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":42,"output_tokens":7}}'
+if [ -n "${FAKE_CODEX_EVENTS:-}" ]; then
+  cat "$FAKE_CODEX_EVENTS"
+else
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":42,"output_tokens":7}}'
+fi
 exit "${FAKE_CODEX_EXIT:-0}"
 EOF
 chmod +x "${FAKE_BIN}/codex"
@@ -471,6 +476,43 @@ assert_contains "codex stderr診断を保持" "authentication failed" "$(jq -r '
 assert_eq "terminal_failureを立てる" "true" "$(jq -r '.metrics.terminal_failure' <<<"$OUT")"
 export FAKE_CODEX_EXIT=0
 unset FAKE_CODEX_STDERR
+
+echo "=== test: stderr が空の失敗はイベント列から診断を採る ==="
+EVENTS_FIXTURES="${TEST_DIR}/fixtures/codex-events"
+export FAKE_CODEX_EXIT=1
+unset FAKE_CODEX_STDERR
+export FAKE_CODEX_EVENTS="${EVENTS_FIXTURES}/usage-limit.jsonl"
+OUT="$(run_runner --mode investigate --repo "$TARGET_REPO" --brief-file "$BRIEF_FILE")"
+RC=$?
+assert_eq "利用上限は既存の失敗と同じexit 4" "4" "$RC"
+assert_eq "利用上限をfailedとして返す" "failed" "$(jq -r '.result' <<<"$OUT")"
+assert_eq "利用上限はcodex_usage_limit" "codex_usage_limit" "$(jq -r '.errors[0].code' <<<"$OUT")"
+assert_contains "利用上限の文面を診断に採る" "You've hit your usage limit." "$(jq -r '.errors[0].message' <<<"$OUT")"
+assert_eq "利用上限はterminal failure" "true" "$(jq -r '.metrics.terminal_failure' <<<"$OUT")"
+assert_eq "利用上限でもcodex exitを保持" "1" "$(jq -r '.metrics.codex_exit_code' <<<"$OUT")"
+
+export FAKE_CODEX_EVENTS="${EVENTS_FIXTURES}/turn-failed.jsonl"
+OUT="$(run_runner --mode investigate --repo "$TARGET_REPO" --brief-file "$BRIEF_FILE")"
+RC=$?
+assert_eq "一般のエラーイベントはexit 4" "4" "$RC"
+assert_eq "一般のエラーイベントはcodex_failed" "codex_failed" "$(jq -r '.errors[0].code' <<<"$OUT")"
+assert_eq "最後のエラー系イベントの文面を診断に採る" "codex exec failed: stream disconnected before completion: error sending request" "$(jq -r '.errors[0].message' <<<"$OUT")"
+
+export FAKE_CODEX_EVENTS="${EVENTS_FIXTURES}/no-error.jsonl"
+OUT="$(run_runner --mode investigate --repo "$TARGET_REPO" --brief-file "$BRIEF_FILE")"
+RC=$?
+assert_eq "エラーイベントも無い失敗はexit 4" "4" "$RC"
+assert_eq "エラーイベントも無い失敗はcodex_failed" "codex_failed" "$(jq -r '.errors[0].code' <<<"$OUT")"
+assert_eq "エラーイベントも無ければ診断なしのまま" "codex exec failed without a diagnostic" "$(jq -r '.errors[0].message' <<<"$OUT")"
+
+export FAKE_CODEX_EVENTS="${EVENTS_FIXTURES}/usage-limit.jsonl"
+export FAKE_CODEX_STDERR="authentication failed"
+OUT="$(run_runner --mode investigate --repo "$TARGET_REPO" --brief-file "$BRIEF_FILE")"
+assert_eq "stderrに診断があればイベント列より優先" "codex_failed" "$(jq -r '.errors[0].code' <<<"$OUT")"
+assert_contains "stderrの診断を採る" "authentication failed" "$(jq -r '.errors[0].message' <<<"$OUT")"
+unset FAKE_CODEX_STDERR
+unset FAKE_CODEX_EVENTS
+export FAKE_CODEX_EXIT=0
 
 BROKEN="${WORK_DIR}/broken.json"
 printf 'not json' >"$BROKEN"

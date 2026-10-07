@@ -73,6 +73,7 @@ runnerのstdout JSONを保持する。exit codeと`result`を次のように扱�
 | `output_budget_exceeded` | 結果が予算超過。結果自体は使えるが、次回はブリーフで問いを絞る |
 | `invalid_task_contract` | 出力が契約を満たさない。結果は使わない |
 | `codex_timeout` / `codex_failed` | Codexが完走していない。結果は使わない |
+| `codex_usage_limit` | Codexのアカウントの利用上限で止まった。結果は使わない。時間を置けば直るため、設定の問題としては扱わず、利用上限に達したことと`message`（再開できる時刻が書かれていることがある）を報告する |
 
 ## Step 4: 報告と後始末
 

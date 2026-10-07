@@ -52,6 +52,7 @@ runnerのstdout JSONを保持する。exit codeと`result`を次のように扱�
 - exit 0 / `complete`: 完全なshadow review結果
 - exit 3 / `partial`: 部分結果は提示するが、レビュー完了・指摘ゼロと扱わない
 - exit 4 / `failed`: findingsを利用せず、実行失敗として報告する
+  - `errors[].code`が`codex_usage_limit`なら、Codexのアカウントの利用上限で止まっている。時間を置けば直るため、設定の問題としては扱わず、利用上限に達したことと`errors[].message`（再開できる時刻が書かれていることがある）を報告する。`codex_failed`は認証・設定・CLIの不具合など、時間を置いても直るとは限らない失敗である
 - exit 64/66/69: 入力・導入・依存関係の問題として報告する
 
 ## Step 4: 報告と後始末
