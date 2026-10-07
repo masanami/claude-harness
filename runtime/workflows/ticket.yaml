@@ -10,6 +10,7 @@
 #   - publish に implement の unverified（未検証の事項）を渡す。respond・merge に PR 番号（と base）を渡す
 #   - ci に timeout（ci-wait.sh の既定の待ち 900 秒より長い 20 分）を付ける
 #   - ci の red_no_log（red で失敗ログが空。CI が実行されずに失敗した等）を fix へ送らず ci-pending で止める（#278）
+#   - implement の review_incomplete（/self-review が self_review: incomplete で終わった）を失敗で止める（#262・#299）
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -66,6 +67,7 @@ steps:
       skip:      commit                             # I7: 未検証は pull-request が本文に明記する
       failure:   { fail: quality_gate }             # W2: 初回 failure は再委譲しない
       deviation: { gate: design-deviation }         # I8
+      review_incomplete: { fail: self_review_incomplete }  # #262: セルフレビューと合流できないまま PR へ進めない
 
   fix:                                              # W1: スコープ付き修正（Step a〜e を開始しない）
     kind: llm

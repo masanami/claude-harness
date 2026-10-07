@@ -32,6 +32,9 @@ type Engine struct {
 
 	// ClaudeBin は llm 種類が起動する claude の実行ファイル（空なら PATH の claude）。テストは偽の claude を指す。
 	ClaudeBin string
+	// PermissionMode は llm 種類が起動する claude に --permission-mode で渡すモード（空なら渡さない＝claude の既定）。
+	// 値は検査せず claude にそのまま渡す（受け付けるモードは claude の版が決める）。
+	PermissionMode string
 	// GitBin・GhBin は workspace・pull-request 種類と pr-state の観測が起動する git・gh（空なら PATH のもの）。
 	GitBin string
 	GhBin  string

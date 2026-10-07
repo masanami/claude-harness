@@ -108,6 +108,9 @@ func (e *Engine) executeLLM(ctx context.Context, st *runstate.State, u *runstate
 	if step.Agent != "" {
 		args = append(args, "--agent", step.Agent)
 	}
+	if e.PermissionMode != "" {
+		args = append(args, "--permission-mode", e.PermissionMode)
+	}
 
 	prompt, err := e.prompt(st, u, step, attempt, granted)
 	if err != nil {

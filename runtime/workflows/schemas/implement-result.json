@@ -4,7 +4,7 @@
   "type": "object",
   "required": ["outcome", "pr_title", "summary", "residual_findings", "unverified", "cross_repo_attestation", "deviation_report"],
   "properties": {
-    "outcome": { "type": "string", "enum": ["pass", "skip", "failure", "deviation"] },
+    "outcome": { "type": "string", "enum": ["pass", "skip", "failure", "deviation", "review_incomplete"] },
     "pr_title": { "type": "string" },
     "summary": { "type": "string" },
     "residual_findings": {

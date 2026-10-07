@@ -1,6 +1,7 @@
 #!/bin/bash
 # test-foreground-subagent-spawn.sh
-# `/impl` の経路（`/impl` → feature-implementer → `/self-review` → レビュアー）で、サブエージェントの
+# 実装の経路（`ticket-worker` → feature-implementer → `/self-review` → レビュアー。`/impl` は #299 で
+# `harness` の `ticket` ワークフローを呼ぶ薄いスキルになり、Task を起動しない）で、サブエージェントの
 # 起動を前景（`run_in_background: false`）に固定する規約の構造テスト（Issue #262）。
 #
 # 背景（実測: Claude Code 2.1.283・headless）: サブエージェントの中から `run_in_background` を指定せずに
@@ -15,7 +16,8 @@
 #   (F-2) 経路上の各ファイルで、`subagent_type` を指定する起動行がすべて `run_in_background: false` を持つ
 #         （起動箇所が増えたときに、その行だけ背景起動に戻ることを止める）
 #   (F-3) 合流できなかったことを返す契約（`self_review: incomplete`）が、出す側（`/self-review`）・
-#         転記する側（feature-implementer）・受け取ってやり直す側（`/impl`）の3点で接続されている
+#         転記する側（feature-implementer）・受け取る側（runtime の `ticket` ワークフロー。PR へ進めず失敗で止める）の
+#         3点で接続されている（遷移そのものの振る舞いは runtime の Go テスト TestTicketStopsWhenSelfReviewIsIncomplete）
 #   (F-4) 合流ゲートの正本が、起動通知の受領を終端返却と読まないことを定めている
 #
 # 実行方法: bash scripts/tests/test-foreground-subagent-spawn.sh
@@ -30,18 +32,19 @@ cd "$PLUGIN_ROOT" || exit 1
 SELF_REVIEW="skills/self-review/SKILL.md"
 DEFECT_SWEEP="skills/self-review/references/defect-sweep.md"
 FI="agents/feature-implementer.md"
-IMPL="skills/impl/SKILL.md"
 TW="agents/ticket-worker.md"
 JOIN="skills/para-impl/references/join-gate.md"
+TICKET_WF="../runtime/workflows/ticket.yaml"
+TICKET_IMPLEMENT_PROMPT="../runtime/workflows/prompts/ticket-implement.md"
 
 # 規約文を逐語で持つファイル（サブエージェントを起動する主体が読むもの）
-CANON_HOLDERS=("$SELF_REVIEW" "$FI" "$IMPL" "$TW")
+CANON_HOLDERS=("$SELF_REVIEW" "$FI" "$TW")
 # `subagent_type` を指定する起動行を持つ経路上のファイル
-SPAWN_FILES=("$SELF_REVIEW" "$DEFECT_SWEEP" "$FI" "$IMPL" "$TW")
+SPAWN_FILES=("$SELF_REVIEW" "$DEFECT_SWEEP" "$FI" "$TW")
 
 CANON='**Task ツールの呼び出しには必ず `run_in_background: false` を明示する。** 省略するとバックグラウンド起動になり、返るのは結果ではなく起動通知（`Async agent launched` 等）だけになる。サブエージェントの中ではターンを終えた時点で呼び出し元へ返却され、後から届く結果は自分では受け取れない。**起動通知は結果ではない** — 求めた形式の結果を含まない応答を受け取ったら、ターンを終えず、同じ委譲を `run_in_background: false` で1回だけ起動し直す。それでも結果が得られなければ「合流できなかった」として扱う（黙って結果なしで先へ進まない）。'
 
-for f in "${SPAWN_FILES[@]}" "$JOIN"; do
+for f in "${SPAWN_FILES[@]}" "$JOIN" "$TICKET_WF" "$TICKET_IMPLEMENT_PROMPT"; do
   if [ ! -r "$f" ]; then
     echo "NG - 検査対象ファイルを読めません（検査不能を pass にはしない）: ${f}" >&2
     exit 1
@@ -128,10 +131,10 @@ assert_file_contains "(F-3) feature-implementer は incomplete をやり直さ�
   '**`/self-review` を自分でやり直さず、e-2・e-3 へも進まずに**'
 assert_file_contains "(F-3) feature-implementer の返却内容に incomplete の形が在る" "$FI" \
   '### `/self-review` が `incomplete` で終了した場合'
-assert_file_contains "(F-3) /impl の例外ケースに incomplete の行が在る" "$IMPL" \
-  '| `self_review: incomplete`（'
-assert_file_contains "(F-3) /impl は incomplete を受けて /self-review を実行し直す" "$IMPL" \
-  '**本スキルの実行主体が Skill ツールで `/self-review` を1回だけ最初から実行し直し**'
+assert_file_contains "(F-3) ticket の実装ステップのプロンプトが incomplete を review_incomplete として返させる" "$TICKET_IMPLEMENT_PROMPT" \
+  '`review_incomplete`（`/self-review` の報告が `self_review: incomplete`、または `self_review:` 行が無い。'
+assert_file_contains "(F-3) ticket ワークフローは review_incomplete を PR へ進めず失敗で止める" "$TICKET_WF" \
+  'review_incomplete: { fail: self_review_incomplete }'
 
 echo "=== (F-4) 合流ゲートの正本が起動通知を終端返却と読まない ==="
 assert_file_contains "(F-4) 有限タスクは前景で起動する" "$JOIN" \

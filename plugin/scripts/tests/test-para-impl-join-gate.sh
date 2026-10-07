@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 SKILL_FILE="${REPO_ROOT}/skills/para-impl/SKILL.md"
-# 1チケットの実装フロー（Phase 3〜8）の正本。para-impl / ticket-worker の双方がここを呼ぶ
+# 1チケットの実装フローの入口（harness の ticket ワークフローを呼ぶ薄いスキル。#299）。para-impl / ticket-worker の双方がここを呼ぶ
 IMPL_FILE="${REPO_ROOT}/skills/impl/SKILL.md"
 STAR_FILE="${REPO_ROOT}/skills/para-impl/references/star-parallel.md"
 JOIN_FILE="${REPO_ROOT}/skills/para-impl/references/join-gate.md"
@@ -245,7 +245,7 @@ assert_join_contains "(4) 受領の見込みは実状態の確認で判定する
 assert_join_contains "(4) 取得タイムアウトを「結果がもう来ない」と同一視しない" \
   '結果取得のタイムアウトは「結果がもう来ない」ことを意味しない'
 assert_join_contains "(4) worker の長時間・多数回待機は正当な稼働であると明示している" \
-  'Phase 4〜8 を実行中の worker は長時間・多数回の待機にまたがって正当に稼働し続ける'
+  '`/impl`（`harness run`）を実行中の worker は長時間・多数回の待機にまたがって正当に稼働し続ける'
 assert_join_contains "(4) 再試行上限は稼働確認も結果取得もできない場合の確認試行に限定する" \
   '再試行上限（**3回を目安**）は、**稼働確認も結果取得もできない場合の確認試行にだけ**適用する'
 assert_file_not_contains "(4) 取得失敗を一律に回数へ数える旧規則が残っていない" "$JOIN_FILE" \
@@ -582,15 +582,18 @@ assert_file_not_contains "(9) 正準句の定義が SKILL.md 側に複製され�
 assert_eq "(9) 「未解消報告を含まない終端返却」の文言規則が正本の含意・条項(1)・合流済み定義の3箇所で一致する" \
   "3" "$canon_rule_count"
 
-# 接続検査: 1チケットの実装フロー（Phase 4。正本は /impl）と star 型（spawn プロンプト
-# 必須項目）の双方から条項へ接続。**Phase 4 の委譲は /impl が規定する**ため、単一Issue経路の
-# 接続先は para-impl ではなく impl 側であり、cross-skill 参照なのでパスはプラグインルート相対。
-assert_file_contains "(9) /impl の Phase 4 委譲プロンプトにも条項を含める" "$IMPL_FILE" \
-  '委譲プロンプトには**合流ゲート伝播条項**（`skills/para-impl/references/join-gate.md` の「ネストへの伝播」に定義。逐語で転記する）も含める'
+# 接続検査: /impl（#299 で harness の ticket ワークフローを呼ぶ薄いスキルになった）は Task を起動せず、
+# 起動するのはバックグラウンドの `harness run`（有限タスク）だけ。その合流を最終返却の前に済ませることを
+# 規定し、Task の起動行を持たないこと（持つなら条項の転記が要る）を確かめる。star 型（spawn プロンプト
+# 必須項目）からの条項への接続は従来どおり。
+assert_file_contains "(9) /impl はバックグラウンドの harness run と合流してから返す" "$IMPL_FILE" \
+  '**`harness run` が終わる前に最終応答・返却をしない**'
+assert_file_not_contains "(9) /impl は Task を起動しない（起動するなら条項の転記が要る）" "$IMPL_FILE" \
+  'subagent_type'
 assert_star_contains "(9) star 型の spawn プロンプト必須項目に条項の転記がある" \
   '- **合流ゲート伝播条項**（`references/join-gate.md`「ネストへの伝播」に定義された条項を**逐語で転記する**'
 assert_star_contains "(9) 条項が無い場合の喪失経路（worker のネスト spawn）を明示している" \
-  'worker は Phase 4 で `feature-implementer` をさらに spawn するため'
+  'worker は CI の差し戻しで `feature-implementer` をさらに spawn し、`/impl` ではバックグラウンドの `harness run` を起動するため'
 assert_file_not_contains "(9) star-parallel.md は条項本文を複製しない（正本は SKILL.md のみ）" "$STAR_FILE" \
   '【合流ゲート伝播条項】'
 

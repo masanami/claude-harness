@@ -38,7 +38,7 @@
 #   | ファイル | 役割 |
 #   |---|---|
 #   | `agents/feature-implementer.md` | `/self-review` の呼び出し元。残指摘を返却内容へ転記する |
-#   | `skills/impl/SKILL.md`          | 1チケットの実装フローの正本。返却を受け取り、PR 本文へ転記する |
+#   | `skills/impl/SKILL.md`          | `harness` の `ticket` を呼ぶ薄いスキル。run の出力の残指摘を返却へ転記する（PR 本文への転記は runtime の pull-request） |
 #   | `agents/ticket-worker.md`       | 並列実装の worker。返却をリードへ転記する |
 #
 # 非 ASCII の一致判定に awk の `==` は使わない（macOS 標準 awk が誤って真にする。

@@ -5,7 +5,7 @@
 
 ## 1. 何をするか
 
-- 既存のスキル（`/impl`・`/para-impl`・`ticket-worker`）は**変えない**。runtime（`harness` CLI）の `ticket` ワークフロー（[`runtime/workflows/ticket.yaml`](../runtime/workflows/ticket.yaml)）を、**人の端末から**実チケットに使う。
+- 既存のスキル（`/impl`・`/para-impl`・`ticket-worker`）は**変えない**（段階 A の記録。段階 B〔PR-7・#299〕で `/impl` は `ticket` を呼ぶ薄いスキルになった）。runtime（`harness` CLI）の `ticket` ワークフロー（[`runtime/workflows/ticket.yaml`](../runtime/workflows/ticket.yaml)）を、**人の端末から**実チケットに使う。
 - 同じ種類のチケットを現行の経路（`/impl`・flywheel の委譲）で扱った記録と、§9 の指標で比べる。
 - 比べる期間は導入前と同じ長さ（38 日）。件数 N は N4 で決まる。
 

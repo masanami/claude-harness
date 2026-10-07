@@ -24,10 +24,10 @@ const Dev = "dev"
 
 // PluginMin・PluginMaxExclusive は CLI が対応するプラグイン（plugin/.claude-plugin/plugin.json の version）の範囲
 // [PluginMin, PluginMaxExclusive)。子の claude -p が使う agents/ はインストール済みのプラグインから解決されるため、
-// 範囲外のプラグインでは動き続けない（§7.3）。
+// 範囲外のプラグインでは動き続けない（§7.3）。上限は、薄い /impl（#299）を載せるプラグイン 5.x を受けるため 6.0.0。
 const (
 	PluginMin          = "4.9.0"
-	PluginMaxExclusive = "5.0.0"
+	PluginMaxExclusive = "6.0.0"
 )
 
 // プラグインの marketplace（.claude-plugin/marketplace.json の name）と ID、marketplace の既定の登録元。
