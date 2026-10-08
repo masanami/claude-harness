@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"0199a000-0000-7000-8000-000000000295"}
+{"type":"turn.started"}
+not a json line
+{"type":"error","message":"Reconnecting... 1/5"}
+{"type":"turn.failed","error":{"message":"stream disconnected before completion: error sending request"}}
