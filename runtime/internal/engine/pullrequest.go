@@ -154,7 +154,8 @@ func lastLine(b []byte) string {
 type PRInput struct {
 	RunID            string
 	Base             string
-	Closes           int64
+	Closes           int64   // 0 は closing キーワードを書かない（#305）
+	Refs             []int64 // 本文に Refs #N を書く（#305）
 	Title            string
 	Summary          string
 	Quality          string            // pass | skip | ""（渡されていない）
@@ -172,8 +173,20 @@ func prInputFrom(with map[string]json.RawMessage) (PRInput, error) {
 	if in.Base, ok = jsonString(with["base"]); !ok || in.Base == "" {
 		return in, fmt.Errorf("with.base must be a non-empty string")
 	}
-	if in.Closes, ok = jsonInt(with["closes"]); !ok || in.Closes <= 0 {
-		return in, fmt.Errorf("with.closes must be a positive issue number")
+	if raw, given := with["closes"]; given {
+		if in.Closes, ok = jsonInt(raw); !ok || in.Closes < 0 {
+			return in, fmt.Errorf("with.closes must be an issue number (0 to write no closing keyword)")
+		}
+	}
+	if raw, given := with["refs"]; given {
+		if err := json.Unmarshal(raw, &in.Refs); err != nil {
+			return in, fmt.Errorf("with.refs must be an array of issue numbers: %v", err)
+		}
+		for _, n := range in.Refs {
+			if n <= 0 {
+				return in, fmt.Errorf("with.refs must be an array of positive issue numbers, got %d", n)
+			}
+		}
 	}
 	if in.Title, ok = jsonString(with["title"]); !ok || strings.TrimSpace(in.Title) == "" {
 		return in, fmt.Errorf("with.title must be a non-empty string (the PR title)")
@@ -218,7 +231,17 @@ func RenderPRBody(in PRInput) string {
 	} else {
 		b.WriteString("（要約は渡されていない）\n\n")
 	}
-	fmt.Fprintf(&b, "Closes #%d\n\n", in.Closes)
+	// Issue 参照（#305）。closes が 0 なら closing キーワード（Closes / Fixes / Resolves）を書かない。
+	var links []string
+	if in.Closes > 0 {
+		links = append(links, fmt.Sprintf("Closes #%d", in.Closes))
+	}
+	for _, n := range in.Refs {
+		links = append(links, fmt.Sprintf("Refs #%d", n))
+	}
+	if len(links) > 0 {
+		b.WriteString(strings.Join(links, "\n") + "\n\n")
+	}
 
 	b.WriteString("## 品質ゲート\n\n")
 	switch {

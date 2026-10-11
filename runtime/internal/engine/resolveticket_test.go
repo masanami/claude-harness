@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -30,6 +31,8 @@ type resolved struct {
 	BaseKind      string `json:"base_kind"`
 	BaseSource    string `json:"base_source"`
 	DefaultBranch string `json:"default_branch"`
+	Closes        *int   `json:"closes"`
+	Refs          []int  `json:"refs"`
 	Message       string `json:"message"`
 }
 
@@ -106,6 +109,59 @@ func TestResolveTicket(t *testing.T) {
 			}
 			if c.checkLsR && !strings.Contains(tl.read(tl.git, "calls"), "ls-remote\t--exit-code\t--heads\torigin\trefs/heads/"+c.base+"\n") {
 				t.Errorf("did not check the remote: %s", tl.read(tl.git, "calls"))
+			}
+		})
+	}
+}
+
+// resolve-ticket は Issue 本文の Refs: 行・Closes: なし 行から、PR 本文に書く Issue 参照（closes・refs）を決める（#305）。
+// どちらの行も無ければ closes は Issue 自身・refs は空（従来の Closes #<issue> だけ）。読めない値は links_invalid で止める。
+func TestResolveTicketLinks(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		outcome string
+		closes  int
+		refs    string // refs を , で連結したもの
+		wantMsg string
+	}{
+		{name: "no lines: closes the issue itself", body: "## 背景\nwidget\n", outcome: "ok", closes: 42},
+		{name: "Refs line", body: "Refs: #159\n\n## 背景\n", outcome: "ok", closes: 42, refs: "159"},
+		{name: "Refs line with several numbers", body: "Refs: #159, #160 #161、#162\n", outcome: "ok", closes: 42, refs: "159,160,161,162"},
+		{name: "Refs with backticks, CRLF and a full-width colon", body: "Refs：`#159`\r\n", outcome: "ok", closes: 42, refs: "159"},
+		{name: "two Refs lines are merged without duplicates", body: "Refs: #159, #160\nRefs: #160\nRefs: #12\n", outcome: "ok", closes: 42, refs: "159,160,12"},
+		{name: "Refs to the closed issue itself is dropped", body: "Refs: #42, #159\n", outcome: "ok", closes: 42, refs: "159"},
+		{name: "Closes: なし", body: "Closes: なし\n", outcome: "ok", closes: 0},
+		{name: "Closes: なし and Refs", body: "Closes: なし\nRefs: #155\n", outcome: "ok", closes: 0, refs: "155"},
+		{name: "Closes: none, any case", body: "Closes: None\n", outcome: "ok", closes: 0},
+		{name: "Closes: 無し twice", body: "Closes：無し\nCloses: なし\n", outcome: "ok", closes: 0},
+		{name: "lines in an HTML comment are not read", body: "<!--\nRefs: #1\nCloses: なし\n-->\n", outcome: "ok", closes: 42},
+		{name: "lines in a code block are not read", body: "```\nRefs: #1\nCloses: なし\n```\n", outcome: "ok", closes: 42},
+		{name: "Refs: inside a sentence is not a Refs line", body: "see the Refs: line of #40\n", outcome: "ok", closes: 42},
+		{name: "Refs with a non-number", body: "Refs: #159（要件チケット）\n", outcome: "links_invalid", closes: 42, wantMsg: "#159（要件チケット）"},
+		{name: "Refs to another repository", body: "Refs: masanami/flywheel#159\n", outcome: "links_invalid", closes: 42, wantMsg: "masanami/flywheel#159"},
+		{name: "Closes with another value", body: "Closes: #41\n", outcome: "links_invalid", closes: 42, wantMsg: "Closes: 行の値 '#41'"},
+		{name: "base_missing wins over links_invalid", body: "Base: feat/x\nRefs: x\n", outcome: "base_missing", closes: 42, wantMsg: "remote（origin）に存在しない"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tl := newTools(t)
+			r, code, stderr := resolveTicket(t, tl, c.body)
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			var refs []string
+			for _, n := range r.Refs {
+				refs = append(refs, strconv.Itoa(n))
+			}
+			if r.Outcome != c.outcome || r.Closes == nil || *r.Closes != c.closes || r.Refs == nil || strings.Join(refs, ",") != c.refs {
+				t.Fatalf("got %+v (closes %v)", r, r.Closes)
+			}
+			if c.wantMsg != "" && !strings.Contains(r.Message, c.wantMsg) {
+				t.Errorf("message %q lacks %q", r.Message, c.wantMsg)
+			}
+			if c.outcome == "ok" && r.Message != "" {
+				t.Errorf("ok with a message: %q", r.Message)
 			}
 		})
 	}

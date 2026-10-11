@@ -217,7 +217,8 @@ steps:
     kind: pull-request
     with:
       base: $steps.resolve.base       # 必須
-      closes: $inputs.issue           # 必須（本文の Closes #N）
+      closes: $steps.resolve.closes   # 省略可（本文の Closes #N。省略か 0 なら closing キーワードを書かない）
+      refs: $steps.resolve.refs       # 省略可（本文の Refs #N。Issue 番号の配列）
       title: $steps.implement.pr_title        # 必須（LLM が書くのは題名と要約だけ）
       summary: $steps.implement.summary       # 必須
       quality: $steps.implement.outcome       # pass | skip（skip は「未検証あり」と明記する。I7）
@@ -228,5 +229,6 @@ steps:
 ```
 
 - 作業ブランチを `git push -u origin refs/heads/<branch>:refs/heads/<branch>` し、そのブランチの open な PR（fork からの同名ブランチの PR は除く）が在れば push だけで `updated`（本文は書き換えない。W4）、無ければ `gh pr create --body-file` で `opened`。作業ブランチが base そのもの・リポジトリの既定ブランチ・open な PR の base が違う・open な PR が複数、なら push せず／作らず `step_error`（fail-closed）。
-- PR 本文（概要・品質ゲート・未検証・残指摘・クロスリポジトリ確証）は with の値から Go が決定的に作る。作った本文は run の `logs/<step>.<n>.body.md` に残る。
+- PR 本文（概要・品質ゲート・未検証・残指摘・クロスリポジトリ確証）は with の値から Go が決定的に作る。Issue 参照は概要の直後に `Closes #N`、続けて `refs` の `Refs #N` を 1 行ずつ置く。
+- 同梱の `ticket` では、`resolve-ticket` が Issue 本文の `Refs: #N[, #M]` 行と `Closes: なし` 行を `Base:` 行と同じ読み方（HTML コメントとコードブロックの中は読まない）で読み、`closes`・`refs` を決める。どちらの行も無ければ `Closes #<issue>` だけになる。`Refs:` 行に `#<番号>` 以外の値がある・`Closes:` 行の値が「なし」以外なら `links_invalid` で止まる（#305）。作った本文は run の `logs/<step>.<n>.body.md` に残る。
 - observe 型ゲートの観測 `pr-state`（`with: { pr: <PR 番号> }`）は `gh pr view` で PR の実状態を確かめ、`merged` / `open` / `closed` を返す。

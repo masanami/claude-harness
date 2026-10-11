@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -110,6 +111,39 @@ func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
 	h := newHarness(t, append(env, extraEnv...)...)
 	h.cwd = repo
 	return &ticketFixture{h: h, root: root, repo: repo, origin: origin, fdir: fdir, ghDir: ghDir, dataDir: data, branch: branch, write: write}
+}
+
+// PR 本文の Issue 参照は Issue 本文の Refs: 行・Closes: なし 行に従う（#305 の完了条件）。同梱の ticket ワークフローを
+// 最初の PR 作成まで通し、作られた PR 本文を見る。どちらの行も無い Issue では従来どおり Closes #<issue> だけを書く。
+func TestTicketWorkflowPRLinks(t *testing.T) {
+	closing := regexp.MustCompile(`(?i)\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s*:?\s*#[0-9]`)
+	for _, c := range []struct {
+		name, body string
+		links      string // 概要の後に置かれる参照の行（空なら行を置かない）
+		closing    bool   // closing キーワードがあってよいか
+	}{
+		{name: "Refs line", body: "Refs: #159\n\n## 背景\nwidget が要る\n", links: "Closes #42\nRefs #159\n\n", closing: true},
+		{name: "Closes: なし line", body: "Closes: なし\n\n## 背景\nwidget が要る\n", links: "", closing: false},
+		{name: "Closes: なし and Refs lines", body: "Closes: なし\nRefs: #155\n\n## 背景\n", links: "Refs #155\n\n", closing: false},
+		{name: "neither line", body: "## 背景\nwidget が要る\n", links: "Closes #42\n\n", closing: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newTicketFixture(t)
+			issue, _ := json.Marshal(map[string]any{"number": 42, "title": "Add the widget", "body": c.body, "state": "OPEN"})
+			f.write("issue.json", string(issue))
+			out, errOut, code := f.h.run("run", "--input", "issue=42", "ticket", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts))
+			if code != ExitWaiting {
+				t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
+			}
+			body := readFile(t, filepath.Join(f.ghDir, "body.1.md"))
+			if want := "## 概要\n\nAdds the widget.\n\n" + c.links + "## 品質ゲート\n"; !strings.HasPrefix(body, want) {
+				t.Errorf("PR body does not start with %q:\n%s", want, body)
+			}
+			if got := closing.MatchString(body); got != c.closing {
+				t.Errorf("closing keyword present = %v, want %v:\n%s", got, c.closing, body)
+			}
+		})
+	}
 }
 
 // 同梱の ticket ワークフロー（runtime/workflows/ticket.yaml）を、偽の claude・gh と一時リポジトリで通す（Issue #269 の完了条件）:

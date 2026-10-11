@@ -11,6 +11,7 @@
 #   - ci に timeout（ci-wait.sh の既定の待ち 900 秒より長い 20 分）を付ける
 #   - ci の red_no_log（red で失敗ログが空。CI が実行されずに失敗した等）を fix へ送らず ci-pending で止める（#278）
 #   - implement の review_incomplete（/self-review が self_review: incomplete で終わった）を失敗で止める（#262・#299）
+#   - publish の closes・refs を resolve が Issue 本文の Closes: なし 行・Refs: 行から決めた値にする（#305）
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -25,13 +26,14 @@ limits:
 steps:
   resolve:
     kind: command
-    run: resolve-ticket             # scripts/resolve-ticket.sh: gh issue view＋Base: 行の抽出＋統合ブランチの remote 存在確認
+    run: resolve-ticket             # scripts/resolve-ticket.sh: gh issue view＋Base:・Refs:・Closes: 行の抽出＋統合ブランチの remote 存在確認
     with: { issue: $inputs.issue, base: $inputs.base }
     output: schemas/resolve-ticket.json
     timeout: 2m
     on:
       ok: analyze
       base_missing: { fail: base_missing }          # I3: 作成を促して止まる（手順は output の message に載る）
+      links_invalid: { fail: links_invalid }        # Refs:・Closes: 行が読めない（直し方は output の message に載る。#305）
 
   analyze:
     kind: llm
@@ -113,7 +115,8 @@ steps:
     kind: pull-request
     with:
       base: $steps.resolve.base
-      closes: $inputs.issue
+      closes: $steps.resolve.closes                 # 既定は Issue 自身。Issue 本文の Closes: なし 行で 0（書かない。#305）
+      refs: $steps.resolve.refs                     # Issue 本文の Refs: 行（#305）
       title: $steps.implement.pr_title
       summary: $steps.implement.summary
       quality: $steps.implement.outcome
