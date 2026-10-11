@@ -51,7 +51,8 @@ var builtinWith = map[string][]withSpec{
 	"workspace:" + ActionRelease: {},
 	"pull-request": {
 		{name: "base", typ: "string", required: true},
-		{name: "closes", typ: "integer", required: true},
+		{name: "closes", typ: "integer"}, // 本文に Closes #N を書く Issue。省略か 0 なら closing キーワードを書かない（#305）
+		{name: "refs", typ: "array"},     // 本文に Refs #N を書く Issue 番号の並び（#305）
 		{name: "title", typ: "string", required: true},
 		{name: "summary", typ: "string", required: true},
 		{name: "quality", typ: "string"},          // 実装ステップの outcome（pass / skip）。skip なら未検証を明記する（I7）

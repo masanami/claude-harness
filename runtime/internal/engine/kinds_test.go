@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -455,6 +456,39 @@ func TestPullRequestRefusals(t *testing.T) {
 	})
 }
 
+// with の closes は省略か 0 で「書かない」、refs は正の Issue 番号の配列だけを受ける（#305）。
+func TestPRInputFromLinks(t *testing.T) {
+	base := `"base":"main","title":"t","summary":"s"`
+	for _, c := range []struct {
+		with    string
+		closes  int64
+		refs    []int64
+		wantErr string
+	}{
+		{with: `{` + base + `}`},
+		{with: `{` + base + `,"closes":0,"refs":[]}`, refs: []int64{}},
+		{with: `{` + base + `,"closes":9,"refs":[159,160]}`, closes: 9, refs: []int64{159, 160}},
+		{with: `{` + base + `,"closes":-1}`, wantErr: "with.closes"},
+		{with: `{` + base + `,"refs":[0]}`, wantErr: "with.refs"},
+		{with: `{` + base + `,"refs":["#159"]}`, wantErr: "with.refs"},
+	} {
+		var with map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(c.with), &with); err != nil {
+			t.Fatal(err)
+		}
+		in, err := prInputFrom(with)
+		if c.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("%s: err = %v, want %q", c.with, err, c.wantErr)
+			}
+			continue
+		}
+		if err != nil || in.Closes != c.closes || fmt.Sprint(in.Refs) != fmt.Sprint(c.refs) {
+			t.Errorf("%s: closes %d refs %v err %v", c.with, in.Closes, in.Refs, err)
+		}
+	}
+}
+
 func TestRenderPRBody(t *testing.T) {
 	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
 	body := RenderPRBody(PRInput{RunID: "r1", Base: "main", Closes: 4, Title: "t", Summary: "s",
@@ -471,6 +505,19 @@ func TestRenderPRBody(t *testing.T) {
 	body = RenderPRBody(PRInput{RunID: "r1", Closes: 4, Quality: "deviation", QualityGiven: true, FindingsGiven: true})
 	if !strings.Contains(body, "注意: 実装ステップは deviation で終わっている") {
 		t.Errorf("a deviated implementation must carry the caveat:\n%s", body)
+	}
+	// Issue 参照（#305）: Refs は Closes の後に 1 行ずつ。closes が 0 なら closing キーワードを書かない。
+	body = RenderPRBody(PRInput{RunID: "r1", Closes: 4, Refs: []int64{159, 160}, Summary: "s"})
+	if !strings.Contains(body, "s\n\nCloses #4\nRefs #159\nRefs #160\n\n## 品質ゲート") {
+		t.Errorf("body lacks the Closes and Refs lines:\n%s", body)
+	}
+	body = RenderPRBody(PRInput{RunID: "r1", Refs: []int64{155}, Summary: "s"})
+	if !strings.Contains(body, "s\n\nRefs #155\n\n## 品質ゲート") || regexp.MustCompile(`(?i)\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #`).MatchString(body) {
+		t.Errorf("closes 0 must write Refs only, without a closing keyword:\n%s", body)
+	}
+	body = RenderPRBody(PRInput{RunID: "r1", Summary: "s"})
+	if !strings.Contains(body, "s\n\n## 品質ゲート") {
+		t.Errorf("no closes and no refs must write no reference line:\n%s", body)
 	}
 	// 形の分からない要素も落とさない（JSON のまま載せる）。知っているフィールド以外も残す。
 	body = RenderPRBody(PRInput{RunID: "r1", Closes: 4, Quality: "skip", QualityGiven: true, FindingsGiven: true,

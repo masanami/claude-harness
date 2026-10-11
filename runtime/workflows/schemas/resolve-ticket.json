@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "scripts/resolve-ticket.sh の出力（ticket ワークフローの resolve。I2・I3）",
   "type": "object",
-  "required": ["outcome", "issue", "title", "state", "base", "base_kind", "base_source", "default_branch", "message"],
+  "required": ["outcome", "issue", "title", "state", "base", "base_kind", "base_source", "default_branch", "closes", "refs", "message"],
   "properties": {
-    "outcome": { "type": "string", "enum": ["ok", "base_missing"] },
+    "outcome": { "type": "string", "enum": ["ok", "base_missing", "links_invalid"] },
     "issue": { "type": "integer" },
     "title": { "type": "string" },
     "state": { "type": "string" },
@@ -12,6 +12,8 @@
     "base_kind": { "type": "string", "enum": ["integration", "default"] },
     "base_source": { "type": "string", "enum": ["input", "issue", "default"] },
     "default_branch": { "type": "string" },
+    "closes": { "type": "integer", "minimum": 0, "description": "PR 本文に Closes #N を書く Issue。0 は closing キーワードを書かない（Issue 本文の Closes: なし 行）" },
+    "refs": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "description": "PR 本文に Refs #N を書く Issue（Issue 本文の Refs: 行）" },
     "message": { "type": "string" }
   },
   "additionalProperties": false
