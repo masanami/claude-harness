@@ -119,6 +119,7 @@ steps:
       refs: $steps.resolve.refs                     # Issue 本文の Refs: 行（#305）
       title: $steps.implement.pr_title
       summary: $steps.implement.summary
+      behaviors: $steps.implement.behaviors         # #304: 振る舞いの一覧（テスト名・ケース名・シグネチャと保証すること）
       quality: $steps.implement.outcome
       residual_findings: $steps.implement.residual_findings
       unverified: $steps.implement.unverified

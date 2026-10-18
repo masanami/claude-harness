@@ -111,7 +111,7 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    - テストが適切に書かれているか
    - セキュリティ上の問題がないか
 
-4. 問題があれば後述「問題がある場合の共通ステップ」に進む。無ければ Phase 4 へ進む。
+4. 問題があれば後述「問題がある場合の共通ステップ」に進む。無ければ Phase 3.5 へ進む。
 
 #### 分岐B: 統合ブランチゲート・リスクゲート非該当時
 
@@ -124,7 +124,7 @@ Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だ�
 - `gh pr diff` ベースのレビューに限定すること（ローカルチェックアウト・品質チェックコマンド実行を前提にしないこと）
 - 手順1で取得済みの PR title/body と、`gh pr diff "$PR_NUM"` の変更差分を渡す
 
-報告内容にブロッカーがあれば「問題がある場合の共通ステップ」に進む。無ければ Phase 4 へ進む。
+報告内容にブロッカーがあれば「問題がある場合の共通ステップ」に進む。無ければ Phase 3.5 へ進む。
 
 #### 分岐C: 統合ブランチゲート・リスクゲート該当時
 
@@ -187,7 +187,7 @@ Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だ�
 
 5. **判定**
 
-   - `confirmedBlockers`（手順3の panel-level hold 救済分を含む）が空 → **merge** 判定。`rm -f "$DIFF_FILE"` で後始末して Phase 4 へ進む
+   - `confirmedBlockers`（手順3の panel-level hold 救済分を含む）が空 → **merge** 判定。`rm -f "$DIFF_FILE"` で後始末して Phase 3.5 へ進む
    - `confirmedBlockers` が1件以上 → **hold** 判定。`rm -f "$DIFF_FILE"` で後始末したうえで、`confirmedBlockers` の file:line・reason の一覧を使って「問題がある場合の共通ステップ」に進む。Phase 4 には進まない
 
 #### 問題がある場合の共通ステップ（分岐A/B/Cで共有）
@@ -198,6 +198,28 @@ Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だ�
   ```
   - 分岐Cの場合は `confirmedBlockers` の file:line・reason の一覧を構造化して「内容」に含める
 - 実装エージェントに修正を依頼
+
+### Phase 3.5: マージのリスク分類（判定と根拠を残すだけ）
+
+Phase 3 で問題が無かった PR について、マージのリスク区分（`自動マージ可`／`人間判断`）と根拠をスクリプトで判定し、PR に残す。**区分は Phase 4 の承認ゲートを変えない**（`自動マージ可` でも本番ゲートの承認は省かず、統合ブランチゲートの扱いも変えない。区分を使ってマージを省力化するかは利用側の承認ルールが決める）。
+
+1. **判定**（Phase 0-1 と同じくランチャー経由で呼ぶ。`command not found` のときのフォールバックも同じ）
+   ```bash
+   git fetch origin "$BASE"   # 規則は base ブランチの版を読むので、最新にしてから判定する
+   AI_REVIEW=done   # Phase 3 のレビュー（分岐 A・B・C のいずれか）を最後まで実施していなければ none
+   MERGE_RISK=$(claude-harness-run merge-risk --ai-review "$AI_REVIEW" <<<"$PREFLIGHT")
+   ```
+   - `$PREFLIGHT` は最新の preflight の出力を渡す（Phase 2 で再実行したなら再実行後の値）
+   - exit 0 は `自動マージ可`、1 は `人間判断` で、どちらも stdout の JSON が結果。それ以外の終了（2 = 判定できなかった、ランチャーの失敗等）は stderr を報告し、`人間判断` として扱う
+   - 区分と理由はスクリプトが決める。LLM 側で区分を上書き・再判定しない。リポジトリごとの規則の上書きは、導入先リポジトリの base ブランチにある `.claude/merge-risk-rules.txt` で行う。規則と出力の定義を確かめるときは `claude-harness-run read-plugin-doc "scripts/specs/merge-risk.md"` で読む（非0 終了・マーカーの扱いと、`command not found` のときの Read へのフォールバックは Phase 2 の「参照ファイルの読み出し」と同じ）
+2. **記録**: スクリプトが作った本文（`.comment_markdown`）を書き直さずに PR へ残す。本文にはパスなど PR 由来の値が入るので、コマンド文字列へ埋め込まず `--body-file` で渡す
+   ```bash
+   BODY_DIR=$(mktemp -d)
+   jq -r '.comment_markdown' <<<"$MERGE_RISK" > "$BODY_DIR/merge-risk.md"
+   gh pr comment "$PR_NUM" --body-file "$BODY_DIR/merge-risk.md"
+   rm -rf "$BODY_DIR"
+   ```
+   判定できなかった（`$MERGE_RISK` に JSON が無い）場合はコメントせず、その事実を完了報告に書く
 
 ### Phase 4: マージ
 
@@ -255,4 +277,5 @@ Task ツールで `subagent_type: 'claude-harness:code-reviewer'` を**1回だ�
 1. PRの状態（マージ完了 / 保留 / 修正依頼）
 2. コンフリクト解消の有無と内容
 3. レビューで発見した問題点（あれば）
-4. 次のアクション（必要な場合）
+4. マージのリスク区分と根拠（Phase 3.5 の `label` と `reasons` の全件。Phase 3.5 に進まなかった場合はその事実）
+5. 次のアクション（必要な場合）

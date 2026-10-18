@@ -11,6 +11,7 @@
 
 - `outcome`: `pass`（必須ゲートとセルフレビューを通過）/ `skip`（品質ゲートの一部を実行できなかったが、実装は完了した。pass ではない）/ `failure`（必須ゲートを通過できない）/ `deviation`（上記）/ `review_incomplete`（`/self-review` の報告が `self_review: incomplete`、または `self_review:` 行が無い。レビュアーと合流できていないので `pass`・`skip` にしない。`/self-review` はやり直さず、未回収の委譲先の名前を `unverified` に書く）。
 - `pr_title`: PR の題名（Conventional Commits 形式の 1 行。`deviation` で止まる場合も、この Issue の PR の題名として埋める〔人の判断の後の修正でそのまま使われる〕）。`summary`: PR の概要（何を・なぜ。数段落まで）。**PR 本文の他の節は runtime が下の値から作るので、summary に残指摘や未検証を書き写さない**。
+- `behaviors`: この変更で足した・変えた振る舞いの一覧。1 件 1 要素で、`kind`（`test`〔テスト名〕/ `e2e`〔E2E のケース名〕/ `signature`〔公開関数のシグネチャ〕）・`name`（テスト名・ケース名・シグネチャをコードのとおりに）・`guarantees`（それが保証すること。1 文）。変更した振る舞いが無ければ（docs だけ等）空配列（PR 本文には「なし」と載る）。
 - `residual_findings`: `/self-review` の `residualFindings` の**全件**（`converged` の値に関わらず。件数へ丸めない・severity で間引かない）。各要素は `location`（file:line）・`severity`・`claim`・`reason`。
 - `unverified`: 未検証の事項（skip の理由・実行できなかったゲート・確かめられなかった前提）を 1 件 1 要素で。無ければ空配列。
 - `cross_repo_attestation`: クロスリポジトリ依存の確証結果（形式は feature-implementer の定義どおり）。依存が無ければ空文字。

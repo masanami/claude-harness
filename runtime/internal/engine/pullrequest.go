@@ -158,6 +158,8 @@ type PRInput struct {
 	Refs             []int64 // 本文に Refs #N を書く（#305）
 	Title            string
 	Summary          string
+	Behaviors        []json.RawMessage // 振る舞いの一覧（#304。要素の形は問わない。kind / name / guarantees は表の列に、残りは JSON のまま載せる）
+	BehaviorsGiven   bool
 	Quality          string            // pass | skip | ""（渡されていない）
 	QualityGiven     bool              //
 	ResidualFindings []json.RawMessage // 残指摘の全件（要素の形は問わない。知っているフィールドは読みやすく、残りは JSON のまま載せる）
@@ -194,6 +196,12 @@ func prInputFrom(with map[string]json.RawMessage) (PRInput, error) {
 	in.Title = strings.TrimSpace(in.Title)
 	if in.Summary, ok = jsonString(with["summary"]); !ok {
 		return in, fmt.Errorf("with.summary must be a string")
+	}
+	if raw, given := with["behaviors"]; given {
+		if err := json.Unmarshal(raw, &in.Behaviors); err != nil {
+			return in, fmt.Errorf("with.behaviors must be an array: %v", err)
+		}
+		in.BehaviorsGiven = true
 	}
 	if raw, given := with["quality"]; given {
 		if in.Quality, ok = jsonString(raw); !ok {
@@ -241,6 +249,21 @@ func RenderPRBody(in PRInput) string {
 	}
 	if len(links) > 0 {
 		b.WriteString(strings.Join(links, "\n") + "\n\n")
+	}
+
+	// 振る舞いの一覧（#304）: コードを全部読まずに、変更した振る舞いをテスト名・ケース名・シグネチャで把握できるようにする。
+	switch {
+	case !in.BehaviorsGiven:
+		b.WriteString("## 振る舞いの一覧\n\n（振る舞いの一覧は渡されていない）\n\n")
+	case len(in.Behaviors) == 0:
+		b.WriteString("## 振る舞いの一覧（全 0 件）\n\nなし（変更した振る舞いは無い）\n\n")
+	default:
+		fmt.Fprintf(&b, "## 振る舞いの一覧（全 %d 件）\n\n", len(in.Behaviors))
+		b.WriteString("| 種別 | テスト名・ケース名・シグネチャ | 保証すること |\n|---|---|---|\n")
+		for _, raw := range in.Behaviors {
+			b.WriteString(renderBehavior(raw))
+		}
+		b.WriteString("\n")
 	}
 
 	b.WriteString("## 品質ゲート\n\n")
@@ -298,9 +321,48 @@ func RenderPRBody(in PRInput) string {
 	}
 
 	b.WriteString("---\n\n")
-	b.WriteString("残指摘・未検証・品質ゲートの節は実装ステップ（implement）の出力から作っている。差し戻しの修正（fix）の後の変化は反映されない。\n\n")
-	fmt.Fprintf(&b, "この PR は harness runtime（run `%s`）が作成した。品質ゲート・未検証・残指摘・クロスリポジトリ確証の節は、実装ステップの型付きの出力から runtime が転記した（LLM による要約・件数への丸めを経ていない）。\n", in.RunID)
+	b.WriteString("振る舞いの一覧・残指摘・未検証・品質ゲートの節は実装ステップ（implement）の出力から作っている。差し戻しの修正（fix）の後の変化は反映されない。\n\n")
+	fmt.Fprintf(&b, "この PR は harness runtime（run `%s`）が作成した。振る舞いの一覧・品質ゲート・未検証・残指摘・クロスリポジトリ確証の節は、実装ステップの型付きの出力から runtime が転記した（LLM による要約・件数への丸めを経ていない）。\n", in.RunID)
 	return b.String()
+}
+
+// behaviorKinds は振る舞いの種別（implement-result.json の behaviors[].kind）の表示名。
+var behaviorKinds = map[string]string{"test": "テスト", "e2e": "E2E", "signature": "シグネチャ"}
+
+// renderBehavior は振る舞い 1 件を表の 1 行にする。kind / name / guarantees 以外のフィールド（形の分からない要素そのものを
+// 含む）は「保証すること」の列に JSON のまま添える（情報を落とさない）。
+func renderBehavior(raw json.RawMessage) string {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return "| ? | `" + tableCell(compactRaw(raw)) + "` | |\n"
+	}
+	str := func(k string) string {
+		v, ok := obj[k]
+		if !ok {
+			return ""
+		}
+		delete(obj, k)
+		if s, ok := jsonString(v); ok {
+			return s
+		}
+		return compactRaw(v)
+	}
+	kind, name, guarantees := str("kind"), str("name"), str("guarantees")
+	if label, ok := behaviorKinds[kind]; ok {
+		kind = label
+	}
+	cell := tableCell(guarantees)
+	if len(obj) > 0 {
+		rest, _ := json.Marshal(obj)
+		cell = strings.TrimSpace(cell + " `" + tableCell(compactRaw(rest)) + "`")
+	}
+	return fmt.Sprintf("| %s | `%s` | %s |\n", tableCell(kind), tableCell(strings.ReplaceAll(name, "`", "'")), cell)
+}
+
+// tableCell は Markdown の表のセルに入れられる 1 行へ直す（改行は空白に、| はエスケープする）。
+func tableCell(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	return strings.ReplaceAll(s, "|", "\\|")
 }
 
 // renderFinding は残指摘 1 件を番号付きの項目にする。location / file・line / severity / claim / reason は読みやすく並べ、

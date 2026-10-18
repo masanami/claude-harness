@@ -55,6 +55,7 @@ var builtinWith = map[string][]withSpec{
 		{name: "refs", typ: "array"},     // 本文に Refs #N を書く Issue 番号の並び（#305）
 		{name: "title", typ: "string", required: true},
 		{name: "summary", typ: "string", required: true},
+		{name: "behaviors", typ: "array"},         // 振る舞いの一覧（#304）
 		{name: "quality", typ: "string"},          // 実装ステップの outcome（pass / skip）。skip なら未検証を明記する（I7）
 		{name: "residual_findings", typ: "array"}, // 残指摘の全件（I13）
 		{name: "unverified", typ: "array"},        // 未検証の事項（I7）

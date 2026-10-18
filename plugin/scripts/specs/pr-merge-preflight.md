@@ -13,7 +13,8 @@
 | `commented_bodies` | `[string]` | `COMMENTED` レビューの本文一覧。**重大性の意味判断はスクリプトでは行わない**（呼び出し側 LLM の責務） |
 | `blocking` | bool | 下記 `block_reasons` が1つでもあれば true |
 | `block_reasons` | 配列 | `changes_requested`（reviewDecision ベース。stale な過去レビューでは立たない）/ `ci_failed` / `conflicting` / `merge_blocked`（branch protection の必須条件未達）の部分集合 |
-| `risk` | `{files_changed, insertions, deletions, touches_sensitive}` | 変更規模と sensitive パス接触。パターン正本は `scripts/config/sensitive-paths.txt` |
+| `risk` | `{files_changed, insertions, deletions, touches_sensitive}` | 変更規模と sensitive パス接触。パターン正本は `scripts/config/sensitive-paths.txt`。`files` が取れたときはその一覧（リネーム前のパスを含む）で判定し、取れなければ `gh pr view` の変更ファイルで判定する |
+| `files` | `[{path, previous_path, status, additions, deletions}]` \| null | 変更ファイルごとのパス・リネーム前のパス・変更の種類（`added`・`modified`・`removed`・`renamed` 等）・増減行数。REST（`gh api repos/{owner}/{repo}/pulls/<n>/files --paginate`）で取る。`scripts/merge-risk.sh`（マージのリスク分類）の入力。取得に失敗したら null（stderr に Warning。merge-risk は人間判断にする） |
 
 挙動の要点:
 
