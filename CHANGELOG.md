@@ -29,8 +29,14 @@
 
 - **harness runtime に、`llm` 種類が起動する `claude` へ渡す permission mode の設定を足した（環境変数 `HARNESS_CLAUDE_PERMISSION_MODE`。Issue #299）。** 設定されていれば値をそのまま `--permission-mode` で渡し、設定されていなければ渡さない（これまでどおり `claude` の既定）。値は検査しない（受け付けるモードは `claude` の版が決め、不正な値は `claude` が起動時に拒否する）。run には記録しないので、`run`・`resume`・`approve`（`contract start`・`contract resume`・`predict-conflicts` を含む）のプロセスごとに設定する。渡したモードは各ステップの記録（`argv`）に残る。薄い `/impl` は利用者が設定していなければ `auto` を渡す。
 
+- **`/pr-merge` が、マージのリスク区分（`自動マージ可`／`人間判断`）と根拠を判定して PR にコメントで残すようにした（Phase 3.5。判定は `scripts/merge-risk.sh`。Issue #304）。** 区分は承認ゲートを変えず、マージもしない。`自動マージ可` は、変更パスがすべて自動マージ可の規則（ドキュメント・テストの追加等）に一致し、CI が pass で、レビューが 1 件以上あり、blocking でないときだけ。規則はリポジトリの base ブランチの `.claude/merge-risk-rules.txt` で上書きできる（`docs/customization.md`）。
+- **`/impl` の完了報告に、失敗・差し戻しの原因区分（文脈不足／権限不足／性能不足）と対処の向きを足した（Issue #304）。** `ticket-worker`・`/para-impl` の返却はその区分をそのまま運ぶ。
+- **`ticket` ワークフローが作る PR 本文に「振る舞いの一覧」の節を足した（Issue #304）。** 実装ステップが返す `behaviors`（テスト名・E2E のケース名・公開関数のシグネチャと、それが保証すること）を表で載せる。変更した振る舞いが無ければ「なし」と書く。
+
 ### 変更
 
+- **`scripts/pr-merge-preflight.sh` の出力に `files`（変更ファイルごとのパス・リネーム前のパス・変更の種類・増減行数）を足した（Issue #304）。** REST（`gh api .../pulls/<n>/files --paginate`）で取るので、gh の呼び出しが 1 回増える。取得に失敗しても preflight は止まらず、`files` が null になる。
+- **`ticket` ワークフローの実装ステップの出力スキーマ（`implement-result.json`）に必須の `behaviors` を足した（Issue #304）。**
 - **harness runtime が対応するプラグイン版の上限を 6.0.0 に上げた（`PluginMaxExclusive`。範囲は `>=4.9.0 <6.0.0`）。** 薄い `/impl` を載せるプラグイン 5.x を受けるため。下限は 4.9.0 のまま。
 - **`ticket` ワークフローの実装ステップ（`implement`）が、`/self-review` の `self_review: incomplete`（レビュアーと合流できなかった。#262）を `review_incomplete` として返し、PR へ進めず失敗（`self_review_incomplete`）で止まるようにした（Issue #299）。** これまで runtime はこの返却を区別しておらず、合流できなかった実装が `pass` のまま PR へ進みえた。旧 `/impl` が行っていた `/self-review` のやり直しは持たない（やり直すときは run を新しく始める）。
 - **`/para-impl`・`references/star-parallel.md`・`references/join-gate.md`・`ticket-worker` の文面を、薄い `/impl` に合わせた（Issue #299）。** 旧 `/impl` の Phase 番号への参照と「`/explain-e2e` まで `/impl` が実施する」等の記述を直しただけで、リードと worker の役割分担・ループ・返却の分類は変えていない。

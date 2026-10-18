@@ -108,6 +108,23 @@ fetch_pr_recheck() {
   printf '%s' "$output"
 }
 
+# merge-risk.sh（マージのリスク分類）の入力にする変更ファイルの一覧を REST で取得する。
+# gh pr view --json files と違い、変更の種類（status）とリネーム前のパス（previous_path）が取れる
+# （リネームで human のファイルを docs/ へ移す変更を、新しいパスだけで判定しないため）。
+# 取得に失敗したら null を返し、Warning を出す（preflight 全体は止めない。merge-risk は null を人間判断にする）。
+fetch_pr_files_detail() {
+  local pr_num="$1"
+  local output
+  if ! output=$(gh api "repos/{owner}/{repo}/pulls/${pr_num}/files" --paginate \
+    --jq '.[] | {path: .filename, previous_path: (.previous_filename // null), status, additions, deletions}' 2>/dev/null) ||
+    ! output=$(jq -sc '.' <<<"$output" 2>/dev/null); then
+    echo "Warning: failed to fetch the changed files of PR #${pr_num} via gh api (files will be null)" >&2
+    printf 'null'
+    return 0
+  fi
+  printf '%s' "$output"
+}
+
 # ---------------------------------------------------------------------------
 # 純粋関数（gh を呼ばない。source して直接テスト可能）
 # ---------------------------------------------------------------------------
@@ -410,8 +427,14 @@ main() {
   deletions="$(jq -r '.deletions // 0' <<<"$recheck_json")"
   changed_files="$(jq -r '.changedFiles // 0' <<<"$recheck_json")"
 
-  local touches_sensitive risk_json
-  touches_sensitive="$(compute_touches_sensitive "$files_json" "$patterns")"
+  local touches_sensitive risk_json files_out sensitive_input
+  files_out="$(fetch_pr_files_detail "$pr_num")"
+  # REST の一覧が取れたら、それ（リネーム前のパスを含む）で sensitive を判定する。merge-risk が分類する一覧と同じ材料にするため。
+  sensitive_input="$files_json"
+  if [ "$files_out" != "null" ]; then
+    sensitive_input="$(jq -c '[.[] | {path}, (select(.previous_path != null) | {path: .previous_path})]' <<<"$files_out")"
+  fi
+  touches_sensitive="$(compute_touches_sensitive "$sensitive_input" "$patterns")"
   risk_json=$(build_risk_json "$changed_files" "$insertions" "$deletions" "$touches_sensitive")
 
   jq -n \
@@ -426,6 +449,7 @@ main() {
     --argjson blocking "$BLOCKING" \
     --argjson block_reasons "$BLOCK_REASONS_JSON" \
     --argjson risk "$risk_json" \
+    --argjson files "$files_out" \
     '{
       gate: $gate,
       base: $base,
@@ -437,7 +461,8 @@ main() {
       commented_bodies: $commented_bodies,
       blocking: $blocking,
       block_reasons: $block_reasons,
-      risk: $risk
+      risk: $risk,
+      files: $files
     }'
 }
 

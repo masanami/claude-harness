@@ -13,7 +13,7 @@ func TestTicketStopsWhenSelfReviewIsIncomplete(t *testing.T) {
 	f := newTicketFixture(t)
 	h, fdir, ghDir := f.h, f.fdir, f.ghDir
 	respond(t, fdir, 2, 0, claudeStructured(map[string]any{"outcome": "review_incomplete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
-		"residual_findings": []map[string]string{}, "unverified": []string{"unrecovered: claude-harness:code-reviewer"},
+		"behaviors": []map[string]string{}, "residual_findings": []map[string]string{}, "unverified": []string{"unrecovered: claude-harness:code-reviewer"},
 		"cross_repo_attestation": "", "deviation_report": ""}, 4.0))
 
 	out, errOut, code := h.run("run", "--input", "issue=42", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "ticket")

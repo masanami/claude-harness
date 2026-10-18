@@ -25,6 +25,8 @@
 #       揃っていることを語彙駆動で確かめる（片側だけの記述＝接続漏れを検出）。
 #   (E) 薄い `/impl` の返り方（#299・設計 §11.4 U2）: `--worktree` の経路では `review` ゲートで通常完了として
 #       返し run を残す・他のゲートと失敗の写し方・CLI への版と permission mode の渡し方・合流してから返すこと。
+#   (F) 失敗・差し戻しの原因区分（文脈不足／権限不足／性能不足）: 区分と対処の向きの定義が `/impl` の完了報告に在り、
+#       ticket-worker・para-impl の返却面に接続されていること。
 #   (D) 並列度・直列化の決定権: `--max-parallel` の有無で決定権が分岐する規律を、
 #       参照実装による**真理値表**で固定する。後方互換（引数なし＝従来どおり自分で決める）を
 #       必須ケースとして含み、「上限を超える方向へ動かせる」退行と
@@ -304,6 +306,28 @@ assert_contains "(E) 合流の待ちは上限付きの until ループ（先頭�
   'until [ "$(harness status {run-id} --json | jq -r .status)" != running ]'
 
 echo ""
+echo "=== (F) 失敗・差し戻しの原因区分（3 分類）が完了報告に在る ==="
+# 区分の定義は /impl の完了報告だけが持ち、ticket-worker・para-impl はその区分を運ぶ（返却の面に接続されていなければ上位層に届かない）。
+assert_contains "(F) /impl の完了報告に原因区分の項目が在る" "$IMPL_REPORT" '**失敗・差し戻しの原因区分**'
+for row in \
+  '| 文脈不足 | 指示・前提・守るべきテストが足りず、想定と違うものを作った・判断できなかった | 指示（Issue の完了条件・前提）か守るテストを足して再実行する |' \
+  '| 権限不足 | 必要なコマンド・ファイル・外部サービスへの操作が拒否された | その権限を与えられるかを検討する（与えないなら手順を変える） |' \
+  '| 性能不足 | 文脈と権限は足りているのに、差し戻しの上限まで直しても通らない | 待つ（モデルやツールの更新を待つ。同じ指示での再試行はしない） |'; do
+  assert_contains "(F) /impl の完了報告に区分と対処の向きの行が在る: ${row:2:4}" "$IMPL_REPORT" "$row"
+done
+assert_contains "(F) 差し戻し（rework）があった場合も区分を書く" "$IMPL_REPORT" '差し戻し〔`limits_used.rework` が 1 以上〕があった場合'
+assert_contains "(F) 決めきれないときの既定の区分が決まっている" "$IMPL_REPORT" '決めきれないときは `文脈不足` を選び'
+assert_contains "(F) ticket-worker の返却に原因区分が接続されている" "$(section_body "$TW_FILE" '## 返却内容')" \
+  '原因区分（文脈不足／権限不足／性能不足）と根拠・対処の向き'
+assert_contains "(F) para-impl（単一Issue）の完了報告に原因区分が接続されている" \
+  "$(section_body "$PARA_FILE" '### 単一Issueの場合')" '原因区分（文脈不足／権限不足／性能不足）と根拠・対処の向き'
+assert_contains "(F) para-impl は /impl の区分を作り直さずに運ぶ" \
+  "$(section_body "$PARA_FILE" '### 単一Issueの場合')" '（`/impl` が返した区分をそのまま載せる）'
+assert_contains "(F) ticket-worker は /impl の区分を作り直さずに運ぶ" "$(section_body "$TW_FILE" '## 返却内容')" \
+  '`/impl` が返した区分をそのまま載せる'
+assert_contains "(F) star 型の完了報告に原因区分が接続されている" \
+  "$(section_body "$STAR_FILE" '### 複数Issueの場合（star 型並列実装完了後）')" '原因区分（文脈不足／権限不足／性能不足）と根拠・対処の向き'
+
 echo "=== (D) 並列度・直列化の決定権（--max-parallel の有無で分岐する真理値表） ==="
 
 PARA_P2="$(section_body "$PARA_FILE" '## Phase 2: 並列度と直列化 ── 決定権の所在')"

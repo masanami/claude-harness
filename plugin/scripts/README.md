@@ -5,6 +5,7 @@
 | スクリプト | 仕様ファイル |
 |---|---|
 | pr-merge-preflight.sh | `scripts/specs/pr-merge-preflight.md` |
+| merge-risk.sh | `scripts/specs/merge-risk.md` |
 | quality-check-runner.sh | `scripts/specs/quality-check-runner.md` |
 | extract-acceptance-criteria.sh / check-e2e-traceability.sh | `scripts/specs/extract-acceptance-criteria.md` |
 | collect-review-diff.sh / extract-hunk.sh / cleanup-review-diff.sh | `scripts/specs/collect-review-diff.md` |

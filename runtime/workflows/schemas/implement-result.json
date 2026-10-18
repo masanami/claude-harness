@@ -1,12 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "ticket ワークフローの implement（feature-implementer）の型付き出力。residual_findings・unverified・cross_repo_attestation は pull-request 種類が PR 本文へそのまま転記する（I7・I13）",
+  "description": "ticket ワークフローの implement（feature-implementer）の型付き出力。behaviors・residual_findings・unverified・cross_repo_attestation は pull-request 種類が PR 本文へそのまま転記する（I7・I13）",
   "type": "object",
-  "required": ["outcome", "pr_title", "summary", "residual_findings", "unverified", "cross_repo_attestation", "deviation_report"],
+  "required": ["outcome", "pr_title", "summary", "behaviors", "residual_findings", "unverified", "cross_repo_attestation", "deviation_report"],
   "properties": {
     "outcome": { "type": "string", "enum": ["pass", "skip", "failure", "deviation", "review_incomplete"] },
     "pr_title": { "type": "string" },
     "summary": { "type": "string" },
+    "behaviors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "name", "guarantees"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["test", "e2e", "signature"] },
+          "name": { "type": "string" },
+          "guarantees": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
     "residual_findings": {
       "type": "array",
       "items": {

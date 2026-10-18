@@ -188,7 +188,7 @@ YAML と Go のステップ種類が許す判定は**一致だけ**である。�
 | `select` | 参照 1 つが指す **enum 値をそのまま outcome にする**（副作用なし） | I10（2 段前の値での分岐） |
 | `gate` | ラウンドの区切り。`input` 型（resume 時に型付きの入力を受け、その値が outcome）と `observe` 型（resume 時に外部の実状態を確認し、その結果が outcome。人の申告を信じない）がある。`decider: human \| parent \| any` | I8・P7・R1〜R3・R5 |
 | `workspace` | `acquire`: 呼び出し元が worktree を渡していれば検証して `provided`、無ければ `worktree-setup` を呼んで `created`/`reused`。払い出しは run 内で直列化。`release`: 自分が作ったものだけを `worktree-cleanup` で削除（渡されたものは消さない） | I5・P8・P12 |
-| `pull-request` | push → PR 作成（既存なら push のみ）。本文の**転記節（残指摘の全件・未検証の明記・クロスリポジトリ確証）は型付きの値から Go が生成**する。LLM が書くのは題名と要約だけ | I7・I13・W4 |
+| `pull-request` | push → PR 作成（既存なら push のみ）。本文の**転記節（振る舞いの一覧・残指摘の全件・未検証の明記・クロスリポジトリ確証）は型付きの値から Go が生成**する。LLM が書くのは題名と要約だけ | I7・I13・W4 |
 | `fanout`（見送り） | 子ワークフローを項目ごとに起動。`max_parallel`・`serial_groups`・後続の起動条件（`advance_on`）を持つ。各項目は独立に gate で止まってよく、全項目が終端に達したら `all_terminal`、ゲート待ちが残れば run を `waiting` にする | P9・P10・P7 |
 | `plan-parallel`（見送り） | `max_parallel` が入力にあれば**検証して写すだけ**（判断し直さない）。無ければ計画用の `llm` を呼ぶ。Issue 数が `predict_min_issues`（リテラル）以上なら先に予測の fan-out を行う。計画結果は「受け取った直列グループを緩めていない・天井を超えていない」ことを Go が検証し、追加直列化の差分を出力に残す | P3〜P6・P13 |
 

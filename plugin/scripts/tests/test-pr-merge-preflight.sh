@@ -140,6 +140,13 @@ assert_eq "reviews件数0・attempt>max_attempts -> stop" \
   "stop" "$(reviews_poll_decision 0 11 10)"
 
 # =============================================================================
+echo "=== test: fetch_pr_files_detail ==="
+# gh api の出力（ページごとのオブジェクトの並び）を 1 つの配列にする。取得に失敗したら null（preflight 全体は止めない）。
+assert_eq "REST の変更ファイルを path・previous_path・status・増減行数の配列にする" \
+  '[{"path":"docs/new.md","previous_path":".github/workflows/a.yml","status":"renamed","additions":0,"deletions":0}]' \
+  "$( gh() { printf '{"path":"docs/new.md","previous_path":".github/workflows/a.yml","status":"renamed","additions":0,"deletions":0}\n'; }; fetch_pr_files_detail 1 2>/dev/null )"
+assert_eq "gh api が失敗したら null を返す" "null" "$( gh() { return 1; }; fetch_pr_files_detail 1 2>/dev/null )"
+
 echo "=== test: compute_touches_sensitive ==="
 # =============================================================================
 
@@ -360,6 +367,9 @@ fetch_pr_recheck() {
 # shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
 fetch_pr_review_decision() { printf 'APPROVED'; }
 
+# shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き。以降の main 呼び出しにも効く）
+fetch_pr_files_detail() { printf '[{"path":"src/foo.ts","previous_path":null,"status":"modified","additions":5,"deletions":1}]'; }
+
 # shellcheck disable=SC2034  # poll_for_reviews 内で参照される（source元のグローバル変数）
 POLL_SLEEP_CMD="fake_sleep"
 # shellcheck disable=SC2034  # poll_for_reviews 内で参照される（source元のグローバル変数）
@@ -374,6 +384,25 @@ assert_eq "再取得後: blockingはfalse（CI pass・conflictなし・reviewDec
   "false" "$(jq -r '.blocking' <<<"$MAIN_OUTPUT")"
 assert_eq "再取得後: risk.files_changedが再取得後のfilesを反映" "1" "$(jq -r '.risk.files_changed' <<<"$MAIN_OUTPUT")"
 assert_eq "再取得後: risk.insertionsが再取得後の値を反映" "5" "$(jq -r '.risk.insertions' <<<"$MAIN_OUTPUT")"
+assert_eq "REST の一覧（files）で sensitive を判定する（gh pr view の files は src/foo.ts のみ）" "false" "$(jq -r '.risk.touches_sensitive' <<<"$MAIN_OUTPUT")"
+assert_eq "files に変更ファイルの詳細（status・previous_path・増減行数）を渡す（merge-risk の入力）" \
+  '[{"path":"src/foo.ts","previous_path":null,"status":"modified","additions":5,"deletions":1}]' "$(jq -c '.files' <<<"$MAIN_OUTPUT")"
+# sensitive の判定材料: REST の一覧が取れたらそれ（リネーム前のパスを含む）、取れなければ gh pr view の files。
+fetch_pr_files_detail() { printf '[{"path":"docs/new.md","previous_path":".github/workflows/a.yml","status":"renamed","additions":0,"deletions":0}]'; }
+assert_eq "REST のリネーム前のパスが sensitive なら touches_sensitive=true（gh pr view の files は src/foo.ts のみ）" \
+  "true" "$(main "123" 1 2>/dev/null | jq -r '.risk.touches_sensitive')"
+fetch_pr_files_detail() { printf 'null'; }
+fetch_pr_recheck() { printf '{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","files":[{"path":".github/workflows/ci.yml"}],"additions":1,"deletions":0,"changedFiles":1}'; }
+assert_eq "REST の一覧が null なら gh pr view の files で判定する" \
+  "true null" "$(main "123" 1 2>/dev/null | jq -r '"\(.risk.touches_sensitive) \(.files)"')"
+fetch_pr_files_detail() { printf '[{"path":"src/foo.ts","previous_path":null,"status":"modified","additions":5,"deletions":1}]'; }
+fetch_pr_recheck() {
+  echo "$(($(cat "$RECHECK_CALL_COUNT_FILE") + 1))" >"$RECHECK_CALL_COUNT_FILE"
+  printf '{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","files":[{"path":"src/foo.ts"}],"additions":5,"deletions":1,"changedFiles":1}'
+}
+echo 0 >"$CHECKS_CALL_COUNT_FILE"
+echo 0 >"$RECHECK_CALL_COUNT_FILE"
+MAIN_OUTPUT="$(main "123" 1)"
 assert_eq "fetch_pr_checksはポーリング後に1回だけ呼ばれる" "1" "$(cat "$CHECKS_CALL_COUNT_FILE")"
 assert_eq "fetch_pr_recheckが1回呼ばれる" "1" "$(cat "$RECHECK_CALL_COUNT_FILE")"
 

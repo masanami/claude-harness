@@ -98,8 +98,11 @@ func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
 		{"location": "widget.go:20", "severity": "minor", "claim": "second residual finding", "reason": "out of scope"},
 	}
 	respond(t, fdir, 1, 0, claudeStructured(map[string]any{"outcome": "ok", "e2e_target": "no", "e2e_reason": "internal only", "branch": branch, "critical_design": ""}, 0.3))
+	behaviors := []map[string]string{
+		{"kind": "test", "name": "TestWidgetRejectsEmpty", "guarantees": "空の入力は 400 を返す"},
+	}
 	respond(t, fdir, 2, 0, claudeStructured(map[string]any{"outcome": "pass", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
-		"residual_findings": findings, "unverified": []string{}, "cross_repo_attestation": "", "deviation_report": ""}, 4.0))
+		"behaviors": behaviors, "residual_findings": findings, "unverified": []string{}, "cross_repo_attestation": "", "deviation_report": ""}, 4.0))
 	respond(t, fdir, 3, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "abc", "summary": "committed"}, 4.5))
 	respond(t, fdir, 4, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed the failing test", "deviation_report": ""}, 5.25))
 	respond(t, fdir, 5, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "def", "summary": "committed"}, 5.5))
@@ -136,7 +139,10 @@ func TestTicketWorkflowPRLinks(t *testing.T) {
 				t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 			}
 			body := readFile(t, filepath.Join(f.ghDir, "body.1.md"))
-			if want := "## 概要\n\nAdds the widget.\n\n" + c.links + "## 品質ゲート\n"; !strings.HasPrefix(body, want) {
+			// 振る舞いの一覧（#304）は参照の行の後、品質ゲートの前に、implement が返した behaviors の表として載る。
+			behaviors := "## 振る舞いの一覧（全 1 件）\n\n| 種別 | テスト名・ケース名・シグネチャ | 保証すること |\n|---|---|---|\n" +
+				"| テスト | `TestWidgetRejectsEmpty` | 空の入力は 400 を返す |\n\n"
+			if want := "## 概要\n\nAdds the widget.\n\n" + c.links + behaviors + "## 品質ゲート\n"; !strings.HasPrefix(body, want) {
 				t.Errorf("PR body does not start with %q:\n%s", want, body)
 			}
 			if got := closing.MatchString(body); got != c.closing {

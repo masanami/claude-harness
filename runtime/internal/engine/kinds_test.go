@@ -508,15 +508,15 @@ func TestRenderPRBody(t *testing.T) {
 	}
 	// Issue 参照（#305）: Refs は Closes の後に 1 行ずつ。closes が 0 なら closing キーワードを書かない。
 	body = RenderPRBody(PRInput{RunID: "r1", Closes: 4, Refs: []int64{159, 160}, Summary: "s"})
-	if !strings.Contains(body, "s\n\nCloses #4\nRefs #159\nRefs #160\n\n## 品質ゲート") {
+	if !strings.Contains(body, "s\n\nCloses #4\nRefs #159\nRefs #160\n\n## 振る舞いの一覧") {
 		t.Errorf("body lacks the Closes and Refs lines:\n%s", body)
 	}
 	body = RenderPRBody(PRInput{RunID: "r1", Refs: []int64{155}, Summary: "s"})
-	if !strings.Contains(body, "s\n\nRefs #155\n\n## 品質ゲート") || regexp.MustCompile(`(?i)\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #`).MatchString(body) {
+	if !strings.Contains(body, "s\n\nRefs #155\n\n## 振る舞いの一覧") || regexp.MustCompile(`(?i)\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #`).MatchString(body) {
 		t.Errorf("closes 0 must write Refs only, without a closing keyword:\n%s", body)
 	}
 	body = RenderPRBody(PRInput{RunID: "r1", Summary: "s"})
-	if !strings.Contains(body, "s\n\n## 品質ゲート") {
+	if !strings.Contains(body, "s\n\n## 振る舞いの一覧") {
 		t.Errorf("no closes and no refs must write no reference line:\n%s", body)
 	}
 	// 形の分からない要素も落とさない（JSON のまま載せる）。知っているフィールド以外も残す。
@@ -526,6 +526,77 @@ func TestRenderPRBody(t *testing.T) {
 		"## 未検証", "未検証の事項は列挙されていない", "（渡されていない）"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// 振る舞いの一覧（#304）: 渡された全件を表で載せる。0 件は「なし」、渡されていなければその旨を書く（0 件と区別する）。
+func TestRenderPRBodyBehaviors(t *testing.T) {
+	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
+	body := RenderPRBody(PRInput{RunID: "r1", Summary: "s", BehaviorsGiven: true, Behaviors: []json.RawMessage{
+		raw(`{"kind":"test","name":"TestWidgetRejectsEmpty","guarantees":"空の入力は 400 を返す"}`),
+		raw(`{"kind":"e2e","name":"widget を作成して一覧に出る","guarantees":"作成後の一覧に\n新しい widget が | 付きで出る"}`),
+		raw(`{"kind":"signature","name":"func NewWidget(name string) (*Widget, error)","guarantees":"name が空ならエラー","note":"extra"}`),
+		raw(`"free text"`),
+	}})
+	for _, want := range []string{
+		"## 振る舞いの一覧（全 4 件）\n\n| 種別 | テスト名・ケース名・シグネチャ | 保証すること |\n|---|---|---|\n",
+		"| テスト | `TestWidgetRejectsEmpty` | 空の入力は 400 を返す |\n",
+		"| E2E | `widget を作成して一覧に出る` | 作成後の一覧に 新しい widget が \\| 付きで出る |\n",
+		"| シグネチャ | `func NewWidget(name string) (*Widget, error)` | name が空ならエラー `{\"note\":\"extra\"}` |\n",
+		"| ? | `\"free text\"` | |\n",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if i, j := strings.Index(body, "## 振る舞いの一覧"), strings.Index(body, "## 品質ゲート"); i < 0 || j < i {
+		t.Errorf("the behaviors section must come before the quality gate section:\n%s", body)
+	}
+	body = RenderPRBody(PRInput{RunID: "r1", Summary: "s", BehaviorsGiven: true})
+	if !strings.Contains(body, "## 振る舞いの一覧（全 0 件）\n\nなし（変更した振る舞いは無い）\n") {
+		t.Errorf("no behaviors must be written as なし:\n%s", body)
+	}
+	body = RenderPRBody(PRInput{RunID: "r1", Summary: "s"})
+	if !strings.Contains(body, "## 振る舞いの一覧\n\n（振る舞いの一覧は渡されていない）") || strings.Contains(body, "全 0 件）\n\nなし") {
+		t.Errorf("behaviors that were not passed must not read as なし:\n%s", body)
+	}
+	var with map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(`{"base":"main","title":"t","summary":"s","behaviors":"not an array"}`), &with)
+	if _, err := prInputFrom(with); err == nil || !strings.Contains(err.Error(), "with.behaviors") {
+		t.Errorf("a non-array behaviors must be rejected: %v", err)
+	}
+}
+
+// 振る舞いの種別は implement-result.json の enum と表示名の表（behaviorKinds）で一致する（片方だけに足すと、生の値が PR 本文に出る）。
+func TestBehaviorKindsMatchTheSchema(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "workflows", "schemas", "implement-result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties struct {
+			Behaviors struct {
+				Items struct {
+					Properties struct {
+						Kind struct {
+							Enum []string `json:"enum"`
+						} `json:"kind"`
+					} `json:"properties"`
+				} `json:"items"`
+			} `json:"behaviors"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	enum := schema.Properties.Behaviors.Items.Properties.Kind.Enum
+	if len(enum) == 0 || len(enum) != len(behaviorKinds) {
+		t.Fatalf("schema enum %v and behaviorKinds %v differ in size", enum, behaviorKinds)
+	}
+	for _, k := range enum {
+		if _, ok := behaviorKinds[k]; !ok {
+			t.Errorf("schema kind %q has no label in behaviorKinds", k)
 		}
 	}
 }

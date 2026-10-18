@@ -167,6 +167,21 @@ model: opus
 
 ---
 
+## 5-2. マージのリスク分類の規則（`/pr-merge`）
+
+`/pr-merge` は PR ごとにマージのリスク区分（`自動マージ可`／`人間判断`）と根拠を判定し、PR にコメントで残す（マージはしない。区分を使ってマージを省力化するかは利用側の承認ルールが決める）。既定規則は `scripts/merge-risk.sh` にあり、リポジトリの **base ブランチ**に `.claude/merge-risk-rules.txt` を置くと、既定規則より先に照合される:
+
+```text
+# <区分> <glob>。区分は human（人間判断）/ auto（自動マージ可）/ test（追加だけなら自動マージ可）
+auto src/ui/*
+human docs/adr/*
+```
+
+- 作業ツリーや PR 側の版は読まない（PR が自分を判定する規則を書き換えられないため）。規則ファイル自体の変更と、`scripts/config/sensitive-paths.txt` に一致するパスの変更は、規則で外せない人間判断になる
+- 書式と判定条件の正本は `plugin/scripts/specs/merge-risk.md`
+
+---
+
 ## 6. カスタマイズの優先順位
 
 1. **プロジェクトの `.claude/` 内のファイル**（最優先）
