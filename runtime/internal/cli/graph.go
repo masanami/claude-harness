@@ -30,7 +30,8 @@ const (
 func cmdGraph(args []string, env Env) int {
 	flags, pos, err := parseArgs(args,
 		flagSpec{name: "format", value: true}, flagSpec{name: "json"}, flagSpec{name: "run", value: true},
-		flagSpec{name: "workflow-dir", value: true}, flagSpec{name: "scripts-dir", value: true})
+		flagSpec{name: "workflow-dir", value: true}, flagSpec{name: "scripts-dir", value: true},
+		flagSpec{name: "override", value: true})
 	if err != nil {
 		return usageErr(env, err)
 	}
@@ -54,7 +55,7 @@ func cmdGraph(args []string, env Env) int {
 		if len(pos) > 0 {
 			return usageErr(env, errors.New("graph takes either a workflow or --run <run-id>, not both"))
 		}
-		for _, f := range []string{"workflow-dir", "scripts-dir"} {
+		for _, f := range []string{"workflow-dir", "scripts-dir", "override"} {
 			if _, ok := flags[f]; ok {
 				return usageErr(env, fmt.Errorf("--%s cannot be used with --run (the run's record decides the workflow)", f))
 			}
@@ -72,7 +73,16 @@ func cmdGraph(args []string, env Env) int {
 	if err != nil {
 		return usageErr(env, err)
 	}
-	wf, err := workflow.LoadAndValidate(path, workflow.Options{ScriptsDir: src.sd})
+	// 上書きは run・validate と同じ置き場から同じ順（リポジトリ → --override）で重ね、上書き後の形を描く（§5.1）。
+	arg, err := argOverride(flags)
+	if err != nil {
+		return usageErr(env, err)
+	}
+	srcs, err := overrideSources(env, workflowID(path), arg)
+	if err != nil {
+		return usageErr(env, err)
+	}
+	wf, err := workflow.LoadWithOverrides(path, workflow.Options{ScriptsDir: src.sd}, srcs)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "harness: workflow is not valid\n%v\n", err)
 		return ExitUsage
@@ -98,6 +108,8 @@ func writeGraph(env Env, g *graph.Graph, format string) {
 }
 
 // graphRun は run の記録から resume と同じ手順（engine.Reopen）で定義を組み立て直し、その形に現在地を重ねる（§5.2）。
+// 上書きで始めた run は、Reopen が run ディレクトリの上書きの写しを重ねて effective_hash と照合した定義を描く。上書きの
+// 記録が無い run（上書きなしで始めた run・上書きを記録する前の版で始めた run）は元の定義をそのまま描く。
 // status と違い、runner の居ない実行中の run を interrupted に記録し直さない（§4: 読み取りのコマンドは状態を変えない）。
 // Reopen は定義と上書きの写しを読んで照合するだけで、run には何も書かない。
 func graphRun(env Env, id, format string) int {
@@ -112,12 +124,6 @@ func graphRun(env Env, id, format string) int {
 		return ExitFailed
 	}
 	hint := fmt.Sprintf("harness status %s still shows where the run is", st.RunID)
-	// 上書きの写しから組み立て直した形の描き方（changes・overridden・skipped）は段 3（#317）で足す。それまでは、
-	// 上書きの印の無い形に重ねて付け替えた辺を元の定義の辺のように見せないよう、描かずに止める。
-	if len(st.Overrides.Overrides) > 0 {
-		fmt.Fprintf(env.Stderr, "harness: run %s started with overrides; graph --run does not draw an overridden workflow yet\n%s\n", st.RunID, hint)
-		return ExitFailed
-	}
 	eng, err := engine.Reopen(run, st)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "harness: cannot rebuild the workflow run %s started with, so its shape is not drawn: %v\n%s\n", st.RunID, err, hint)
@@ -133,6 +139,15 @@ func graphRun(env Env, id, format string) int {
 		cli = version.CLI()
 	}
 	g := graph.Build(eng.WF, source, cli)
+	// 組み立て直した定義の上書きは run ディレクトリの写しを指すので、上書きの一覧は run の記録（読んだファイルと写し）で出す
+	// （status --json の workflow.overrides と同じ値）。
+	if refs := st.Overrides.Overrides; len(refs) > 0 {
+		g.Workflow.Overrides = g.Workflow.Overrides[:0]
+		for _, ref := range refs {
+			cp := ref.Copy
+			g.Workflow.Overrides = append(g.Workflow.Overrides, graph.Override{Layer: ref.Layer, Path: ref.Path, SHA256: ref.SHA256, Copy: &cp})
+		}
+	}
 	g.Run = graph.NewRun(st, runnerAlive(st), func(u *runstate.Unit) graph.Waiting { return graph.Waiting(waiting(st.RunID, u)) })
 	writeGraph(env, g, format)
 	return ExitOK

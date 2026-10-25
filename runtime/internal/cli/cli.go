@@ -96,9 +96,10 @@ commands:
   validate [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [<workflow>...]
       statically check workflow definitions (all *.yaml in the workflow directory by default);
       with overrides, also lists the override files read and the values they set (changes)
-  graph [--format text|json|mermaid] [--json] [--workflow-dir DIR] [--scripts-dir DIR] <workflow>
+  graph [--format text|json|mermaid] [--json] [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] <workflow>
   graph [--format text|json|mermaid] [--json] --run <run-id>
       read-only: show the shape of a workflow (steps, transitions, gates, ends); --json is --format json;
+      overrides (the repository's and --override) are applied as in run and validate, with what they changed;
       with --run, the shape of the workflow the run started with and where the run is (records nothing)
       (exit 0 when it printed it, 1 when the run is missing or its workflow cannot be rebuilt,
       2 on usage or an invalid workflow; never 3 or 4)

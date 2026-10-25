@@ -22,6 +22,9 @@ var (
 // --run を付けたときに凡例へ足す項目（§6.1）。
 var runLegendItems = []string{"> current step", "* visited (executions, last outcome)"}
 
+// 上書きで到達できなくなったステップがあるときに凡例へ足す項目（§5.3）。そのステップの遷移は破線の印（..> 等）で書く。
+var skippedLegendItems = []string{"- skipped by an override", "..> transition of a skipped step"}
+
 const (
 	// attrMax を超える種類の欄（長い select の参照等）は欄を広げず、その行だけ後ろへはみ出させる。
 	attrMax = 26
@@ -50,7 +53,11 @@ func WriteText(w io.Writer, g *Graph, width int) {
 	lines := wrapAt(fmt.Sprintf("workflow %s (%s, cli %s)  ", g.Workflow.ID, g.Workflow.Source, g.Workflow.CLIVersion),
 		[]string{"entry: " + g.Entry}, "  ", contIndent, width)
 	lines = append(lines, wrapAt("limits: ", ls, " ", legendIndent, width)...)
+	lines = append(lines, overrideLines(g, width)...)
 	legend := legendItems
+	if hasSkipped(g) {
+		legend = append(append([]string{}, legend...), skippedLegendItems...)
+	}
 	if g.Run != nil {
 		legend = append(append([]string{}, legend...), runLegendItems...)
 	}
@@ -76,11 +83,14 @@ func WriteText(w io.Writer, g *Graph, width int) {
 	marks, notes := runMarks(g.Run)
 	for _, n := range steps {
 		mark := marks[n.ID]
+		if mark == "" && n.Skipped {
+			mark = "-"
+		}
 		if mark == "" {
 			mark = " "
 		}
 		head := mark + " " + pad(n.ID, idw) + "  " + pad(attrs[n.ID], attrw) + "  "
-		items := transitions(g, n.ID, limits)
+		items := transitions(g, n.ID, limits, n.Skipped)
 		if note := notes[n.ID]; note != "" {
 			// 現在地の要約は最後の遷移に続けて置き、折り返しても行き先と取り違えないよう遷移の区切りでは書かない。
 			if len(items) == 0 {
@@ -138,8 +148,62 @@ func attr(n *Node) string {
 	return strings.Join(parts, " ")
 }
 
+// overrideLines は上書きを重ねた形の見出しに置く、読んだ上書き（層とパス）と効いた値（changes）の行。上書きが無ければ
+// 何も出さない（上書きの無い形の表示は従来のまま）。
+func overrideLines(g *Graph, width int) []string {
+	var lines []string
+	if len(g.Workflow.Overrides) > 0 {
+		var ovs []string
+		for _, ov := range g.Workflow.Overrides {
+			ovs = append(ovs, ov.Layer+" "+ov.Path)
+		}
+		lines = append(lines, wrapAt("overrides: ", ovs, ", ", legendIndent, width)...)
+	}
+	if len(g.Workflow.Changes) > 0 {
+		var cs []string
+		for _, c := range g.Workflow.Changes {
+			cs = append(cs, fmt.Sprintf("%s: %s -> %s (%s)", c.Key, ChangeValue(c.From), ChangeValue(c.To), c.Layer))
+		}
+		lines = append(lines, wrapAt("changes: ", cs, ", ", legendIndent, width)...)
+	}
+	return lines
+}
+
+// ChangeValue は changes の値を表示の文字列にする（数は短い 10 進、元の定義に無いキーは (unset)）。
+func ChangeValue(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "(unset)"
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case string:
+		return x
+	}
+	return fmt.Sprint(v)
+}
+
+func hasSkipped(g *Graph) bool {
+	for _, n := range g.Nodes {
+		if n.Skipped {
+			return true
+		}
+	}
+	return false
+}
+
+// overriddenNote は付け替えた辺に添える元の行き先と層。
+func overriddenNote(e Edge) string {
+	if e.Overridden == nil {
+		return ""
+	}
+	return fmt.Sprintf(" (override %s, was %s)", e.Overridden.Layer, e.Overridden.From)
+}
+
 // transitions は 1 ステップの遷移を outcome ごとに 1 項目にする（尽きたときの辺は通常の辺の項目に括弧で添える）。
-func transitions(g *Graph, from string, limits map[string]float64) []string {
+// skipped なら（上書きで到達できなくなったステップ）、行き先の印を破線の形（..> ..! ..= ..~）にする。
+func transitions(g *Graph, from string, limits map[string]float64, skipped bool) []string {
 	var items []string
 	for i := 0; i < len(g.Edges); i++ {
 		e := g.Edges[i]
@@ -150,38 +214,48 @@ func transitions(g *Graph, from string, limits map[string]float64) []string {
 		if i+1 < len(g.Edges) && g.Edges[i+1].From == from && g.Edges[i+1].Outcome == e.Outcome && g.Edges[i+1].Exhausted != nil {
 			ex = &g.Edges[i+1]
 		}
+		var item string
 		switch {
 		case e.Kind == "retry":
-			items = append(items, fmt.Sprintf("%s ~ %s (retry<=%d%s)", e.Outcome, e.To, e.Retry, then(ex)))
+			item = fmt.Sprintf("%s %s %s (retry<=%d%s)", e.Outcome, dash("~", skipped), e.To, e.Retry, then(ex, skipped))
 		case e.Limit != "":
 			bound := e.Limit
 			if v, ok := limits[e.Limit]; ok {
 				bound += "<=" + num(v)
 			}
-			items = append(items, fmt.Sprintf("%s ~ %s (%s%s)", e.Outcome, e.To, bound, then(ex)))
+			item = fmt.Sprintf("%s %s %s (%s%s)", e.Outcome, dash("~", skipped), e.To, bound, then(ex, skipped))
 		default:
-			items = append(items, e.Outcome+" "+target(e))
+			item = e.Outcome + " " + target(e, skipped)
 		}
+		items = append(items, item+overriddenNote(e))
 	}
 	return items
 }
 
-func then(ex *Edge) string {
+func then(ex *Edge, skipped bool) string {
 	if ex == nil {
 		return ""
 	}
-	return ", then " + target(*ex)
+	return ", then " + target(*ex, skipped)
 }
 
 // target は行き先を印つきで書く: 終端は ! <理由>・= <理由>、それ以外は -> <ステップ>。
-func target(e Edge) string {
+func target(e Edge, skipped bool) string {
 	switch e.Kind {
 	case "fail":
-		return "! " + strings.TrimPrefix(e.To, "fail:")
+		return dash("!", skipped) + " " + strings.TrimPrefix(e.To, "fail:")
 	case "done":
-		return "= " + strings.TrimPrefix(e.To, "done:")
+		return dash("=", skipped) + " " + strings.TrimPrefix(e.To, "done:")
 	}
-	return "-> " + e.To
+	return dash("->", skipped) + " " + e.To
+}
+
+// dash は skipped のステップの遷移の印を破線の形にする（-> は ..>、! = ~ は ..! ..= ..~）。
+func dash(sym string, skipped bool) string {
+	if !skipped {
+		return sym
+	}
+	return ".." + strings.TrimPrefix(sym, "-")
 }
 
 // wrapAt は prefix の後に items を sep でつなぎ、width を超える前で折り返す。続きの行は indent 桁で字下げする
