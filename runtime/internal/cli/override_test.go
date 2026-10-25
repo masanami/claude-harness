@@ -161,14 +161,14 @@ func TestValidateOverrideLayers(t *testing.T) {
 
 // 閉じたキー・元の定義に無い名前・型の違う値は validate が拒否する（§5.3）。どのファイルの何行目かを示す。
 func TestValidateOverrideRejectsClosedKeys(t *testing.T) {
-	arg := writeFile(t, filepath.Join(t.TempDir(), "bad.yaml"), "schema: harness.workflow-override/v1\nworkflow: ticket\nsteps:\n  human-merge: { decider: any }\n  implement: { prompt: other.md }\n")
+	arg := writeFile(t, filepath.Join(t.TempDir(), "bad.yaml"), "schema: harness.workflow-override/v1\nworkflow: ticket\nsteps:\n  review: { decider: human }\n  implement: { prompt: other.md }\n")
 	h := newHarness(t)
 	out, errOut, code := h.run("validate", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "--override", arg, "ticket")
 	if code != ExitFailed {
 		t.Fatalf("validate exit %d\n%s\n%s", code, out, errOut)
 	}
 	for _, want := range []string{
-		arg + ":4: steps.human-merge.decider cannot be overridden",
+		arg + ":4: steps.review.decider cannot be overridden",
 		arg + ":5: steps.implement.prompt cannot be overridden",
 	} {
 		if !strings.Contains(errOut, want) {

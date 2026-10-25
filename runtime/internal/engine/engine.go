@@ -141,6 +141,7 @@ func copyOverrides(run *runstate.Run, wf *workflow.Workflow) (runstate.OverrideR
 		rec.Changes = append(rec.Changes, runstate.OverrideChange{Key: c.Key, From: c.From, To: c.To, Layer: c.Layer})
 	}
 	rec.EffectiveHash = wf.EffectiveHash
+	rec.SkippedSteps = wf.SkippedSteps
 	return rec, nil
 }
 

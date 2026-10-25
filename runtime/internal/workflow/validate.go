@@ -33,9 +33,11 @@ func LoadAndValidate(path string, opts Options) (*Workflow, error) {
 }
 
 type validator struct {
-	wf       *Workflow
-	opts     Options
-	problems Problems
+	wf         *Workflow
+	opts       Options
+	problems   Problems
+	overridden bool            // 上書きを重ねた定義を検査している
+	skipped    map[string]bool // 上書きの付け替えで到達できなくなったステップ（誤りにしない）
 }
 
 func (v *validator) errf(line int, format string, args ...any) {
@@ -46,7 +48,20 @@ func (v *validator) errf(line int, format string, args ...any) {
 // 参照先の存在と型・到達不能なステップ・limit の定義・run の参照先の実在。
 // 加えて、数える遷移（limit・retry）もゲートも通らない循環を拒否する（止まらない run を作らないため）。
 func Validate(wf *Workflow, opts Options) Problems {
-	v := &validator{wf: wf, opts: opts}
+	return validate(wf, opts, false, nil)
+}
+
+// validate は Validate の本体。overridden は上書きを重ねた定義（LoadWithOverrides）を検査するときに真にし、skipped の
+// ステップが到達できないことを誤りにしない（§6.2 の規則 5）。上書きを重ねた定義では overridable.routes の宣言の検査も
+// しない（元の定義で検査済みで、遷移先は付け替え後の値になっている）。
+func validate(wf *Workflow, opts Options, overridden bool, skipped []string) Problems {
+	v := &validator{wf: wf, opts: opts, overridden: overridden}
+	for _, id := range skipped {
+		if v.skipped == nil {
+			v.skipped = map[string]bool{}
+		}
+		v.skipped[id] = true
+	}
 	base := strings.TrimSuffix(filepath.Base(wf.Path), filepath.Ext(wf.Path))
 	if wf.ID != base {
 		v.errf(0, "id %q must equal the file name %q", wf.ID, base)
@@ -68,6 +83,9 @@ func Validate(wf *Workflow, opts Options) Problems {
 	v.budget()
 	for _, s := range wf.Steps {
 		v.onTable(s)
+	}
+	if !v.overridden {
+		v.routeDecls()
 	}
 	if len(v.problems) > 0 {
 		// 参照・到達の検査は outcome と遷移先が確定していることを前提にする。
@@ -650,7 +668,7 @@ func (v *validator) sessions(g *graph) {
 func (v *validator) reachability(g *graph) {
 	r := g.reachable(nil)
 	for _, s := range v.wf.Steps {
-		if !r[s.ID] {
+		if !r[s.ID] && !v.skipped[s.ID] {
 			v.errf(s.Line, "steps.%s is unreachable from the first step %q", s.ID, g.entry)
 		}
 	}

@@ -80,6 +80,8 @@ type Workflow struct {
 	Inputs      []*Input
 	Limits      []*Limit
 	Steps       []*Step
+	// Routes は overridable.routes（docs/harness-runtime-overrides.md §5.2）。上書きで付け替えてよい遷移と候補。
+	Routes []*RouteDecl
 
 	// Path は読み込んだ YAML のパス、Dir は output 等の相対パスの起点、Hash は YAML のバイト列の sha256。
 	Path string
@@ -88,9 +90,11 @@ type Workflow struct {
 
 	// 上書き（docs/harness-runtime-overrides.md）を重ねた定義だけが持つ。Hash は元の定義のまま変えず（§7.1）、
 	// Overrides は重ねた順（層の順）、Changes は効いた値、EffectiveHash は上書き後の定義を正規化した表現の sha256。
+	// SkippedSteps は付け替えでだけ開始ステップから到達できなくなったステップ（宣言順。§6.2 の規則 5）。
 	Overrides     []*Override
 	Changes       []Change
 	EffectiveHash string
+	SkippedSteps  []string
 }
 
 // Step は id でステップを引く。無ければ nil。

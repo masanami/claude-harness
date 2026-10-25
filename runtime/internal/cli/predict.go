@@ -192,7 +192,14 @@ func predict(args []string, env Env) predictionDoc {
 	if err != nil {
 		return predictFailed(d, "%v", err)
 	}
-	wf, err := workflow.LoadAndValidate(filepath.Join(src.wd, predictWorkflow+".yaml"), workflow.Options{ScriptsDir: src.sd})
+	// リポジトリの上書き（.claude-harness/overrides/conflict-predict-issue.yaml）は run・validate と同じく重ねる
+	// （validate が「効いた」と出す値で予測の run も走るようにする。docs/harness-runtime-overrides.md §3）。
+	// --override は持たない（口の引数を増やさない）。
+	srcs, err := overrideSources(env, predictWorkflow, nil)
+	if err != nil {
+		return predictFailed(d, "%v", err)
+	}
+	wf, err := workflow.LoadWithOverrides(filepath.Join(src.wd, predictWorkflow+".yaml"), workflow.Options{ScriptsDir: src.sd}, srcs)
 	if err != nil {
 		return predictFailed(d, "the %s workflow is not valid: %v", predictWorkflow, err)
 	}

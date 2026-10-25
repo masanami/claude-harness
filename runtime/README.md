@@ -13,7 +13,7 @@
 - runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
-- 定義の上書きの段 1（数値のキー・2 層の置き場・run の記録と `resume`。Issue #312。下の「定義の上書き」）
+- 定義の上書きの段 1（数値のキー・2 層の置き場・run の記録と `resume`。Issue #312）と段 2（宣言した遷移の付け替えと外せないゲート。Issue #313）。下の「定義の上書き」
 - ワークフローの形を出す読み取り専用のコマンド `graph`（[`docs/harness-runtime-visualization.md`](../docs/harness-runtime-visualization.md) の段 1。下の「ワークフローの形」）
 
 ## 構成
@@ -54,9 +54,9 @@
 - 初回の `run` / `validate` で `<data>/runtime/<CLI の版>/` へ展開して使う。`<data>` は `$HARNESS_DATA_DIR`、無ければ `$XDG_DATA_HOME/claude-harness`、無ければ `~/.local/share/claude-harness`。展開したファイルは読み取り専用で、印（`.bundle-sha256`）の中身が違うディレクトリは上書きせずに止まる。版を持たないビルドは `dev-<中身の sha256 の先頭 12 桁>` に展開する。
 - `--workflow-dir` / `--scripts-dir`（開発用）を渡せばそちらを使う。埋め込んでいないバイナリは、作業ツリーの中なら作業ツリーの `runtime/workflows`・`plugin/scripts` を探して使い、外なら 2 つのフラグを求めて止まる。
 
-## 定義の上書き（Issue #309 の段 1・#312。設計は [docs/harness-runtime-overrides.md](../docs/harness-runtime-overrides.md)）
+## 定義の上書き（Issue #309 の段 1・#312 と段 2・#313。設計は [docs/harness-runtime-overrides.md](../docs/harness-runtime-overrides.md)）
 
-定義を丸ごと写さずに、数値だけを小さな YAML で変えられる。上書きの置き場は 2 か所で、元の定義（埋め込みか `--workflow-dir`）→ リポジトリ → 引数の順に重ね、キーごとに後ろの層が勝つ。
+定義を丸ごと写さずに、数値と、元の定義が宣言した遷移先だけを小さな YAML で変えられる。上書きの置き場は 2 か所で、元の定義（埋め込みか `--workflow-dir`）→ リポジトリ → 引数の順に重ね、キーごとに後ろの層が勝つ。
 
 - 層 1（リポジトリ）: 作業ディレクトリから上へ探した git の最上位（`.git` を持つディレクトリ）の `.claude-harness/overrides/<ワークフローの id>.yaml`。在れば読み、無ければ飛ばす。
 - 層 2（引数）: `run`・`contract start`・`validate` の `--override <ファイル>`（1 つだけ）。ファイルが無ければ止まる。`validate` では、そのファイルの `workflow` が指す定義にだけ重ねる。
@@ -68,9 +68,11 @@ limits: { budget_usd: 100 }            # limits の全項目（元の定義に�
 steps: { implement: { budget_usd: 60, timeout: 3h } }   # llm の budget_usd・timeout、command の timeout
 ```
 
-- それ以外のキー（`prompt`・`agent`・`decider`・`on` 等）は「上書きできない」、元の文法に無いキーは「未知」として、`validate`・`run` が拒否する（§5.3）。遷移の付け替え（`overridable.routes`）は段 2（#313）で入る。
-- `validate` は ok の行の後に、読んだ上書き（`override <層> <パス>`）と効いた値（`changes:` の下に `<キー>: <元の値> -> <効いた値> (<層>)`）を出す。
-- run は `run_started` の `workflow` に、上書きの出どころと sha256（`overrides`）・効いた値（`changes`）・上書き後の定義のハッシュ（`effective_hash`）を記録し、上書きのファイルを run ディレクトリの `overrides/1-repo.yaml`・`overrides/2-arg.yaml` へ写す。`workflow.hash` は元の定義の YAML の sha256 のまま。上書きの無い run の記録は従来と同じ形。`status --json` への表示は段 3（#314）で入る。
+- 遷移は、元の定義がトップレベルの `overridable.routes` に `<ステップ id>.<outcome>: [候補...]` と宣言したものだけ、候補のステップ id 1 つへ付け替えられる（§5.2）。同梱の `ticket` が宣言するのは `merge-route.integration: [merge, human-merge]`（統合ブランチ宛も人のマージ）と `e2e-route.no: [publish, e2e]`（E2E 不要の判断でも E2E を書く）だけ。上書きは `steps: { merge-route: { on: { integration: human-merge } } }` の形で書く。
+- 人のゲート（`decider: human`）のキーは書けず、人のゲートへ向かう遷移と `fail` で終わる遷移は宣言も上書きもできない。付け替えで人のゲートが到達できなくなる上書きも拒否する。どれもゲートの名前ではなく `decider: human` という性質で決まる（§6.2 の規則 1〜3）。`--workflow-dir` の定義の差し替えはこの規則の外にある（開発用。§6.3）。
+- それ以外のキー（`prompt`・`agent`・`decider`、宣言の無い `on` 等）は「上書きできない」、元の文法に無いキーは「未知」として、`validate`・`run` が拒否する（§5.3）。
+- `validate` は ok の行の後に、読んだ上書き（`override <層> <パス>`）と効いた値（`changes:` の下に `<キー>: <元の値> -> <効いた値> (<層>)`）を出す。付け替えでだけ到達できなくなったステップは誤りにせず `skipped_steps: <id>, ...` の行に出す（§6.2 の規則 5）。
+- run は `run_started` の `workflow` に、上書きの出どころと sha256（`overrides`）・効いた値（`changes`）・上書き後の定義のハッシュ（`effective_hash`）・付け替えで到達できなくなったステップ（`skipped_steps`。無ければ出さない）を記録し、上書きのファイルを run ディレクトリの `overrides/1-repo.yaml`・`overrides/2-arg.yaml` へ写す。`workflow.hash` は元の定義の YAML の sha256 のまま。上書きの無い run の記録は従来と同じ形。`status --json` への表示は段 3（#314）で入る。
 - `resume` は元の上書きのファイルではなく写しを読んで定義を組み立て直す。写しの sha256 が開始時と違えば止まる。上書き後の定義のハッシュが開始時と違えば（CLI の重ね方が変わった）、終了コード 5 で開始時の版での `resume` か `cancel` を案内する（§7.2）。
 
 ## 版の照合（§7.3）
@@ -129,6 +131,7 @@ harness predict-conflicts [--max-budget-usd USD] <issue> <issue>...   # cwd の�
 ```
 
 - Issue ごとに `conflict-predict-issue` ワークフローの run を 1 本起動する（`fetch-issue.sh` で `gh issue view` → `issue-conflict-predictor` が cwd のチェックアウトのルートを探索）。同時に 4 本まで。run は状態の置き場に残る。
+- 予測の run は `run` と同じくリポジトリの上書き（`.claude-harness/overrides/conflict-predict-issue.yaml`）を重ねて起動する（`--override` は持たない）。1 件分の予算は上書き後の `limits.budget_usd`。
 - `--max-budget-usd` は口全体の上限（既定は件数 × 1 USD）。1 件分（1 USD）ずつ起動前に確保し、確保できない Issue は起動せず `budget_exhausted` にする。
 - 出力の主なフィールド: `repository`・`head_sha`・`complete`・`error`（口全体を実行できなかったときだけ）・`issues[]`（`status` は `predicted` / `failed` / `budget_exhausted`）・`pairs[]`（`shared_files[]` は除外せずすべて出し、lockfile 等に `merge_friendly`、git が無視するパスに `ignored` の印。`dependency.first` は先に入れるべき側）・`cost_usd`。表は設計 §5.4.1。
 - エージェントはインストール済みのプラグインから解決される。`issue-conflict-predictor` の `tools` に `StructuredOutput` が無い版のプラグインでは、予測が型付きの出力を返せず `failed` になる（#282 と同じ）。
