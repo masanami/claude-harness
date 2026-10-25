@@ -4,7 +4,7 @@
 >
 > **2026-09-29 更新**: 複数 Issue の並列実行は flywheel の責務にするとオーナーが決めた。PR-5（`fanout`・`plan-parallel`・`para-impl` ワークフロー）は実装を見送り、§11.3 の「検討」へ移した。決定の記録は §11.4。
 >
-> **2026-10-25 追記**: ワークフロー定義を上書きの YAML で調整する設計（Issue #309）は [harness-runtime-overrides.md](harness-runtime-overrides.md) に置いた（未決の問いあり）。
+> **2026-10-25 追記**: ワークフロー定義を上書きの YAML で調整する設計（Issue #309）は [harness-runtime-overrides.md](harness-runtime-overrides.md) に置いた（2026-10-25 に問いを決定済み）。
 >
 > - 正本は Issue #201 のコメント群。食い違ったら Issue が正。
 > - 本文書は設計の置き場であり、`skills/`・`agents/`・`scripts/` の挙動は変えない（実装は §10 の段階計画に従い別 PR で行う）。
