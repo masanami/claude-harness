@@ -5,9 +5,9 @@
 > - 正本は Issue #308。食い違ったら Issue が正。
 > - 上書き（Issue #309・[harness-runtime-overrides.md](harness-runtime-overrides.md)）の決定は前提として変えない。
 
-新しいサブコマンド `harness graph` を足し、ワークフローの形を JSON（`schema: harness.workflow-graph/v1`）で出す。この JSON を正本にし、CLI のテキストと Mermaid のテキストはそこから作る。`--run <run-id>` を付けると、その run が実際に使った定義（元の定義のハッシュと上書きの写しから組み立て直したもの）の形に、現在地（いまのステップ・待っているゲート・ラウンド・通ったステップ・使った上限）を重ねる。上書きで到達できなくなったステップは消さずに `skipped` の印を付けて残す。形は接続契約（flywheel との取り決め）に載せず、flywheel は衝突の予測の口と同じく契約の外の宣言で JSON を読み、自分で描く（オーナーの決定 A1・A2）。harness の Mermaid の出力は、人が端末や Markdown で見るためのものである。単体で開ける HTML は出さない（A3）。
+新しいサブコマンド `harness graph` を足し、ワークフローの形を JSON（`schema: harness.workflow-graph/v1`）で出す。この JSON を正本にし、CLI のテキストと Mermaid のテキストはそこから作る。`--run <run-id>` を付けると、その run が実際に使った定義（元の定義のハッシュと上書きの写しから組み立て直したもの）の形に、現在地（いまのステップ・待っているゲート・ラウンド・通ったステップ・使った上限）を重ねる。上書きで到達できなくなったステップは消さずに `skipped` の印を付けて残す。この JSON と Mermaid は harness が自分の利用者に向けて出すもので、接続契約にも flywheel の宣言にも載せない（オーナーの決定 A1・A2）。flywheel から見た claude-harness は接続ツールの 1 つ（プラグイン）であり、flywheel の画面にフローを出すときの形は flywheel#265 で flywheel が接続ツール共通の形として定め、harness はその形に合わせて出す側に回る。単体で開ける HTML は出さない（A3）。
 
-位置づけ: runtime 化（#201）と上書き（#309）の次に来る追加で、flywheel 側の開発フローの可視化（masanami/flywheel#265・移行〔M5〕の後）より先に、claude-harness 単体で使える形にする。flywheel#265 が挙げた論点「flywheel が harness の YAML のスキーマを知らずに可視化できるか」に、harness 側から機械可読な形を先に出すことで答える。
+位置づけ: runtime 化（#201）と上書き（#309）の次に来る追加で、flywheel 側の開発フローの可視化（masanami/flywheel#265・移行〔M5〕の後）より先に、claude-harness 単体で使える形にする。flywheel#265 が挙げた論点「flywheel が harness の YAML のスキーマを知らずに可視化できるか」は、flywheel が共通の形を定めることで解く（A2）。本文書の JSON はその形を先取りしない。
 
 ---
 
@@ -29,8 +29,8 @@ run の現在地は `harness status <run> --json` で読める（`runtime/intern
 | run を指定したときの定義 | run の記録（元の定義のパスとハッシュ・上書きの写し）から `resume` と同じ手順で組み立て直す。組み立て直せなければ表示しない | 親（B2） | §5.2 |
 | 上書きで到達できなくなったステップ | 消さずに `skipped: true` を付けて残し、入ってくる辺を持たない | 親（B3） | §5.3 |
 | コマンドの面 | 新しいサブコマンド `harness graph`。`--format text\|json\|mermaid`（`--json` は `--format json` の別名）。既定は `text` | 親（B1・B5） | §7 |
-| 接続契約に載せるか | 載せない。flywheel は flywheel#265 で、衝突の予測と同じく契約 v1 の外の宣言として読む | オーナー（A1） | §8 |
-| flywheel の UI との分担 | flywheel は JSON だけを読み、描画（Mermaid への変換を含む）は flywheel が持つ。harness の Mermaid は人が端末・Markdown で見るためのもの | オーナー（A2） | §8.3 |
+| 接続契約に載せるか | 載せない（契約 v1 の出力は変えない） | オーナー（A1） | §8.2 |
+| flywheel の UI との分担 | flywheel の画面に出す形は flywheel#265 で flywheel が接続ツール共通の形として定め、harness はその形に合わせて出す。`harness graph` の JSON・Mermaid は harness の利用者向けの出力で、flywheel の取り決め（契約・宣言）ではない | オーナー（A2。当初の D1 を改めた） | §8.3 |
 | HTML | 出さない（出力は text・json・mermaid） | オーナー（A3） | §6.3 |
 
 文書の置き場は、#309 と同じく設計書の外の新しい文書にした（作成者の判断。仮定）。設計書の冒頭と上書きの文書からこの文書へリンクする。
@@ -222,12 +222,12 @@ run …: waiting at review (decider any) round 3, rework 1/3, spent 21.30/40.00 
 
 ### 6.2 Mermaid のテキスト（`--format mermaid`）
 
-`flowchart TD` の 1 文書を出す。GitHub の Markdown は ` ```mermaid ` のコードブロックを図として表示するので、PR 本文や Issue に貼れば図になる。flywheel の web も Mermaid を依存に持つ（flywheel のクローン `6818ec5` の `web/package.json` に `"mermaid": "^12.2.0"`。`web/src/board/loadMermaid.ts` は課題の図を `securityLevel: "strict"` で描き、失敗したらテキストを出す。実コード確証・high）。
+`flowchart TD` の 1 文書を出す。GitHub の Markdown は ` ```mermaid ` のコードブロックを図として表示するので、PR 本文や Issue に貼れば図になる。
 
 - 節点の形は種類で分ける: `llm` は角丸、`command`・`workspace`・`pull-request` は四角、`gate` は六角形、`select` はひし形、終端は円。人のゲート（`decider: human`）にはクラス `human` を付けて色を変える。
 - 辺には outcome を書く。上限つきの `goto` は `fail (rework<=3)`、尽きたときの辺は点線にする。
 - `--run` を付けると、いまいるステップにクラス `current`、通ったステップにクラス `visited` を付ける。`skipped` のステップは破線のクラス `skipped` にする。
-- この出力は人が端末・Markdown で見るためのもので、flywheel との取り決めではない（§8.3）。flywheel の画面は形の JSON から flywheel が描く。
+- この出力は人が端末・Markdown で見るためのもので、flywheel との取り決めではない（§8.3）。
 - Mermaid の節点 id は `n0`・`n1` … に置き換え、ステップ id は表示の文字にだけ使う（ステップ id に含まれる `-` や将来の文字が Mermaid の文法とぶつからないようにする）。
 
 ### 6.3 単体で開ける HTML は出さない（A3）
@@ -263,32 +263,33 @@ harness graph [--format text|json|mermaid] [--json] --run <run-id>
 
 C1 を採った（B1）。`validate` と `status` の出力と終了コードの意味を変えずに済み、`predict-conflicts` と同じく役割ごとにサブコマンドを分ける既存の形に揃う。名前は `graph` にした。
 
-## 8. 接続契約には載せず、flywheel は別の宣言で読んで自分で描く（A1・A2）
+## 8. 接続契約に載せず、flywheel の画面の形は flywheel が接続ツール共通に定める（A1・A2）
 
 ### 8.1 いまの契約と、形を出すことの食い違い
 
 flywheel の接続契約 v1 は `start`・`status`・`resume`・`cancel` の 4 つのコマンドで、出力は `contract_version`・`run_id`・`state`・`summary`・`requested_action`・`artifacts`・`cost_usd` だけである（flywheel `docs/features/m3-invoker-delegation.md` §クリティカル設計決定 3・設計書 §5.6.1。ドキュメント由来・high）。flywheel の設計書 §10 は「接続ツール内部の手順や判断値は core に持ち込まない」とし、設計書 §5.6 も「harness 固有の step id・判断値はこの面に出さない」としている。
 
-形の JSON はステップ id と outcome（判断値）そのものを含む。flywheel が形を読むときは、この線引きを「flywheel は id と outcome を表示の文字としてだけ扱い、値で分岐しない」と読み替える必要がある。flywheel#265 の論点（flywheel が harness の YAML のスキーマを知らずに可視化できるか）には、形の JSON の語彙（節点・辺・`decider`・`requires_tty`・終端）が harness の文法に依存しないので、知らずに描ける、と答えられる。
+形の JSON はステップ id と outcome（判断値）そのものを含む。flywheel が harness 固有のこの形を読むと、上の線引きを崩し、flywheel が接続ツールの 1 つ（harness）に依存することになる。そのため形の JSON は harness の利用者向けの出力にとどめ、flywheel の取り決めには載せない（§8.2・§8.3）。
 
 ### 8.2 契約 v1 には載せない（A1）
 
 | 案 | 中身 | 選ぶと利用者に見えること |
 | --- | --- | --- |
-| G1（採用） | 契約 v1 には載せない。`harness graph` は harness の人向けのコマンドとして出し、flywheel が要るときは衝突の予測と同じく契約 v1 の外の宣言（`connectors.json` に `graph: {"command": [...], "schema": "harness.workflow-graph/v1"}` のような項）で呼ぶ。宣言の形は flywheel#265 で flywheel が決める | 今は claude-harness の利用者だけが `harness graph` で形を見る。flywheel の画面に出るのは flywheel#265 の実装後。契約 v1 の出力は変わらない |
+| G1（採用） | 契約 v1 には載せない。`harness graph` は harness の利用者向けのコマンドとして出す | claude-harness の利用者が `harness graph` で形を見る。契約 v1 の出力は変わらない。flywheel の画面に出すときの形と呼び方は flywheel#265 で flywheel が決める（§8.3） |
 | G2 | 契約 v1 の `status` の出力に形（または形の要約）を足す | flywheel は今の `contract status` を読むだけで形が手に入る。契約の出力のフィールドが増え（契約の変更）、呼ばれるたびに定義を読み込む。step id が契約の出力に入る |
 | G3 | 契約に新しいコマンド（`graph`）を足して契約の版を上げる | 形を読むことが契約の一部になり、接続ツール（harness 以外も）が形を出す義務を負う |
 
-オーナーは G1 を採った。flywheel は flywheel#265 で、契約の外の宣言として形を読む。衝突の予測の口が同じ問題を「契約 v1 の外の宣言で、`schema` を閉じた集合として読む」形で解いた先例がある（flywheel `docs/features/m3-invoker-delegation.md` の `conflict_prediction`。`schema` は閉集合〔2026-10-01 オーナー決定 M3H9〕。ドキュメント由来・high）。契約は flywheel が定め、harness が合わせる（設計書 §0.1）ので、harness 側から契約を先に変えない。
+オーナーは G1 を採った。契約は flywheel が定め、harness が合わせる（設計書 §0.1）ので、harness 側から契約を先に変えない。
 
-### 8.3 flywheel の画面は flywheel が JSON から描く（A2）
+### 8.3 flywheel の画面に出す形は flywheel が接続ツール共通に定め、harness が合わせる（A2）
 
-| 案 | 中身 | 選ぶと利用者に見えること |
-| --- | --- | --- |
-| D1（採用） | flywheel は形の JSON だけを読み、Mermaid への変換と描画は flywheel が持つ | flywheel の画面の見た目（色・現在地の強調・クリックでカードへ飛ぶ等）を flywheel が決められる。harness の Mermaid の出力を変えても flywheel は壊れない。flywheel に JSON → Mermaid の変換が 1 つ増える |
-| D2 | harness が Mermaid のテキストを出し、flywheel はそれを既存の図の表示（`FigureView`）にそのまま渡す | flywheel 側の追加はほぼ要らない。見た目は harness の Mermaid の出力で決まり、harness が出力を変えると flywheel の画面が変わる。Mermaid のテキストが flywheel との取り決めの一部になる |
+オーナーの方針（2026-10-25）は、flywheel から見た claude-harness を接続ツールの 1 つ（プラグイン）という関係に保ち、flywheel が harness 固有の JSON の形・コマンド・名前を前提にする設計にしない、である。これに従い、flywheel の画面にフローを出すときの形は flywheel#265 で flywheel が接続ツール共通の形として定め、harness はプラグインとしてその形に合わせて出す側に回る。
 
-オーナーは D1 を採った。取り決めを機械可読な形だけにし、表示の形式（Mermaid の書き方）を取り決めに含めないためである。harness の `--format mermaid` の出力は、人が端末や Markdown（PR・Issue）で見るためのもので、flywheel との取り決めには含めない。出力の書き方は flywheel に断らずに変えてよい。
+`harness graph --format json`（`harness.workflow-graph/v1`）は harness が自分の利用者向けに出す出力で、flywheel の取り決め（契約・宣言）ではない。`--format mermaid` も同じく、人が端末や Markdown（PR・Issue）で見るためのものである。どちらの書き方も flywheel に断らずに変えてよい。
+
+flywheel の共通の形が決まったときに harness が合わせやすいよう、形の JSON の語彙は harness の YAML の内部語に寄せすぎない。節点（ステップと終端）・辺（行き先と outcome）・ゲートの決める主体（`decider`）・端末の要否（`requires_tty`）は、どの接続ツールのフローにもある一般的な概念で表す（§3）。flywheel の形をここで先取りして決めることはしない。合わせ方（`harness graph` の出力を写すか、別の出力を足すか）は flywheel の形が決まってから決める。
+
+当初の決定 D1（flywheel が harness の JSON を読んで自分で描く）と、検討した D2（harness の Mermaid を flywheel がそのまま描く）は、どちらも flywheel が harness 固有の出力を前提にするので採らない。
 
 ## 9. 例: `ticket` を上書きで `merge-route.integration` → `human-merge` に付け替えたとき
 
@@ -308,8 +309,8 @@ harness graph --override route.yaml ticket      # route.yaml に steps.merge-rou
 
 | # | 問い | 選択肢 | 決定 | 理由・補足 |
 | --- | --- | --- | --- | --- |
-| A1 | 形を接続契約に載せるか | (G1) 載せない (G2) 契約 v1 の `status` の出力に足す (G3) 契約に `graph` コマンドを足して版を上げる | G1 | flywheel は flywheel#265 で、衝突の予測と同じく契約の外の宣言として読む。契約は flywheel が定め、harness から先に変えない（§8.2） |
-| A2 | flywheel の画面ではどちらが図を描くか | (D1) flywheel が JSON を読んで描く (D2) harness の Mermaid をそのまま描く | D1 | harness の Mermaid の出力は人が端末・Markdown で見るためのもので、取り決めに含めない（§8.3） |
+| A1 | 形を接続契約に載せるか | (G1) 載せない (G2) 契約 v1 の `status` の出力に足す (G3) 契約に `graph` コマンドを足して版を上げる | G1 | 契約は flywheel が定め、harness から先に変えない（§8.2） |
+| A2 | flywheel の画面にフローを出すときの形 | (D1) flywheel が harness の JSON を読んで描く (D2) harness の Mermaid をそのまま描く | flywheel#265 で flywheel が接続ツール共通の形を定め、harness がそれに合わせて出す | 当初は D1 に決めたが、2026-10-25 にオーナーの方針（flywheel から見た harness は接続ツールの 1 つで、harness 固有の形・コマンド・名前を前提にしない）で改めた。`harness graph` の JSON・Mermaid は harness の利用者向けの出力（§8.3） |
 | A3 | 単体で開ける HTML を出すか | (H1) 出さない (H2) CDN の Mermaid を読む HTML (H3) Mermaid を埋め込んだ HTML (H4) Go で SVG を描く | H1 | 出力は text・json・mermaid の 3 つ。外部の JS の取得・同梱を持たない（§6.3） |
 
 ### 10.2 親が決めたこと
