@@ -517,6 +517,49 @@ type statusView struct {
 	TornTail    *int          `json:"torn_tail_bytes,omitempty"`
 }
 
+// workflowView は status --json の workflow: run_started の定義の同定情報に、上書きの出どころと sha256（overrides）・
+// 効いた値（changes）・付け替えで到達できなくなったステップ（skipped_steps）を足したもの（docs/harness-runtime-overrides.md
+// §7.1。#314）。上書きの無い run と、上書きを記録する前の版で始めた run では 3 つとも空の配列で出す（キーの有無で分岐させない。
+// harness graph の meta と同じ扱い）。effective_hash は resume の照合の材料なので出さない。
+type workflowView struct {
+	runstate.WorkflowRef
+	Overrides    []runstate.OverrideRef    `json:"overrides"`
+	Changes      []runstate.OverrideChange `json:"changes"`
+	SkippedSteps []string                  `json:"skipped_steps"`
+}
+
+// MarshalJSON は State の workflow を workflowView に差し替えて出す（キーの位置は従来どおり run_id の次）。読み込み
+// （contract の decodeView）は既定のままで、足したキーは捨てられる（接続契約 v1 の出力は statusView から contractDoc へ
+// 写すので形が変わらない。§8）。
+func (v statusView) MarshalJSON() ([]byte, error) {
+	type plain statusView
+	b, err := json.Marshal(plain(v))
+	if err != nil || v.State == nil {
+		return b, err
+	}
+	o := v.State.Overrides
+	w := workflowView{WorkflowRef: v.State.Workflow, Overrides: []runstate.OverrideRef{}, Changes: []runstate.OverrideChange{}, SkippedSteps: []string{}}
+	w.Overrides = append(w.Overrides, o.Overrides...)
+	w.Changes = append(w.Changes, o.Changes...)
+	w.SkippedSteps = append(w.SkippedSteps, o.SkippedSteps...)
+	ref, err := json.Marshal(w.WorkflowRef)
+	if err != nil {
+		return nil, err
+	}
+	ext, err := json.Marshal(w)
+	if err != nil {
+		return nil, err
+	}
+	key := []byte(`"workflow":`)
+	at := bytes.Index(b, append(key, ref...))
+	if at < 0 {
+		return b, nil // 見つからなければ従来の形のまま出す（status --json を読めなくしない）
+	}
+	out := append([]byte{}, b[:at+len(key)]...)
+	out = append(out, ext...)
+	return append(out, b[at+len(key)+len(ref):]...), nil
+}
+
 // waitingView は待っているゲート 1 つ。ResumeCommand は解決に使うコマンドの形（<...> は選ぶ値）。
 type waitingView struct {
 	Unit            string   `json:"unit"`

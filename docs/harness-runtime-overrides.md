@@ -213,7 +213,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 - `hash` の意味は変えない（元の定義の YAML のバイト列の sha256）。`resume` の照合（設計書 §7.3 と N3）、`definitionsUsable` の判定はそのまま効く。上書きの無い run の記録は現行と同じ形になる（`overrides` は空、`effective_hash` は `hash` と同じ値か省略。どちらにするかは実装時に決める）。
 - 上書きのファイルは run の開始時に run ディレクトリ（設計書 §4.6 の F1）の `overrides/` へ写す。リポジトリの `.claude-harness/overrides/` はブランチを切り替えると中身が変わり、`--override` のファイルは呼び出し元が書き換えうる。写しを持てば、`resume` は開始時と同じ上書きで続けられる。
 - `changes` は「何を何から何へ変えたか」を層つきで持つ。#308 の可視化と、後から「この run は何で走ったか」を読むときに、YAML 同士を比べずに済む。`limits` の効いた値は現行の `run_started.limits` にも入る（`engine.go` が `WF.Limits` から作る）。
-- `status --json` に `workflow.overrides`・`changes`・`skipped_steps` を出す。接続契約 v1 の出力（`harness contract`）の形は変えない。
+- `status --json` に `workflow.overrides`・`changes`・`skipped_steps` を出す。接続契約 v1 の出力（`harness contract`）の形は変えない。段 3（#314）で入れた: 3 つは上書きの無い run と上書きを記録する前の版で始めた run でも空の配列で出す（キーの有無で分岐させない。`harness graph` の `meta` と同じ扱い）。`effective_hash` は `resume` の照合の材料なので `status --json` には出さない。`state.json` の形は変えていない。`status --json` と同じ JSON を出す `run`・`resume`・`approve`・`cancel` にも同じく出る。`contract status` は `status --json` の出力を読み込んで契約 v1 へ写すので、足したキーは写らない（`runtime/internal/cli/status_overrides_test.go` が確かめる）。実コード確証・high。
 
 ### 7.2 `resume` での組み立て直し
 
