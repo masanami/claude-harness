@@ -6,6 +6,8 @@
 >
 > **2026-10-25 追記**: ワークフロー定義を上書きの YAML で調整する設計（Issue #309）は [harness-runtime-overrides.md](harness-runtime-overrides.md) に置いた（2026-10-25 に問いを決定済み）。
 >
+> **2026-10-25 追記**: ワークフローの形と run の現在地を表示する設計（Issue #308）は [harness-runtime-visualization.md](harness-runtime-visualization.md) に置いた（問いは未決）。
+>
 > - 正本は Issue #201 のコメント群。食い違ったら Issue が正。
 > - 本文書は設計の置き場であり、`skills/`・`agents/`・`scripts/` の挙動は変えない（実装は §10 の段階計画に従い別 PR で行う）。
 
