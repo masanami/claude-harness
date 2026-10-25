@@ -9,7 +9,7 @@ import (
 // workspaced は作業ツリーの払い出し・PR・返却を含む列（PR-4・§4.1 Workspace）。
 func workspaced(created bool, removed bool) []Event {
 	return withSeq([]Event{
-		{Type: EvRunStarted, RunStarted: &RunStarted{RunID: "r1", Workflow: WorkflowRef{ID: "w"}, Inputs: map[string]json.RawMessage{}, Units: []string{"main"}, EntryStep: "ws"}},
+		{Type: EvRunStarted, RunStarted: &RunStarted{RunID: "r1", Workflow: WorkflowRecord{WorkflowRef: WorkflowRef{ID: "w"}}, Inputs: map[string]json.RawMessage{}, Units: []string{"main"}, EntryStep: "ws"}},
 		{Type: EvRoundStarted, RoundStarted: &RoundStarted{Unit: "main", Round: 1, Trigger: Trigger{Kind: "start"}}},
 		{Type: EvStepStarted, StepStarted: &StepStarted{Unit: "main", Step: "ws", Attempt: 1}},
 		{Type: EvWorkspace, Workspace: &WorkspaceEvent{Unit: "main", Action: WorkspaceAcquired, WorktreePath: "/wt/issue-7", Branch: "feature/issue-7-x", Base: "main",

@@ -79,10 +79,17 @@ func Start(p StartParams) (*Engine, error) {
 	if len(limits) == 0 {
 		limits = nil
 	}
+	overrides, err := copyOverrides(run, p.WF)
+	if err != nil {
+		return nil, err
+	}
 	_, err = run.Append(
 		runstate.Event{Type: runstate.EvRunStarted, RunStarted: &runstate.RunStarted{
-			RunID:       id,
-			Workflow:    runstate.WorkflowRef{ID: p.WF.ID, Schema: p.WF.Schema, Hash: p.WF.Hash, Path: p.WF.Path},
+			RunID: id,
+			Workflow: runstate.WorkflowRecord{
+				WorkflowRef:    runstate.WorkflowRef{ID: p.WF.ID, Schema: p.WF.Schema, Hash: p.WF.Hash, Path: p.WF.Path},
+				OverrideRecord: overrides,
+			},
 			Inputs:      p.Inputs,
 			Limits:      limits,
 			Origin:      p.Origin,
@@ -103,6 +110,38 @@ func Start(p StartParams) (*Engine, error) {
 		return nil, err
 	}
 	return &Engine{WF: p.WF, Run: run, ScriptsDir: p.ScriptsDir, Cwd: p.Cwd}, nil
+}
+
+// overrideLayers は上書きの層の番号（docs/harness-runtime-overrides.md §3 の表の層）。写しの名前に使う。
+var overrideLayers = map[string]int{workflow.LayerRepo: 1, workflow.LayerArg: 2}
+
+// copyOverrides は上書きのファイルを run ディレクトリの overrides/<層の番号>-<層>.yaml へ写し、run_started に残す
+// 記録を作る（§7.1。リポジトリの置き場はブランチの切り替えで、--override のファイルは呼び出し元が書き換えうるので、
+// resume は写しで組み立て直す）。上書きの無い定義では空の記録を返し、何も書かない。
+func copyOverrides(run *runstate.Run, wf *workflow.Workflow) (runstate.OverrideRecord, error) {
+	var rec runstate.OverrideRecord
+	if len(wf.Overrides) == 0 {
+		return rec, nil
+	}
+	if err := os.MkdirAll(filepath.Join(run.Dir, runstate.OverridesDir), 0o755); err != nil {
+		return rec, err
+	}
+	for _, ov := range wf.Overrides {
+		n, ok := overrideLayers[ov.Layer]
+		if !ok {
+			return rec, fmt.Errorf("unknown override layer %q", ov.Layer)
+		}
+		cp := filepath.Join(runstate.OverridesDir, fmt.Sprintf("%d-%s.yaml", n, ov.Layer))
+		if err := os.WriteFile(filepath.Join(run.Dir, cp), ov.Data, 0o644); err != nil {
+			return rec, err
+		}
+		rec.Overrides = append(rec.Overrides, runstate.OverrideRef{Layer: ov.Layer, Path: ov.Path, SHA256: ov.SHA256, Copy: cp})
+	}
+	for _, c := range wf.Changes {
+		rec.Changes = append(rec.Changes, runstate.OverrideChange{Key: c.Key, From: c.From, To: c.To, Layer: c.Layer})
+	}
+	rec.EffectiveHash = wf.EffectiveHash
+	return rec, nil
 }
 
 func (e *Engine) grace() time.Duration {

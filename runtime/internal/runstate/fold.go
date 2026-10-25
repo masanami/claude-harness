@@ -40,6 +40,10 @@ type State struct {
 	Cancel      *CancelRequested           `json:"cancel_requested,omitempty"`
 	Cancelled   *RunCancelled              `json:"cancelled,omitempty"`
 	Units       []*Unit                    `json:"units"`
+
+	// Overrides は run_started の上書きの記録（resume が同じ上書きで定義を組み立て直す材料。§7.2）。status --json への
+	// 表示は #314（段 3）で決めるので、ここでは JSON に出さない（state.json・status --json の形は従来のまま）。
+	Overrides OverrideRecord `json:"-"`
 }
 
 // Unit は run の 1 単位（fan-out の 1 項目。単独のワークフローでは 1 つ）。
@@ -272,7 +276,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		}
 		p := ev.RunStarted
 		s = &State{
-			RunID: p.RunID, Workflow: p.Workflow, Inputs: p.Inputs, Limits: p.Limits,
+			RunID: p.RunID, Workflow: p.Workflow.WorkflowRef, Overrides: p.Workflow.OverrideRecord, Inputs: p.Inputs, Limits: p.Limits,
 			Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID,
 			ScriptsDir: p.ScriptsDir, WorkflowDir: p.WorkflowDir, CLIVersion: p.CLIVersion, Embedded: p.Embedded, Units: []*Unit{},
 		}

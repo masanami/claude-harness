@@ -85,6 +85,12 @@ type Workflow struct {
 	Path string
 	Dir  string
 	Hash string
+
+	// 上書き（docs/harness-runtime-overrides.md）を重ねた定義だけが持つ。Hash は元の定義のまま変えず（§7.1）、
+	// Overrides は重ねた順（層の順）、Changes は効いた値、EffectiveHash は上書き後の定義を正規化した表現の sha256。
+	Overrides     []*Override
+	Changes       []Change
+	EffectiveHash string
 }
 
 // Step は id でステップを引く。無ければ nil。

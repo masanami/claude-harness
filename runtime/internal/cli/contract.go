@@ -67,7 +67,7 @@ type artifact struct {
 
 const contractUsage = `usage: harness contract <start|status|resume|cancel> [options]
 
-  start [--workflow-dir DIR] [--scripts-dir DIR] [--input NAME=VALUE]... <workflow>
+  start [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [--input NAME=VALUE]... <workflow>
   status <run-id>
   resume [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
   cancel <run-id>

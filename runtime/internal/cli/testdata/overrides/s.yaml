@@ -1,0 +1,4 @@
+# s.yaml（docs/harness-runtime-overrides.md §9 の例。Tom の S の写しを置き換える）
+schema: harness.workflow-override/v1
+workflow: ticket
+limits: { budget_usd: 30 }
