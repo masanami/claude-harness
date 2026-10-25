@@ -18,7 +18,7 @@ func intp(n int) *int { return &n }
 func sample() []Event {
 	return []Event{
 		{Type: EvRunStarted, RunStarted: &RunStarted{
-			RunID: "r1", Workflow: WorkflowRef{ID: "w", Schema: "harness.workflow/v1", Hash: "h", Path: "/w.yaml"},
+			RunID: "r1", Workflow: WorkflowRecord{WorkflowRef: WorkflowRef{ID: "w", Schema: "harness.workflow/v1", Hash: "h", Path: "/w.yaml"}},
 			Inputs: map[string]json.RawMessage{"issue": json.RawMessage(`42`), "base": json.RawMessage(`"main"`)},
 			Limits: map[string]float64{"rework": 3, "budget_usd": 40.5}, Origin: "cli", Cwd: "/repo", PID: 123,
 			ScriptsDir: "/s", WorkflowDir: "/wd", Units: []string{"main"}, EntryStep: "ci",
@@ -57,7 +57,7 @@ func f64(v float64) *float64 { return &v }
 func gated() []Event {
 	return []Event{
 		{Type: EvRunStarted, RunStarted: &RunStarted{
-			RunID: "r1", Workflow: WorkflowRef{ID: "w", Schema: "harness.workflow/v1", Hash: "h", Path: "/w.yaml"},
+			RunID: "r1", Workflow: WorkflowRecord{WorkflowRef: WorkflowRef{ID: "w", Schema: "harness.workflow/v1", Hash: "h", Path: "/w.yaml"}},
 			Inputs: map[string]json.RawMessage{}, Limits: map[string]float64{"budget_usd": 10}, Origin: "cli", Cwd: "/repo", PID: 123,
 			Units: []string{"main"}, EntryStep: "implement",
 		}},

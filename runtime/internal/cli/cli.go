@@ -80,7 +80,7 @@ func (env Env) channel() string {
 const usage = `usage: harness <command> [options]
 
 commands:
-  run [--workflow-dir DIR] [--scripts-dir DIR] [--input NAME=VALUE]... <workflow>
+  run [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [--input NAME=VALUE]... <workflow>
       start a run and advance it until it ends or waits at a gate (exit 3 with the gate as JSON)
   status [--json] <run-id>
       show where a run is (the event log is the source of truth)
@@ -93,8 +93,9 @@ commands:
       resolve a gate from a terminal: shows what is approved and asks for confirmation (refused without a TTY)
   cancel <run-id>
       stop a run: stop its child process and record the stop
-  validate [--workflow-dir DIR] [--scripts-dir DIR] [<workflow>...]
-      statically check workflow definitions (all *.yaml in the workflow directory by default)
+  validate [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [<workflow>...]
+      statically check workflow definitions (all *.yaml in the workflow directory by default);
+      with overrides, also lists the override files read and the values they set (changes)
   graph [--format text|json] [--json] [--workflow-dir DIR] [--scripts-dir DIR] <workflow>
       read-only: show the shape of a workflow (steps, transitions, gates, ends); --json is --format json
       (exit 0 when it printed it, 2 on usage or an invalid workflow)
@@ -112,6 +113,9 @@ commands:
 workflows and scripts: embedded in the binary and extracted to <data>/runtime/<version>/
   (<data>: $HARNESS_DATA_DIR, else $XDG_DATA_HOME/claude-harness, else ~/.local/share/claude-harness);
   --workflow-dir / --scripts-dir point elsewhere (development)
+overrides (numbers only: limits.<name>, steps.<id>.budget_usd, steps.<id>.timeout; schema harness.workflow-override/v1):
+  <git top of the current directory>/.claude-harness/overrides/<workflow>.yaml if it exists, then --override FILE;
+  a later layer wins key by key. a run keeps copies of them and resume rebuilds the definition from the copies
 plugin version check: $HARNESS_PLUGIN_VERSION (set by the calling skill; exit 5 when this CLI does not support it)
 state directory: $HARNESS_STATE_DIR, else $XDG_STATE_HOME/claude-harness, else ~/.local/state/claude-harness
 claude executable for llm steps: $HARNESS_CLAUDE_BIN, else claude in PATH
@@ -318,7 +322,7 @@ func runsDir(env Env) (string, error) {
 func cmdRun(args []string, env Env) int {
 	flags, pos, err := parseArgs(args,
 		flagSpec{name: "workflow-dir", value: true}, flagSpec{name: "scripts-dir", value: true},
-		flagSpec{name: "input", value: true, multi: true})
+		flagSpec{name: "override", value: true}, flagSpec{name: "input", value: true, multi: true})
 	if err != nil {
 		return usageErr(env, err)
 	}
@@ -337,7 +341,15 @@ func cmdRun(args []string, env Env) int {
 	if err != nil {
 		return usageErr(env, err)
 	}
-	wf, err := workflow.LoadAndValidate(path, workflow.Options{ScriptsDir: sd})
+	arg, err := argOverride(flags)
+	if err != nil {
+		return usageErr(env, err)
+	}
+	srcs, err := overrideSources(env, workflowID(path), arg)
+	if err != nil {
+		return usageErr(env, err)
+	}
+	wf, err := workflow.LoadWithOverrides(path, workflow.Options{ScriptsDir: sd}, srcs)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "harness: workflow is not valid; no run was started\n%v\n", err)
 		return ExitUsage
@@ -895,7 +907,12 @@ func cmdCancel(args []string, env Env) int {
 // --- validate ---------------------------------------------------------------
 
 func cmdValidate(args []string, env Env) int {
-	flags, pos, err := parseArgs(args, flagSpec{name: "workflow-dir", value: true}, flagSpec{name: "scripts-dir", value: true})
+	flags, pos, err := parseArgs(args, flagSpec{name: "workflow-dir", value: true}, flagSpec{name: "scripts-dir", value: true},
+		flagSpec{name: "override", value: true})
+	if err != nil {
+		return usageErr(env, err)
+	}
+	arg, err := argOverride(flags)
 	if err != nil {
 		return usageErr(env, err)
 	}
@@ -923,14 +940,42 @@ func cmdValidate(args []string, env Env) int {
 		}
 		paths = append(paths, p)
 	}
+	// --override は、そのファイルの workflow が指す定義にだけ重ねる。検査する定義に無ければ使い方の誤り。
+	argID := ""
+	if arg != nil {
+		if argID, err = workflow.OverrideTarget(arg.Path, arg.Data); err != nil {
+			fmt.Fprintf(env.Stderr, "NG %s\n%v\n", arg.Path, err)
+			return ExitFailed
+		}
+		found := false
+		for _, p := range paths {
+			found = found || workflowID(p) == argID
+		}
+		if !found {
+			return usageErr(env, fmt.Errorf("--override %s is for workflow %q, which is not among the workflows to validate", arg.Path, argID))
+		}
+	}
 	failed := 0
 	for _, p := range paths {
-		if _, err := workflow.LoadAndValidate(p, workflow.Options{ScriptsDir: sd}); err != nil {
+		id := workflowID(p)
+		var a *workflow.OverrideSource
+		if id == argID {
+			a = arg
+		}
+		srcs, err := overrideSources(env, id, a)
+		if err != nil {
+			failed++
+			fmt.Fprintf(env.Stderr, "NG %s\n%v\n", p, err)
+			continue
+		}
+		wf, err := workflow.LoadWithOverrides(p, workflow.Options{ScriptsDir: sd}, srcs)
+		if err != nil {
 			failed++
 			fmt.Fprintf(env.Stderr, "NG %s\n%v\n", p, err)
 			continue
 		}
 		fmt.Fprintf(env.Stdout, "ok %s\n", p)
+		printOverrides(env.Stdout, wf)
 	}
 	fmt.Fprintf(env.Stdout, "harness validate: total=%d passed=%d failed=%d\n", len(paths), len(paths)-failed, failed)
 	if failed > 0 {

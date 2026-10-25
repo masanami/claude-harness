@@ -53,10 +53,45 @@ type WorkflowRef struct {
 	Path   string `json:"path"`
 }
 
+// OverridesDir は run ディレクトリの中で上書きの写しを置くディレクトリ（docs/harness-runtime-overrides.md §7.1）。
+const OverridesDir = "overrides"
+
+// OverrideRef は run が開始時に読んだ上書き 1 つ。Path は読んだファイルの絶対パス、SHA256 はそのバイト列の sha256、
+// Copy は run ディレクトリに置いた写しの相対パス（resume は Path ではなく Copy を読んで SHA256 と照合する。§7.2）。
+type OverrideRef struct {
+	Layer  string `json:"layer"`
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Copy   string `json:"copy"`
+}
+
+// OverrideChange は上書きで効いた値 1 つ（どの層のどのキーを何から何へ）。
+type OverrideChange struct {
+	Key   string `json:"key"`
+	From  any    `json:"from"`
+	To    any    `json:"to"`
+	Layer string `json:"layer"`
+}
+
+// OverrideRecord は上書きを重ねて始めた run の記録（§7.1）。上書きの無い run では空で、JSON には何も出ない
+// （上書きの無い run の記録は従来と同じ形）。EffectiveHash は上書き後の定義を正規化した表現の sha256。
+type OverrideRecord struct {
+	Overrides     []OverrideRef    `json:"overrides,omitempty"`
+	EffectiveHash string           `json:"effective_hash,omitempty"`
+	Changes       []OverrideChange `json:"changes,omitempty"`
+}
+
+// WorkflowRecord は run_started の workflow: 定義の同定情報に上書きの記録を足したもの（JSON では同じ階層に並ぶ）。
+// Hash は上書きがあっても元の定義の YAML の sha256 のまま（§7.1）。
+type WorkflowRecord struct {
+	WorkflowRef
+	OverrideRecord
+}
+
 // RunStarted は run の開始。
 type RunStarted struct {
 	RunID       string                     `json:"run_id"`
-	Workflow    WorkflowRef                `json:"workflow"`
+	Workflow    WorkflowRecord             `json:"workflow"`
 	Inputs      map[string]json.RawMessage `json:"inputs"`
 	Limits      map[string]float64         `json:"limits,omitempty"`
 	Origin      string                     `json:"origin"`

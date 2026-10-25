@@ -2,11 +2,14 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -137,14 +140,54 @@ func Reopen(run *runstate.Run, st *runstate.State) (*Engine, error) {
 		return nil, &ReopenError{Msg: fmt.Sprintf("workflow %s changed since the run started (sha256 %s, now %s); the run is not continued with a different definition",
 			st.Workflow.Path, st.Workflow.Hash, wf.Hash)}
 	}
+	if len(st.Overrides.Overrides) > 0 {
+		if wf, err = reopenOverrides(run, st); err != nil {
+			return nil, err
+		}
+	}
 	return &Engine{WF: wf, Run: run, ScriptsDir: st.ScriptsDir, Cwd: st.Cwd}, nil
 }
 
-// ReopenError は run を記録した定義で開き直せないこと。Load は定義を読み込めなかった（無い・この CLI が読めない）、
-// そうでなければ定義が開始時から変わっていた。
+// reopenOverrides は上書きを重ねて始めた run の定義を組み立て直す（docs/harness-runtime-overrides.md §7.2）。
+// 上書きは元のパスではなく run ディレクトリの写しを読み、開始時の sha256 と照合する（手で書き換えた写しで黙って
+// 続けない）。重ねて検査した定義の effective_hash が開始時と違えば（CLI の版が変わって重ね方・正規化が変わった）止める。
+func reopenOverrides(run *runstate.Run, st *runstate.State) (*workflow.Workflow, error) {
+	var srcs []workflow.OverrideSource
+	for _, ref := range st.Overrides.Overrides {
+		p := filepath.Join(run.Dir, ref.Copy)
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, &ReopenError{Msg: fmt.Sprintf("cannot read the copy of the %s override the run started with: %v", ref.Layer, err)}
+		}
+		sum := sha256.Sum256(data)
+		if got := hex.EncodeToString(sum[:]); got != ref.SHA256 {
+			return nil, &ReopenError{Msg: fmt.Sprintf("the copy of the %s override %s changed since the run started (sha256 %s, now %s); the run is not continued with a different override",
+				ref.Layer, p, ref.SHA256, got)}
+		}
+		srcs = append(srcs, workflow.OverrideSource{Layer: ref.Layer, Path: p, Data: data})
+	}
+	wf, err := workflow.LoadWithOverrides(st.Workflow.Path, workflow.Options{ScriptsDir: st.ScriptsDir}, srcs)
+	if err != nil {
+		return nil, &ReopenError{Load: true, Msg: fmt.Sprintf("cannot apply the overrides the run started with to %s: %v", st.Workflow.Path, err)}
+	}
+	if wf.Hash != st.Workflow.Hash {
+		return nil, &ReopenError{Msg: fmt.Sprintf("workflow %s changed since the run started (sha256 %s, now %s); the run is not continued with a different definition",
+			st.Workflow.Path, st.Workflow.Hash, wf.Hash)}
+	}
+	if wf.EffectiveHash != st.Overrides.EffectiveHash {
+		return nil, &ReopenError{Effective: true, Msg: fmt.Sprintf("the overridden workflow %s does not build the same as when the run started (effective sha256 %s, now %s)",
+			st.Workflow.ID, st.Overrides.EffectiveHash, wf.EffectiveHash)}
+	}
+	return wf, nil
+}
+
+// ReopenError は run を記録した定義で開き直せないこと。Load は定義（と上書き）を読み込めなかった（無い・この CLI が
+// 読めない）。Effective は上書きを重ねた定義が開始時と同じに組み上がらなかった（CLI の重ね方・正規化が変わった）。
+// どちらでもなければ定義か上書きの写しが開始時から変わっていた。
 type ReopenError struct {
-	Load bool
-	Msg  string
+	Load      bool
+	Effective bool
+	Msg       string
 }
 
 func (e *ReopenError) Error() string { return e.Msg }
