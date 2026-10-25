@@ -171,9 +171,9 @@ func TestGraphExitCodes(t *testing.T) {
 	}{
 		{"no workflow", append([]string{"graph"}, dirArgs...), ExitUsage, "exactly one workflow"},
 		{"two workflows", append(append([]string{"graph"}, dirArgs...), "ticket", "list-tests"), ExitUsage, "exactly one workflow"},
-		{"unknown option", append(append([]string{"graph", "--run", "x"}, dirArgs...), "ticket"), ExitUsage, "unknown option --run"},
+		{"unknown option", append(append([]string{"graph", "--output", "x"}, dirArgs...), "ticket"), ExitUsage, "unknown option --output"},
 		{"unknown format", append(append([]string{"graph", "--format", "html"}, dirArgs...), "ticket"), ExitUsage, "unknown graph format"},
-		{"mermaid is not in this stage", append(append([]string{"graph", "--format", "mermaid"}, dirArgs...), "ticket"), ExitUsage, "not implemented"},
+		{"mermaid", append(append([]string{"graph", "--format", "mermaid"}, dirArgs...), "ticket"), ExitOK, ""},
 		{"--json with another format", append(append([]string{"graph", "--json", "--format", "text"}, dirArgs...), "ticket"), ExitUsage, "--json is --format json"},
 		{"missing workflow", append(append([]string{"graph"}, dirArgs...), "no-such"), ExitUsage, "workflow is not valid"},
 		{"invalid workflow", []string{"graph", "--workflow-dir", bad, "--scripts-dir", abs(t, repoScripts), "bad"}, ExitUsage, "workflow is not valid"},

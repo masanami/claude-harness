@@ -96,9 +96,12 @@ commands:
   validate [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [<workflow>...]
       statically check workflow definitions (all *.yaml in the workflow directory by default);
       with overrides, also lists the override files read and the values they set (changes)
-  graph [--format text|json] [--json] [--workflow-dir DIR] [--scripts-dir DIR] <workflow>
-      read-only: show the shape of a workflow (steps, transitions, gates, ends); --json is --format json
-      (exit 0 when it printed it, 2 on usage or an invalid workflow)
+  graph [--format text|json|mermaid] [--json] [--workflow-dir DIR] [--scripts-dir DIR] <workflow>
+  graph [--format text|json|mermaid] [--json] --run <run-id>
+      read-only: show the shape of a workflow (steps, transitions, gates, ends); --json is --format json;
+      with --run, the shape of the workflow the run started with and where the run is (records nothing)
+      (exit 0 when it printed it, 1 when the run is missing or its workflow cannot be rebuilt,
+      2 on usage or an invalid workflow; never 3 or 4)
   setup [--scope user|project|local] [--marketplace SOURCE]
       add the marketplace and install the claude-harness plugin with claude plugin, then check its version
   version [--json]
@@ -573,11 +576,7 @@ type waitingView struct {
 }
 
 func view(run *runstate.Run, st *runstate.State, torn *runstate.Torn) statusView {
-	v := statusView{State: st, RunDir: run.Dir, EventsFile: filepath.Join(run.Dir, runstate.EventsFile)}
-	if st.Status == runstate.StatusRunning {
-		alive := runstate.Alive(st.PID)
-		v.RunnerAlive = &alive
-	}
+	v := statusView{State: st, RunDir: run.Dir, EventsFile: filepath.Join(run.Dir, runstate.EventsFile), RunnerAlive: runnerAlive(st)}
 	if !runstate.Terminal(st.Status) {
 		for _, u := range st.Units {
 			if u.Gate != nil {
@@ -590,6 +589,15 @@ func view(run *runstate.Run, st *runstate.State, torn *runstate.Torn) statusView
 		v.TornTail = &n
 	}
 	return v
+}
+
+// runnerAlive は running の run について runner のプロセスが生きているか（running でなければ nil。graph --run も使う）。
+func runnerAlive(st *runstate.State) *bool {
+	if st.Status != runstate.StatusRunning {
+		return nil
+	}
+	alive := runstate.Alive(st.PID)
+	return &alive
 }
 
 func waiting(runID string, u *runstate.Unit) waitingView {
