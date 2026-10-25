@@ -7,7 +7,7 @@
 
 上書きの YAML は、リポジトリの `.claude-harness/overrides/<ワークフローの id>.yaml` と引数 `--override <ファイル>` の 2 か所から読み、埋め込みの定義 → リポジトリ → 引数の順に重ねる。上書きできるのは数値（`limits` の値・ステップの `budget_usd`・`timeout`）と、元の定義が `overridable.routes` に候補を宣言した遷移先だけで、それ以外のキーは `harness validate` が拒否する。人のゲート（`decider: human`）とそこへ向かう遷移・`fail` への遷移は、どの宣言でも付け替えられない。v1 の `ticket.yaml` が付け替えを許すのは保守側の 2 か所（統合ブランチ宛も人がマージする・E2E 不要の判断でも E2E を書く）だけで、E2E・レビュー待ち・CI 待ちの省略は許さない。run は元の定義のハッシュに加えて上書きの写しを run ディレクトリに残し、`resume` はその写しで同じ定義を組み立て直す。
 
-位置づけ: Issue #201 の runtime 化（段階 B まで実装済み）の次に来る追加で、flywheel の「開発フローを YAML で制御する」検討（masanami/flywheel#265・移行〔M5〕の後）より先に、claude-harness 単体で使える形にする。可視化（#308）は本文書の上書き後の定義を表示の対象にする。
+位置づけ: Issue #201 の runtime 化（段階 B まで実装済み）の次に来る追加で、flywheel の「開発フローを YAML で制御する」検討（masanami/flywheel#265・移行〔M5〕の後）より先に、claude-harness 単体で使える形にする。可視化（#308）は本文書の上書き後の定義を表示の対象にする（設計は [harness-runtime-visualization.md](harness-runtime-visualization.md)）。
 
 ---
 
