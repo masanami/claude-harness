@@ -214,3 +214,46 @@ func TestEffectiveHash(t *testing.T) {
 		}
 	}
 }
+
+// goldenWorkflow は上書き後の定義のハッシュを固定値で確かめるための元の定義。ハッシュは元の定義のバイト列に依るので、
+// 他のテストの定義（validate_test.go の base）を流用せず、この 1 か所に固定する。書き換えたら下の固定値も変わる。
+const goldenWorkflow = `schema: harness.workflow/v1
+id: golden
+limits:
+  rework: 2
+  budget_usd: 1.5
+steps:
+  a:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on:
+      ok: c
+      bad: { fail: bad }
+  c:
+    kind: llm
+    prompt: prompts/p.md
+    output: schemas/out.json
+    budget_usd: 1
+    on:
+      ok: { done: ok }
+      bad: { goto: a, limit: rework, exhausted: { fail: exhausted } }
+`
+
+// 上書き後の定義のハッシュ（effectiveHash）の固定値。正規化（表現の JSON・値の型・キーの並べ方）を変えると、進行中の
+// run の resume が照合で一斉に止まる（§7.2 の 3）。その変更は effectiveSchema を上げて意図して行うものなので、
+// 気付かずに変えたらここで落ちるようにする。固定値は段 1（#312）の実装で取った値で、段 2 の遷移の付け替えを
+// 足しても数値だけの上書きのハッシュは変わらない（段 1 の版で始めた run を段 2 の CLI で resume できる）。
+func TestEffectiveHashGolden(t *testing.T) {
+	path, scripts := setup(t, "golden", goldenWorkflow)
+	src := OverrideSource{Layer: LayerArg, Path: "/ov/arg.yaml", Data: []byte("schema: harness.workflow-override/v1\nworkflow: golden\n" +
+		"limits: { budget_usd: 3, rework: 1 }\nsteps:\n  a: { timeout: 90s }\n  c: { budget_usd: 2.5, timeout: 1h }\n")}
+	wf, err := LoadWithOverrides(path, Options{ScriptsDir: scripts}, []OverrideSource{src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "6b19d702b48d1be94671c2b5720539dab4ba7c4c261e58ceb59e67cb62442a5f"
+	if wf.EffectiveHash != want {
+		t.Fatalf("effective hash = %s, want %s (the normalization changed; bump effectiveSchema if that is intended)", wf.EffectiveHash, want)
+	}
+}
