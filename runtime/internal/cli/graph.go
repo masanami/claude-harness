@@ -9,23 +9,27 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/masanami/claude-harness/runtime/internal/engine"
 	"github.com/masanami/claude-harness/runtime/internal/graph"
+	"github.com/masanami/claude-harness/runtime/internal/runstate"
 	"github.com/masanami/claude-harness/runtime/internal/version"
 	"github.com/masanami/claude-harness/runtime/internal/workflow"
 )
 
-// graph 形式（docs/harness-runtime-visualization.md §7）。mermaid は段 2（#316）で足すので、この段では使い方の誤りにする。
+// graph 形式（docs/harness-runtime-visualization.md §7）。
 const (
 	formatText    = "text"
 	formatJSON    = "json"
 	formatMermaid = "mermaid"
 )
 
-// cmdGraph はワークフロー定義の形を出す（§3・§6.1・§7）。読み取りだけのコマンドで、run を進めないので版の照合
-// （HARNESS_PLUGIN_VERSION）はしない。終了コードは 0 = 出力した、2 = 使い方の誤り・定義の不正。
+// cmdGraph はワークフロー定義の形を出す（§3・§6・§7）。--run を付けると、その run が使った定義の形に現在地を重ねる
+// （§4・§5.2）。読み取りだけのコマンドで、run を進めず状態も変えないので版の照合（HARNESS_PLUGIN_VERSION）はしない。
+// 終了コードは 0 = 出力した、1 = run が見つからない・run の定義を組み立て直せない、2 = 使い方の誤り・定義の不正。
+// run が待機中・停止済みでも 3・4 は返さない（run の状態は出力の run.status で読む）。
 func cmdGraph(args []string, env Env) int {
 	flags, pos, err := parseArgs(args,
-		flagSpec{name: "format", value: true}, flagSpec{name: "json"},
+		flagSpec{name: "format", value: true}, flagSpec{name: "json"}, flagSpec{name: "run", value: true},
 		flagSpec{name: "workflow-dir", value: true}, flagSpec{name: "scripts-dir", value: true})
 	if err != nil {
 		return usageErr(env, err)
@@ -41,11 +45,21 @@ func cmdGraph(args []string, env Env) int {
 		format = formatJSON
 	}
 	switch format {
-	case formatText, formatJSON:
-	case formatMermaid:
-		return usageErr(env, errors.New("graph --format mermaid is not implemented yet (use --format text or json)"))
+	case formatText, formatJSON, formatMermaid:
 	default:
-		return usageErr(env, fmt.Errorf("unknown graph format %q (text or json)", format))
+		return usageErr(env, fmt.Errorf("unknown graph format %q (text, json or mermaid)", format))
+	}
+	if _, ok := flags["run"]; ok {
+		// --run のときは定義を run の記録から決めるので、定義を選ぶ引数は使い方の誤り（§7）。
+		if len(pos) > 0 {
+			return usageErr(env, errors.New("graph takes either a workflow or --run <run-id>, not both"))
+		}
+		for _, f := range []string{"workflow-dir", "scripts-dir"} {
+			if _, ok := flags[f]; ok {
+				return usageErr(env, fmt.Errorf("--%s cannot be used with --run (the run's record decides the workflow)", f))
+			}
+		}
+		return graphRun(env, first(flags, "run"), format)
 	}
 	if len(pos) != 1 {
 		return usageErr(env, errors.New("graph takes exactly one workflow"))
@@ -68,12 +82,59 @@ func cmdGraph(args []string, env Env) int {
 	if src.embedded && filepath.Dir(path) == src.wd {
 		source = graph.SourceEmbedded
 	}
-	g := graph.Build(wf, source, version.CLI())
-	if format == formatJSON {
+	writeGraph(env, graph.Build(wf, source, version.CLI()), format)
+	return ExitOK
+}
+
+func writeGraph(env Env, g *graph.Graph, format string) {
+	switch format {
+	case formatJSON:
 		writeJSON(env.Stdout, g)
-		return ExitOK
+	case formatMermaid:
+		graph.WriteMermaid(env.Stdout, g)
+	default:
+		graph.WriteText(env.Stdout, g, outputWidth(env))
 	}
-	graph.WriteText(env.Stdout, g, outputWidth(env))
+}
+
+// graphRun は run の記録から resume と同じ手順（engine.Reopen）で定義を組み立て直し、その形に現在地を重ねる（§5.2）。
+// status と違い、runner の居ない実行中の run を interrupted に記録し直さない（§4: 読み取りのコマンドは状態を変えない）。
+// Reopen は定義と上書きの写しを読んで照合するだけで、run には何も書かない。
+func graphRun(env Env, id, format string) int {
+	run, err := openRun(env, id)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+		return ExitFailed
+	}
+	st, _, err := run.Load()
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+		return ExitFailed
+	}
+	hint := fmt.Sprintf("harness status %s still shows where the run is", st.RunID)
+	// 上書きの写しから組み立て直した形の描き方（changes・overridden・skipped）は段 3（#317）で足す。それまでは、
+	// 上書きの印の無い形に重ねて付け替えた辺を元の定義の辺のように見せないよう、描かずに止める。
+	if len(st.Overrides.Overrides) > 0 {
+		fmt.Fprintf(env.Stderr, "harness: run %s started with overrides; graph --run does not draw an overridden workflow yet\n%s\n", st.RunID, hint)
+		return ExitFailed
+	}
+	eng, err := engine.Reopen(run, st)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "harness: cannot rebuild the workflow run %s started with, so its shape is not drawn: %v\n%s\n", st.RunID, err, hint)
+		return ExitFailed
+	}
+	source := graph.SourceWorkflowDir
+	if st.Embedded {
+		source = graph.SourceEmbedded
+	}
+	// 描く定義は run を始めた版の写しなので、版も run を始めた CLI の版にする（記録の無い古い run は今の版）。
+	cli := st.CLIVersion
+	if cli == "" {
+		cli = version.CLI()
+	}
+	g := graph.Build(eng.WF, source, cli)
+	g.Run = graph.NewRun(st, runnerAlive(st), func(u *runstate.Unit) graph.Waiting { return graph.Waiting(waiting(st.RunID, u)) })
+	writeGraph(env, g, format)
 	return ExitOK
 }
 

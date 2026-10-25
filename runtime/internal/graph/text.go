@@ -6,6 +6,9 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/masanami/claude-harness/runtime/internal/runstate"
+	"github.com/masanami/claude-harness/runtime/internal/workflow"
 )
 
 // テキスト表示（§6.1）の凡例。既定の失敗と interrupted ゲートは辺にしないので（§3.4）、ここで 1 回だけ書く。
@@ -15,6 +18,9 @@ var (
 	notShown = "not shown: unhandled step_error/step_timeout/invalid_output/budget_exhausted fail the run; " +
 		"a step left running by a dead runner waits at the built-in gate interrupted"
 )
+
+// --run を付けたときに凡例へ足す項目（§6.1）。
+var runLegendItems = []string{"> current step", "* visited (executions, last outcome)"}
 
 const (
 	// attrMax を超える種類の欄（長い select の参照等）は欄を広げず、その行だけ後ろへはみ出させる。
@@ -44,7 +50,11 @@ func WriteText(w io.Writer, g *Graph, width int) {
 	lines := wrapAt(fmt.Sprintf("workflow %s (%s, cli %s)  ", g.Workflow.ID, g.Workflow.Source, g.Workflow.CLIVersion),
 		[]string{"entry: " + g.Entry}, "  ", contIndent, width)
 	lines = append(lines, wrapAt("limits: ", ls, " ", legendIndent, width)...)
-	lines = append(lines, wrapAt("legend: ", legendItems, "  ", legendIndent, width)...)
+	legend := legendItems
+	if g.Run != nil {
+		legend = append(append([]string{}, legend...), runLegendItems...)
+	}
+	lines = append(lines, wrapAt("legend: ", legend, "  ", legendIndent, width)...)
 	lines = append(lines, wrapAt(strings.Repeat(" ", legendIndent), strings.Fields(notShown), " ", legendIndent, width)...)
 	lines = append(lines, "")
 
@@ -63,9 +73,27 @@ func WriteText(w io.Writer, g *Graph, width int) {
 			attrw = max(attrw, a)
 		}
 	}
+	marks, notes := runMarks(g.Run)
 	for _, n := range steps {
-		head := "  " + pad(n.ID, idw) + "  " + pad(attrs[n.ID], attrw) + "  "
-		lines = append(lines, wrapAt(head, transitions(g, n.ID, limits), " | ", 2+idw+2+attrw+2, width)...)
+		mark := marks[n.ID]
+		if mark == "" {
+			mark = " "
+		}
+		head := mark + " " + pad(n.ID, idw) + "  " + pad(attrs[n.ID], attrw) + "  "
+		items := transitions(g, n.ID, limits)
+		if note := notes[n.ID]; note != "" {
+			// 現在地の要約は最後の遷移に続けて置き、折り返しても行き先と取り違えないよう遷移の区切りでは書かない。
+			if len(items) == 0 {
+				items = []string{note}
+			} else {
+				items[len(items)-1] += "  " + note
+			}
+		}
+		lines = append(lines, wrapAt(head, items, " | ", 2+idw+2+attrw+2, width)...)
+	}
+	if g.Run != nil {
+		lines = append(lines, "")
+		lines = append(lines, runSummary(g, width)...)
 	}
 	for _, l := range lines {
 		fmt.Fprintln(w, strings.TrimRight(l, " "))
@@ -191,3 +219,91 @@ func pad(s string, w int) string {
 func runes(s string) int { return utf8.RuneCountInString(s) }
 
 func num(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+
+// runMarks は行の先頭の印（> いまいるステップ・* 通ったステップ）と、行末に添える回数と最後の outcome を返す。
+// いまいるステップは終わっていない unit の current_step だけにする（終わった unit の current_step は最後に動いた
+// ステップで、そこに居るわけではない）。unit が複数なら、行末の要約は unit ごとに key を付けて並べる。
+func runMarks(r *Run) (map[string]string, map[string]string) {
+	marks, notes := map[string]string{}, map[string]string{}
+	if r == nil {
+		return marks, notes
+	}
+	parts := map[string][]string{}
+	for _, u := range r.Units {
+		at := map[string]bool{}
+		for _, v := range u.Visited {
+			at[v.Step] = true
+			marks[v.Step] = "*"
+			p := fmt.Sprintf("x%d, last %s", v.Executions, v.LastOutcome)
+			if len(r.Units) > 1 {
+				p = u.Key + ": " + p
+			}
+			parts[v.Step] = append(parts[v.Step], p)
+		}
+		if u.CurrentStep != "" && !runstate.Terminal(u.Status) && !at[u.CurrentStep] && len(r.Units) > 1 {
+			parts[u.CurrentStep] = append(parts[u.CurrentStep], u.Key+": here")
+		}
+	}
+	for _, u := range r.Units {
+		if u.CurrentStep != "" && !runstate.Terminal(u.Status) {
+			marks[u.CurrentStep] = ">"
+		}
+	}
+	for step, ps := range parts {
+		notes[step] = "(" + strings.Join(ps, "; ") + ")"
+	}
+	return marks, notes
+}
+
+// runSummary は形の後に置く現在地の要約（unit ごと）。待っていれば再開のコマンドを添える。実行中のまま runner が
+// 居ない run は、graph が記録し直さないこと（§4）と、status・resume を呼んだ後にどう見えるかを書く（§12）。
+func runSummary(g *Graph, width int) []string {
+	r := g.Run
+	var lines []string
+	for _, u := range r.Units {
+		label := "run " + r.RunID
+		if len(r.Units) > 1 {
+			label += " unit " + u.Key
+		}
+		var where string
+		switch {
+		case u.Waiting != nil:
+			where = fmt.Sprintf("waiting at %s (decider %s)", u.Waiting.Gate, u.Waiting.Decider)
+		case runstate.Terminal(u.Status):
+			where = u.Status
+			if r.Reason != nil && runstate.Terminal(r.Status) {
+				where += " (" + *r.Reason + ")"
+			}
+			if u.CurrentStep != "" {
+				where += " after " + u.CurrentStep
+			}
+		default:
+			where = u.Status + " at " + u.CurrentStep
+		}
+		items := []string{where, fmt.Sprintf("round %d", u.Round)}
+		for _, l := range g.Limits {
+			if l.Name == workflow.BudgetLimit { // 予算は使った回数ではなく使った額で出す
+				continue
+			}
+			items = append(items, fmt.Sprintf("%s %d/%s", l.Name, u.LimitsUsed[l.Name], num(l.Value)))
+		}
+		if b := u.Budget; b != nil {
+			s := fmt.Sprintf("spent %.2f/%.2f USD", b.SpentUSD, b.LimitUSD)
+			if b.UnknownCostCount > 0 {
+				s += fmt.Sprintf(" (unknown cost x%d)", b.UnknownCostCount)
+			}
+			items = append(items, s)
+		}
+		lines = append(lines, wrapAt(label+": ", items, ", ", contIndent, width)...)
+		if u.Waiting != nil {
+			// 再開のコマンドはそのまま貼れるよう折り返さない。
+			lines = append(lines, "  resume: "+u.Waiting.ResumeCommand)
+		}
+		if r.RunnerAlive != nil && !*r.RunnerAlive && u.Waiting == nil && !runstate.Terminal(u.Status) {
+			note := fmt.Sprintf("the runner is not alive: nothing is advancing this run. graph does not record that; "+
+				"harness status or harness resume will end step %s as interrupted and wait at the built-in gate interrupted", u.CurrentStep)
+			lines = append(lines, wrapAt("  ", strings.Fields(note), " ", 2, width)...)
+		}
+	}
+	return lines
+}

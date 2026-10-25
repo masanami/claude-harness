@@ -1,6 +1,6 @@
 // Package graph はワークフロー定義の形（ステップ・遷移・ゲート・終端）を、節点と辺の一覧（harness.workflow-graph/v1）に
 // 組み直す（docs/harness-runtime-visualization.md §3）。harness graph の JSON はこの形をそのまま出し、テキスト表示
-// （text.go・§6.1）もこの形から作る。
+// （text.go・§6.1）と Mermaid（mermaid.go・§6.2）もこの形から作る。--run の現在地（run.go・§4）はこの形に重ねる。
 //
 // 形に入れるのは遷移を読むのに要るものと、上書きで変えられる数値（budget_usd・timeout）だけで、prompt・with・output の
 // ような実行の中身は入れない（§3.1）。ゲートの名前は Go に書かず、decider と requires_tty の性質で人のゲートを区別させる。
@@ -34,8 +34,8 @@ type Graph struct {
 	BuiltinGates []BuiltinGate `json:"builtin_gates"`
 	Nodes        []Node        `json:"nodes"`
 	Edges        []Edge        `json:"edges"`
-	// Run は --run を付けたときだけ値を持つ（§4。段 2 で足す）。この段では常に null。
-	Run any `json:"run"`
+	// Run は --run を付けたときだけ値を持つ（§4・run.go）。付けなければ null。
+	Run *Run `json:"run"`
 }
 
 // Meta はどの定義を描いたか（§3.1・§5）。Overrides・Changes は #309 の run の記録と同じ形で、上書きが無ければ空の配列。

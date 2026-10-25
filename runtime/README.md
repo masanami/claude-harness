@@ -14,7 +14,7 @@
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
 - 定義の上書きの段 1（数値のキー・2 層の置き場・run の記録と `resume`。Issue #312）と段 2（宣言した遷移の付け替えと外せないゲート。Issue #313）。下の「定義の上書き」
-- ワークフローの形を出す読み取り専用のコマンド `graph`（[`docs/harness-runtime-visualization.md`](../docs/harness-runtime-visualization.md) の段 1。下の「ワークフローの形」）
+- ワークフローの形を出す読み取り専用のコマンド `graph`（[`docs/harness-runtime-visualization.md`](../docs/harness-runtime-visualization.md) の段 1 と段 2。下の「ワークフローの形」）
 
 ## 構成
 
@@ -114,6 +114,7 @@ go run ./cmd/harness cancel <run-id>
 go run ./cmd/harness contract status <run-id>        # flywheel の接続契約 v1 の JSON（start・status・resume・cancel）
 go run ./cmd/harness predict-conflicts 12 13         # 衝突の予測（読み取り専用。JSON を 1 つ出す）
 go run ./cmd/harness graph ticket                    # ワークフローの形（読み取り専用。--json で JSON）
+go run ./cmd/harness graph --run <run-id>            # run が使った定義の形に現在地を重ねる（状態は変えない）
 ```
 
 - ワークフロー定義とスクリプトの置き場は `--workflow-dir` / `--scripts-dir` で指す。省略時は埋め込んだ写し（`make bundle` の時点の作業ツリーの内容）を展開して使う（上の「定義とスクリプトの置き場」）。
@@ -138,19 +139,23 @@ harness predict-conflicts [--max-budget-usd USD] <issue> <issue>...   # cwd の�
 
 - 待機（3）のとき stdout の JSON の `waiting[]` に、ゲート・決める主体・要求操作（`requested_action`）・受け付ける値・`requires_tty`・再開のコマンドが入る（§5.2）。
 
-## ワークフローの形（`graph`。Issue #315）
+## ワークフローの形（`graph`。Issue #315・#316）
 
-定義の形（ステップ・遷移・ゲート・終端）を出す。設計は [`docs/harness-runtime-visualization.md`](../docs/harness-runtime-visualization.md)（Issue #308）が正本で、ここに入っているのはその §11 の段 1 である。run を進めず、状態も変えない。接続契約 v1 には載せない（同 §8）。
+定義の形（ステップ・遷移・ゲート・終端）を出す。設計は [`docs/harness-runtime-visualization.md`](../docs/harness-runtime-visualization.md)（Issue #308）が正本で、ここに入っているのはその §11 の段 1 と段 2 である。run を進めず、状態も変えない。接続契約 v1 には載せない（同 §8）。
 
 ```bash
-harness graph [--format text|json] [--json] [--workflow-dir DIR] [--scripts-dir DIR] <workflow>
+harness graph [--format text|json|mermaid] [--json] [--workflow-dir DIR] [--scripts-dir DIR] <workflow>
+harness graph [--format text|json|mermaid] [--json] --run <run-id>
 ```
 
 - 定義は `run`・`validate` と同じ手順で決める（フラグ無しなら埋め込んだ写し、`--workflow-dir` なら開発用の置き場）。`<workflow>` は名前かパス。
 - `--format json`（別名 `--json`）は `schema: harness.workflow-graph/v1` の JSON を出す。`nodes` はステップ（定義の順）と終端（`fail:<理由>`・`done:<理由>`。初出の順）、`edges` は遷移で、上限つきの `goto` と `retry` は通常の行き先と尽きたときの行き先（`exhausted` を持つ）の 2 本になる。人のゲートは `gate.decider` と `gate.requires_tty` で分かる。`on` に書かれていない予約値は辺にせずステップの `fail_closed` に並べ、組み込みの `interrupted` ゲートは `builtin_gates` に置く。
-- この段では上書きを反映しない（`workflow.overrides`・`workflow.changes` は空の配列、辺の `overridable`・`overridden` は `null`、`workflow.effective_hash` は `hash` と同じ値）。`run` は常に `null`。`--run` と `--format mermaid` は段 2（#316）、`--override` は段 3（#317）で足す。`--format mermaid` は今は使い方の誤り（終了コード 2）になる。
-- 既定の `text` は 1 ステップ 1 行（`->` 次のステップ・`!` 失敗・`=` 成功・`~` 上限つきの `goto`／`retry`、`[human]` 人が決めるゲート・`[tty]` 端末が要るゲート）。`$COLUMNS` が正の整数ならその幅、標準出力が端末ならその幅で、遷移の区切りでだけ折り返す（1 つの遷移の途中では切らない）。パイプ・リダイレクト先では折り返さない。
-- 終了コード: 0 = 出力した、2 = 使い方の誤り・定義の不正。run を進めないので、版の照合（`$HARNESS_PLUGIN_VERSION`）はしない。
+- この段では上書きを反映しない（`workflow.overrides`・`workflow.changes` は空の配列、辺の `overridable`・`overridden` は `null`、`workflow.effective_hash` は `hash` と同じ値）。`--override` と上書きの反映は段 3（#317）で足す。
+- `--run <run-id>` は、run の記録から `resume` と同じ手順（`engine.Reopen`。元の定義のパスを読んでハッシュと照合する）で定義を組み立て直し、その形の `run` に現在地を入れる。`run_id`・`status`・`reason`・`runner_alive` と、unit ごとの `key`・`status`・`current_step`・`round`（`rounds[]` の数）・`waiting`（`status --json` の `waiting[]` の要素と同じ形。待っていなければ `null`）・`visited`（ステップごとの実行回数と最後の outcome）・`limits_used`・`budget` で、名前と値は `status --json` と同じ。組み立て直せない（定義を開始後に書き換えた等）ときは描かずに終了コード 1 で止まり、`harness status` で現在地を読めることを標準エラーに出す。上書きを重ねて始めた run も、段 3 までは描かずに 1 で止まる。`<workflow>` と `--run` の併用、`--run` と `--workflow-dir`・`--scripts-dir` の併用は使い方の誤り（2）。
+- `graph --run` は runner の居ない実行中の run を `interrupted` に記録し直さない（`status` と `resume` は記録し直す）。そのため `graph --run` では `run.status` が `running`・`runner_alive` が `false`・`waiting` が `null` のままで、テキストはそのことと、`status`・`resume` の後に `interrupted` ゲートで待つことを末尾に書く。
+- `--format mermaid` は `flowchart TD` の 1 文書を出す（GitHub の Markdown の ` ```mermaid ` に貼れば図になる）。節点 id は `n0`・`n1` …（ラベルにステップ id と種類の欄）、形は `llm` 角丸・`command` 等は四角・`gate` 六角形・`select` ひし形・終端は円。辺のラベルは outcome（上限つきは `fail (rework<=3)`）で、同じ節点の間の素の辺は 1 本にまとめて outcome を ` / ` で並べる。尽きたときの辺は点線。人のゲートはクラス `human`、`--run` ではいまいるステップ（終わった run は達した終端）にクラス `current`、通ったステップに `visited` を付け、現在地の要約を `%%` のコメントに入れる。
+- 既定の `text` は 1 ステップ 1 行（`->` 次のステップ・`!` 失敗・`=` 成功・`~` 上限つきの `goto`／`retry`、`[human]` 人が決めるゲート・`[tty]` 端末が要るゲート）。`--run` では行の先頭に `>`（いまいるステップ）・`*`（通ったステップ）を付け、行末に `(x2, last green)` のように実行回数と最後の outcome を添え、形の後に現在地の要約（待っていれば再開のコマンド）を置く。`$COLUMNS` が正の整数ならその幅、標準出力が端末ならその幅で、遷移の区切りでだけ折り返す（1 つの遷移の途中では切らない）。パイプ・リダイレクト先では折り返さない。
+- 終了コード: 0 = 出力した、1 = run が見つからない・run の定義を組み立て直せない、2 = 使い方の誤り・定義の不正。run が待機中・停止済みでも 3・4 は返さない（run の状態は `run.status` で読む）。run を進めないので、版の照合（`$HARNESS_PLUGIN_VERSION`）はしない。
 
 ## `command` 種類の書き方
 
