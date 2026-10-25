@@ -72,7 +72,7 @@ steps: { implement: { budget_usd: 60, timeout: 3h } }   # llm の budget_usd・t
 - 人のゲート（`decider: human`）のキーは書けず、人のゲートへ向かう遷移と `fail` で終わる遷移は宣言も上書きもできない。付け替えで人のゲートが到達できなくなる上書きも拒否する。どれもゲートの名前ではなく `decider: human` という性質で決まる（§6.2 の規則 1〜3）。`--workflow-dir` の定義の差し替えはこの規則の外にある（開発用。§6.3）。
 - それ以外のキー（`prompt`・`agent`・`decider`、宣言の無い `on` 等）は「上書きできない」、元の文法に無いキーは「未知」として、`validate`・`run` が拒否する（§5.3）。
 - `validate` は ok の行の後に、読んだ上書き（`override <層> <パス>`）と効いた値（`changes:` の下に `<キー>: <元の値> -> <効いた値> (<層>)`）を出す。付け替えでだけ到達できなくなったステップは誤りにせず `skipped_steps: <id>, ...` の行に出す（§6.2 の規則 5）。
-- run は `run_started` の `workflow` に、上書きの出どころと sha256（`overrides`）・効いた値（`changes`）・上書き後の定義のハッシュ（`effective_hash`）・付け替えで到達できなくなったステップ（`skipped_steps`。無ければ出さない）を記録し、上書きのファイルを run ディレクトリの `overrides/1-repo.yaml`・`overrides/2-arg.yaml` へ写す。`workflow.hash` は元の定義の YAML の sha256 のまま。上書きの無い run の記録は従来と同じ形。`status --json` への表示は段 3（#314）で入る。
+- run は `run_started` の `workflow` に、上書きの出どころと sha256（`overrides`）・効いた値（`changes`）・上書き後の定義のハッシュ（`effective_hash`）・付け替えで到達できなくなったステップ（`skipped_steps`。無ければ出さない）を記録し、上書きのファイルを run ディレクトリの `overrides/1-repo.yaml`・`overrides/2-arg.yaml` へ写す。`workflow.hash` は元の定義の YAML の sha256 のまま。上書きの無い run の記録は従来と同じ形。`status --json`（と同じ JSON を出す `run`・`resume`・`approve`・`cancel`）は `workflow` の下に `overrides`・`changes`・`skipped_steps` を出す。上書きの無い run と、上書きを記録する前の版で始めた run では 3 つとも空の配列。`effective_hash` は出さない。`harness contract status` の出力（接続契約 v1）は変わらない。
 - `resume` は元の上書きのファイルではなく写しを読んで定義を組み立て直す。写しの sha256 が開始時と違えば止まる。上書き後の定義のハッシュが開始時と違えば（CLI の重ね方が変わった）、終了コード 5 で開始時の版での `resume` か `cancel` を案内する（§7.2）。
 
 ## 版の照合（§7.3）

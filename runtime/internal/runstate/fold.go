@@ -41,8 +41,8 @@ type State struct {
 	Cancelled   *RunCancelled              `json:"cancelled,omitempty"`
 	Units       []*Unit                    `json:"units"`
 
-	// Overrides は run_started の上書きの記録（resume が同じ上書きで定義を組み立て直す材料。§7.2）。status --json への
-	// 表示は #314（段 3）で決めるので、ここでは JSON に出さない（state.json・status --json の形は従来のまま）。
+	// Overrides は run_started の上書きの記録（resume が同じ上書きで定義を組み立て直す材料。§7.2）。state.json には
+	// 出さない。status --json は cli の statusView が workflow の下に overrides・changes・skipped_steps を足して出す（#314）。
 	Overrides OverrideRecord `json:"-"`
 }
 
