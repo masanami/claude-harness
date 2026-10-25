@@ -93,7 +93,8 @@ func overrideSources(env Env, id string, arg *workflow.OverrideSource) ([]workfl
 	return srcs, nil
 }
 
-// printOverrides は validate の ok の後に、読んだ上書きと効いた値（changes）を出す。
+// printOverrides は validate の ok の後に、読んだ上書きと効いた値（changes）と、付け替えで到達できなくなったステップ
+// （skipped_steps。docs/harness-runtime-overrides.md §6.2 の規則 5）を出す。
 func printOverrides(w io.Writer, wf *workflow.Workflow) {
 	if len(wf.Overrides) == 0 {
 		return
@@ -108,6 +109,9 @@ func printOverrides(w io.Writer, wf *workflow.Workflow) {
 	fmt.Fprintln(w, "  changes:")
 	for _, c := range wf.Changes {
 		fmt.Fprintf(w, "    %s: %s -> %s (%s)\n", c.Key, changeValue(c.From), changeValue(c.To), c.Layer)
+	}
+	if len(wf.SkippedSteps) > 0 {
+		fmt.Fprintf(w, "  skipped_steps: %s\n", strings.Join(wf.SkippedSteps, ", "))
 	}
 }
 

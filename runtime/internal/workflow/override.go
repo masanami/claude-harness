@@ -5,7 +5,8 @@ package workflow
 // 上書きは元の定義と同じ入れ子の写像で、変えるスカラーだけを書く部分上書き（§4）。開くキーは数値だけで（§5.1）、
 // limits の全項目・llm の budget_usd と timeout・command の timeout を Go の規則で一律に開く。それ以外のキーは
 // 「書けるものだけを列挙する」形（workflow.go の冒頭の注記）で拒否し、元の定義の文法にあるキーの名前なら
-// 「上書きできない」と伝える（§5.3）。遷移の付け替え（overridable.routes）は段 2 で足す。
+// 「上書きできない」と伝える（§5.3）。遷移の付け替え（元の定義の overridable.routes が宣言した遷移だけ。§5.2）は
+// 段 2（#313）で足した（routes.go）。
 
 import (
 	"bytes"
@@ -53,13 +54,15 @@ type Override struct {
 
 // overrideSet は上書きが書いた値 1 つ。
 type overrideSet struct {
-	key   string // limits.<名前> | steps.<id>.budget_usd | steps.<id>.timeout
-	limit string
-	step  string
-	field string
-	num   float64
-	isInt bool
-	dur   time.Duration
+	key     string // limits.<名前> | steps.<id>.budget_usd | steps.<id>.timeout | steps.<id>.on.<outcome>
+	limit   string
+	step    string
+	field   string
+	num     float64
+	isInt   bool
+	dur     time.Duration
+	outcome string // field が on のとき: 付け替える遷移の outcome
+	target  string // field が on のとき: 付け替え先のステップ id
 }
 
 // Change は上書きで効いた値 1 つ（§7.1 の changes）。From は元の定義の値（元の定義に無いキーなら nil）、To は効いた値、
@@ -146,7 +149,7 @@ func ParseOverride(src OverrideSource, base *Workflow) (*Override, error) {
 		case pr.key == "steps":
 			p.overrideSteps(ov, pr.val, base)
 		case closedTopKeys[pr.key]:
-			p.errf(pr.knode, "override: key %q cannot be overridden (an override may set only limits.<name>, steps.<id>.budget_usd and steps.<id>.timeout)", pr.key)
+			p.errf(pr.knode, "override: key %q cannot be overridden (an override may set only limits.<name>, steps.<id>.budget_usd, steps.<id>.timeout and the declared steps.<id>.on.<outcome>)", pr.key)
 		case exprKeys[strings.ToLower(pr.key)]:
 			p.errf(pr.knode, "override: key %q is a condition/expression; overrides have no expressions (see §3.1)", pr.key)
 		default:
@@ -223,12 +226,20 @@ func (p *parser) overrideSteps(ov *Override, n *yaml.Node, base *Workflow) {
 			p.errf(pr.knode, "%s: workflow %s has no such step (an override cannot add steps)", what, base.ID)
 			continue
 		}
+		if isHumanGate(s) {
+			p.errf(pr.knode, "%s is a human gate (decider: human); none of its keys can be overridden (§6.2 rule 1)", what)
+			continue
+		}
 		fields, ok := p.mapping(pr.val, what)
 		if !ok {
 			continue
 		}
 		for _, f := range fields {
 			fw := what + "." + f.key
+			if f.key == "on" {
+				p.overrideRoutes(ov, s, f.val, fw, base)
+				continue
+			}
 			kindsWith, open := openStepKeys[f.key]
 			switch {
 			case open && !contains(kindsWith, s.Kind):
@@ -236,13 +247,13 @@ func (p *parser) overrideSteps(ov *Override, n *yaml.Node, base *Workflow) {
 				continue
 			case open:
 			case closedStepKey(f.key):
-				p.errf(f.knode, "%s cannot be overridden (a step override may set only budget_usd on llm steps and timeout on llm and command steps)", fw)
+				p.errf(f.knode, "%s cannot be overridden (a step override may set only budget_usd on llm steps, timeout on llm and command steps, and the transitions declared in overridable.routes under on)", fw)
 				continue
 			case exprKeys[strings.ToLower(f.key)]:
 				p.errf(f.knode, "%s: key %q is a condition/expression; overrides have no expressions (see §3.1)", what, f.key)
 				continue
 			default:
-				p.errf(f.knode, "%s: unknown key %q (allowed: budget_usd, timeout)", what, f.key)
+				p.errf(f.knode, "%s: unknown key %q (allowed: budget_usd, timeout, on)", what, f.key)
 				continue
 			}
 			set := overrideSet{key: fw, step: pr.key, field: f.key}
@@ -291,7 +302,8 @@ func contains(xs []string, x string) bool {
 
 // LoadWithOverrides は元の定義を読み込んで検査し、上書きを層の順に重ねた定義を返す（§3・§6.2 の規則 4: 上書き後の定義も
 // 通常の検査をすべて通す）。上書きが無ければ LoadAndValidate と同じ。返す定義の Hash は元の定義の YAML の sha256 のまま
-// （§7.1）で、上書きがあれば Overrides・Changes・EffectiveHash を持つ。
+// （§7.1）で、上書きがあれば Overrides・Changes・EffectiveHash を持つ。付け替えで到達できなくなったステップは誤りにせず
+// SkippedSteps に入れ、人のゲートが到達できなくなる上書きは拒否する（§6.2 の規則 3・5）。
 func LoadWithOverrides(path string, opts Options, srcs []OverrideSource) (*Workflow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -330,15 +342,20 @@ func LoadWithOverrides(path string, opts Options, srcs []OverrideSource) (*Workf
 		return nil, err
 	}
 	changes := apply(eff, ovs)
-	if ps := Validate(eff, opts); len(ps) > 0 {
+	skipped, ps := skippedSteps(eff)
+	if len(ps) > 0 {
 		return nil, ps
 	}
-	eff.Overrides, eff.Changes = ovs, changes
+	if ps := validate(eff, opts, true, skipped); len(ps) > 0 {
+		return nil, ps
+	}
+	eff.Overrides, eff.Changes, eff.SkippedSteps = ovs, changes, skipped
 	eff.EffectiveHash = effectiveHash(eff.Hash, changes)
 	return eff, nil
 }
 
-// apply は上書きを順に wf へ重ね、効いた値を元の定義の順（limits の宣言順 → steps の宣言順・budget_usd → timeout）で返す。
+// apply は上書きを順に wf へ重ね、効いた値を元の定義の順（limits の宣言順 → steps の宣言順・budget_usd → timeout →
+// on の宣言順）で返す。
 func apply(wf *Workflow, ovs []*Override) []Change {
 	type won struct {
 		set   overrideSet
@@ -373,6 +390,16 @@ func apply(wf *Workflow, ovs []*Override) []Change {
 			}
 			s.Timeout = w.set.dur
 			changes = append(changes, Change{Key: w.set.key, From: from, To: s.Timeout.String(), Layer: w.layer})
+		}
+		for _, e := range s.On {
+			w, ok := last["steps."+s.ID+".on."+e.Outcome]
+			if !ok {
+				continue
+			}
+			// 宣言できるのはステップ id だけの遷移（routes.go の routeDecls）なので、付け替えは行き先を差し替えるだけ。
+			from := e.T.Target
+			e.T = &Transition{Kind: TStep, Target: w.set.target, Line: e.T.Line}
+			changes = append(changes, Change{Key: w.set.key, From: from, To: w.set.target, Layer: w.layer})
 		}
 	}
 	return changes

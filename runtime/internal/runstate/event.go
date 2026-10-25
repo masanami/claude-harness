@@ -75,10 +75,12 @@ type OverrideChange struct {
 
 // OverrideRecord は上書きを重ねて始めた run の記録（§7.1）。上書きの無い run では空で、JSON には何も出ない
 // （上書きの無い run の記録は従来と同じ形）。EffectiveHash は上書き後の定義を正規化した表現の sha256。
+// SkippedSteps は遷移の付け替えでだけ到達できなくなったステップの id（定義の宣言順。§6.2 の規則 5）で、無ければ出さない。
 type OverrideRecord struct {
 	Overrides     []OverrideRef    `json:"overrides,omitempty"`
 	EffectiveHash string           `json:"effective_hash,omitempty"`
 	Changes       []OverrideChange `json:"changes,omitempty"`
+	SkippedSteps  []string         `json:"skipped_steps,omitempty"`
 }
 
 // WorkflowRecord は run_started の workflow: 定義の同定情報に上書きの記録を足したもの（JSON では同じ階層に並ぶ）。

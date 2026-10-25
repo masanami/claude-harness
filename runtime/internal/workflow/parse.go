@@ -262,7 +262,7 @@ func Parse(path string, data []byte) (*Workflow, error) {
 	if !ok {
 		return nil, p.problems
 	}
-	p.allowKeys(top, "workflow", "schema", "id", "description", "inputs", "limits", "steps")
+	p.allowKeys(top, "workflow", "schema", "id", "description", "inputs", "limits", "overridable", "steps")
 	var stepsNode *yaml.Node
 	for _, pr := range top {
 		switch pr.key {
@@ -276,6 +276,8 @@ func Parse(path string, data []byte) (*Workflow, error) {
 			wf.Inputs = p.inputs(pr.val)
 		case "limits":
 			wf.Limits = p.limits(pr.val)
+		case "overridable":
+			wf.Routes = p.overridable(pr.val)
 		case "steps":
 			stepsNode = pr.val
 		}
