@@ -305,5 +305,5 @@ harness run --override <置き場>/l.yaml --input issue=<番号> ticket
 
 - flywheel が `cli` 形態で harness を起動するときの作業ディレクトリ（§3 の層 1 をどこから探すか）。flywheel の S4 で決まる【要確認】。
 - `overridable` を `harness.workflow/v1` のまま足せるか（埋め込みの定義と `--workflow-dir` の古い定義の混在で、読めない CLI が出ないか）。設計書 §7.3 の照合と合わせて実装時に確かめる【要確認】。
-- 上書き後の定義を正規化してハッシュを取る方法（キーの順・数値の書式）。実装時に決める。
+- 上書き後の定義を正規化してハッシュを取る方法（キーの順・数値の書式）。段 1（#312）で決めた: `{schema: harness.workflow-effective/v1, base: 元の定義の hash, set: 効いた値の [{key, value}] をキーの順に並べたもの}` の JSON の sha256。値は読み込んだ後の値（数は数、`timeout` は Go の時間の書式）なので、上書きのファイルの書式・コメント・キーの順・`60` と `60.0`・`30m` と `1800s`・どの層が書いたかには依らない。元の定義の残りの部分は `base` が同定する。重ね方・正規化を変えるときは `schema` の版を上げる（`runtime/internal/workflow/override.go` の `effectiveHash`）。
 - CI が実行中の PR を `/pr-merge` の preflight がどう扱うか（CI 待ちの省略を開くときの判断材料。§5.2）【要確認】。

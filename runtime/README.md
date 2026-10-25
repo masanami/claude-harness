@@ -13,6 +13,7 @@
 - runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
+- 定義の上書きの段 1（数値のキー・2 層の置き場・run の記録と `resume`。Issue #312。下の「定義の上書き」）
 
 ## 構成
 
@@ -50,6 +51,25 @@
 - リリースのバイナリは `runtime/workflows/`・`plugin/scripts/`（`tests/` を除く）・`plugin/agents/` を埋め込んでいる（`agents/` は `validate` が `agent:` の参照先を確かめるためだけに使う。子の `claude -p` はインストール済みのプラグインから解決する）。
 - 初回の `run` / `validate` で `<data>/runtime/<CLI の版>/` へ展開して使う。`<data>` は `$HARNESS_DATA_DIR`、無ければ `$XDG_DATA_HOME/claude-harness`、無ければ `~/.local/share/claude-harness`。展開したファイルは読み取り専用で、印（`.bundle-sha256`）の中身が違うディレクトリは上書きせずに止まる。版を持たないビルドは `dev-<中身の sha256 の先頭 12 桁>` に展開する。
 - `--workflow-dir` / `--scripts-dir`（開発用）を渡せばそちらを使う。埋め込んでいないバイナリは、作業ツリーの中なら作業ツリーの `runtime/workflows`・`plugin/scripts` を探して使い、外なら 2 つのフラグを求めて止まる。
+
+## 定義の上書き（Issue #309 の段 1・#312。設計は [docs/harness-runtime-overrides.md](../docs/harness-runtime-overrides.md)）
+
+定義を丸ごと写さずに、数値だけを小さな YAML で変えられる。上書きの置き場は 2 か所で、元の定義（埋め込みか `--workflow-dir`）→ リポジトリ → 引数の順に重ね、キーごとに後ろの層が勝つ。
+
+- 層 1（リポジトリ）: 作業ディレクトリから上へ探した git の最上位（`.git` を持つディレクトリ）の `.claude-harness/overrides/<ワークフローの id>.yaml`。在れば読み、無ければ飛ばす。
+- 層 2（引数）: `run`・`contract start`・`validate` の `--override <ファイル>`（1 つだけ）。ファイルが無ければ止まる。`validate` では、そのファイルの `workflow` が指す定義にだけ重ねる。
+
+```yaml
+schema: harness.workflow-override/v1
+workflow: ticket                       # 元の定義の id と一致しなければ拒否する
+limits: { budget_usd: 100 }            # limits の全項目（元の定義に在る名前だけ。整数の limit は整数、budget_usd は正の金額）
+steps: { implement: { budget_usd: 60, timeout: 3h } }   # llm の budget_usd・timeout、command の timeout
+```
+
+- それ以外のキー（`prompt`・`agent`・`decider`・`on` 等）は「上書きできない」、元の文法に無いキーは「未知」として、`validate`・`run` が拒否する（§5.3）。遷移の付け替え（`overridable.routes`）は段 2（#313）で入る。
+- `validate` は ok の行の後に、読んだ上書き（`override <層> <パス>`）と効いた値（`changes:` の下に `<キー>: <元の値> -> <効いた値> (<層>)`）を出す。
+- run は `run_started` の `workflow` に、上書きの出どころと sha256（`overrides`）・効いた値（`changes`）・上書き後の定義のハッシュ（`effective_hash`）を記録し、上書きのファイルを run ディレクトリの `overrides/1-repo.yaml`・`overrides/2-arg.yaml` へ写す。`workflow.hash` は元の定義の YAML の sha256 のまま。上書きの無い run の記録は従来と同じ形。`status --json` への表示は段 3（#314）で入る。
+- `resume` は元の上書きのファイルではなく写しを読んで定義を組み立て直す。写しの sha256 が開始時と違えば止まる。上書き後の定義のハッシュが開始時と違えば（CLI の重ね方が変わった）、終了コード 5 で開始時の版での `resume` か `cancel` を案内する（§7.2）。
 
 ## 版の照合（§7.3）
 

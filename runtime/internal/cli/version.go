@@ -132,6 +132,10 @@ func reopen(env Env, run *runstate.Run, st *runstate.State) (*engine.Engine, err
 	if errors.As(err, &re) && re.Load && st.Embedded && st.CLIVersion != version.CLI() {
 		return nil, versionErrorf(st, "this harness %s cannot load the definitions of %s: %v", version.CLI(), startedBy(st), re)
 	}
+	if errors.As(err, &re) && re.Effective {
+		// 上書きの写しと元の定義は開始時と同じなのに組み上がりが違う＝重ね方・正規化が開始時の版と違う（docs/harness-runtime-overrides.md §7.2）。
+		return nil, versionErrorf(st, "%v: this harness %s builds overrides differently from %s", re, version.CLI(), startedBy(st))
+	}
 	return eng, err
 }
 
