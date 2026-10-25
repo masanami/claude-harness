@@ -95,6 +95,9 @@ commands:
       stop a run: stop its child process and record the stop
   validate [--workflow-dir DIR] [--scripts-dir DIR] [<workflow>...]
       statically check workflow definitions (all *.yaml in the workflow directory by default)
+  graph [--format text|json] [--json] [--workflow-dir DIR] [--scripts-dir DIR] <workflow>
+      read-only: show the shape of a workflow (steps, transitions, gates, ends); --json is --format json
+      (exit 0 when it printed it, 2 on usage or an invalid workflow)
   setup [--scope user|project|local] [--marketplace SOURCE]
       add the marketplace and install the claude-harness plugin with claude plugin, then check its version
   version [--json]
@@ -142,6 +145,8 @@ func Main(args []string, env Env) int {
 		return cmdCancel(rest, env)
 	case "validate":
 		return cmdValidate(rest, env)
+	case "graph":
+		return cmdGraph(rest, env)
 	case "contract":
 		return cmdContract(rest, env)
 	case "predict-conflicts":

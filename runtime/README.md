@@ -2,7 +2,7 @@
 
 `harness` は claude-harness の headless workflow runtime。設計は [`docs/harness-runtime-design.md`](../docs/harness-runtime-design.md)（Issue #201）が正本。このディレクトリはプラグインの配布物（`plugin/`）の外にある。CLI はプラグインとは別に、GitHub Releases のバイナリで配る（§6.4。下の「導入」「リリース」）。
 
-## 現在の範囲（PR-2・Issue #259 ＋ PR-3・Issue #261 ＋ PR-4・Issue #269 ＋ PR-6・Issue #275 ＋ Issue #288）
+## 現在の範囲（PR-2・Issue #259 ＋ PR-3・Issue #261 ＋ PR-4・Issue #269 ＋ PR-6・Issue #275 ＋ Issue #288 ＋ Issue #315）
 
 - ワークフロー定義（式を持たない YAML・§3.1〜§3.3）の読み込みと `harness validate`（§6.3）
 - イベントログ（`events.jsonl` が正本）と状態の畳み込み（`state.json`）・状態の置き場（§4・§4.6）
@@ -13,6 +13,7 @@
 - runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
+- ワークフローの形を出す読み取り専用のコマンド `graph`（[`docs/harness-runtime-visualization.md`](../docs/harness-runtime-visualization.md) の段 1。下の「ワークフローの形」）
 
 ## 構成
 
@@ -25,6 +26,7 @@
 | `internal/statedir/` | 状態の置き場の決定（L2）と、埋め込んだ定義の展開先の決定 |
 | `internal/bundle/` | 埋め込んだ定義・スクリプト（`files/` は `make bundle` が作る写し）と、版ごとのディレクトリへの展開 |
 | `internal/version/` | CLI の版・対応するプラグイン版の範囲・読めるワークフロースキーマ版 |
+| `internal/graph/` | ワークフローの形（節点と辺の一覧・`harness.workflow-graph/v1`）とそのテキスト表示（`graph`） |
 | `internal/cli/` | コマンドの面（approve の TTY 判定・`setup`・`version` を含む） |
 | `internal/qualitygate/` | ルートの `Makefile` の検査（go が無ければ失敗すること） |
 | `workflows/` | ワークフロー定義（`schemas/` は出力の JSON Schema、`prompts/` は `llm` のプロンプト、`scripts/` は runtime が持つスクリプト） |
@@ -89,6 +91,7 @@ go run ./cmd/harness approve <run-id> --input <値>   # 人が端末から解決
 go run ./cmd/harness cancel <run-id>
 go run ./cmd/harness contract status <run-id>        # flywheel の接続契約 v1 の JSON（start・status・resume・cancel）
 go run ./cmd/harness predict-conflicts 12 13         # 衝突の予測（読み取り専用。JSON を 1 つ出す）
+go run ./cmd/harness graph ticket                    # ワークフローの形（読み取り専用。--json で JSON）
 ```
 
 - ワークフロー定義とスクリプトの置き場は `--workflow-dir` / `--scripts-dir` で指す。省略時は埋め込んだ写し（`make bundle` の時点の作業ツリーの内容）を展開して使う（上の「定義とスクリプトの置き場」）。
@@ -111,6 +114,20 @@ harness predict-conflicts [--max-budget-usd USD] <issue> <issue>...   # cwd の�
 - エージェントはインストール済みのプラグインから解決される。`issue-conflict-predictor` の `tools` に `StructuredOutput` が無い版のプラグインでは、予測が型付きの出力を返せず `failed` になる（#282 と同じ）。
 
 - 待機（3）のとき stdout の JSON の `waiting[]` に、ゲート・決める主体・要求操作（`requested_action`）・受け付ける値・`requires_tty`・再開のコマンドが入る（§5.2）。
+
+## ワークフローの形（`graph`。Issue #315）
+
+定義の形（ステップ・遷移・ゲート・終端）を出す。設計は [`docs/harness-runtime-visualization.md`](../docs/harness-runtime-visualization.md)（Issue #308）が正本で、ここに入っているのはその §11 の段 1 である。run を進めず、状態も変えない。接続契約 v1 には載せない（同 §8）。
+
+```bash
+harness graph [--format text|json] [--json] [--workflow-dir DIR] [--scripts-dir DIR] <workflow>
+```
+
+- 定義は `run`・`validate` と同じ手順で決める（フラグ無しなら埋め込んだ写し、`--workflow-dir` なら開発用の置き場）。`<workflow>` は名前かパス。
+- `--format json`（別名 `--json`）は `schema: harness.workflow-graph/v1` の JSON を出す。`nodes` はステップ（定義の順）と終端（`fail:<理由>`・`done:<理由>`。初出の順）、`edges` は遷移で、上限つきの `goto` と `retry` は通常の行き先と尽きたときの行き先（`exhausted` を持つ）の 2 本になる。人のゲートは `gate.decider` と `gate.requires_tty` で分かる。`on` に書かれていない予約値は辺にせずステップの `fail_closed` に並べ、組み込みの `interrupted` ゲートは `builtin_gates` に置く。
+- この段では上書きを反映しない（`workflow.overrides`・`workflow.changes` は空の配列、辺の `overridable`・`overridden` は `null`、`workflow.effective_hash` は `hash` と同じ値）。`run` は常に `null`。`--run` と `--format mermaid` は段 2（#316）、`--override` は段 3（#317）で足す。`--format mermaid` は今は使い方の誤り（終了コード 2）になる。
+- 既定の `text` は 1 ステップ 1 行（`->` 次のステップ・`!` 失敗・`=` 成功・`~` 上限つきの `goto`／`retry`、`[human]` 人が決めるゲート・`[tty]` 端末が要るゲート）。`$COLUMNS` が正の整数ならその幅、標準出力が端末ならその幅で、遷移の区切りでだけ折り返す（1 つの遷移の途中では切らない）。パイプ・リダイレクト先では折り返さない。
+- 終了コード: 0 = 出力した、2 = 使い方の誤り・定義の不正。run を進めないので、版の照合（`$HARNESS_PLUGIN_VERSION`）はしない。
 
 ## `command` 種類の書き方
 
