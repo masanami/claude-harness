@@ -98,9 +98,10 @@ func TestTicketQualityRunsTheBaseDeclarationOnTheCommit(t *testing.T) {
 	if q.Gates["result"] != "pass" || test["status"] != "pass" || gates["lint"].(map[string]any)["status"] != "skip" {
 		t.Fatalf("gates = %v", q.Gates)
 	}
-	// PR の head（publish が push した SHA）と記録の SHA を照合できる。
-	if sha := v.Unit("main").Workspace.HeadSHAs["1"]; sha != q.CommitSHA {
-		t.Fatalf("head_sha_by_round[1] = %s, quality commit_sha = %s", sha, q.CommitSHA)
+	// PR を作った時点では、実際の PR の head（origin の作業ブランチ）が記録の SHA と一致する。照合は head_sha_by_round では
+	// なく実際の PR の head で行う（head_sha_by_round を書くのは publish だけで、respond が push した head は記録されない）。
+	if remote := strings.Fields(git(t, f.repo, "ls-remote", "--heads", f.origin, f.branch)); len(remote) == 0 || remote[0] != q.CommitSHA {
+		t.Fatalf("the PR head on origin = %v, quality commit_sha = %s", remote, q.CommitSHA)
 	}
 }
 
@@ -172,6 +173,7 @@ func TestTicketQualityUndeclaredWhenNothingRunsOrTheCommandIsRejected(t *testing
 		{"no gate", `{"lint": ""}`, "1 つも無い"},
 		{"rejected", `{"test": "rm -rf build"}`, "拒否された"},
 		{"not the shape", `{"tests": "true"}`, "宣言の形になっていない"},
+		{"two JSON values", `{"test": "true"} {"test": "false"}`, "宣言の形になっていない"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newTicketFixture(t)
@@ -273,5 +275,119 @@ func TestTicketQualityStopsWhenReworkIsExhausted(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.ghDir, "create.count")); err == nil {
 		t.Errorf("a PR was opened although the quality gate kept failing")
+	}
+}
+
+// 宣言は、その時点の origin から取り直した PR の宛先から読む。ローカルの base（refs/heads/main）や、取り直す前の
+// refs/remotes/origin/main が別の宣言を指していても使わない。渡された作業ツリーの経路は workspace が fetch しないので、
+// quality 自身が取り直さないと古い refs/remotes/origin/main を読む。
+func TestTicketQualityReadsTheDeclarationFromOriginNow(t *testing.T) {
+	for _, c := range []struct {
+		name, reason string
+		setup        func(t *testing.T, f *ticketFixture)
+	}{
+		// (a) ローカルの main と refs/remotes/origin/main を {"test":"false"} の宣言を持つ未 push のコミットへ向けても、
+		// origin の {"test":"true"} で pass になる。
+		{"local refs point to another declaration", "", func(t *testing.T, f *ticketFixture) {
+			declareLocally(t, f.repo, `{"test": "false"}`)
+			git(t, f.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+		}},
+		// (b) 作業ツリーを用意した後に、別のクローンから origin の宣言を消すと undeclared で止まる。
+		{"origin dropped the declaration afterwards", "quality_gate_undeclared", func(t *testing.T, f *ticketFixture) {
+			other := filepath.Join(f.root, "other")
+			git(t, f.root, "clone", "-q", f.origin, other)
+			git(t, other, "rm", "-q", ".claude-harness/quality-gate.json")
+			git(t, other, "commit", "-q", "-m", "drop the declaration")
+			git(t, other, "push", "-q", "origin", "main")
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newTicketFixture(t)
+			f.write("checks.1", check("test", "pass"))
+			f.write("checks", check("test", "pass"))
+			wt := providedWorktree(t, f)
+			c.setup(t, f)
+			f.h.cwd = wt
+			out, errOut, code := f.h.run("run", "--input", "issue=42", "--input", "worktree="+wt,
+				"--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "ticket")
+			v := decode[statusView](t, out)
+			q := qualityOf(t, v)
+			if c.reason == "" {
+				if code != ExitWaiting || q.Result != "pass" || q.Declaration.Commit != git(t, f.origin, "rev-parse", "main") {
+					t.Fatalf("exit %d quality %+v\n%s", code, q, errOut)
+				}
+				return
+			}
+			if code != ExitFailed || v.Reason != c.reason || q.Result != "undeclared" {
+				t.Fatalf("exit %d reason %s quality %+v\n%s", code, v.Reason, q, errOut)
+			}
+		})
+	}
+}
+
+// declareLocally は宣言を変えるコミットを repo の main に作るが、origin へは push しない。
+func declareLocally(t *testing.T, repo, decl string) {
+	t.Helper()
+	commitFile(t, repo, ".claude-harness/quality-gate.json", decl+"\n")
+}
+
+// fakeScriptsDir は repoScripts の写し（シンボリックリンク）で、quality-check-runner.sh だけを偽物に差し替えた scripts ディレクトリ。
+// エージェント定義は <scripts-dir>/../agents から探されるので、隣に agents を置く。
+func fakeScriptsDir(t *testing.T, runner string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Symlink(filepath.Join(abs(t, repoScripts), "..", "agents"), filepath.Join(root, "agents")); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "scripts")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(abs(t, repoScripts))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() == "quality-check-runner.sh" {
+			continue
+		}
+		if err := os.Symlink(filepath.Join(abs(t, repoScripts), e.Name()), filepath.Join(dir, e.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(dir, "quality-check-runner.sh"), "#!/bin/bash\n"+runner+"\n")
+	return dir
+}
+
+// runner の結果と終了コードが食い違う・想定外の終了コード・宛先を取り直せない場合は、結果を記録せず step_error で止まる（fail-closed）。
+func TestTicketQualityFailsClosed(t *testing.T) {
+	for _, c := range []struct{ name, runner, stderr string }{
+		{"exit 0 without pass", `echo '{"result":"fail","gates":{}}'; exit 0`, "exited 0 without a pass result"},
+		{"exit 1 without fail", `echo '{"result":"pass","gates":{}}'; exit 1`, "exited 1 without a fail result"},
+		{"exit 1 without JSON", `echo 'usage' >&2; exit 1`, "exited 1 without a fail result"},
+		{"unexpected exit code", `exit 7`, "quality-check-runner.sh failed (exit 7)"},
+		{"cannot fetch the base", "", "cannot fetch the base 'main' from origin"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newTicketFixture(t)
+			scripts := abs(t, repoScripts)
+			if c.runner != "" {
+				scripts = fakeScriptsDir(t, c.runner)
+			}
+			wt := providedWorktree(t, f) // workspace が fetch しない経路（fetch の失敗を quality で起こすため）
+			if c.runner == "" {
+				git(t, f.repo, "remote", "set-url", "origin", filepath.Join(f.root, "gone.git"))
+			}
+			f.h.cwd = wt
+			out, errOut, code := f.h.run("run", "--input", "issue=42", "--input", "worktree="+wt,
+				"--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", scripts, "ticket")
+			if code != ExitFailed {
+				t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+			}
+			v := decode[statusView](t, out)
+			if _, ok := v.Unit("main").Outputs["quality"]; ok || v.Reason != "step_error" || !strings.Contains(stepSeq(v), "quality:step_error") || !strings.Contains(out, c.stderr) {
+				t.Fatalf("reason %s steps %s\n%s", v.Reason, stepSeq(v), out)
+			}
+		})
 	}
 }

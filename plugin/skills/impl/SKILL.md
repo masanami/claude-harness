@@ -102,7 +102,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 | PR | `.units[0].workspace.pr_url`・`.units[0].workspace.pr_number` |
 | 作業ツリーとブランチ | `.units[0].workspace.worktree_path`・`.units[0].workspace.branch` |
 | 実装の結果 | `.units[0].outputs.implement`（`outcome`・`summary`・`residual_findings`・`unverified`・`cross_repo_attestation`・`deviation_report`） |
-| 品質ゲート（機械） | `.units[0].outputs.quality`（`result`・`commit_sha`・`declaration`・`gates`・`failure_excerpt`・`message`）。PR を作る前に runtime が回した結果。上書きで省いたリポジトリでは無く、`.workflow.skipped_steps` に `quality` が出る |
+| 品質ゲート（機械） | `.units[0].outputs.quality`（`result`・`commit_sha`・`base`・`declaration`・`gates`・`failure_excerpt`・`message`）。PR を作る前に runtime が回した結果。上書きで省いたリポジトリでは無く、`.workflow.skipped_steps` に `quality` が出る。上書きが 2 行のうち 1 行だけ（例: `e2e-route.no` だけを `publish` へ付け替え）だと、付け替えた側の経路の run では `outputs.quality` が無いのに `skipped_steps` にも出ず、`.workflow.changes` にだけ付け替えが出る。`outputs.quality` が無いときは「品質ゲートを機械で回していない」と報告する |
 | CI | `.units[0].outputs.ci`（`ci`・`failure_log_excerpt`）。差し戻しに使った回数は `.units[0].limits_used.rework` |
 | E2E | `.units[0].outputs.e2e`（`scenarios`・`traceability`。E2E 対象のときだけ在る） |
 | 費用 | `.units[0].budget`（`spent_usd`・`limit_usd`） |
@@ -119,7 +119,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 | `cancelled` | **`failure`** として返す | 同左を報告する |
 | `succeeded` | 完了として返す | 完了として報告する |
 
-`failed` の主な `reason`: `quality_gate`（実装の中の必須ゲートを通過できない）・`quality_gate_red`（PR を作る前に runtime が回した品質ゲートが、差し戻しの上限まで直しても通らない）・`quality_gate_undeclared`（品質ゲートのコマンドの宣言 `.claude-harness/quality-gate.json` が PR の宛先に無い・形が違う。`.units[0].outputs.quality.message` の案内〔宣言を置くか、上書きで省く〕をそのまま伝える）・`commit`（コミットできなかった。コミット対象外のファイルが `.gitignore` に入らずに残っていた場合は、`.units[0].outputs.commit.summary` にファイルの一覧と「コミットに含めてよいか、消してよいか」の問いが載るので、そのまま人へ伝える。答えに従ってファイルを消すか `.gitignore` に入れてから、新しい run で再実行する）・`self_review_incomplete`（セルフレビューのレビュアーと合流できなかった）・`ci_red`（CI の red を差し戻しの上限まで直しても green にならない）・`e2e`（E2E の失敗を差し戻しの上限まで直しても通らない）・`base_missing`（統合ブランチが remote に無い。`.units[0].outputs.resolve` の案内に従い作成を促す）・`worktree_conflict`（渡された・既存の作業ツリーが使えない）。
+`failed` の主な `reason`: `quality_gate`（実装の中の必須ゲートを通過できない）・`quality_gate_red`（PR を作る前に runtime が回した品質ゲートが、差し戻しの上限まで直しても通らない）・`quality_gate_undeclared`（品質ゲートのコマンドの宣言 `.claude-harness/quality-gate.json` が PR の宛先に無い・形が違う・ゲートが 1 つも走らない・コマンドが拒否された。`.units[0].outputs.quality.message` の案内〔宣言を置くか、上書きで省く〕をそのまま伝える）・`commit`（コミットできなかった。コミット対象外のファイルが `.gitignore` に入らずに残っていた場合は、`.units[0].outputs.commit.summary` にファイルの一覧と「コミットに含めてよいか、消してよいか」の問いが載るので、そのまま人へ伝える。答えに従ってファイルを消すか `.gitignore` に入れてから、新しい run で再実行する）・`self_review_incomplete`（セルフレビューのレビュアーと合流できなかった）・`ci_red`（CI の red を差し戻しの上限まで直しても green にならない）・`e2e`（E2E の失敗を差し戻しの上限まで直しても通らない）・`base_missing`（統合ブランチが remote に無い。`.units[0].outputs.resolve` の案内に従い作成を促す）・`worktree_conflict`（渡された・既存の作業ツリーが使えない）。
 
 **`decider: human` のゲート（`requires_tty: true`）を自分で解決しない**（`harness approve` は端末からしか通らない。Claude に解決させない設計）。**`review` ゲートに `ready` を自動で渡さない**（統合ブランチ宛では runtime がマージまで進む。マージ順は呼び出し元の判断）。
 

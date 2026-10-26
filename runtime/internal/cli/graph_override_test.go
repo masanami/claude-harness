@@ -71,6 +71,30 @@ func changesJSON(t *testing.T, cs []map[string]any) string {
 
 const routeTicketOverride = "schema: harness.workflow-override/v1\nworkflow: ticket\nsteps:\n  merge-route:\n    on:\n      integration: human-merge\n"
 
+// 品質ゲートの quality を省く 2 行の上書き（#326）では、graph の JSON で quality が skipped になり、quality へ入る辺は無くなる。
+func TestGraphOverrideTicketSkipsQuality(t *testing.T) {
+	h := newHarness(t)
+	ov := writeFile(t, filepath.Join(t.TempDir(), "skip-quality.yaml"),
+		"schema: harness.workflow-override/v1\nworkflow: ticket\nsteps:\n  e2e-route: { on: { no: publish } }\n  e2e: { on: { pass: publish } }\n")
+	out, errOut, code := h.run("graph", "--json", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "--override", ov, "ticket")
+	if code != ExitOK || errOut != "" {
+		t.Fatalf("graph --json: exit %d\n%s", code, errOut)
+	}
+	d := decode[overrideGraphDoc](t, out)
+	var skipped []string
+	for _, n := range d.Nodes {
+		if n["skipped"] == true {
+			skipped = append(skipped, n["id"].(string))
+		}
+	}
+	if strings.Join(skipped, ",") != "quality" {
+		t.Fatalf("skipped nodes = %v, want [quality]", skipped)
+	}
+	if in := d.edges("", "", "quality"); len(in) != 0 {
+		t.Fatalf("edges into the skipped quality = %v, want none", in)
+	}
+}
+
 // §9 の例: ticket の merge-route.integration を human-merge へ付け替えると、付け替えた辺に overridden が付き、merge は
 // 入ってくる辺を失って skipped になり、出ていく辺は残る（破線・灰色）。テキスト・Mermaid・JSON の 3 形式で確かめる。
 func TestGraphOverrideTicketRoute(t *testing.T) {

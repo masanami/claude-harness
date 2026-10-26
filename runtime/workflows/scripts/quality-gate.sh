@@ -19,7 +19,7 @@
 # stderr に理由を出して非 0 で終わる（runtime は step_error にする。fail-closed）。
 # runner の置き場は runtime が HARNESS_SCRIPTS_DIR で渡す。git は PATH のものを使う。
 
-set -u
+set -u -o pipefail
 
 decl_path=".claude-harness/quality-gate.json"
 excerpt_bytes=4000
@@ -114,8 +114,14 @@ if ! git cat-file -e "${base_commit}:${decl_path}" 2>/dev/null; then
 fi
 decl="$(git cat-file blob "${base_commit}:${decl_path}")" || { echo "Error: cannot read ${decl_path} at ${base_commit}" >&2; exit 1; }
 decl_sha="$(git cat-file blob "${base_commit}:${decl_path}" | sha256)"
-if ! jq -e 'type == "object" and ((keys - ["lint", "typecheck", "test"]) | length == 0) and all(.[]; type == "string")' <<<"$decl" >/dev/null 2>&1; then
-  emit undeclared "$decl_sha" null "" "origin/${base}（${base_commit}）の ${decl_path} が宣言の形になっていない（JSON のオブジェクトで、キーは lint・typecheck・test、値は文字列だけ）。${how_to}"
+if ! [[ "$decl_sha" =~ ^[0-9a-f]{64}$ ]]; then
+  # sha256 の道具が無い・失敗した。宣言の版を記録できないまま pass を残さない。
+  echo "Error: cannot compute the sha256 of ${decl_path} (got '${decl_sha}'; sha256sum or shasum is required)" >&2
+  exit 1
+fi
+# JSON の値がちょうど 1 つで、それがオブジェクトであること（複数の値を並べた宣言は、どれを読んだかが曖昧になるので拒否する）。
+if ! jq -s -e 'length == 1 and (.[0] | type == "object" and ((keys - ["lint", "typecheck", "test"]) | length == 0) and all(.[]; type == "string"))' <<<"$decl" >/dev/null 2>&1; then
+  emit undeclared "$decl_sha" null "" "origin/${base}（${base_commit}）の ${decl_path} が宣言の形になっていない（JSON のオブジェクト 1 つで、キーは lint・typecheck・test、値は文字列だけ）。${how_to}"
   exit 0
 fi
 

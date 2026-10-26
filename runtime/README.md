@@ -78,15 +78,15 @@ steps: { implement: { budget_usd: 60, timeout: 3h } }   # llm の budget_usd・t
 
 ## 品質ゲートのステップ（`quality`。Issue #326）
 
-`ticket` は、E2E の後・PR の作成（`publish`）の前に、品質ゲートを機械で回す `command` のステップ `quality`（`workflows/scripts/quality-gate.sh`）を通る。品質ゲートの根拠を子（LLM）の申告ではなく run の記録にするためで、呼び出し側は記録の `commit_sha` と PR の head（`units[].workspace.head_sha_by_round`）を照合すれば、PR の head で品質ゲートを回し直さずに済む。照合が当てはまるのは PR を作る（`fix` の後に push し直す）までの経路で、レビュー対応（`respond`）が push した後の head は `quality` を通らない（`respond.pushed → ci`）ので、食い違ったら機械の品質ゲートの記録は無い。
+`ticket` は、E2E の後・PR の作成（`publish`）の前に、品質ゲートを機械で回す `command` のステップ `quality`（`workflows/scripts/quality-gate.sh`）を通る。品質ゲートの根拠を子（LLM）の申告ではなく run の記録にするためで、呼び出し側は記録の `commit_sha` と**実際の PR の head**（`gh pr view <番号> --json headRefOid`）を照合し、一致すれば PR の head で品質ゲートを回し直さずに済む。`units[].workspace.head_sha_by_round` とは照合しない（これを書くのは `publish` だけで、レビュー対応〔`respond`〕が push しても更新されないため、respond の後でも 1 ラウンド目の SHA と一致してしまう）。守れるのは PR を作るまでの経路で、`respond` が push した後の head は `quality` を通らない（`respond.pushed → ci`）。食い違ったら、その head には機械の品質ゲートの記録が無い。
 
 - コマンドはリポジトリの宣言 `.claude-harness/quality-gate.json` から読む。形は `{"lint": "<コマンド>", "typecheck": "<コマンド>", "test": "<コマンド>"}`（どれも省略可）で、値は `plugin/scripts/quality-check-runner.sh` と同じ約束（シェルを介さない・`plugin/scripts/config/command-allowlist.txt` に載った実行系だけ）。このリポジトリでは `{"test": "make check"}`。
-- 宣言は PR の宛先（`origin/<base>`。ステップの中で取り直す）から読み、作業ツリーからは読まない。実装した子が同じ PR の中で宣言のコマンドを差し替えてゲートを弱められないようにするためで、宣言を足す PR 自身ではその宣言は効かない（先に宛先へ入れる）。守れるのはコマンドの差し替えまでで、コマンドの中身（`Makefile` のターゲット・`package.json` の scripts 等）は PR の版で動く。
+- 宣言は PR の宛先（`origin/<base>`。ステップの中で取り直す）から読み、作業ツリーからは読まない。実装した子が同じ PR の中で宣言のコマンドを差し替えてゲートを弱められないようにするためで、宣言を足す PR 自身ではその宣言は効かない（先に宛先へ入れる）。守れるのはコマンドの差し替えまでで、コマンドの中身（`Makefile` のターゲット・`package.json` の scripts 等）は PR の版で動く。また、`quality` を省く上書き（層 1 の `.claude-harness/overrides/ticket.yaml`）は宛先からではなく run を始めたディレクトリの git の最上位から読むので、`--worktree` で作業ツリーの中から始める経路では、前の run の子が作業ブランチにコミットした上書きで、次の run の `quality` が省かれうる。
 - 実行の前に作業ツリーに未コミットの変更が無いことを、実行の後に HEAD と作業ツリーが変わっていないことを確かめる（`--auto-fix` は渡さない）。どちらかが崩れたら結果をコミットのものとして記録せず `step_error` で止まる。
 - outcome（`result`）は `pass`（`publish` へ）・`fail`（落ちたゲートの出力の末尾 4000 バイトを `fix` へ渡す。`limits.rework` を E2E・CI の差し戻しと共有し、尽きたら `quality_gate_red`）・`undeclared`（宣言が無い・形が違う・ゲートが 1 つも走らない・コマンドの形が拒否された。`quality_gate_undeclared` で止まり、`message` に「宣言を置くか、上書きで省く」を載せる）。
 - 結果は `status --json` の `units[].outputs.quality` に残る（`result`・`commit_sha`・`base`・`declaration`〔`path`・`ref`・読んだ版の `commit`・`sha256`〕・`gates`〔runner の出力〕・`failure_excerpt`・`message`）。PR 本文には載せない。
 - `commit` は `/commit`（safety net の `/quality-check` を含む）を使わず、git で直接 Conventional Commits の形でコミットする（品質ゲートを二重に回さない）。`.gitignore` に入っていないコミット対象外のファイルが残っていると、コミットせずに `fail: commit` で止まり、`outputs.commit.summary` に「含めてよいか、消してよいか」の問いを載せる。
-- pre-commit 等で同じゲートが既に回るリポジトリは、リポジトリの上書きで `quality` を省ける。前段の 2 本を **2 行そろえて** `publish` へ付け替える（1 行だけだと、もう一方の経路では `quality` を通る）。省いたことは `validate` と `status --json` の `skipped_steps`、`harness graph` の `skipped` に出る。
+- pre-commit 等で同じゲートが既に回るリポジトリは、リポジトリの上書きで `quality` を省ける。前段の 2 本を **2 行そろえて** `publish` へ付け替える。省いたことは `validate` と `status --json` の `skipped_steps`、`harness graph` の `skipped` に出る。1 行だけ書くと、付け替えた側の経路（例: `e2e-route.no: publish` だけなら、E2E 不要の run すべて）では `quality` を通らずに PR になるが、もう一方の経路では通るので `skipped_steps` にも `skipped` にも出ず、`changes` にだけ出る。
 
 ```yaml
 # .claude-harness/overrides/ticket.yaml
