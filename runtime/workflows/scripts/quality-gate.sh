@@ -12,7 +12,7 @@
 # シェルを介さず、plugin/scripts/config/command-allowlist.txt に載った実行系だけ）。このリポジトリでは {"test": "make check"}。
 #
 # stdout に JSON を 1 つ出す（schemas/quality-gate.json）。result は pass | fail | undeclared。ゲートが落ちても exit 0。
-#   fail: ゲートが落ちた。failure_excerpt にゲートの出力の末尾を載せる（fix へ渡す）
+#   fail: ゲートが落ちた。failure_excerpt に、落ちたゲートの出力の末尾（4000 バイトまで）を載せる（fix へ渡す）
 #   undeclared: 宣言が無い・JSON として読めない・知らないキーや文字列でない値がある・ゲートが 1 つも走らない（runner の exit 3）・
 #               コマンドの形が拒否された（runner の exit 4）。message に直し方を載せる
 # 実行のエラー（未コミットの変更・base を取得できない・runner が JSON を返さない・実行中に HEAD や作業ツリーが変わった）は
@@ -53,6 +53,25 @@ sha256() {
     sha256sum | cut -d' ' -f1
   else
     shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+# failed_output は runner の stderr から、落ちたゲート（gates.<名前>.status が fail）の区間だけを取り出す。runner はゲートごとに
+# `--- <名前>: <コマンド> ---` から `--- <名前> exit: <N> ---` までに出力を書き、1 つが落ちても残りのゲートを実行するので、
+# 末尾だけを取ると、後に通ったゲートの出力で落ちたゲートの出力が押し出される。区間が見つからなければ stderr 全体を返す。
+failed_output() {
+  local gates_json="$1" file="$2" names
+  names="$(jq -r '.gates | to_entries[] | select(.value.status == "fail") | .key' <<<"$gates_json" | tr '\n' ' ')"
+  local out
+  out="$(awk -v names=" ${names}" '
+    /^--- [a-z]+: / { label = substr($2, 1, length($2) - 1); inside = (index(names, " " label " ") > 0) }
+    inside { print }
+    /^--- [a-z]+ exit: [0-9]+ ---$/ { inside = 0 }
+  ' "$file")"
+  if [ -n "$out" ]; then
+    printf '%s\n' "$out"
+  else
+    cat "$file"
   fi
 }
 
@@ -138,7 +157,7 @@ case "$rc" in
       echo "Error: quality-check-runner.sh exited 1 without a fail result (an argument error?)" >&2
       exit 1
     fi
-    emit fail "$decl_sha" "$gates" "$(tail -c "$excerpt_bytes" "$errf")" ""
+    emit fail "$decl_sha" "$gates" "$(failed_output "$gates" "$errf" | tail -c "$excerpt_bytes")" ""
     ;;
   3)
     emit undeclared "$decl_sha" "$gates" "" "origin/${base}（${base_commit}）の ${decl_path} に、実行するゲート（lint・typecheck・test）が 1 つも無い。何も検査していない状態を通過とは扱わない。${how_to}"

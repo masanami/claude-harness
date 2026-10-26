@@ -24,7 +24,7 @@ inputs:
 limits:
   budget_usd: 40                    # この unit 全ラウンドの累計上限（仮の値。shadow run で較正する。§12）
   rework: 3                         # Phase 4→8 の差し戻し上限（W2・Q8）
-overridable:                        # 上書きで付け替えてよい遷移と候補（docs/harness-runtime-overrides.md §5.2。保守側だけ＝O2）
+overridable:                        # 上書きで付け替えてよい遷移と候補（docs/harness-runtime-overrides.md §5.2。保守側だけ＝O2 と、quality の省略＝#326）
   routes:
     merge-route.integration: [merge, human-merge]   # 統合ブランチ宛も人のマージにできる
     e2e-route.no: [quality, e2e, publish]           # analyze が E2E 不要と判断しても E2E を書ける。publish は quality の省略（#326）

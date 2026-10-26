@@ -23,6 +23,8 @@
   - **`/impl` の返り方が変わった。** これまでは PR 作成と CI の確認で終わり、`/pr-review-respond`・`/pr-merge` を案内していた。今後は run の最初のゲートか終端で返る。人が直接使ったとき（`--worktree` なし）は、PR・CI の結果と run ID を報告し、レビュー対応は `harness resume <run> --input respond`、マージへ進めるのは `--input ready`（統合ブランチ宛は runtime がマージし、既定ブランチ宛は人がマージした後に `harness resume <run>`）、人の判断が要るゲートは端末からの `harness approve` を案内する。`/impl` は再開用の引数を持たない。
   - **`ticket-worker`（`/para-impl` の並列経路）から呼ばれたとき**（`--worktree` あり）、`/impl` は CI の確認の後の `review` ゲートで通常完了として返り、run は `review` で待ったまま残る（取り消さない）。`design-deviation` は判断待ち、`ci-pending`・その他のゲート・失敗（`quality_gate`・`ci_red`・`e2e`・`self_review_incomplete` 等）は `failure` として返る。CI の red の差し戻しは runtime の中で最大 3 回まで済ませており、返却にもそう書く。
 
+- **`ticket` ワークフロー（`/impl`）が、PR を作る前に品質ゲートを機械で回すようになり、宣言の無いリポジトリでは PR を作らずに止まる（Issue #326）。** 品質ゲートのコマンドはリポジトリの `.claude-harness/quality-gate.json`（`{"lint": …, "typecheck": …, "test": …}`。値は `quality-check-runner` と同じく、シェルを介さない allowlist のコマンド）から、PR の宛先ブランチの版を読む。宣言が無い・形が違う・ゲートが 1 つも走らないときは `quality_gate_undeclared` で止まる。**利用者が取る操作**: 宣言を PR の宛先ブランチへ先に入れる（例: `{"test": "make check"}`）。pre-commit 等で同じゲートが既に回るなら、代わりにリポジトリの上書き `.claude-harness/overrides/ticket.yaml` で `quality` を省く（`steps: { e2e-route: { on: { no: publish } }, e2e: { on: { pass: publish } } }` の 2 行をそろえる。`runtime/README.md`「品質ゲートのステップ」）。落ちたゲートは `fix` へ差し戻され、E2E・CI と共有の上限 3 回を使い切ると `quality_gate_red` で止まる。あわせて `ticket` の `commit` ステップは `/commit`（safety net の `/quality-check`）を使わず、git で直接コミットするようにした。
+
 - **runtime が起動する `claude -p` は、利用者の対話での許可を受けられない。** 子プロセスは `HARNESS_CLAUDE_PERMISSION_MODE` のモード（`/impl` の既定は `auto`）と、利用者の settings の allow で動く。
 
 ### 追加

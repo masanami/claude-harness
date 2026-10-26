@@ -104,7 +104,8 @@ func TestTicketQualityRunsTheBaseDeclarationOnTheCommit(t *testing.T) {
 	}
 }
 
-// ゲートが落ちると fix へ差し戻し（落ちた出力の末尾を渡す）、commit の後に再び quality を通る。差し戻しは rework を 1 回使う。
+// ゲートが落ちると fix へ差し戻し（落ちたゲートの出力だけを渡す。通った lint の出力は混ぜない）、commit の後に再び quality を
+// 通る。差し戻しは rework を 1 回使う。
 func TestTicketQualityFailGoesToFixAndRunsAgain(t *testing.T) {
 	f := newTicketFixture(t)
 	f.write("checks.1", check("test", "pass"))
@@ -112,7 +113,7 @@ func TestTicketQualityFailGoesToFixAndRunsAgain(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "gate-ran-once") // 作業ツリーの外（ゲートが作業ツリーを変えない）
 	makefile := "gate:\n\t@if [ -f \"$(MARKER)\" ]; then echo gate passed; else touch \"$(MARKER)\"; echo 'widget gate failed: TestWidget'; exit 1; fi\n"
 	commitFile(t, f.repo, "Makefile", makefile)
-	declareQualityGate(t, f.repo, `{"test": "make gate MARKER=`+marker+`"}`)
+	declareQualityGate(t, f.repo, `{"lint": "echo lint-passed-noise", "test": "make gate MARKER=`+marker+`"}`)
 
 	out, errOut, code := f.h.run("run", "--input", "issue=42", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "ticket")
 	if code != ExitWaiting {
@@ -127,8 +128,8 @@ func TestTicketQualityFailGoesToFixAndRunsAgain(t *testing.T) {
 	if v.Waiting[0].Gate != "review" || v.Unit("main").LimitsUsed["rework"] != 1 {
 		t.Fatalf("waiting %+v rework %d", v.Waiting, v.Unit("main").LimitsUsed["rework"])
 	}
-	if !strings.Contains(readFile(t, filepath.Join(f.fdir, "calls", "4.stdin")), "widget gate failed: TestWidget") {
-		t.Errorf("the fix step did not receive the failure of the quality gate")
+	if in := readFile(t, filepath.Join(f.fdir, "calls", "4.stdin")); !strings.Contains(in, "widget gate failed: TestWidget") || strings.Contains(in, "lint-passed-noise") {
+		t.Errorf("the fix step did not receive only the failure of the quality gate:\n%s", in)
 	}
 	if q := qualityOf(t, v); q.Result != "pass" { // 最後に成功した実行（2 回目）の出力
 		t.Errorf("quality = %+v", q)
@@ -251,5 +252,26 @@ func TestTicketQualityRefusesWhenTheTreeIsNotTheCommit(t *testing.T) {
 				t.Fatalf("reason %s steps %s\n%s", v.Reason, stepSeq(v), out)
 			}
 		})
+	}
+}
+
+// 落ち続けると、差し戻しの上限（limits.rework。E2E・CI と共有）を使い切ったところで quality_gate_red で止まり、PR を作らない。
+func TestTicketQualityStopsWhenReworkIsExhausted(t *testing.T) {
+	f := newTicketFixture(t)
+	declareQualityGate(t, f.repo, `{"test": "false"}`)
+	for n := 6; n <= 9; n += 2 { // fix と commit の 2 回目・3 回目（1 回目は newTicketFixture の 4・5）
+		respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": ""}, 5.5+float64(n)))
+		respond(t, f.fdir, n+1, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "x", "summary": "committed"}, 6+float64(n)))
+	}
+	out, errOut, code := f.h.run("run", "--input", "issue=42", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "ticket")
+	if code != ExitFailed {
+		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
+	}
+	v := decode[statusView](t, out)
+	if v.Reason != "quality_gate_red" || v.Unit("main").LimitsUsed["rework"] != 3 || strings.Count(stepSeq(v), "quality:fail") != 4 {
+		t.Fatalf("reason %s rework %d steps %s", v.Reason, v.Unit("main").LimitsUsed["rework"], stepSeq(v))
+	}
+	if _, err := os.Stat(filepath.Join(f.ghDir, "create.count")); err == nil {
+		t.Errorf("a PR was opened although the quality gate kept failing")
 	}
 }

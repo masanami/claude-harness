@@ -34,7 +34,7 @@ run は開始時の定義のハッシュ（`state.json` の `workflow.hash`＝YA
 | 置き場と優先順 | 埋め込み（または `--workflow-dir`）→ リポジトリの `.claude-harness/overrides/<id>.yaml` → `--override <ファイル>`（1 つ）。キーごとに後ろが勝つ | 親（P1） | §3 |
 | 上書きの形 | 定義と同じ入れ子の写像で、変えるスカラーだけを書く部分上書き。ステップは id で指す（`steps` は配列でなく写像） | 親（P3） | §4 |
 | 開くキー（数値） | `limits` の全項目・`llm` の `budget_usd`・`timeout`・`command` の `timeout` を Go の規則で一律に開く | 親（P2） | §5.1 |
-| 開くキー（遷移） | 元の定義が `overridable.routes` に宣言した遷移だけ、宣言した候補の中で付け替えられる。v1 の `ticket.yaml` が宣言するのは保守側の `merge-route.integration: [merge, human-merge]` と `e2e-route.no: [publish, e2e]` だけ | オーナー（O2） | §5.2 |
+| 開くキー（遷移） | 元の定義が `overridable.routes` に宣言した遷移だけ、宣言した候補の中で付け替えられる。v1 の `ticket.yaml` が宣言するのは保守側の `merge-route.integration: [merge, human-merge]` と `e2e-route.no: [publish, e2e]` だけ。#326 で、品質ゲートの `quality` を省く候補（`e2e-route.no`・`e2e.pass` の `publish`）と `overridable.skips: [quality]` を足した | オーナー（O2・O5） | §5.2 |
 | 外せないゲート | `decider: human` のゲートすべてと、そこへ向かう遷移・`fail` への遷移を付け替え不可にする | オーナー（O1） | §6 |
 | `--workflow-dir` | 開発用のまま、外せないゲートの規則の外に残す | オーナー（O4） | §6.3 |
 | run の記録 | `workflow.hash` は元の定義のハッシュのまま。上書きの写しを run ディレクトリに置き、出どころ・ハッシュ・上書き後の定義のハッシュを記録して照合する | 親（P4） | §7 |
@@ -293,7 +293,7 @@ steps: { implement: { budget_usd: 60 } }
 harness run --override <置き場>/l.yaml --input issue=<番号> ticket
 ```
 
-## 10. 決定の記録（2026-10-25）
+## 10. 決定の記録（2026-10-25。O5・P6 は #326 で 2026-10-26 に追記）
 
 設計の段階で出した問いを、オーナー（人間）が決めるものと親（Tom）が決めてよいものに分けて回答を受けた。本文はこの決定に揃えてある。
 
@@ -305,6 +305,7 @@ harness run --override <置き場>/l.yaml --input issue=<番号> ticket
 | O2 | 上書きでステップの省略を許す範囲 | (a) 保守側への付け替えだけ (b) (a)＋E2E の省略 (c) (b)＋レビュー待ちの省略 | **(a)**。`ticket.yaml` の宣言は `merge-route.integration: [merge, human-merge]` と `e2e-route.no: [publish, e2e]` | E2E・レビュー待ち・CI 待ちの省略は v1 では許さない。用途によっては省略して速さを求める場合があるので、後から宣言を足せば開けることと、開いたときに何が起きるかを §5.2 に残した（CI 待ちの省略の行はこの回答で足した） |
 | O3 | flywheel から使うときに接続契約・宣言へ手を入れるか | (F1) 契約を変えず固定の上書きだけ (F2) 宣言でサイズ別にファイルを選ぶ (F3) 契約の `start` に予算の額を足す | **F1** | F2・F3 は flywheel の S4 を分解するときに決める（§8） |
 | O4 | `--workflow-dir` を外せないゲートの規則の外に置いたままにするか | (a) 開発用のまま残す (b) `contract start` では拒否する (c) 必須の人のゲートを Go に持ち `--workflow-dir` にも課す | **(a)** | 上書きが入れば運用で使う理由が無くなる。(b) は契約の引数を減らす変更、(c) はゲートの名前を Go に持ち込む（§6.3） |
+| O5 | 品質ゲートを機械で回すステップ `quality` を足し、pre-commit 等で同じゲートが回るリポジトリでは省けるようにするか（2026-10-26） | — | **足す。省くかは事前設定（リポジトリの上書き）で決め、子に判断させない**。宣言は PR の宛先から読み、宣言が無ければ `quality_gate_undeclared` で止まる。`commit` の safety net の `/quality-check` は外す | O2 の「保守側への付け替えだけ」に対する追加で、`quality` を省く付け替えだけを `overridable.skips` で開く（E2E・レビュー待ち・CI 待ちの省略は開かないまま） |
 
 ### 10.2 親が決めたこと
 
@@ -315,6 +316,7 @@ harness run --override <置き場>/l.yaml --input issue=<番号> ticket
 | P3 | 上書きの形 | 定義と同じ形の部分上書き（案 A） | §4.2 |
 | P4 | run の記録と `resume` の照合 | `hash` は元の定義のまま。上書きの写しを run ディレクトリに置き、`effective_hash` で照合する | 上書き後の定義を書き出す案は相対パスの起点がずれる。上書きの無い run の記録と照合は現行のまま変わらない（§7） |
 | P5 | harness 側で予算の上限を持つか | 持たない | 予算の承認と上限は呼び出し元が持つ。上限が 2 か所に分かれると、どちらで止まったかが分かりにくい（§5.1） |
+| P6 | `quality` の置き場所と、省く上書きの 2 行がそろっているかの検査（#326。2026-10-26） | `e2e` の後・`publish` の前に置く。2 行そろえは文書で求め、Go の検査は足さない | `e2e` は追加したテストをコミットするので、その後に置かないと回したコミットと push するコミットが食い違う。片方だけの付け替えはもう一方の経路で `quality` を通るので、品質ゲートを回さない経路が黙って増えることはない（§5.2） |
 
 ## 11. 実装の段階分け（参考。Issue は別に起票する）
 
