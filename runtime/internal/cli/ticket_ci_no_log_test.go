@@ -42,7 +42,7 @@ func ticketCIRedWithoutLog(t *testing.T, embedded bool) {
 	for _, x := range u.Rounds[0].Steps {
 		seq = append(seq, x.Step+":"+x.Outcome)
 	}
-	want := "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no publish:opened ci:red_no_log"
+	want := "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:red_no_log"
 	if strings.Join(seq, " ") != want {
 		t.Fatalf("round 1 steps:\n got %s\nwant %s", strings.Join(seq, " "), want)
 	}

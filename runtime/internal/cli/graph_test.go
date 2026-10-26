@@ -44,7 +44,7 @@ func TestGraphBundledWorkflows(t *testing.T) {
 		id    string
 		entry string
 		steps int
-	}{{"ticket", "resolve", 19}, {"conflict-predict-issue", "fetch", 2}, {"list-tests", "list", 1}}
+	}{{"ticket", "resolve", 20}, {"conflict-predict-issue", "fetch", 2}, {"list-tests", "list", 1}}
 	for _, c := range cases {
 		t.Run(c.id, func(t *testing.T) {
 			var docs []graphDoc

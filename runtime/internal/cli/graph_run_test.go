@@ -316,7 +316,7 @@ func TestGraphRunExitCodes(t *testing.T) {
 	}
 }
 
-// --format mermaid は同梱の ticket を描ける（§6.2）: 19 ステップと終端が n0… の節点になり、辺は outcome のラベル付きで、
+// --format mermaid は同梱の ticket を描ける（§6.2）: 20 ステップと終端が n0… の節点になり、辺は outcome のラベル付きで、
 // 人のゲート 3 つにクラス human が付く。
 func TestGraphMermaidTicket(t *testing.T) {
 	h := newHarness(t)
@@ -328,12 +328,13 @@ func TestGraphMermaidTicket(t *testing.T) {
 		t.Fatalf("mermaid:\n%s", out)
 	}
 	for _, want := range []string{
-		`  n0["resolve<br/>command 2m"]`, `  n3("implement<br/>llm $15 90m")`, `  n11{{"review<br/>gate input any"}}`,
-		`  n14{"merge-route<br/>select $steps.resolve.base_kind"}`,
+		`  n0["resolve<br/>command 2m"]`, `  n3("implement<br/>llm $15 90m")`, `  n12{{"review<br/>gate input any"}}`,
+		`  n15{"merge-route<br/>select $steps.resolve.base_kind"}`,
 		`  n2 -->|"provided / created / reused"| n3`,
-		`  n7 -->|"fail (rework#lt;=3)"| n4`, `  n7 -.->|"fail (rework exhausted)"| n25`,
-		`  n9 -->|"timeout (retry#lt;=1)"| n9`, `  n9 -.->|"timeout (retry exhausted)"| n10`,
-		"  class n13,n16,n17 human\n",
+		`  n7 -->|"fail (rework#lt;=3)"| n4`, `  n7 -.->|"fail (rework exhausted)"| n26`,
+		`  n8["quality<br/>command 30m"]`, `  n8 -->|"fail (rework#lt;=3)"| n4`, `  n8 -.->|"fail (rework exhausted)"| n27`,
+		`  n10 -->|"timeout (retry#lt;=1)"| n10`, `  n10 -.->|"timeout (retry exhausted)"| n11`,
+		"  class n14,n17,n18 human\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("mermaid does not contain %q", want)

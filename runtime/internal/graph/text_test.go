@@ -33,12 +33,13 @@ func TestTextUnwrapped(t *testing.T) {
 		t.Fatalf("legend = %q", lines[2:4])
 	}
 	steps := stepLines(lines)
-	if len(steps) != 19 {
+	if len(steps) != 20 {
 		t.Fatalf("%d step lines:\n%s", len(steps), strings.Join(steps, "\n"))
 	}
 	want := map[string][]string{
 		"resolve":      {"command 2m", "ok -> analyze | base_missing ! base_missing | links_invalid ! links_invalid"},
-		"e2e":          {"llm $8 60m", "pass -> publish | fail ~ fix (rework<=3, then ! e2e)"},
+		"e2e":          {"llm $8 60m", "pass -> quality | fail ~ fix (rework<=3, then ! e2e)"},
+		"quality":      {"command 30m", "pass -> publish | fail ~ fix (rework<=3, then ! quality_gate_red) | undeclared ! quality_gate_undeclared"},
 		"ci":           {"command 20m", "red ~ fix (rework<=3, then ! ci_red)", "timeout ~ ci (retry<=1, then -> ci-pending)"},
 		"review":       {"gate input any ", "respond -> respond | ready -> merge-route"},
 		"review-human": {"gate input [human] [tty]", "abort ! aborted_by_human"},

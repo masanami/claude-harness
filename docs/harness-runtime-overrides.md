@@ -34,7 +34,7 @@ run は開始時の定義のハッシュ（`state.json` の `workflow.hash`＝YA
 | 置き場と優先順 | 埋め込み（または `--workflow-dir`）→ リポジトリの `.claude-harness/overrides/<id>.yaml` → `--override <ファイル>`（1 つ）。キーごとに後ろが勝つ | 親（P1） | §3 |
 | 上書きの形 | 定義と同じ入れ子の写像で、変えるスカラーだけを書く部分上書き。ステップは id で指す（`steps` は配列でなく写像） | 親（P3） | §4 |
 | 開くキー（数値） | `limits` の全項目・`llm` の `budget_usd`・`timeout`・`command` の `timeout` を Go の規則で一律に開く | 親（P2） | §5.1 |
-| 開くキー（遷移） | 元の定義が `overridable.routes` に宣言した遷移だけ、宣言した候補の中で付け替えられる。v1 の `ticket.yaml` が宣言するのは保守側の `merge-route.integration: [merge, human-merge]` と `e2e-route.no: [publish, e2e]` だけ | オーナー（O2） | §5.2 |
+| 開くキー（遷移） | 元の定義が `overridable.routes` に宣言した遷移だけ、宣言した候補の中で付け替えられる。v1 の `ticket.yaml` が宣言するのは保守側の `merge-route.integration: [merge, human-merge]` と `e2e-route.no: [publish, e2e]` だけ。#326 で、品質ゲートの `quality` を省く候補（`e2e-route.no`・`e2e.pass` の `publish`）と `overridable.skips: [quality]` を足した | オーナー（O2・O5） | §5.2 |
 | 外せないゲート | `decider: human` のゲートすべてと、そこへ向かう遷移・`fail` への遷移を付け替え不可にする | オーナー（O1） | §6 |
 | `--workflow-dir` | 開発用のまま、外せないゲートの規則の外に残す | オーナー（O4） | §6.3 |
 | run の記録 | `workflow.hash` は元の定義のハッシュのまま。上書きの写しを run ディレクトリに置き、出どころ・ハッシュ・上書き後の定義のハッシュを記録して照合する | 親（P4） | §7 |
@@ -108,7 +108,7 @@ A は B・C より表現力が小さく、ステップの新設や遷移表の�
 
 ### 5.2 遷移の付け替えは、元の定義が `overridable.routes` に宣言した候補の中だけ
 
-元の定義に、トップレベルのキー `overridable` を足す（設計書 §3.1 の文法の追加。`harness.workflow/v1` のまま足せるか、スキーマ版を上げるかは実装時に設計書 §7.3 の照合と合わせて決める）。v1 の `ticket.yaml` の宣言は次の 2 行である（O2）。
+元の定義に、トップレベルのキー `overridable` を足す（設計書 §3.1 の文法の追加。`harness.workflow/v1` のまま足せるか、スキーマ版を上げるかは実装時に設計書 §7.3 の照合と合わせて決める）。#309 で入れた v1 の `ticket.yaml` の宣言は次の 2 行だった（O2）。#326 で品質ゲートの `quality` を足した後の宣言は、下の `overridable.skips` の例のとおり。
 
 ```yaml
 overridable:
@@ -121,14 +121,18 @@ overridable:
 - 上書きで書ける値は候補のどれか 1 つだけである。
 - 候補を宣言できない遷移は §6.2 の規則で決まる。候補を宣言できる遷移でも、その候補へ付け替えると守るステップ（人のゲート・人のゲートへ入る遷移を持つステップ・`fail` へ入る遷移を持つステップ）を迂回する候補は、宣言の時点で拒否する（§6.2 の規則 6。#322）。
 
-`fail` へ落ちうるステップ（品質ゲート等）を付け替えで省いてよいときは、元の定義が `overridable.skips` にそのステップ id を挙げる（#322。#326 の品質ゲートのステップがこの形で省ける）。
+`fail` へ落ちうるステップ（品質ゲート等）を付け替えで省いてよいときは、元の定義が `overridable.skips` にそのステップ id を挙げる（#322）。`ticket.yaml` の品質ゲートのステップ `quality`（#326。`e2e` の後・`publish` の前）はこの形で省ける。
 
 ```yaml
 overridable:
   routes:
-    commit.committed: [quality, e2e-route]   # 例（#326 の想定。v1 の ticket.yaml はまだ宣言していない）
+    merge-route.integration: [merge, human-merge]
+    e2e-route.no: [quality, e2e, publish]   # publish は quality の省略
+    e2e.pass: [quality, publish]            # publish は quality の省略
   skips: [quality]                          # quality（fail を返しうる）を省く付け替えを許す
 ```
+
+`quality` へ入る遷移は `e2e-route.no`（E2E を書かない経路）と `e2e.pass`（E2E を書いた経路）の 2 本なので、省く上書きは **2 行そろえて** 書く（`steps: { e2e-route: { on: { no: publish } }, e2e: { on: { pass: publish } } }`）。1 行だけ書いた上書きも検査を通る。そのとき、付け替えた側の経路では `quality` を通らずに PR になる（例: `e2e-route.no: publish` だけなら、E2E 不要の run では毎回）。もう一方の経路では `quality` を通るので、`quality` は到達できるまま残り、`skipped_steps` にも `harness graph` の `skipped` にも出ず、`changes` にだけ出る。片方だけを省く形を止める Go の検査は持たない（#326 で親が決定）ので、上書きを読むときは `changes` で確かめる。`quality` を `commit` の後・`e2e-route` の前に置けば宣言は 1 行で済むが、`e2e` が追加したテストをコミットしうる（`prompts/ticket-e2e.md`）ため、回したコミットと push するコミットが食い違い、E2E のテストもゲートに入らない。そのため `e2e` の後に置いた。
 
 - 値はステップ id の空でない列。挙げられるのは、`fail` へ入る遷移（`limit`・`retry` を使い切ったときの `exhausted` を含む）だけを理由に守るステップに限る。人のゲートと、人のゲートへ入る遷移を持つステップは挙げられない（挙げれば元の定義の検査で拒否する）。守るステップでないもの（挙げなくても省けるもの）を挙げても拒否する（宣言が何を許したかを読み違えないため）。
 - `skips` は付け替えを開くものではない。省く付け替えそのものは `routes` に候補として宣言し、上書きで選ぶ。`skips` は、その付け替えが規則 6 に当たらないようにするだけである。
@@ -141,15 +145,16 @@ overridable:
 | 遷移 | 元の遷移先 | 付け替えの候補 | 何が変わるか | v1 |
 | --- | --- | --- | --- | --- |
 | `merge-route.integration` | `merge`（`/pr-merge` で自動マージ） | `human-merge` | 統合ブランチ宛も人がマージする（保守側） | 開く |
-| `e2e-route.no` | `publish` | `e2e` | analyze が E2E 不要と判断しても E2E を書く（保守側） | 開く |
-| `e2e-route.yes` | `e2e` | `publish` | E2E を書かない（E2E の省略） | 開かない |
+| `e2e-route.no` | `publish`（#326 の後は `quality`） | `e2e` | analyze が E2E 不要と判断しても E2E を書く（保守側） | 開く |
+| `e2e-route.no`・`e2e.pass` | `quality`（#326） | `publish` | PR を作る前の品質ゲートを回さない（pre-commit 等で同じゲートが回るリポジトリ。2 行そろえる） | 開く（`skips: [quality]`。#326） |
+| `e2e-route.yes` | `e2e` | `quality`（#326 の前は `publish`） | E2E を書かない（E2E の省略） | 開かない |
 | `ci.green`・`ci.none` | `review`（レビュー待ちのゲート） | `merge-route` | PR のレビューを待たずにマージの振り分けへ進む。統合ブランチ宛は `/pr-merge` の自動マージになる（レビュー待ちの省略） | 開かない |
 | `publish.opened`・`publish.updated` | `ci`（CI の結果を待つ） | `review` | CI の結果を見ずにレビュー待ちへ進む。CI の失敗を `fix` で直す差し戻し（`ci.red`）と、待ちきれないときの `ci-pending` は通らなくなる（CI 待ちの省略） | 開かない |
 | `merge-route.default` | `human-merge` | — | 既定ブランチ宛 PR の人のマージ | 宣言できない（§6.2） |
 
-E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用途によっては品質の確認を省いて速さを求める場合がある（オーナー・2026-10-25）。開くときは、上の表の候補を `ticket.yaml` の `overridable.routes` に 1 行足せばよい（例: `e2e-route.yes: [e2e, publish]`）。しくみと §6.2 の規則は v1 で入るので、Go の変更は要らない。開く前に確かめておくこと:
+E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用途によっては品質の確認を省いて速さを求める場合がある（オーナー・2026-10-25）。開くときは、上の表の候補を `ticket.yaml` の `overridable.routes` に 1 行足せばよい（例: `e2e-route.yes: [e2e, quality]`。`publish` を候補にすると品質ゲートの `quality` も一緒に迂回する。`quality` は `overridable.skips` に挙がっているので規則 6 では止まらず、E2E だけを省くつもりの宣言が品質ゲートまで省く形になるので、候補は `quality` にする）。しくみと §6.2 の規則は v1 で入るので、Go の変更は要らない。開く前に確かめておくこと:
 
-- E2E の省略（`e2e-route.yes → publish`）: `e2e` の差し戻しの経路（`e2e.fail → fix`）が通らなくなる。`publish` は `e2e` の出力を参照していないので、§6.2 の規則 4 には当たらない。
+- E2E の省略（`e2e-route.yes → quality`）: `e2e` の差し戻しの経路（`e2e.fail → fix`）が通らなくなる。`quality`・`publish` は `e2e` の出力を参照していないので、§6.2 の規則 4 には当たらない。
 - レビュー待ちの省略（`ci.green`・`ci.none → merge-route`）: CI の後のレビュー待ちを通らなくなる。`merge.blocked → review-human → respond → review` の経路は残るので、`review`・`respond` は到達でき、`skipped_steps` にはならない。`review-human` も到達できるので、§6.2 の規則 3 には当たらない。
 - CI 待ちの省略（`publish.opened`・`publish.updated → review`）: PR を作った直後の CI 待ちを通らなくなる。`respond.pushed → ci` は残るので、レビュー対応で push した後は CI を待つ（`ci`・`ci-pending` は到達でき、`skipped_steps` にはならない）。統合ブランチ宛の `/pr-merge` は preflight で CI の失敗をマージの妨げとして判定する（`plugin/skills/pr-merge/SKILL.md` Phase 0-1。実コード確証・high）が、CI が実行中のときの扱いは確かめていない【要確認】。`ci` は `ci.red` の上限を使い切ると `fail` で終わるので、§6.2 の規則 6 により、開くときは `ci` を `overridable.skips` にも挙げる（#322）。
 
@@ -178,7 +183,8 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 | `review-human` | `input` × `human`（TTY 必須）。`respond.needs_human`・`merge.blocked` から入る | レビュー対応で品質ゲートの失敗や設計変更が出たときに人が判断する | 外せない |
 | 品質の失敗での停止 | `implement.failure`・`implement.review_incomplete`・`fix.failure`・`commit.failure` → `fail` | 品質ゲートに通らない変更・セルフレビューと合流できない変更を PR にしない（#262） | 付け替え不可 |
 | 入口の検査での停止 | `resolve.base_missing`・`resolve.links_invalid`・`workspace.conflict` → `fail` | 宛先や作業ツリーが不正なまま進まない | 付け替え不可 |
-| 差し戻しの上限 | `e2e.fail`・`ci.red` の `limit: rework` | 修正の繰り返しを止める | 形は変えない。回数は `limits.rework` で変えられる（§5.1） |
+| 差し戻しの上限 | `e2e.fail`・`ci.red`・`quality.fail`（#326）の `limit: rework` | 修正の繰り返しを止める | 形は変えない。回数は `limits.rework` で変えられる（§5.1） |
+| `quality`（#326） | `command`。`fail` は `fix` へ差し戻し、尽きたら `quality_gate_red`。宣言が無ければ `quality_gate_undeclared` | PR を作る前に、push するコミットに対して品質ゲートを機械で回す | `quality` 自身の遷移は付け替え不可。前段から省くことは `overridable.skips` で許す（§5.2） |
 | `review`・`ci-pending` | `input` × `any` | レビュー待ち・CI を確かめる外部待ち | ゲート自体のキーは閉じる（§5.3）。前段から飛ばすことは v1 では許さない（§5.2） |
 
 `merge` ステップ（`/pr-merge`）のプロンプトは、マージの前に PR の base が既定ブランチでないことを `gh pr view` で確かめ、既定ブランチ宛なら `blocked` を返す（`runtime/workflows/prompts/ticket-merge.md`。実コード確証・high）。これは LLM が守る散文の歯止めで、構造の歯止めは `merge-route` の振り分けである。上書きで構造の歯止めを外せないようにするのが §6.2 の規則である。
@@ -195,7 +201,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 6. **守るステップを迂回できない**（#322 で追加。オーナーの決定 2026-10-26）: 守るステップは、`decider: human` のゲート・人のゲートへ入る遷移を持つステップ（`ticket.yaml` では `implement`・`fix`・`respond`・`merge`・`merge-route`・`human-merge`）・`fail` へ入る遷移を持つステップ（`exhausted` を含む）である。元の定義で守るステップ P が D（ステップ、または `done`・`fail` の終端）を支配していた（開始ステップから D へのすべての経路が P を通った）なら、上書き後の定義でも、D に到達できる限り P が D を支配していなければならない。到達できなくなった D は規則 5 の省略として問わない。元の定義が `overridable.skips` に挙げたステップ（§5.2。`fail` へ入る遷移だけを理由に守るもの）はこの規則で問わない。
    - 検査は 2 段に置く。元の定義の検査で、`overridable.routes` の候補を 1 つずつ当てて迂回する候補を拒否し（保守者が宣言を足す PR で落ちる）、上書きを重ねた時点で付け替えの組み合わせをまとめて検査する。組み合わせで P を迂回できるなら、その経路の上の付け替えのどれか 1 つだけを当てた時点で、P が支配していた何かの節点へ P を通らずに届く（経路の上で、元の定義では P を通らずに届かない最初の節点の手前の付け替えを当てればよい）。そのため前段を通った定義では後段は落ちず、後段は二重の検査である。
    - 支配は遷移のグラフの経路で決め、値（`select` が読む出力など）は見ない。「既定ブランチ宛のときだけ `human-merge` を通る」のような値に依る条件は表せないので、人のゲートへ分岐するステップ（`merge-route`）を守ることで、分岐の手前を前段ごと飛ばす形を止める。
-   - `ticket.yaml` の 2 本（`merge-route.integration: [merge, human-merge]`・`e2e-route.no: [publish, e2e]`）はこの規則に当たらない（`merge` はどのステップも支配していない。`e2e` を足す付け替えは支配を減らさない）。§5.2 で後から開きうるとした付け替えのうち、`e2e-route.yes → publish`・`ci.green`/`ci.none → merge-route` は当たらず、`publish.opened`/`publish.updated → review`（CI 待ちの省略）は `ci` が `fail` へ落ちうるため、開くときに `ci` を `overridable.skips` に挙げる必要がある。
+   - `ticket.yaml` の保守側の 2 本（`merge-route.integration: [merge, human-merge]`・`e2e-route.no` の候補 `e2e`）はこの規則に当たらない（`merge` はどのステップも支配していない。`e2e` を足す付け替えは支配を減らさない）。`quality` を省く候補 `publish`（`e2e-route.no`・`e2e.pass`。#326）は当たるが、`quality` を `overridable.skips` に挙げているので通る。§5.2 で後から開きうるとした付け替えのうち、`e2e-route.yes → quality`・`ci.green`/`ci.none → merge-route` は当たらず、`publish.opened`/`publish.updated → review`（CI 待ちの省略）は `ci` が `fail` へ落ちうるため、開くときに `ci` を `overridable.skips` に挙げる必要がある。
 
 規則 1〜3・6 はゲートの名前（`human-merge` 等）を Go に書かず、`decider: human` という性質で決める。`ticket` 以外のワークフローにも同じ規則が効き、新しい人のゲートを足したときに Go を直す必要が無い。`fail` への遷移まで含めたのは、付け替えられると品質ゲートに通らない変更（#262 で塞いだ `review_incomplete` を含む）を PR にする経路が上書き 1 行で開くためである。
 
@@ -287,7 +293,7 @@ steps: { implement: { budget_usd: 60 } }
 harness run --override <置き場>/l.yaml --input issue=<番号> ticket
 ```
 
-## 10. 決定の記録（2026-10-25）
+## 10. 決定の記録（2026-10-25。O5・P6 は #326 で 2026-10-26 に追記）
 
 設計の段階で出した問いを、オーナー（人間）が決めるものと親（Tom）が決めてよいものに分けて回答を受けた。本文はこの決定に揃えてある。
 
@@ -299,6 +305,7 @@ harness run --override <置き場>/l.yaml --input issue=<番号> ticket
 | O2 | 上書きでステップの省略を許す範囲 | (a) 保守側への付け替えだけ (b) (a)＋E2E の省略 (c) (b)＋レビュー待ちの省略 | **(a)**。`ticket.yaml` の宣言は `merge-route.integration: [merge, human-merge]` と `e2e-route.no: [publish, e2e]` | E2E・レビュー待ち・CI 待ちの省略は v1 では許さない。用途によっては省略して速さを求める場合があるので、後から宣言を足せば開けることと、開いたときに何が起きるかを §5.2 に残した（CI 待ちの省略の行はこの回答で足した） |
 | O3 | flywheel から使うときに接続契約・宣言へ手を入れるか | (F1) 契約を変えず固定の上書きだけ (F2) 宣言でサイズ別にファイルを選ぶ (F3) 契約の `start` に予算の額を足す | **F1** | F2・F3 は flywheel の S4 を分解するときに決める（§8） |
 | O4 | `--workflow-dir` を外せないゲートの規則の外に置いたままにするか | (a) 開発用のまま残す (b) `contract start` では拒否する (c) 必須の人のゲートを Go に持ち `--workflow-dir` にも課す | **(a)** | 上書きが入れば運用で使う理由が無くなる。(b) は契約の引数を減らす変更、(c) はゲートの名前を Go に持ち込む（§6.3） |
+| O5 | 品質ゲートを機械で回すステップ `quality` を足し、pre-commit 等で同じゲートが回るリポジトリでは省けるようにするか（2026-10-26） | — | **足す。省くかは事前設定（リポジトリの上書き）で決め、子に判断させない**。宣言は PR の宛先から読み、宣言が無ければ `quality_gate_undeclared` で止まる。`commit` の safety net の `/quality-check` は外す | O2 の「保守側への付け替えだけ」に対する追加で、`quality` を省く付け替えだけを `overridable.skips` で開く（E2E・レビュー待ち・CI 待ちの省略は開かないまま） |
 
 ### 10.2 親が決めたこと
 
@@ -309,6 +316,7 @@ harness run --override <置き場>/l.yaml --input issue=<番号> ticket
 | P3 | 上書きの形 | 定義と同じ形の部分上書き（案 A） | §4.2 |
 | P4 | run の記録と `resume` の照合 | `hash` は元の定義のまま。上書きの写しを run ディレクトリに置き、`effective_hash` で照合する | 上書き後の定義を書き出す案は相対パスの起点がずれる。上書きの無い run の記録と照合は現行のまま変わらない（§7） |
 | P5 | harness 側で予算の上限を持つか | 持たない | 予算の承認と上限は呼び出し元が持つ。上限が 2 か所に分かれると、どちらで止まったかが分かりにくい（§5.1） |
+| P6 | `quality` の置き場所と、省く上書きの 2 行がそろっているかの検査（#326。2026-10-26） | `e2e` の後・`publish` の前に置く。2 行そろえは文書で求め、Go の検査は足さない | `e2e` は追加したテストをコミットするので、その後に置かないと回したコミットと push するコミットが食い違う。片方だけの付け替えでは、付け替えた側の経路だけ `quality` を通らない。そのことは `skipped_steps` ではなく `changes` にだけ出る（§5.2）。検査を足さず文書で 2 行そろえを求め、`changes` で確かめる |
 
 ## 11. 実装の段階分け（参考。Issue は別に起票する）
 
