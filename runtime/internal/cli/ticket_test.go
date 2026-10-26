@@ -53,6 +53,21 @@ func tempRepo(t *testing.T) (root, repo, origin string) {
 	return root, repo, origin
 }
 
+// declareQualityGate は品質ゲートの宣言（.claude-harness/quality-gate.json。#326）を main にコミットして origin へ push する。
+// quality ステップは宣言を PR の宛先（origin/<base>）から読む。
+func declareQualityGate(t *testing.T, repo, decl string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(repo, ".claude-harness"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".claude-harness", "quality-gate.json"), []byte(decl+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", ".claude-harness/quality-gate.json")
+	git(t, repo, "commit", "-q", "-m", "declare the quality gate")
+	git(t, repo, "push", "-q", "origin", "main")
+}
+
 func claudeStructured(v any, cost float64) string {
 	b, _ := json.Marshal(v)
 	return fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"session_id":"@SID@","total_cost_usd":%v,"structured_output":%s}`, cost, b)
@@ -75,6 +90,7 @@ type ticketFixture struct {
 func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
 	t.Helper()
 	root, repo, origin := tempRepo(t)
+	declareQualityGate(t, repo, `{"test": "true"}`)
 	fdir, fenv := fakeClaude(t)
 	ghDir := t.TempDir()
 	bin := t.TempDir()
@@ -200,8 +216,8 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 	for _, x := range u.Rounds[0].Steps {
 		seq = append(seq, x.Step+":"+x.Outcome)
 	}
-	want := "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no publish:opened ci:red " +
-		"fix:pass commit:committed e2e-route:no publish:updated ci:timeout ci:timeout"
+	want := "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:red " +
+		"fix:pass commit:committed e2e-route:no quality:pass publish:updated ci:timeout ci:timeout"
 	if strings.Join(seq, " ") != want {
 		t.Fatalf("round 1 steps:\n got %s\nwant %s", strings.Join(seq, " "), want)
 	}
@@ -226,7 +242,7 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 			t.Errorf("claude call %d ran in %s, want the worktree %s", n, pwd, wt)
 		}
 	}
-	implement, fix := u.Rounds[0].Steps[3], u.Rounds[0].Steps[8]
+	implement, fix := u.Rounds[0].Steps[3], u.Rounds[0].Steps[9]
 	if implement.Resume || !fix.Resume || fix.SessionID != implement.SessionID || fix.SessionID == "" {
 		t.Errorf("session hand-over: implement %s (resume %v), fix %s (resume %v)", implement.SessionID, implement.Resume, fix.SessionID, fix.Resume)
 	}

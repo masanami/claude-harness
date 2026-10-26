@@ -8,8 +8,9 @@ import (
 // 遷移の付け替え（docs/harness-runtime-overrides.md §5.2・§6.2。#313）: overridable.routes の宣言の検査、上書きでの
 // 付け替え、外せないゲート（decider: human・fail への遷移）、付け替えで到達できなくなったステップ（skipped_steps）。
 
-// ticket.yaml が宣言するのは保守側の 2 行だけ（O2）。
-func TestTicketDeclaresOnlyTwoRoutes(t *testing.T) {
+// ticket.yaml が宣言するのは保守側の 2 行と、quality（品質ゲート。#326）を省く付け替えだけ（O2）。省く付け替えは
+// e2e-route.no と e2e.pass の候補 publish で、quality を overridable.skips に挙げている。
+func TestTicketDeclaredRoutes(t *testing.T) {
 	wf, err := loadTicket(t)
 	if err != nil {
 		t.Fatal(err)
@@ -18,9 +19,40 @@ func TestTicketDeclaresOnlyTwoRoutes(t *testing.T) {
 	for _, d := range wf.Routes {
 		got = append(got, d.Key()+": "+strings.Join(d.Candidates, ","))
 	}
-	want := "merge-route.integration: merge,human-merge | e2e-route.no: publish,e2e"
+	want := "merge-route.integration: merge,human-merge | e2e-route.no: quality,e2e,publish | e2e.pass: quality,publish"
 	if strings.Join(got, " | ") != want {
 		t.Fatalf("routes = %q, want %q", strings.Join(got, " | "), want)
+	}
+	if strings.Join(wf.Skips, ",") != "quality" {
+		t.Fatalf("skips = %v, want [quality]", wf.Skips)
+	}
+}
+
+// 品質ゲート（quality）を省く上書きは、前段の 2 本（e2e-route.no・e2e.pass）を publish へ付け替える 2 行（#326）。quality は
+// fail へ落ちうるので規則 6 で守られるが、overridable.skips に挙がっているので省ける。省いたことは skipped_steps に出る。
+// 1 行だけ付け替えると、もう一方の経路では quality を通るので skipped_steps には出ない（2 行そろえる。overrides.md §5.2）。
+func TestOverrideRouteSkipsQuality(t *testing.T) {
+	wf, err := loadTicket(t, ov(LayerRepo, "steps:\n  e2e-route: { on: { no: publish } }\n  e2e: { on: { pass: publish } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(wf.SkippedSteps, ",") != "quality" {
+		t.Fatalf("skipped_steps = %v, want [quality]", wf.SkippedSteps)
+	}
+	if got, want := changesJSON(t, wf.Changes), `[{"key":"steps.e2e-route.on.no","from":"quality","to":"publish","layer":"repo"},{"key":"steps.e2e.on.pass","from":"quality","to":"publish","layer":"repo"}]`; got != want {
+		t.Fatalf("changes = %s, want %s", got, want)
+	}
+	half, err := loadTicket(t, ov(LayerRepo, "steps:\n  e2e-route: { on: { no: publish } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if half.SkippedSteps != nil {
+		t.Fatalf("one of the two lines: skipped_steps = %v, want none (quality is still on the e2e path)", half.SkippedSteps)
+	}
+	// quality 自身の遷移は宣言していないので付け替えられない（fail を publish へ向けて品質ゲートの失敗を通すことはできない）。
+	if _, err := loadTicket(t, ov(LayerArg, "steps: { quality: { on: { fail: publish } } }\n")); err == nil ||
+		!strings.Contains(err.Error(), "steps.quality.on.fail cannot be overridden: workflow ticket does not declare quality.fail") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -60,7 +92,7 @@ func TestOverrideRouteToE2E(t *testing.T) {
 	if wf.Step("e2e-route").OnFor("no").Target != "e2e" || wf.SkippedSteps != nil {
 		t.Fatalf("e2e-route.no = %+v skipped %v", wf.Step("e2e-route").OnFor("no"), wf.SkippedSteps)
 	}
-	if got, want := changesJSON(t, wf.Changes), `[{"key":"limits.budget_usd","from":40,"to":50,"layer":"arg"},{"key":"steps.e2e-route.on.no","from":"publish","to":"e2e","layer":"arg"}]`; got != want {
+	if got, want := changesJSON(t, wf.Changes), `[{"key":"limits.budget_usd","from":40,"to":50,"layer":"arg"},{"key":"steps.e2e-route.on.no","from":"quality","to":"e2e","layer":"arg"}]`; got != want {
 		t.Fatalf("changes = %s, want %s", got, want)
 	}
 }
@@ -86,7 +118,7 @@ func TestOverrideRouteLayers(t *testing.T) {
 func TestOverrideRouteRejects(t *testing.T) {
 	cases := []struct{ name, body, want string }{
 		{"undeclared", "steps: { ci: { on: { green: merge-route } } }\n",
-			"steps.ci.on.green cannot be overridden: workflow ticket does not declare ci.green in overridable.routes (declared: merge-route.integration, e2e-route.no)"},
+			"steps.ci.on.green cannot be overridden: workflow ticket does not declare ci.green in overridable.routes (declared: merge-route.integration, e2e-route.no, e2e.pass)"},
 		{"not a candidate", "steps: { merge-route: { on: { integration: cleanup } } }\n",
 			`steps.merge-route.on.integration: "cleanup" is not one of the declared candidates (merge, human-merge)`},
 		{"undeclared outcome of a declared step", "steps: { e2e-route: { on: { yes: publish } } }\n",
@@ -477,13 +509,13 @@ func TestSkipsDeclarationRejects(t *testing.T) {
 	}
 }
 
-// ticket.yaml の 2 本の宣言（保守側の付け替え）は規則 6 に当たらない。両方を同時に付け替えても通る。
+// ticket.yaml の保守側の 2 本の宣言は規則 6 に当たらない。両方を同時に付け替えても通る（quality の省略は skips で許す。#326）。
 func TestTicketRoutesPassRule6(t *testing.T) {
 	wf, err := loadTicket(t, ov(LayerRepo, "steps:\n  merge-route: { on: { integration: human-merge } }\n  e2e-route: { on: { no: e2e } }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wf.Skips != nil || strings.Join(wf.SkippedSteps, ",") != "merge" {
-		t.Fatalf("skips %v skipped_steps %v, want no skips and [merge]", wf.Skips, wf.SkippedSteps)
+	if strings.Join(wf.SkippedSteps, ",") != "merge" {
+		t.Fatalf("skipped_steps %v, want [merge]", wf.SkippedSteps)
 	}
 }

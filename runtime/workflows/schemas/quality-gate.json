@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "scripts/quality-gate.sh の出力（ticket ワークフローの quality。#326）。outcome は result フィールド",
+  "type": "object",
+  "required": ["result", "commit_sha", "base", "declaration", "gates", "failure_excerpt", "message"],
+  "properties": {
+    "result": { "type": "string", "enum": ["pass", "fail", "undeclared"] },
+    "commit_sha": { "type": "string", "description": "品質ゲートを回したコミット（実行の前後で HEAD と作業ツリーが変わっていないことを確かめた値）" },
+    "base": { "type": "string" },
+    "declaration": {
+      "type": "object",
+      "description": "読んだ宣言。ref と commit は宣言を読んだ base の版。宣言が無ければ sha256 は空文字",
+      "required": ["path", "ref", "commit", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "ref": { "type": "string" },
+        "commit": { "type": "string" },
+        "sha256": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "gates": {
+      "type": ["object", "null"],
+      "description": "plugin/scripts/quality-check-runner.sh の出力（{result, auto_fix, gates}）。runner を実行しなかった・JSON を返さなかったときは null"
+    },
+    "failure_excerpt": { "type": "string", "description": "fail のとき、ゲートの出力の末尾（4000 バイトまで）。それ以外は空文字" },
+    "message": { "type": "string", "description": "undeclared のとき、何が足りないかと直し方。それ以外は空文字" }
+  },
+  "additionalProperties": false
+}

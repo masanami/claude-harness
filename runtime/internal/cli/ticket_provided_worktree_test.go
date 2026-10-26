@@ -36,7 +36,7 @@ func TestTicketRunsInAWorktreeProvidedByTheLead(t *testing.T) {
 	for _, x := range u.Rounds[0].Steps {
 		seq = append(seq, x.Step+":"+x.Outcome)
 	}
-	if want := "resolve:ok analyze:ok workspace:provided implement:pass commit:committed e2e-route:no publish:opened ci:green"; strings.Join(seq, " ") != want {
+	if want := "resolve:ok analyze:ok workspace:provided implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:green"; strings.Join(seq, " ") != want {
 		t.Fatalf("steps:\n got %s\nwant %s", strings.Join(seq, " "), want)
 	}
 	ws := u.Workspace

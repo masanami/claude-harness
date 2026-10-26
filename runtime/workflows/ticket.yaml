@@ -12,6 +12,8 @@
 #   - ci の red_no_log（red で失敗ログが空。CI が実行されずに失敗した等）を fix へ送らず ci-pending で止める（#278）
 #   - implement の review_incomplete（/self-review が self_review: incomplete で終わった）を失敗で止める（#262・#299）
 #   - publish の closes・refs を resolve が Issue 本文の Closes: なし 行・Refs: 行から決めた値にする（#305）
+#   - PR を作る前に、push するコミットに対して品質ゲートを機械で回す quality（command）を e2e の後・publish の前に置く（#326）。
+#     commit は safety net の /quality-check を回さない。pre-commit 等で同じゲートが回るリポジトリは、上書きで省ける
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -25,7 +27,9 @@ limits:
 overridable:                        # 上書きで付け替えてよい遷移と候補（docs/harness-runtime-overrides.md §5.2。保守側だけ＝O2）
   routes:
     merge-route.integration: [merge, human-merge]   # 統合ブランチ宛も人のマージにできる
-    e2e-route.no: [publish, e2e]                    # analyze が E2E 不要と判断しても E2E を書ける
+    e2e-route.no: [quality, e2e, publish]           # analyze が E2E 不要と判断しても E2E を書ける。publish は quality の省略（#326）
+    e2e.pass: [quality, publish]                    # publish は quality の省略（#326。e2e-route.no と 2 行そろえて付け替える）
+  skips: [quality]                                  # quality（fail へ落ちうる）を省く付け替えを許す（§6.2 の規則 6・#326）
 
 steps:
   resolve:
@@ -91,7 +95,7 @@ steps:
 
   commit:
     kind: llm
-    prompt: prompts/ticket-commit.md                # /commit を呼ぶ（safety net の /quality-check を含む）
+    prompt: prompts/ticket-commit.md                # git で直接コミットする（品質ゲートは後段の quality が機械で回す。#326）
     session: continue:implement
     output: schemas/commit-result.json
     budget_usd: 2
@@ -101,7 +105,7 @@ steps:
   e2e-route:
     kind: select
     value: $steps.analyze.e2e_target                # I10: 2 段前の値での分岐を select で解く
-    on: { yes: e2e, no: publish }
+    on: { yes: e2e, no: quality }
 
   e2e:
     kind: llm
@@ -111,9 +115,22 @@ steps:
     budget_usd: 8
     timeout: 60m
     on:
-      pass: publish
+      pass: quality
       fail: { goto: fix, with: { failure: $steps.e2e.failure_summary },
               limit: rework, exhausted: { fail: e2e } }             # I11 に上限 3 を与える（Q8）
+
+  quality:                                          # #326: push するコミットに対して品質ゲートを機械で回し、結果を SHA と一緒に残す
+    kind: command
+    run: quality-gate                               # scripts/quality-gate.sh: base の .claude-harness/quality-gate.json → plugin/scripts/quality-check-runner.sh
+    with: { base: $steps.resolve.base }
+    output: schemas/quality-gate.json
+    outcome_field: result
+    timeout: 30m
+    on:
+      pass: publish
+      fail: { goto: fix, with: { failure: $steps.quality.failure_excerpt },
+              limit: rework, exhausted: { fail: quality_gate_red } }
+      undeclared: { fail: quality_gate_undeclared }  # 宣言が無い・読めない・ゲートが 1 つも走らない（直し方は output の message に載る）
 
   publish:
     kind: pull-request

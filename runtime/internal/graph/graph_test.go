@@ -54,10 +54,10 @@ func edgesFrom(g *Graph, from, outcome string) []Edge {
 	return out
 }
 
-// ticket.yaml の 19 ステップが定義の順に並び、終端はその後に初出の順で、同じ理由の終端は 1 つにまとまる（§3.2）。
+// ticket.yaml の 20 ステップが定義の順に並び、終端はその後に初出の順で、同じ理由の終端は 1 つにまとまる（§3.2）。
 func TestTicketNodes(t *testing.T) {
 	g := Build(load(t, repoWorkflows, repoScripts, "ticket"), SourceWorkflowDir, "1.2.3")
-	wantSteps := []string{"resolve", "analyze", "workspace", "implement", "fix", "commit", "e2e-route", "e2e", "publish", "ci",
+	wantSteps := []string{"resolve", "analyze", "workspace", "implement", "fix", "commit", "e2e-route", "e2e", "quality", "publish", "ci",
 		"ci-pending", "review", "respond", "review-human", "merge-route", "merge", "human-merge", "design-deviation", "cleanup"}
 	var steps, terms []string
 	for _, n := range g.Nodes {
@@ -77,7 +77,7 @@ func TestTicketNodes(t *testing.T) {
 		t.Fatalf("entry = %q", g.Entry)
 	}
 	wantTerms := []string{"fail:base_missing", "fail:links_invalid", "fail:worktree_conflict", "fail:quality_gate",
-		"fail:self_review_incomplete", "fail:commit", "fail:e2e", "fail:ci_red", "fail:ci_timeout", "fail:aborted_by_human",
+		"fail:self_review_incomplete", "fail:commit", "fail:e2e", "fail:quality_gate_red", "fail:quality_gate_undeclared", "fail:ci_red", "fail:ci_timeout", "fail:aborted_by_human",
 		"fail:pr_closed", "done:merged", "done:merged_worktree_dirty"}
 	if !reflect.DeepEqual(terms, wantTerms) {
 		t.Fatalf("terminals = %v", terms)
@@ -91,9 +91,9 @@ func TestTicketNodes(t *testing.T) {
 	if into != 2 {
 		t.Fatalf("edges into fail:quality_gate = %d, want 2 (implement.failure and fix.failure)", into)
 	}
-	// 設計文書 §12 の数: 53 本（尽きたときの辺 3 本を含む）。
-	if len(g.Edges) != 53 {
-		t.Fatalf("edges = %d, want 53", len(g.Edges))
+	// 設計文書 §12 の数: 53 本（尽きたときの辺 3 本を含む）に、quality（#326）の 4 本（pass・fail・fail が尽きたとき・undeclared）を足した 57 本。
+	if len(g.Edges) != 57 {
+		t.Fatalf("edges = %d, want 57", len(g.Edges))
 	}
 	if n := node(t, g, "implement"); n.Kind != "llm" || n.Agent != "claude-harness:feature-implementer" || n.BudgetUSD != 15 ||
 		FormatDuration(n.Timeout) != "90m" {
@@ -279,7 +279,8 @@ func TestJSONShape(t *testing.T) {
 			declared[m["from"].(string)+"."+m["outcome"].(string)] = v
 		}
 	}
-	if !reflect.DeepEqual(declared, map[string]any{"merge-route.integration": []any{"merge", "human-merge"}, "e2e-route.no": []any{"publish", "e2e"}}) {
+	if !reflect.DeepEqual(declared, map[string]any{"merge-route.integration": []any{"merge", "human-merge"}, "e2e-route.no": []any{"quality", "e2e", "publish"},
+		"e2e.pass": []any{"quality", "publish"}}) {
 		t.Fatalf("overridable edges = %v", declared)
 	}
 }

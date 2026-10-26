@@ -15,6 +15,7 @@
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
 - 定義の上書きの段 1（数値のキー・2 層の置き場・run の記録と `resume`。Issue #312）と段 2（宣言した遷移の付け替えと外せないゲート。Issue #313）。下の「定義の上書き」
 - ワークフローの形を出す読み取り専用のコマンド `graph`（[`docs/harness-runtime-visualization.md`](../docs/harness-runtime-visualization.md) の段 1 と段 2。下の「ワークフローの形」）
+- `ticket` の品質ゲートのステップ `quality`（PR を作る前に、push するコミットに対して品質ゲートを機械で回す。Issue #326。下の「品質ゲートのステップ」）
 
 ## 構成
 
@@ -68,12 +69,33 @@ limits: { budget_usd: 100 }            # limits の全項目（元の定義に�
 steps: { implement: { budget_usd: 60, timeout: 3h } }   # llm の budget_usd・timeout、command の timeout
 ```
 
-- 遷移は、元の定義がトップレベルの `overridable.routes` に `<ステップ id>.<outcome>: [候補...]` と宣言したものだけ、候補のステップ id 1 つへ付け替えられる（§5.2）。同梱の `ticket` が宣言するのは `merge-route.integration: [merge, human-merge]`（統合ブランチ宛も人のマージ）と `e2e-route.no: [publish, e2e]`（E2E 不要の判断でも E2E を書く）だけ。上書きは `steps: { merge-route: { on: { integration: human-merge } } }` の形で書く。人のゲート・人のゲートへ入る遷移を持つステップ・`fail` へ入る遷移を持つステップを迂回する候補は拒否する（§6.2 の規則 6）。`fail` へ落ちうるステップを省いてよいときは、元の定義が `overridable.skips: [<ステップ id>]` に挙げる。
+- 遷移は、元の定義がトップレベルの `overridable.routes` に `<ステップ id>.<outcome>: [候補...]` と宣言したものだけ、候補のステップ id 1 つへ付け替えられる（§5.2）。同梱の `ticket` が宣言するのは `merge-route.integration: [merge, human-merge]`（統合ブランチ宛も人のマージ）、`e2e-route.no: [quality, e2e, publish]`（E2E 不要の判断でも E2E を書く。`publish` は品質ゲートの省略）、`e2e.pass: [quality, publish]`（`publish` は品質ゲートの省略）と、`overridable.skips: [quality]` だけ（下の「品質ゲートのステップ」）。上書きは `steps: { merge-route: { on: { integration: human-merge } } }` の形で書く。人のゲート・人のゲートへ入る遷移を持つステップ・`fail` へ入る遷移を持つステップを迂回する候補は拒否する（§6.2 の規則 6）。`fail` へ落ちうるステップを省いてよいときは、元の定義が `overridable.skips: [<ステップ id>]` に挙げる。
 - 人のゲート（`decider: human`）のキーは書けず、人のゲートへ向かう遷移と `fail` で終わる遷移は宣言も上書きもできない。付け替えで人のゲートが到達できなくなる上書きも拒否する。どれもゲートの名前ではなく `decider: human` という性質で決まる（§6.2 の規則 1〜3）。`--workflow-dir` の定義の差し替えはこの規則の外にある（開発用。§6.3）。
 - それ以外のキー（`prompt`・`agent`・`decider`、宣言の無い `on` 等）は「上書きできない」、元の文法に無いキーは「未知」として、`validate`・`run` が拒否する（§5.3）。
 - `validate` は ok の行の後に、読んだ上書き（`override <層> <パス>`）と効いた値（`changes:` の下に `<キー>: <元の値> -> <効いた値> (<層>)`）を出す。付け替えでだけ到達できなくなったステップは誤りにせず `skipped_steps: <id>, ...` の行に出す（§6.2 の規則 5）。
 - run は `run_started` の `workflow` に、上書きの出どころと sha256（`overrides`）・効いた値（`changes`）・上書き後の定義のハッシュ（`effective_hash`）・付け替えで到達できなくなったステップ（`skipped_steps`。無ければ出さない）を記録し、上書きのファイルを run ディレクトリの `overrides/1-repo.yaml`・`overrides/2-arg.yaml` へ写す。`workflow.hash` は元の定義の YAML の sha256 のまま。上書きの無い run の記録は従来と同じ形。`status --json`（と同じ JSON を出す `run`・`resume`・`approve`・`cancel`）は `workflow` の下に `overrides`・`changes`・`skipped_steps` を出す。上書きの無い run と、上書きを記録する前の版で始めた run では 3 つとも空の配列。`effective_hash` は出さない。`harness contract status` の出力（接続契約 v1）は変わらない。
 - `resume` は元の上書きのファイルではなく写しを読んで定義を組み立て直す。写しの sha256 が開始時と違えば止まる。上書き後の定義のハッシュが開始時と違えば（CLI の重ね方が変わった）、終了コード 5 で開始時の版での `resume` か `cancel` を案内する（§7.2）。
+
+## 品質ゲートのステップ（`quality`。Issue #326）
+
+`ticket` は、E2E の後・PR の作成（`publish`）の前に、品質ゲートを機械で回す `command` のステップ `quality`（`workflows/scripts/quality-gate.sh`）を通る。品質ゲートの根拠を子（LLM）の申告ではなく run の記録にするためで、呼び出し側は記録の `commit_sha` と PR の head（`units[].workspace.head_sha_by_round`）を照合すれば、PR の head で品質ゲートを回し直さずに済む。
+
+- コマンドはリポジトリの宣言 `.claude-harness/quality-gate.json` から読む。形は `{"lint": "<コマンド>", "typecheck": "<コマンド>", "test": "<コマンド>"}`（どれも省略可）で、値は `plugin/scripts/quality-check-runner.sh` と同じ約束（シェルを介さない・`plugin/scripts/config/command-allowlist.txt` に載った実行系だけ）。このリポジトリでは `{"test": "make check"}`。
+- 宣言は PR の宛先（`origin/<base>`。ステップの中で取り直す）から読み、作業ツリーからは読まない。実装した子が同じ PR の中で宣言を書き換えてゲートを弱められないようにするためで、宣言を足す PR 自身ではその宣言は効かない（先に宛先へ入れる）。
+- 実行の前に作業ツリーに未コミットの変更が無いことを、実行の後に HEAD と作業ツリーが変わっていないことを確かめる（`--auto-fix` は渡さない）。どちらかが崩れたら結果をコミットのものとして記録せず `step_error` で止まる。
+- outcome（`result`）は `pass`（`publish` へ）・`fail`（ゲートの出力の末尾 4000 バイトを `fix` へ渡す。`limits.rework` を E2E・CI の差し戻しと共有し、尽きたら `quality_gate_red`）・`undeclared`（宣言が無い・形が違う・ゲートが 1 つも走らない・コマンドの形が拒否された。`quality_gate_undeclared` で止まり、`message` に「宣言を置くか、上書きで省く」を載せる）。
+- 結果は `status --json` の `units[].outputs.quality` に残る（`result`・`commit_sha`・`base`・`declaration`〔`path`・`ref`・読んだ版の `commit`・`sha256`〕・`gates`〔runner の出力〕・`failure_excerpt`・`message`）。PR 本文には載せない。
+- `commit` は `/commit`（safety net の `/quality-check` を含む）を使わず、git で直接 Conventional Commits の形でコミットする（品質ゲートを二重に回さない）。
+- pre-commit 等で同じゲートが既に回るリポジトリは、リポジトリの上書きで `quality` を省ける。前段の 2 本を **2 行そろえて** `publish` へ付け替える（1 行だけだと、もう一方の経路では `quality` を通る）。省いたことは `validate` と `status --json` の `skipped_steps`、`harness graph` の `skipped` に出る。
+
+```yaml
+# .claude-harness/overrides/ticket.yaml
+schema: harness.workflow-override/v1
+workflow: ticket
+steps:
+  e2e-route: { on: { no: publish } }
+  e2e: { on: { pass: publish } }
+```
 
 ## 版の照合（§7.3）
 
