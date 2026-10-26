@@ -257,8 +257,9 @@ func TestGraphRunDoesNotRecordTheInterruption(t *testing.T) {
 	}
 }
 
-// 終了コード（§7）: run が見つからない・定義を組み立て直せない・上書きつきの run（段 3 まで）は 1。<workflow> と --run の
-// 併用、--run と定義を選ぶ引数の併用は 2。失敗のとき標準出力は空。
+// 終了コード（§7）: run が見つからない・定義を組み立て直せないは 1。上書きで始めた run は描ける（0。中身は
+// graph_override_test.go）。<workflow> と --run の併用、--run と定義を選ぶ引数（--override を含む）の併用は 2。
+// 失敗のとき標準出力は空。
 func TestGraphRunExitCodes(t *testing.T) {
 	state := t.TempDir()
 	wd := t.TempDir()
@@ -278,6 +279,9 @@ func TestGraphRunExitCodes(t *testing.T) {
 	if out, errOut, code := hv.run("graph", "--run", plain); code != ExitOK || out == "" {
 		t.Fatalf("graph --run with an unsupported plugin version: exit %d\n%s", code, errOut)
 	}
+	if out, errOut, code := h.run("graph", "--run", overridden); code != ExitOK || out == "" || errOut != "" {
+		t.Fatalf("graph --run of a run started with overrides: exit %d\n%s", code, errOut)
+	}
 
 	cases := []struct {
 		name string
@@ -286,11 +290,10 @@ func TestGraphRunExitCodes(t *testing.T) {
 		msg  string
 	}{
 		{"missing run", []string{"graph", "--run", "no-such-run"}, ExitFailed, `run "no-such-run" not found`},
-		{"overridden run", []string{"graph", "--run", overridden}, ExitFailed, "harness status " + overridden + " still shows where the run is"},
 		{"workflow and --run", []string{"graph", "--run", plain, "rte"}, ExitUsage, "either a workflow or --run"},
 		{"--run and --workflow-dir", []string{"graph", "--run", plain, "--workflow-dir", wd}, ExitUsage, "--workflow-dir cannot be used with --run"},
 		{"--run and --scripts-dir", []string{"graph", "--run", plain, "--scripts-dir", wd}, ExitUsage, "--scripts-dir cannot be used with --run"},
-		{"--run and --override", []string{"graph", "--run", plain, "--override", "x.yaml"}, ExitUsage, "unknown option --override"},
+		{"--run and --override", []string{"graph", "--run", plain, "--override", "x.yaml"}, ExitUsage, "--override cannot be used with --run"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -203,8 +203,8 @@ func TestReservedOutcomes(t *testing.T) {
 	}
 }
 
-// JSON の形（§3.1〜§3.3）: 段 1 では overrides・changes は空の配列、overridable・overridden は null、run は null。
-// 節点は種類の持つフィールドだけを持つ。
+// JSON の形（§3.1〜§3.3）: 上書きが無ければ overrides・changes は空の配列、overridden は null、run は null。
+// overridable は元の定義の overridable.routes が宣言した遷移だけが候補を持ち、ほかは null。節点は種類の持つフィールドだけを持つ。
 func TestJSONShape(t *testing.T) {
 	g := Build(load(t, repoWorkflows, repoScripts, "ticket"), SourceEmbedded, "1.2.3")
 	b, err := json.Marshal(g)
@@ -265,13 +265,22 @@ func TestJSONShape(t *testing.T) {
 			}
 		}
 	}
+	declared := map[string]any{}
 	for _, e := range doc["edges"].([]any) {
 		m := e.(map[string]any)
-		for _, k := range []string{"overridable", "overridden"} {
-			if v, ok := m[k]; !ok || v != nil {
-				t.Fatalf("edge %v: %s must be null", m, k)
-			}
+		if v, ok := m["overridden"]; !ok || v != nil {
+			t.Fatalf("edge %v: overridden must be null", m)
 		}
+		v, ok := m["overridable"]
+		if !ok {
+			t.Fatalf("edge %v: overridable must be present", m)
+		}
+		if v != nil {
+			declared[m["from"].(string)+"."+m["outcome"].(string)] = v
+		}
+	}
+	if !reflect.DeepEqual(declared, map[string]any{"merge-route.integration": []any{"merge", "human-merge"}, "e2e-route.no": []any{"publish", "e2e"}}) {
+		t.Fatalf("overridable edges = %v", declared)
 	}
 }
 

@@ -92,7 +92,7 @@ func TestTextWrapped(t *testing.T) {
 			if n.Terminal() {
 				continue
 			}
-			want := transitions(g, n.ID, limits)
+			want := transitions(g, n.ID, limits, n.Skipped)
 			if strings.Join(got[n.ID], "\n") != strings.Join(want, "\n") {
 				t.Errorf("width %d: %s transitions = %q, want %q", width, n.ID, got[n.ID], want)
 			}

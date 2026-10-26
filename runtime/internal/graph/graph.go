@@ -38,17 +38,27 @@ type Graph struct {
 	Run *Run `json:"run"`
 }
 
-// Meta はどの定義を描いたか（§3.1・§5）。Overrides・Changes は #309 の run の記録と同じ形で、上書きが無ければ空の配列。
+// Meta はどの定義を描いたか（§3.1・§5）。Overrides・Changes は #309 の run の記録（run_started.workflow）と同じ形で、
+// 上書きが無ければ空の配列。
 type Meta struct {
-	ID            string `json:"id"`
-	Description   string `json:"description"`
-	Source        string `json:"source"`
-	Path          string `json:"path"`
-	Hash          string `json:"hash"`
-	EffectiveHash string `json:"effective_hash"`
-	CLIVersion    string `json:"cli_version"`
-	Overrides     []any  `json:"overrides"`
-	Changes       []any  `json:"changes"`
+	ID            string            `json:"id"`
+	Description   string            `json:"description"`
+	Source        string            `json:"source"`
+	Path          string            `json:"path"`
+	Hash          string            `json:"hash"`
+	EffectiveHash string            `json:"effective_hash"`
+	CLIVersion    string            `json:"cli_version"`
+	Overrides     []Override        `json:"overrides"`
+	Changes       []workflow.Change `json:"changes"`
+}
+
+// Override は重ねた上書き 1 つ（run の記録の overrides[] と同じ形）。Copy は run ディレクトリに置いた写しの相対パスで、
+// run を指定せずに描いたとき（写しが無い）は null。
+type Override struct {
+	Layer  string  `json:"layer"`
+	Path   string  `json:"path"`
+	SHA256 string  `json:"sha256"`
+	Copy   *string `json:"copy"`
 }
 
 // Limit は limits の 1 項目（宣言順）。
@@ -115,7 +125,8 @@ type Edge struct {
 	Limit     string     `json:"limit,omitempty"`
 	Retry     int        `json:"retry,omitempty"`
 	Exhausted *Exhausted `json:"exhausted,omitempty"`
-	// Overridable・Overridden は上書き（#309）で埋まる。上書きの反映（段 3）までは常に null。
+	// Overridable は元の定義の overridable.routes がこの遷移に宣言した候補（宣言が無ければ null）。Overridden は上書きで
+	// 付け替えた辺の元の行き先と層（付け替えていなければ null）で、To は付け替えた後の行き先になる（§3.3）。
 	Overridable []string    `json:"overridable"`
 	Overridden  *Overridden `json:"overridden"`
 }
@@ -132,17 +143,24 @@ type Overridden struct {
 	Layer string `json:"layer"`
 }
 
-// Build は読み込んで検査した定義から形を組む。meta の ID・Description・Path・Hash は wf から埋める（呼び出し元は
-// Source と CLIVersion を渡す）。
+// Build は読み込んで検査した定義（上書きを重ねたものを含む）から形を組む。meta の ID・Description・Path・Hash と
+// 上書きの記録は wf から埋める（呼び出し元は Source と CLIVersion を渡す）。
+//
+// 上書きを重ねた定義では、付け替えた辺に overridden を付け、付け替えでだけ到達できなくなったステップ（wf.SkippedSteps）を
+// 節点に残して skipped を付ける（§5.3）。そのステップへ入る辺は付け替えた後の定義に無いので描かれず、出ていく辺は残る。
 func Build(wf *workflow.Workflow, source, cliVersion string) *Graph {
+	effective := wf.EffectiveHash
+	if effective == "" {
+		// 上書きが無ければ、描いた定義は元の定義そのものなので元のハッシュと同じ値にする（#309 §7.1 の「hash と同じ値」）。
+		effective = wf.Hash
+	}
 	g := &Graph{
 		Schema: SchemaV1,
 		Workflow: Meta{
 			ID: wf.ID, Description: wf.Description, Source: source, Path: wf.Path, Hash: wf.Hash,
-			// 上書きが無ければ、描いた定義は元の定義そのものなので元のハッシュと同じ値にする（#309 §7.1 の「hash と同じ値」）。
-			EffectiveHash: wf.Hash,
+			EffectiveHash: effective,
 			CLIVersion:    cliVersion,
-			Overrides:     []any{}, Changes: []any{},
+			Overrides:     []Override{}, Changes: append([]workflow.Change{}, wf.Changes...),
 		},
 		Limits: []Limit{},
 		BuiltinGates: []BuiltinGate{{
@@ -155,16 +173,40 @@ func Build(wf *workflow.Workflow, source, cliVersion string) *Graph {
 	if len(wf.Steps) > 0 {
 		g.Entry = wf.Steps[0].ID
 	}
+	for _, ov := range wf.Overrides {
+		g.Workflow.Overrides = append(g.Workflow.Overrides, Override{Layer: ov.Layer, Path: ov.Path, SHA256: ov.SHA256})
+	}
 	for _, l := range wf.Limits {
 		g.Limits = append(g.Limits, Limit{Name: l.Name, Value: l.Value})
 	}
+	skipped := map[string]bool{}
+	for _, id := range wf.SkippedSteps {
+		skipped[id] = true
+	}
 	for _, s := range wf.Steps {
-		g.Nodes = append(g.Nodes, stepNode(s))
+		n := stepNode(s)
+		n.Skipped = skipped[s.ID]
+		g.Nodes = append(g.Nodes, n)
+	}
+	// 付け替えは changes の steps.<id>.on.<outcome> に、元の行き先（from）と書いた層とともに残る（workflow.apply）。
+	rerouted := map[string]workflow.Change{}
+	for _, c := range wf.Changes {
+		rerouted[c.Key] = c
 	}
 	seen := map[string]bool{}
 	for _, s := range wf.Steps {
 		for _, e := range s.On {
-			for _, ed := range edges(s.ID, e.Outcome, e.T, nil) {
+			for i, ed := range edges(s.ID, e.Outcome, e.T, nil) {
+				// 宣言と付け替えは尽きたときの行き先を持たない素のステップ遷移だけなので（routes.go）、通常の辺にだけ付ける。
+				if i == 0 {
+					if d := wf.Route(s.ID, e.Outcome); d != nil {
+						ed.Overridable = append([]string{}, d.Candidates...)
+					}
+					if c, ok := rerouted["steps."+s.ID+".on."+e.Outcome]; ok {
+						from, _ := c.From.(string)
+						ed.Overridden = &Overridden{From: from, Layer: c.Layer}
+					}
+				}
 				g.Edges = append(g.Edges, ed)
 				if kind, reason, ok := terminal(ed.To); ok && !seen[ed.To] {
 					seen[ed.To] = true

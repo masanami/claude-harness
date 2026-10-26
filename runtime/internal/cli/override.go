@@ -9,9 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
+	"github.com/masanami/claude-harness/runtime/internal/graph"
 	"github.com/masanami/claude-harness/runtime/internal/workflow"
 )
 
@@ -108,23 +108,9 @@ func printOverrides(w io.Writer, wf *workflow.Workflow) {
 	}
 	fmt.Fprintln(w, "  changes:")
 	for _, c := range wf.Changes {
-		fmt.Fprintf(w, "    %s: %s -> %s (%s)\n", c.Key, changeValue(c.From), changeValue(c.To), c.Layer)
+		fmt.Fprintf(w, "    %s: %s -> %s (%s)\n", c.Key, graph.ChangeValue(c.From), graph.ChangeValue(c.To), c.Layer)
 	}
 	if len(wf.SkippedSteps) > 0 {
 		fmt.Fprintf(w, "  skipped_steps: %s\n", strings.Join(wf.SkippedSteps, ", "))
 	}
-}
-
-func changeValue(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return "(unset)"
-	case float64:
-		return strconv.FormatFloat(x, 'f', -1, 64)
-	case int64:
-		return strconv.FormatInt(x, 10)
-	case string:
-		return x
-	}
-	return fmt.Sprint(v)
 }

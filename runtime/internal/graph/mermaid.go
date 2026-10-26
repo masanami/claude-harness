@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
@@ -17,17 +18,28 @@ var mermaidClassDefs = []string{
 	"classDef current fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px",
 }
 
+// skippedLinkStyle は上書きで到達できなくなったステップから出ていく線の色と破線（§5.3）。線は linkStyle の番号で指す。
+const skippedLinkStyle = "stroke:#9ca3af,stroke-dasharray:5 5,color:#6b7280"
+
 // WriteMermaid は形を Mermaid の flowchart TD の 1 文書にする（§6.2）。節点 id は n0・n1 … に置き換え、ステップ id は
 // 表示の文字にだけ使う。節点の形は種類で分け（llm 角丸・command 等は四角・gate 六角形・select ひし形・終端は円）、
 // 辺には outcome を書く。尽きたときの辺は点線にする。run を重ねたときは、終わっていない unit のいまいるステップに
 // current、通ったステップに visited を付ける。終わった unit は、その終端の節点があれば current を付ける。
+//
+// 上書きを重ねた形では、読んだ上書きと効いた値を %% のコメントに書き、付け替えた辺は太線にして元の行き先と層をラベルに
+// 添える。上書きで到達できなくなったステップ（skipped）にはクラス skipped を付け、そこから出ていく線を破線・灰色にする。
 func WriteMermaid(w io.Writer, g *Graph) {
 	var b strings.Builder
 	b.WriteString("flowchart TD\n")
 	fmt.Fprintf(&b, "  %%%% workflow %s (%s, cli %s)  entry: %s\n", g.Workflow.ID, g.Workflow.Source, g.Workflow.CLIVersion, g.Entry)
+	for _, l := range overrideLines(g, 0) {
+		b.WriteString("  %% " + l + "\n")
+	}
 	ids := map[string]string{}
+	skipped := map[string]bool{}
 	for i, n := range g.Nodes {
 		ids[n.ID] = fmt.Sprintf("n%d", i)
+		skipped[n.ID] = n.Skipped
 	}
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
@@ -37,16 +49,26 @@ func WriteMermaid(w io.Writer, g *Graph) {
 	for _, l := range g.Limits {
 		limits[l.Name] = l.Value
 	}
-	for _, l := range links(g.Edges, limits) {
+	var grey []string
+	for i, l := range links(g.Edges, limits) {
 		arrow := "-->"
-		if l.dotted {
+		switch {
+		case l.dotted || skipped[l.from]:
 			arrow = "-.->"
+		case l.overridden:
+			arrow = "==>"
+		}
+		if skipped[l.from] {
+			grey = append(grey, strconv.Itoa(i))
 		}
 		fmt.Fprintf(&b, "  %s %s|\"%s\"| %s\n", ids[l.from], arrow, escape(strings.Join(l.labels, " / ")), ids[l.to])
 	}
 	b.WriteString("\n")
 	for _, d := range mermaidClassDefs {
 		b.WriteString("  " + d + "\n")
+	}
+	if len(grey) > 0 {
+		fmt.Fprintf(&b, "  linkStyle %s %s\n", strings.Join(grey, ","), skippedLinkStyle)
 	}
 	classes := map[string][]string{}
 	for _, n := range g.Nodes {
@@ -107,19 +129,20 @@ func shape(n *Node) string {
 
 // link は Mermaid に描く線 1 本。
 type link struct {
-	from, to string
-	labels   []string
-	dotted   bool
+	from, to   string
+	labels     []string
+	dotted     bool
+	overridden bool
 }
 
-// links は辺を線にする。同じ節点の間の素の辺（上限・retry・尽きたときの印を持たないもの）は 1 本にまとめ、outcome を
+// links は辺を線にする。同じ節点の間の素の辺（上限・retry・尽きたときの印・付け替えの印を持たないもの）は 1 本にまとめ、outcome を
 // " / " で並べる（ticket の workspace の provided・created・reused → implement のように、行き先が同じ outcome が並ぶと
 // 線が重なって読めなくなるため）。線の順は、まとめた先頭の辺の順。
 func links(edges []Edge, limits map[string]float64) []link {
 	var out []link
 	at := map[[2]string]int{}
 	for _, e := range edges {
-		plain := e.Exhausted == nil && e.Limit == "" && e.Kind != "retry"
+		plain := e.Exhausted == nil && e.Limit == "" && e.Kind != "retry" && e.Overridden == nil
 		key := [2]string{e.From, e.To}
 		if i, ok := at[key]; ok && plain {
 			out[i].labels = append(out[i].labels, edgeLabel(e, limits))
@@ -128,7 +151,8 @@ func links(edges []Edge, limits map[string]float64) []link {
 		if plain {
 			at[key] = len(out)
 		}
-		out = append(out, link{from: e.From, to: e.To, labels: []string{edgeLabel(e, limits)}, dotted: e.Exhausted != nil})
+		out = append(out, link{from: e.From, to: e.To, labels: []string{edgeLabel(e, limits) + overriddenNote(e)}, dotted: e.Exhausted != nil,
+			overridden: e.Overridden != nil})
 	}
 	return out
 }
