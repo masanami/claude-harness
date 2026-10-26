@@ -119,7 +119,20 @@ overridable:
 
 - キーは `<ステップ id>.<outcome>`、値は遷移先の候補（ステップ id の配列）。元の定義の遷移先は候補に含めなければならない（上書きが無いときの値）。
 - 上書きで書ける値は候補のどれか 1 つだけである。
-- 候補を宣言できない遷移は §6.2 の規則で決まる。
+- 候補を宣言できない遷移は §6.2 の規則で決まる。候補を宣言できる遷移でも、その候補へ付け替えると守るステップ（人のゲート・人のゲートへ入る遷移を持つステップ・`fail` へ入る遷移を持つステップ）を迂回する候補は、宣言の時点で拒否する（§6.2 の規則 6。#322）。
+
+`fail` へ落ちうるステップ（品質ゲート等）を付け替えで省いてよいときは、元の定義が `overridable.skips` にそのステップ id を挙げる（#322。#326 の品質ゲートのステップがこの形で省ける）。
+
+```yaml
+overridable:
+  routes:
+    commit.committed: [quality, e2e-route]   # 例（#326 の想定。v1 の ticket.yaml はまだ宣言していない）
+  skips: [quality]                          # quality（fail を返しうる）を省く付け替えを許す
+```
+
+- 値はステップ id の空でない列。挙げられるのは、`fail` へ入る遷移（`limit`・`retry` を使い切ったときの `exhausted` を含む）だけを理由に守るステップに限る。人のゲートと、人のゲートへ入る遷移を持つステップは挙げられない（挙げれば元の定義の検査で拒否する）。守るステップでないもの（挙げなくても省けるもの）を挙げても拒否する（宣言が何を許したかを読み違えないため）。
+- `skips` は付け替えを開くものではない。省く付け替えそのものは `routes` に候補として宣言し、上書きで選ぶ。`skips` は、その付け替えが規則 6 に当たらないようにするだけである。
+- `overridable` は上書きに書けない（§5.3）ので、`skips` を広げられるのも保守者だけである。
 
 ステップの「省略」は、このしくみで前段の遷移を後段へ付け替えることとして表す（`skip: true` のような専用のキーは持たない）。省略したときにどこへ進むかが定義に書かれた候補から読め、`outcome` の仮定（省略したステップが何を返したことにするか）を持ち込まずに済むためである。
 
@@ -138,7 +151,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 
 - E2E の省略（`e2e-route.yes → publish`）: `e2e` の差し戻しの経路（`e2e.fail → fix`）が通らなくなる。`publish` は `e2e` の出力を参照していないので、§6.2 の規則 4 には当たらない。
 - レビュー待ちの省略（`ci.green`・`ci.none → merge-route`）: CI の後のレビュー待ちを通らなくなる。`merge.blocked → review-human → respond → review` の経路は残るので、`review`・`respond` は到達でき、`skipped_steps` にはならない。`review-human` も到達できるので、§6.2 の規則 3 には当たらない。
-- CI 待ちの省略（`publish.opened`・`publish.updated → review`）: PR を作った直後の CI 待ちを通らなくなる。`respond.pushed → ci` は残るので、レビュー対応で push した後は CI を待つ（`ci`・`ci-pending` は到達でき、`skipped_steps` にはならない）。統合ブランチ宛の `/pr-merge` は preflight で CI の失敗をマージの妨げとして判定する（`plugin/skills/pr-merge/SKILL.md` Phase 0-1。実コード確証・high）が、CI が実行中のときの扱いは確かめていない【要確認】。
+- CI 待ちの省略（`publish.opened`・`publish.updated → review`）: PR を作った直後の CI 待ちを通らなくなる。`respond.pushed → ci` は残るので、レビュー対応で push した後は CI を待つ（`ci`・`ci-pending` は到達でき、`skipped_steps` にはならない）。統合ブランチ宛の `/pr-merge` は preflight で CI の失敗をマージの妨げとして判定する（`plugin/skills/pr-merge/SKILL.md` Phase 0-1。実コード確証・high）が、CI が実行中のときの扱いは確かめていない【要確認】。`ci` は `ci.red` の上限を使い切ると `fail` で終わるので、§6.2 の規則 6 により、開くときは `ci` を `overridable.skips` にも挙げる（#322）。
 
 セルフレビュー（`/self-review`）の省略は、このしくみでは表せない。セルフレビューは runtime のステップではなく、`implement` の中（`feature-implementer` の内側のループ。設計書 §1.1）で動くためである。省略を許すなら、`implement` への入力（`with`）を足してプロンプトへ渡す別の設計が要る。flywheel#265 の「S かつ低リスクはセルフレビューを省略」はこれに当たり、本 Issue の範囲外とする（重要度による自動の切り替えも範囲外。Issue の「やらないこと」）。
 
@@ -176,11 +189,15 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 
 1. **人のゲートは変えられない**: `decider: human` のゲートのキーは上書きに書けない（§5.3 で閉じたキーに加え、数値のキーもゲートには無い）。
 2. **人のゲートと `fail` へ向かう遷移は付け替えられない**: 元の定義で遷移先が `decider: human` のゲート（直接のステップ id でも `{gate: <id>}` でも）、または `{fail: …}` である遷移は、`overridable.routes` に宣言できない。宣言があれば元の定義の検査で拒否する。`ticket.yaml` では `merge-route.default`・`implement.deviation`・`fix.deviation`・`respond.needs_human`・`merge.blocked`・`human-merge.open` と、`fail` への遷移すべてが当たる。
-3. **人のゲートへ到達できなくならない**: 元の定義で開始ステップから到達できる `decider: human` のゲートは、上書き後の定義でも到達できなければならない。規則 2 があれば通常は満たされるが、付け替えの組み合わせで前段ごと迂回される形を検出するための二重の検査として置く。
+3. **人のゲートへ到達できなくならない**: 元の定義で開始ステップから到達できる `decider: human` のゲートは、上書き後の定義でも到達できなければならない。規則 2 は人のゲートへ入る辺を守るだけなので、付け替えで前段ごと到達できなくなる形はこの規則で止める。ゲートが到達できるまま、その手前のステップだけを迂回する形（#322）はこの規則では止まらず、規則 6 で止める。ゲートが到達できなくなったことを名指しで伝えるために、規則 6 と重なる場合もこの規則を先に検査する。
 4. **上書き後の定義も通常の検査をすべて通る**: 参照の型・「その経路で必ず実行済みか」（`guaranteed`）・数えられない循環・`outcome` の網羅（`runtime/internal/workflow/validate.go`）。付け替えで後段が前段の出力を参照できなくなる形（例: `e2e` を飛ばしたのに `e2e` の出力を読むステップが残る）はここで落ちる。
 5. **到達できなくなったステップは「省略」として報告する**: 現行の検査は到達できないステップを誤りにする（`reachability`）。上書き後の定義では、元の定義で到達でき、上書きの付け替えによってだけ到達できなくなったステップを誤りにせず、`skipped_steps` として `validate` の出力と run の記録（§7）に出す。
+6. **守るステップを迂回できない**（#322 で追加。オーナーの決定 2026-10-26）: 守るステップは、`decider: human` のゲート・人のゲートへ入る遷移を持つステップ（`ticket.yaml` では `implement`・`fix`・`respond`・`merge`・`merge-route`・`human-merge`）・`fail` へ入る遷移を持つステップ（`exhausted` を含む）である。元の定義で守るステップ P が D（ステップ、または `done`・`fail` の終端）を支配していた（開始ステップから D へのすべての経路が P を通った）なら、上書き後の定義でも、D に到達できる限り P が D を支配していなければならない。到達できなくなった D は規則 5 の省略として問わない。元の定義が `overridable.skips` に挙げたステップ（§5.2。`fail` へ入る遷移だけを理由に守るもの）はこの規則で問わない。
+   - 検査は 2 段に置く。元の定義の検査で、`overridable.routes` の候補を 1 つずつ当てて迂回する候補を拒否し（保守者が宣言を足す PR で落ちる）、上書きを重ねた時点で付け替えの組み合わせをまとめて検査する。組み合わせで P を迂回できるなら、その経路の上の付け替えのどれか 1 つだけを当てた時点で、P が支配していた何かの節点へ P を通らずに届く（経路の上で、元の定義では P を通らずに届かない最初の節点の手前の付け替えを当てればよい）。そのため前段を通った定義では後段は落ちず、後段は二重の検査である。
+   - 支配は遷移のグラフの経路で決め、値（`select` が読む出力など）は見ない。「既定ブランチ宛のときだけ `human-merge` を通る」のような値に依る条件は表せないので、人のゲートへ分岐するステップ（`merge-route`）を守ることで、分岐の手前を前段ごと飛ばす形を止める。
+   - `ticket.yaml` の 2 本（`merge-route.integration: [merge, human-merge]`・`e2e-route.no: [publish, e2e]`）はこの規則に当たらない（`merge` はどのステップも支配していない。`e2e` を足す付け替えは支配を減らさない）。§5.2 で後から開きうるとした付け替えのうち、`e2e-route.yes → publish`・`ci.green`/`ci.none → merge-route` は当たらず、`publish.opened`/`publish.updated → review`（CI 待ちの省略）は `ci` が `fail` へ落ちうるため、開くときに `ci` を `overridable.skips` に挙げる必要がある。
 
-規則 1〜3 はゲートの名前（`human-merge` 等）を Go に書かず、`decider: human` という性質で決める。`ticket` 以外のワークフローにも同じ規則が効き、新しい人のゲートを足したときに Go を直す必要が無い。`fail` への遷移まで含めたのは、付け替えられると品質ゲートに通らない変更（#262 で塞いだ `review_incomplete` を含む）を PR にする経路が上書き 1 行で開くためである。
+規則 1〜3・6 はゲートの名前（`human-merge` 等）を Go に書かず、`decider: human` という性質で決める。`ticket` 以外のワークフローにも同じ規則が効き、新しい人のゲートを足したときに Go を直す必要が無い。`fail` への遷移まで含めたのは、付け替えられると品質ゲートに通らない変更（#262 で塞いだ `review_incomplete` を含む）を PR にする経路が上書き 1 行で開くためである。
 
 ### 6.3 `--workflow-dir` はこの規則の外にある
 
@@ -307,3 +324,4 @@ harness run --override <置き場>/l.yaml --input issue=<番号> ticket
 - `overridable` を `harness.workflow/v1` のまま足せるか（埋め込みの定義と `--workflow-dir` の古い定義の混在で、読めない CLI が出ないか）。段 2（#313）で確かめた: **版を上げずに足した**。`overridable` は省略できるトップレベルのキーなので、宣言の無い古い定義（`--workflow-dir` の写しや、N3 で読む開始時の版の展開ディレクトリの定義）は段 2 の CLI でもそのまま読める。逆に、段 2 より前の CLI に `overridable` を持つ定義を読ませると、未知のキーとして読み込みを拒否して止まる（黙って宣言を無視して進む経路は無い。fail-closed）。同梱の定義は CLI と同じ版の展開ディレクトリから読む（S1）ので、この組み合わせが起きるのは開発用の `--workflow-dir` と、新しい版で始めた run を古い CLI で `resume` する場合だけで、後者は設計書 §7.3 の照合で止まって開始時の版での `resume` を案内する。上書き後の定義のハッシュは、遷移の付け替えを `{key: steps.<id>.on.<outcome>, value: <ステップ id>}` として段 1 と同じ表現に入れたので `harness.workflow-effective/v1` のまま変えていない（数値だけの上書きのハッシュは段 1 と同じ値。`runtime/internal/workflow/override_test.go` の `TestEffectiveHashGolden` が固定値で確かめる）。実コード確証・high。
 - 上書き後の定義を正規化してハッシュを取る方法（キーの順・数値の書式）。段 1（#312）で決めた: `{schema: harness.workflow-effective/v1, base: 元の定義の hash, set: 効いた値の [{key, value}] をキーの順に並べたもの}` の JSON の sha256。値は読み込んだ後の値（数は数、`timeout` は Go の時間の書式）なので、上書きのファイルの書式・コメント・キーの順・`60` と `60.0`・`30m` と `1800s`・どの層が書いたかには依らない。元の定義の残りの部分は `base` が同定する。重ね方・正規化を変えるときは `schema` の版を上げる（`runtime/internal/workflow/override.go` の `effectiveHash`）。
 - CI が実行中の PR を `/pr-merge` の preflight がどう扱うか（CI 待ちの省略を開くときの判断材料。§5.2）【要確認】。
+- #326 で品質ゲートのステップを `overridable.skips` に挙げて省けるようにするとき、後段のステップ（`publish` の PR 本文など）が品質ゲートの出力（SHA・結果）を参照すると、省いた定義は規則 4（参照先が必ず実行済みか。`guaranteed`）で落ちる。省ける形にするなら、後段は品質ゲートの出力を参照しないか、省いた場合の扱いを別に設計する（#322 の段 1 の申し送り。`runtime/internal/workflow/routes_test.go` の `TestOverrideRouteSkippedAndReferences` と同じしくみ）。

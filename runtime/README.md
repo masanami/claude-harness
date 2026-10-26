@@ -68,7 +68,7 @@ limits: { budget_usd: 100 }            # limits の全項目（元の定義に�
 steps: { implement: { budget_usd: 60, timeout: 3h } }   # llm の budget_usd・timeout、command の timeout
 ```
 
-- 遷移は、元の定義がトップレベルの `overridable.routes` に `<ステップ id>.<outcome>: [候補...]` と宣言したものだけ、候補のステップ id 1 つへ付け替えられる（§5.2）。同梱の `ticket` が宣言するのは `merge-route.integration: [merge, human-merge]`（統合ブランチ宛も人のマージ）と `e2e-route.no: [publish, e2e]`（E2E 不要の判断でも E2E を書く）だけ。上書きは `steps: { merge-route: { on: { integration: human-merge } } }` の形で書く。
+- 遷移は、元の定義がトップレベルの `overridable.routes` に `<ステップ id>.<outcome>: [候補...]` と宣言したものだけ、候補のステップ id 1 つへ付け替えられる（§5.2）。同梱の `ticket` が宣言するのは `merge-route.integration: [merge, human-merge]`（統合ブランチ宛も人のマージ）と `e2e-route.no: [publish, e2e]`（E2E 不要の判断でも E2E を書く）だけ。上書きは `steps: { merge-route: { on: { integration: human-merge } } }` の形で書く。人のゲート・人のゲートへ入る遷移を持つステップ・`fail` へ入る遷移を持つステップを迂回する候補は拒否する（§6.2 の規則 6）。`fail` へ落ちうるステップを省いてよいときは、元の定義が `overridable.skips: [<ステップ id>]` に挙げる。
 - 人のゲート（`decider: human`）のキーは書けず、人のゲートへ向かう遷移と `fail` で終わる遷移は宣言も上書きもできない。付け替えで人のゲートが到達できなくなる上書きも拒否する。どれもゲートの名前ではなく `decider: human` という性質で決まる（§6.2 の規則 1〜3）。`--workflow-dir` の定義の差し替えはこの規則の外にある（開発用。§6.3）。
 - それ以外のキー（`prompt`・`agent`・`decider`、宣言の無い `on` 等）は「上書きできない」、元の文法に無いキーは「未知」として、`validate`・`run` が拒否する（§5.3）。
 - `validate` は ok の行の後に、読んだ上書き（`override <層> <パス>`）と効いた値（`changes:` の下に `<キー>: <元の値> -> <効いた値> (<層>)`）を出す。付け替えでだけ到達できなくなったステップは誤りにせず `skipped_steps: <id>, ...` の行に出す（§6.2 の規則 5）。
@@ -133,7 +133,7 @@ harness predict-conflicts [--max-budget-usd USD] <issue> <issue>...   # cwd の�
 
 - Issue ごとに `conflict-predict-issue` ワークフローの run を 1 本起動する（`fetch-issue.sh` で `gh issue view` → `issue-conflict-predictor` が cwd のチェックアウトのルートを探索）。同時に 4 本まで。run は状態の置き場に残る。
 - 予測の run は `run` と同じくリポジトリの上書き（`.claude-harness/overrides/conflict-predict-issue.yaml`）を重ねて起動する（`--override` は持たない）。1 件分の予算は上書き後の `limits.budget_usd`。
-- `--max-budget-usd` は口全体の上限（既定は件数 × 1 USD）。1 件分（1 USD）ずつ起動前に確保し、確保できない Issue は起動せず `budget_exhausted` にする。
+- `--max-budget-usd` は口全体の上限（既定は件数 × 1 件分）。1 件分は上書き後の `limits.budget_usd`（同梱の定義では 1 USD）で、1 件分ずつ起動前に確保し、確保できない Issue は起動せず `budget_exhausted` にする。
 - 出力の主なフィールド: `repository`・`head_sha`・`complete`・`error`（口全体を実行できなかったときだけ）・`issues[]`（`status` は `predicted` / `failed` / `budget_exhausted`）・`pairs[]`（`shared_files[]` は除外せずすべて出し、lockfile 等に `merge_friendly`、git が無視するパスに `ignored` の印。`dependency.first` は先に入れるべき側）・`cost_usd`。表は設計 §5.4.1。
 - エージェントはインストール済みのプラグインから解決される。`issue-conflict-predictor` の `tools` に `StructuredOutput` が無い版のプラグインでは、予測が型付きの出力を返せず `failed` になる（#282 と同じ）。
 
@@ -217,7 +217,7 @@ steps:
     type: observe                     # observe: resume のたびに登録された観測で外部の実状態を確かめ、その結果が outcome
     decider: human
     observe: pr-state                 # 観測は Go に登録する（pr-state は PR-4）。未登録の名前は validate が拒否する
-    requested_action: 既定ブランチ宛 PR のマージは人が行う。マージ後に resume
+    requested_action: この PR のマージは人が行う（既定ブランチ宛と、上書きで統合ブランチ宛も人のマージにした場合）。マージ後に resume
     on: { merged: cleanup, open: { gate: human-merge }, closed: { fail: pr_closed } }
 ```
 

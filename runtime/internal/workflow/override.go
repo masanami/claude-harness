@@ -346,6 +346,9 @@ func LoadWithOverrides(path string, opts Options, srcs []OverrideSource) (*Workf
 	if len(ps) > 0 {
 		return nil, ps
 	}
+	if ps := bypassProblems(base, eff); len(ps) > 0 {
+		return nil, ps
+	}
 	if ps := validate(eff, opts, true, skipped); len(ps) > 0 {
 		return nil, ps
 	}
