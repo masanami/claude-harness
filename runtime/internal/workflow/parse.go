@@ -277,7 +277,7 @@ func Parse(path string, data []byte) (*Workflow, error) {
 		case "limits":
 			wf.Limits = p.limits(pr.val)
 		case "overridable":
-			wf.Routes = p.overridable(pr.val)
+			wf.Routes = p.overridable(pr.val, wf)
 		case "steps":
 			stepsNode = pr.val
 		}

@@ -125,8 +125,9 @@ predicts, for 2 to 20 issues of the repository checked out in the current direct
 and which pairs may conflict or depend on each other. read-only: it changes no working tree, branch or issue, and
 decides nothing (whether to run the issues in parallel is the caller's decision).
 prints one JSON document {"schema": "` + PredictionSchema + `", ...} and exits 0 whenever it printed it.
---max-budget-usd caps the whole prediction (default: 1 USD per issue); an issue whose share does not fit is not
-launched and is reported as budget_exhausted.
+--max-budget-usd caps the whole prediction (default: one issue's share times the number of issues); one issue's share
+is limits.budget_usd of the conflict-predict-issue workflow after the repository's override (1 USD in the bundled
+definition). an issue whose share does not fit is not launched and is reported as budget_exhausted.
 `
 
 // cmdPredictConflicts は predict-conflicts。JSON を出力できなかったときだけ非 0 で終わる。

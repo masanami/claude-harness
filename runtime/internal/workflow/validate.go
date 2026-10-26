@@ -86,6 +86,10 @@ func validate(wf *Workflow, opts Options, overridden bool, skipped []string) Pro
 	}
 	if !v.overridden {
 		v.routeDecls()
+		v.skipDecls()
+		if len(v.problems) == 0 {
+			v.candidateBypasses()
+		}
 	}
 	if len(v.problems) > 0 {
 		// 参照・到達の検査は outcome と遷移先が確定していることを前提にする。

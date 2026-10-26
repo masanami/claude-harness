@@ -193,7 +193,7 @@ func TestRouteDeclarationRejects(t *testing.T) {
 		{"key without outcome", withRoutes("    a: [b]\n"), `overridable.routes: key "a" must be <step id>.<outcome>`},
 		{"empty candidates", withRoutes("    a.ok: []\n"), "overridable.routes.a.ok must be a non-empty list of step ids"},
 		{"duplicate candidate", withRoutes("    a.ok: [b, b]\n"), `duplicate step id "b"`},
-		{"unknown key", strings.Replace(routesBase, "steps:\n", "overridable:\n  steps: {}\nsteps:\n", 1), `overridable: unknown key "steps" (allowed: routes)`},
+		{"unknown key", strings.Replace(routesBase, "steps:\n", "overridable:\n  steps: {}\nsteps:\n", 1), `overridable: unknown key "steps" (allowed: routes, skips)`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -203,15 +203,17 @@ func TestRouteDeclarationRejects(t *testing.T) {
 			}
 		})
 	}
-	if _, err := loadRoutes(t, withRoutes("    a.ok: [b, c]\n")); err != nil {
+	if _, err := loadRoutes(t, withRoutes("    b.ok: [c, h]\n")); err != nil {
 		t.Fatalf("a valid declaration: %v", err)
 	}
 }
 
 // 規則 3: 付け替えで人のゲートが到達できなくなる上書きは、ゲートの名前に依らず拒否する（a.ok を c へ付け替えると、
-// b と、b からだけ入る人のゲート h が到達できなくなる）。
+// b と、b からだけ入る人のゲート h が到達できなくなる）。c へは a.bad からも入るので、b が支配していたのは h だけで、
+// 規則 6 には当たらない（到達できなくなった節点は規則 6 で問わない）。
 func TestOverrideRouteKeepsHumanGatesReachable(t *testing.T) {
-	_, err := loadRoutes(t, withRoutes("    a.ok: [b, c]\n"), "steps: { a: { on: { ok: c } } }\n")
+	yaml := strings.Replace(withRoutes("    a.ok: [b, c]\n"), "      bad: { fail: bad }\n", "      bad: c\n", 1)
+	_, err := loadRoutes(t, yaml, "steps: { a: { on: { ok: c } } }\n")
 	want := `steps.h: the overrides make the human gate "h" (decider: human) unreachable from the first step "a"; a human gate cannot be bypassed by an override (§6.2 rule 3)`
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want %q", err, want)
@@ -275,5 +277,213 @@ func TestEffectiveHashGoldenWithRoute(t *testing.T) {
 	const want = "f5afff3c124d6375dbff96787f7a40282bd4f847bc39cef190203b6f5a6a52e6"
 	if wf.EffectiveHash != want {
 		t.Fatalf("effective hash = %s, want %s (the normalization changed; bump effectiveSchema if that is intended)", wf.EffectiveHash, want)
+	}
+}
+
+// --- 規則 6（§6.2。#322）: 守るステップ（人のゲート・人のゲートへ入る遷移を持つ・fail へ入る遷移を持つ）を付け替えで迂回できない ---
+
+// issue322 は #322 の再現の定義: done へのどの経路も人のゲート h を通るが、h へは a.bad からも入れる。
+const issue322 = `schema: harness.workflow/v1
+id: r
+overridable:
+  routes:
+    a.ok: [b, c]
+steps:
+  a:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on:
+      ok: b
+      bad: { gate: h }
+  b:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on:
+      ok: { gate: h }
+      bad: { gate: h }
+  h:
+    kind: gate
+    type: input
+    decider: human
+    requested_action: decide
+    inputs: [go]
+    on: { go: c }
+  c:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on:
+      ok: { done: ok }
+      bad: { done: ok }
+`
+
+// #322 の再現: 人のゲートへの抜け道（a.bad）が残っていても、ゲートの手前（b）ごと飛ばす候補は宣言の時点で拒否する
+// （いままでは規則 3 に当たらず、validate が skipped_steps: b で通していた）。
+func TestRule6RejectsIssue322Repro(t *testing.T) {
+	_, err := loadRoutes(t, issue322)
+	want := `overridable.routes.a.ok: candidate "c" would let the run reach c, done: ok without passing "h", which every path takes in the original definition; step "h" is a human gate (decider: human), so an override cannot bypass it (§6.2 rule 6)`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}
+
+// 上書きを重ねた時点の検査（宣言の検査を通った後の二重の検査）も、同じ迂回を拒否する。
+func TestRule6RejectsBypassAfterOverrides(t *testing.T) {
+	base, err := Parse("/w/r.yaml", []byte(issue322))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eff, _ := Parse("/w/r.yaml", []byte(issue322))
+	if ps := bypassProblems(base, eff); ps != nil {
+		t.Fatalf("without overrides: %v", ps)
+	}
+	eff.Step("a").OnFor("ok").Target = "c"
+	ps := bypassProblems(base, eff)
+	want := `steps.h: the overrides let the run reach c, done: ok without passing "h", which every path took in the original definition; step "h" is a human gate (decider: human), so an override cannot bypass it (§6.2 rule 6)`
+	if len(ps) != 1 || !strings.Contains(ps.Error(), want) || ps[0].Line != base.Step("h").Line {
+		t.Fatalf("problems = %v, want %q", ps, want)
+	}
+}
+
+// failSkip は fail へ落ちうるステップ q（品質ゲート等）を a.ok の付け替えで飛ばせる定義（R2）。
+const failSkip = `schema: harness.workflow/v1
+id: r
+overridable:
+  routes:
+    a.ok: [q, c]
+steps:
+  a:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: q, bad: { fail: start } }
+  q:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: c, bad: { fail: quality } }
+  c:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: { done: ok }, bad: { done: ok } }
+`
+
+// R2: fail へ落ちうるステップを丸ごと飛ばす候補は、overridable.skips に挙げていなければ拒否する。
+func TestRule6RejectsSkippingFailableStep(t *testing.T) {
+	_, err := loadRoutes(t, failSkip)
+	want := `overridable.routes.a.ok: candidate "c" would let the run reach c, done: ok without passing "q", which every path takes in the original definition; step "q" can end the run as failed (fail: quality), so an override cannot bypass it (§6.2 rule 6); to allow skipping it, list it in overridable.skips of the workflow`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}
+
+// overridable.skips に挙げたステップは省ける。省いたステップは skipped_steps に出る（#326 の品質ゲートの省略の形）。
+func TestRule6AllowsDeclaredSkip(t *testing.T) {
+	yaml := strings.Replace(failSkip, "    a.ok: [q, c]\n", "    a.ok: [q, c]\n  skips: [q]\n", 1)
+	if wf, err := loadRoutes(t, yaml); err != nil || wf.SkippedSteps != nil {
+		t.Fatalf("without overrides: %v skipped %v", err, wf)
+	}
+	wf, err := loadRoutes(t, yaml, "steps: { a: { on: { ok: c } } }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(wf.SkippedSteps, ",") != "q" {
+		t.Fatalf("skipped_steps = %v, want [q]", wf.SkippedSteps)
+	}
+}
+
+// branchBypass は人のゲート hg へ分岐するステップ sel の手前を飛ばせる定義（R3）。hg へは q → sel からも入れるので、
+// p.ok を c へ付け替えても hg は到達でき、規則 3 には当たらない。
+const branchBypass = `schema: harness.workflow/v1
+id: r
+overridable:
+  routes:
+    p.ok: [sel, c]
+steps:
+  a:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: p, bad: q }
+  p:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: sel, bad: sel }
+  q:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: sel, bad: sel }
+  sel:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: m, bad: { gate: hg } }
+  m:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: c, bad: c }
+  hg:
+    kind: gate
+    type: input
+    decider: human
+    requested_action: decide
+    inputs: [go]
+    on: { go: c }
+  c:
+    kind: command
+    run: tool
+    output: schemas/out.json
+    on: { ok: { done: ok }, bad: { done: ok } }
+`
+
+// R3: 人のゲートへ分岐するステップ（ticket の merge-route に当たる）の手前を飛ばす候補は、人のゲートが別の経路から
+// 到達できても拒否する。
+func TestRule6RejectsBypassingBranchToHumanGate(t *testing.T) {
+	_, err := loadRoutes(t, branchBypass)
+	want := `overridable.routes.p.ok: candidate "c" would let the run reach c, done: ok without passing "sel", which every path takes in the original definition; step "sel" leads to the human gate "hg", so an override cannot bypass it (§6.2 rule 6)`
+	if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "overridable.skips of the workflow") {
+		t.Fatalf("err = %v, want %q (without the skips hint)", err, want)
+	}
+}
+
+// overridable.skips に挙げられるのは、fail へ入る遷移だけを理由に守るステップ。人のゲートと、人のゲートへ入る遷移を持つ
+// ステップは挙げられない。
+func TestSkipsDeclarationRejects(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"human gate", strings.Replace(branchBypass, "    p.ok: [sel, c]\n", "    p.ok: [sel, c]\n  skips: [hg]\n", 1),
+			`overridable.skips: step "hg" is a human gate (decider: human); a human gate and a step that leads to one can never be skipped by an override (§6.2 rule 6)`},
+		{"leads to a human gate", strings.Replace(branchBypass, "    p.ok: [sel, c]\n", "    p.ok: [sel, c]\n  skips: [sel]\n", 1),
+			`overridable.skips: step "sel" leads to the human gate "hg"; a human gate and a step that leads to one can never be skipped`},
+		{"not guarded", strings.Replace(failSkip, "    a.ok: [q, c]\n", "    a.ok: [q, c]\n  skips: [q, c]\n", 1),
+			`overridable.skips: step "c" neither leads to a human gate nor can end the run as failed`},
+		{"unknown step", strings.Replace(failSkip, "    a.ok: [q, c]\n", "    a.ok: [q, c]\n  skips: [zz]\n", 1),
+			`overridable.skips: step "zz" does not exist`},
+		{"empty", strings.Replace(failSkip, "    a.ok: [q, c]\n", "    a.ok: [q, c]\n  skips: []\n", 1),
+			"overridable.skips must be a non-empty list of step ids"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := loadRoutes(t, c.yaml)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
+// ticket.yaml の 2 本の宣言（保守側の付け替え）は規則 6 に当たらない。両方を同時に付け替えても通る。
+func TestTicketRoutesPassRule6(t *testing.T) {
+	wf, err := loadTicket(t, ov(LayerRepo, "steps:\n  merge-route: { on: { integration: human-merge } }\n  e2e-route: { on: { no: e2e } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Skips != nil || strings.Join(wf.SkippedSteps, ",") != "merge" {
+		t.Fatalf("skips %v skipped_steps %v, want no skips and [merge]", wf.Skips, wf.SkippedSteps)
 	}
 }

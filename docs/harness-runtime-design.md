@@ -394,7 +394,7 @@ steps:
     type: observe
     decider: human                        # observe 型なので TTY を要求しない（N1 で決定）
     observe: pr-state                     # resume 時に gh で PR の実状態を確認
-    requested_action: 既定ブランチ宛 PR のマージは人が行う。マージ後に resume
+    requested_action: この PR のマージは人が行う（既定ブランチ宛と、上書きで統合ブランチ宛も人のマージにした場合）。マージ後に resume
     on: { merged: cleanup, open: { gate: human-merge }, closed: { fail: pr_closed } }
 
   design-deviation:

@@ -101,11 +101,86 @@ func TestRunRecordsSkippedSteps(t *testing.T) {
 	}
 }
 
+// gateBeforeRoute は付け替える辺（mid.ok）より手前にゲート（wait）を置いた定義。wait から resume した後に付け替えた
+// 辺を通るので、resume が上書きの写しから定義を組み立て直さなければ（元の遷移を使えば）extra が実行される。
+const gateBeforeRoute = `schema: harness.workflow/v1
+id: rtg
+overridable:
+  routes:
+    mid.ok: [extra, ask]
+steps:
+  first:
+    kind: command
+    run: emit
+    with: { json: "{}" }
+    exit: { 0: ok }
+    on: { ok: wait }
+  wait:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: say go
+    inputs: [go]
+    on: { go: mid }
+  mid:
+    kind: command
+    run: emit
+    with: { json: "{}" }
+    exit: { 0: ok }
+    on: { ok: extra }
+  extra:
+    kind: command
+    run: emit
+    with: { json: "{}" }
+    exit: { 0: ok }
+    on: { ok: ask }
+  ask:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: say go
+    inputs: [go]
+    on: { go: { done: finished } }
+`
+
+// 付け替えた辺より手前のゲートから resume しても、付け替えた定義で進む（extra は実行されない）。
+func TestResumeBeforeRerouteUsesOverride(t *testing.T) {
+	state := t.TempDir()
+	wd := t.TempDir()
+	writeFile(t, filepath.Join(wd, "rtg.yaml"), gateBeforeRoute)
+	arg := writeFile(t, filepath.Join(t.TempDir(), "arg.yaml"), "schema: harness.workflow-override/v1\nworkflow: rtg\nsteps: { mid: { on: { ok: ask } } }\n")
+	h := newHarness(t, "HARNESS_STATE_DIR="+state)
+	out, errOut, code := h.run("run", "--workflow-dir", wd, "--scripts-dir", abs(t, testScripts), "--override", arg, "rtg")
+	if code != ExitWaiting {
+		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
+	}
+	v := decode[statusView](t, out)
+	if steps := stepsStarted(t, v.RunDir); steps != "first" {
+		t.Fatalf("steps before the first gate = %q, want first", steps)
+	}
+	out, errOut, code = h.run("resume", v.RunID, "--input", "go")
+	if code != ExitWaiting {
+		t.Fatalf("resume exit %d\n%s\n%s", code, out, errOut)
+	}
+	if steps := stepsStarted(t, v.RunDir); steps != "first,mid" {
+		t.Fatalf("steps after resuming before the rerouted edge = %q, want first,mid (extra is skipped)", steps)
+	}
+	out, errOut, code = h.run("resume", v.RunID, "--input", "go")
+	if code != ExitOK {
+		t.Fatalf("resume exit %d\n%s\n%s", code, out, errOut)
+	}
+	if st := decode[runstate.State](t, out); st.Reason != "finished" {
+		t.Fatalf("reason %q", st.Reason)
+	}
+}
+
 // 人のゲートを外す上書きでは run を始めない（§6.2 の規則 1。run の開始時にも検査する）。
 func TestRunRefusesHumanGateOverride(t *testing.T) {
 	state := t.TempDir()
 	wd := t.TempDir()
-	writeFile(t, filepath.Join(wd, "rte.yaml"), strings.Replace(routeWorkflow, "decider: any", "decider: human", 1))
+	// 宣言を外す（extra は人のゲート ask へ入るので、first.ok を ask へ付け替える宣言は規則 6 で拒否される）。
+	human := strings.Replace(strings.Replace(routeWorkflow, "decider: any", "decider: human", 1), "overridable:\n  routes:\n    first.ok: [extra, ask]\n", "", 1)
+	writeFile(t, filepath.Join(wd, "rte.yaml"), human)
 	arg := writeFile(t, filepath.Join(t.TempDir(), "arg.yaml"), "schema: harness.workflow-override/v1\nworkflow: rte\nsteps: { ask: { on: { go: first } } }\n")
 	h := newHarness(t, "HARNESS_STATE_DIR="+state)
 	out, errOut, code := h.run("run", "--workflow-dir", wd, "--scripts-dir", abs(t, testScripts), "--override", arg, "rte")

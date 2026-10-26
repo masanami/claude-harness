@@ -82,6 +82,9 @@ type Workflow struct {
 	Steps       []*Step
 	// Routes は overridable.routes（docs/harness-runtime-overrides.md §5.2）。上書きで付け替えてよい遷移と候補。
 	Routes []*RouteDecl
+	// Skips は overridable.skips（§5.2・§6.2 の規則 6）。付け替えで省いてよいと定義が明示した、fail へ落ちうるステップ。
+	Skips     []string
+	SkipsLine int
 
 	// Path は読み込んだ YAML のパス、Dir は output 等の相対パスの起点、Hash は YAML のバイト列の sha256。
 	Path string
