@@ -29,6 +29,7 @@
 
 ### 追加
 
+- **利用者が触れる面を試作で先に固めるスキル `/define-ux` を足した（Issue #330）。** 要件を文書にする前に、媒体（Web・CLI・API・バッチ・ゲームの画面の流れ）を推定して人に確かめ、場面の一覧を決め、媒体ごとの試作を `docs/features/<slug>/prototype/` に作る（媒体が複数ならサブディレクトリに分ける。Web の試作は `file://` で開いて動く静的な HTML に限る）。媒体ごとに `/show-prototype` で往復し、人の宣言・未反映の指摘 0 件・すべての場面を一度は見せたこと、の 3 つがそろったら固め終わりとして、決定の表・`/demo` に写せるシナリオの表・未決・範囲外を `docs/features/<slug>/ux.md` に書き出す。対話前提で、人がいない（headless）起動では試作を作ったところで停止し、`ux.md` は書かない。`/define-feature` から呼ぶ配線は含まない（Issue #331）。
 - **試作を人に見せて直したい点を集めるスキル `/show-prototype` を足した（Issue #329）。** 試作のディレクトリを受け取り、Web の試作は HTML をブラウザで開いて人が自分で触り、CLI・API・バッチの見本は試作にあるものを場面ごとに会話へ示す。指摘は試作のディレクトリの `feedback.md` に記録して試作へ反映し、人が「これで固める」と言うまで往復する。対話前提で、人がいない（headless）起動では試作を見せずに停止する。実装済みの機能の確認は従来どおり `/demo`・`/demo-e2e` が担う。
 - **harness runtime に、`llm` 種類が起動する `claude` へ渡す permission mode の設定を足した（環境変数 `HARNESS_CLAUDE_PERMISSION_MODE`。Issue #299）。** 設定されていれば値をそのまま `--permission-mode` で渡し、設定されていなければ渡さない（これまでどおり `claude` の既定）。値は検査しない（受け付けるモードは `claude` の版が決め、不正な値は `claude` が起動時に拒否する）。run には記録しないので、`run`・`resume`・`approve`（`contract start`・`contract resume`・`predict-conflicts` を含む）のプロセスごとに設定する。渡したモードは各ステップの記録（`argv`）に残る。薄い `/impl` は利用者が設定していなければ `auto` を渡す。
 
@@ -38,6 +39,7 @@
 
 ### 変更
 
+- **`/show-prototype` が、`file://` で動かない試作の部分（`<script type="module">`・`fetch`）を `feedback.md` の表の「見送り」に入れず、表の外の `## 試作の制約` 節に書くようにした（Issue #330）。** 表には人の指摘だけが残る。
 - **`scripts/pr-merge-preflight.sh` の出力に `files`（変更ファイルごとのパス・リネーム前のパス・変更の種類・増減行数）を足した（Issue #304）。** REST（`gh api .../pulls/<n>/files --paginate`）で取るので、gh の呼び出しが 1 回増える。取得に失敗しても preflight は止まらず、`files` が null になる。
 - **`ticket` ワークフローの実装ステップの出力スキーマ（`implement-result.json`）に必須の `behaviors` を足した（Issue #304）。**
 - **harness runtime が対応するプラグイン版の上限を 6.0.0 に上げた（`PluginMaxExclusive`。範囲は `>=4.9.0 <6.0.0`）。** 薄い `/impl` を載せるプラグイン 5.x を受けるため。下限は 4.9.0 のまま。
