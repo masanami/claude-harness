@@ -105,7 +105,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 
 | スキル | 使い方 | 説明 |
 |--------|--------|------|
-| `/define-feature` | `/define-feature [テーマ]` | 対話から機能仕様ドキュメント(`docs/features/{slug}.md`)を作成。要件＋クリティカル設計決定＋スライス（出荷の単位・既定は最小の S1）＋やらないこと＋(必要なら)機能全体の設計を1ドキュメントに集約 |
+| `/define-feature` | `/define-feature [テーマ]` | 対話から機能仕様ドキュメント(`docs/features/{slug}.md`)を作成。要件＋クリティカル設計決定＋スライス（出荷の単位・既定は最小の S1）＋やらないこと＋(必要なら)機能全体の設計を1ドキュメントに集約。利用者が触れる面があれば、ヒアリングの冒頭で `/define-ux` を呼んで固めた UX の決定(`docs/features/{slug}/ux.md`)を受け取ってから要件へ進む |
 | `/define-ux` | `/define-ux [テーマ/機能名]` | 要件を文書にする前に、利用者が触れる面（Web の静的な HTML・CLI のやりとり・API の呼び出し例・バッチの入出力・ゲームの画面の流れ）を試作し、`/show-prototype` で人と往復して固めた決定を `docs/features/<slug>/ux.md` に書き出す（対話前提。人がいない起動では試作を作ったところで停止する） |
 | `/show-prototype` | `/show-prototype [試作のディレクトリ/機能名]` | 試作（静的な HTML・CLI のやりとり・API の呼び出し例・バッチの入出力）を人に見せ、直したい点を `feedback.md` に集めて試作へ反映する往復を、人が「これで固める」と言うまで回す（対話前提。人がいない起動では停止する） |
 | `/create-ticket` | `/create-ticket <機能specパス or 親Issue番号>` | 機能仕様→親要件チケット（実装対象スライスのみ。1スライス=1チケット）、または親Issue→実装チケット群に分解（GitHub Issue 作成専用） |
@@ -135,7 +135,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 | `/commit` | `/commit` | Conventional Commits形式でコミット |
 | `/init-project` | `/init-project` | プロジェクトを分析してCLAUDE.mdを自動生成 |
 | `/codex-task` | `/codex-task [investigate\|chore] <タスクの1行要約>` | 区切られた1タスク（調査 or 雑務）をCodexへ委譲し、結論だけをJSONで受け取る。`investigate`はread-only、`chore`はworkspace-write。**commit・push・PR作成はしない**（成果は作業ツリーに残る） |
-| `/create-adr` | `/create-adr [テーマ]` / `/create-adr promote <機能仕様パス\|ディレクトリ...>` | 恒常的な設計決定を ADR(`docs/adr/NNNN-slug.md`)として記録。`promote` は退役する機能仕様から ADR 昇格の要否を判定するモードで、ファイル・ディレクトリを**複数指定**でき、ディレクトリ直下の `*.md` を一括判定する（例: `/create-adr promote docs/features/`）。定常フローに必須ではないオンデマンドスキル |
+| `/create-adr` | `/create-adr [テーマ]` / `/create-adr promote <機能仕様パス\|ディレクトリ...>` | 恒常的な設計決定を ADR(`docs/adr/NNNN-slug.md`)として記録。`promote` は退役する機能仕様から ADR 昇格の要否を判定するモードで、ファイル・ディレクトリを**複数指定**でき、ディレクトリ直下の `*.md` を一括判定する（例: `/create-adr promote docs/features/`。同じ slug の `docs/features/{slug}/ux.md` があれば対象に加える）。定常フローに必須ではないオンデマンドスキル |
 
 ---
 

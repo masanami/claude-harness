@@ -10,6 +10,8 @@
 #         スライス表の列名と `実装対象:` 行が固定の形で在る（呼び出し側が読み写せる契約）
 #   (S-2) define-feature 手順 2 の**節内**に「最小の縦切り」を問う規定と「既定は S1 のみ」が在る。
 #         手順 6 の節内に必須節の削除禁止が在る。手順 6.5 は観点の所在として spec-critic を指す
+#         手順 2 の節内に試作の段（2-0）の小節と、headless では /define-ux を呼ばない規定が在る
+#         （/define-ux は人に見せる前で止まり ux.md を書かないため、呼ぶと何も受け取れずに止まる）
 #   (S-3) spec-critic の `internal-consistency` レンズの**節内**に、受入基準が実装対象スライスの
 #         範囲に収まっているかの観点と、必須節の欠落を needs_user_input とする観点が在る
 #   (S-4) create-ticket 要件モードの Step 1 の節内に「実装対象スライスのみ起票」「後続の起票
@@ -172,6 +174,8 @@ assert_text_contains "(S-2) 最小の縦切りを問う文が在る" "$STEP2" '�
 assert_text_contains "(S-2) 既定の実装対象は S1 のみ" "$STEP2" '**既定の実装対象は S1 のみ**'
 assert_text_contains "(S-2) 後続スライスの起票は前スライスのマージ後" "$STEP2" '前スライスの PR がマージされた後'
 assert_text_contains "(S-2) やらないことは明示列挙（1件以上）" "$STEP2" '「やらないこと」は範囲外を**明示列挙**する（1件以上）'
+assert_text_contains "(S-2) 手順 2 に試作の段（2-0）の小節が在る" "$STEP2" '#### 2-0. 利用者が触れる面の判定（試作の段）'
+assert_text_contains "(S-2) headless では /define-ux を呼ばない" "$STEP2" '**対話相手の人がいない（headless）で起動された場合は `/define-ux` を呼ばない**'
 
 STEP6="$(extract_section "$DEFINE_SKILL_FILE" '### 6. 機能仕様ドキュメント作成' '^### ')"
 assert_eq "(S-2) 手順 6 の節を切り出せる" "true" "$(nonempty "$STEP6")"
