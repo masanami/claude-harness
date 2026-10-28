@@ -103,6 +103,7 @@
 | skill | create-ticket | `/create-ticket` `チケットを作成` `Issueを作って` `create ticket` `実装チケットに分解` | — | — |
 | skill | cross-repo-verify | `/cross-repo-verify` `クロスリポジトリ依存を確認` `クロスリポジトリの確証` | — | — |
 | skill | define-feature | `/define-feature` `機能定義` `要件定義` `機能設計` | — | — |
+| skill | define-ux | `/define-ux` `試作を作って` `モックを作って` `UXを先に固めて` | — | — |
 | skill | demo | `/demo` `/walkthrough` `動作確認して` `デモして` | — | `/walkthrough` |
 | skill | demo-e2e | `/demo-e2e` `テストケースごとにデモして` `カタログと突き合わせてデモ` `E2Eケースを1件ずつ確認して` | — | — |
 | skill | explain-e2e | `/explain-e2e` `E2Eを解説して` `E2Eのシナリオ解説` `E2Eを検証して` | — | — |
