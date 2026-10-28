@@ -29,6 +29,7 @@
 
 ### 追加
 
+- **試作を人に見せて直したい点を集めるスキル `/show-prototype` を足した（Issue #329）。** 試作のディレクトリを受け取り、Web の試作は HTML をブラウザで開いて人が自分で触り、CLI・API・バッチの見本は試作にあるものを場面ごとに会話へ示す。指摘は試作のディレクトリの `feedback.md` に記録して試作へ反映し、人が「これで固める」と言うまで往復する。対話前提で、人がいない（headless）起動では試作を見せずに停止する。実装済みの機能の確認は従来どおり `/demo`・`/demo-e2e` が担う。
 - **harness runtime に、`llm` 種類が起動する `claude` へ渡す permission mode の設定を足した（環境変数 `HARNESS_CLAUDE_PERMISSION_MODE`。Issue #299）。** 設定されていれば値をそのまま `--permission-mode` で渡し、設定されていなければ渡さない（これまでどおり `claude` の既定）。値は検査しない（受け付けるモードは `claude` の版が決め、不正な値は `claude` が起動時に拒否する）。run には記録しないので、`run`・`resume`・`approve`（`contract start`・`contract resume`・`predict-conflicts` を含む）のプロセスごとに設定する。渡したモードは各ステップの記録（`argv`）に残る。薄い `/impl` は利用者が設定していなければ `auto` を渡す。
 
 - **`/pr-merge` が、マージのリスク区分（`自動マージ可`／`人間判断`）と根拠を判定して PR にコメントで残すようにした（Phase 3.5。判定は `scripts/merge-risk.sh`。Issue #304）。** 区分は承認ゲートを変えず、マージもしない。`自動マージ可` は、変更パスがすべて自動マージ可の規則（ドキュメント・テストの追加等）に一致し、CI が pass で、レビューが 1 件以上あり、blocking でないときだけ。規則はリポジトリの base ブランチの `.claude/merge-risk-rules.txt` で上書きできる（`docs/customization.md`）。

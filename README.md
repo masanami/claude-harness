@@ -106,6 +106,7 @@ claude-harness-run --list          # 実行可能なスクリプト一覧が表�
 | スキル | 使い方 | 説明 |
 |--------|--------|------|
 | `/define-feature` | `/define-feature [テーマ]` | 対話から機能仕様ドキュメント(`docs/features/{slug}.md`)を作成。要件＋クリティカル設計決定＋スライス（出荷の単位・既定は最小の S1）＋やらないこと＋(必要なら)機能全体の設計を1ドキュメントに集約 |
+| `/show-prototype` | `/show-prototype [試作のディレクトリ/機能名]` | 試作（静的な HTML・CLI のやりとり・API の呼び出し例・バッチの入出力）を人に見せ、直したい点を `feedback.md` に集めて試作へ反映する往復を、人が「これで固める」と言うまで回す（対話前提。人がいない起動では停止する） |
 | `/create-ticket` | `/create-ticket <機能specパス or 親Issue番号>` | 機能仕様→親要件チケット（実装対象スライスのみ。1スライス=1チケット）、または親Issue→実装チケット群に分解（GitHub Issue 作成専用） |
 | `/impl` | `/impl {Issue番号} [--base B] [--worktree W]` | 1チケットの実装フローを `harness` CLI の `ticket` ワークフローで実行する薄いスキル。設計→TDD実装→コミット→E2E→PR→CI確認を1件ぶん実行し、レビュー待ちで返る |
 | `/para-impl` | `/para-impl {Issue番号...} [--max-parallel N] [--serial a,b]` | Issue を分析し `/impl` へ fan-out（複数Issue時は star 型並列実装）。並列度・直列化は上位層から受け取り、無指定時のみ自分で決める |
