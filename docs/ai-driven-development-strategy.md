@@ -349,9 +349,9 @@ AIエージェントのアウトプット品質は、**チケットの記述品�
 
 既定フローでは機能仕様を保守し続けるため削除は例外的だが（機能そのものの撤去など）、**削除する場合は次の3つを同じ PR で行う**:
 
-1. **ADR 昇格の要否判定**（`/create-adr promote`）——削除は不可逆であり、**ここが恒常的な設計決定を拾う最後の機会**である（→ 4.3）。判定結果が「昇格不要」でも構わないが、判定そのものは省略しない。同じ slug の `docs/features/{slug}/ux.md`（`/define-ux` が書いた UX の決定）があれば、それも判定の対象に含める。
-2. **削除**。`docs/features/{slug}/`（`ux.md`・試作・`scenes.md`・`feedback.md`）があれば、機能仕様と一緒に削除する。
-3. **被参照の掃引と付け替え**（`claude-harness-run retirement-sweep "<削除したパス>"`。入出力仕様の正本は `scripts/specs/retirement-sweep.md`）。**`docs/adr/` 配下は除外される**——ADR に残る出所記録は正しい記録であり、消してはいけない。`docs/features/{slug}/` も削除した場合は、ディレクトリも末尾に `/` を付けて退役パスとして渡す（例: `claude-harness-run retirement-sweep "docs/features/{slug}.md" "docs/features/{slug}/"`）。`/` を付けないと、`docs/features/{slug}.md` や `docs/features/{slug}-v2.md` への言及まで拾う。
+1. **ADR 昇格の要否判定**（`/create-adr promote`）——削除は不可逆であり、**ここが恒常的な設計決定を拾う最後の機会**である（→ 4.3）。判定結果が「昇格不要」でも構わないが、判定そのものは省略しない。削除する仕様の slug（ファイル名から拡張子を除いたもの。仕様の置き場所は問わない）と同じ名前の `docs/features/<slug>/ux.md`（`/define-ux` が書いた UX の決定）があれば、それも判定の対象に含める（`/create-adr promote` が自動で加える）。
+2. **削除**。`docs/features/<slug>/`（`ux.md`・試作・`scenes.md`・`feedback.md`）があれば、機能仕様と一緒に削除する。
+3. **被参照の掃引と付け替え**（`claude-harness-run retirement-sweep "<削除したパス>"`。入出力仕様の正本は `scripts/specs/retirement-sweep.md`）。**`docs/adr/` 配下は除外される**——ADR に残る出所記録は正しい記録であり、消してはいけない。`docs/features/<slug>/` も削除した場合は、ディレクトリも末尾に `/` を付けて退役パスとして渡す（例: `claude-harness-run retirement-sweep "docs/features/<slug>.md" "docs/features/<slug>/"`）。`/` を付けないと、`docs/features/<slug>.md` や `docs/features/<slug>-v2.md` への言及まで拾う。
 
 **削除だけを行わない。** 削除だけだと利用者向けドキュメントのリンクは 404 になり、実装コメントから設計根拠を辿れなくなる——「エージェントの Glob/Grep から汚染源を除く」という目的に対して、**辿れない参照を撒く**という逆の結果になる（実測: 機能仕様5件の削除で **52箇所／28ファイル**の参照が残り、AI レビューの指摘で事後に解消した）。付け替え先は「その参照は読み手に何を伝えるために置かれていたか」で決める: 恒常的な設計決定なら **ADR 番号**、その機能限りの要件・経緯なら**宣言元 Issue 番号**、実装の内部設計なら**参照ごと削除**（コードとテストが現物）。**判断がつかない参照は消さず、要人間判定として PR に列挙する**。
 
