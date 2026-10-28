@@ -116,6 +116,7 @@
 | skill | quality-check | `/quality-check` `品質チェック` `QCして` `quality gate` | — | — |
 | skill | reduce-debt | `/reduce-debt` `技術負債チェック` `負債チェック` | — | — |
 | skill | self-review | `/self-review` `セルフレビュー` `self-review` `コードレビューして` | — | — |
+| skill | show-prototype | `/show-prototype` `試作を見せて` `モックを見せて` `試作に指摘を反映して` | — | — |
 | skill | surface-audit | `/surface-audit` `テスト担保を診断` `公開面を監査` `GAPを検出` `テストの無い公開面` | — | — |
 | skill | tdd-impl | `/tdd-impl` `TDDで実装` `TDD実装` | — | — |
 | agent | attestation-verifier | `クロスリポジトリ依存の確証を独立に反証したいとき（例: /cross-repo-verify からの委譲）` | `クロスリポジトリ依存` `確証結果` `反証` | — |
