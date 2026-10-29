@@ -39,6 +39,8 @@
 
 ### 変更
 
+- **`/define-feature` が、ヒアリングの冒頭（「何を作りたいか」「誰が使うか」を聞いた直後）に利用者が触れる面の有無を判定し、あれば `/define-ux` を呼んで固まった UX の決定（`docs/features/<slug>/ux.md`）を受け取ってから要件と仕様の作成へ進むようにした（Issue #331）。** 判定は根拠を添えた 1 問で人に確かめる。`ux.md` が既にあれば `/define-ux` を呼ばずに使い、試作だけがあれば `/define-ux` で再開させる。触れる面が無い・人が飛ばすと言った場合は従来の流れのまま進む。UX の決定のうち利用者が観測できる振る舞いは受入基準に落とし、配置・見た目は「画面・API設計」節から試作を参照する（同じ節にシナリオと受入基準の対応表を置く）。人がいない（headless）起動では `/define-ux` を呼ばず、`ux.md` が無く触れる面があれば問いを返して止まる。仕様クリティークは変えていない。
+- **機能仕様の退役の手順（`docs/ai-driven-development-strategy.md` 4.4）と `/create-adr promote` が、`docs/features/<slug>/`（`ux.md`・試作）も扱うようにした（Issue #331）。** 昇格判定は同じ slug の `ux.md` も対象に加え、削除ではディレクトリも一緒に消し、被参照の掃引ではディレクトリも末尾に `/` を付けて `retirement-sweep` に渡す。
 - **`/show-prototype` が、`file://` で動かない試作の部分（`<script type="module">`・`fetch`）を `feedback.md` の表の「見送り」に入れず、表の外の `## 試作の制約` 節に書くようにした（Issue #330）。** 表には人の指摘だけが残る。完了報告には「見せた画面・場面」と「試作の制約: N 件」の行を足し、Web とゲームの画面の流れでは画面ごとにひと通り見たかを人に確かめてから報告する。
 - **`scripts/pr-merge-preflight.sh` の出力に `files`（変更ファイルごとのパス・リネーム前のパス・変更の種類・増減行数）を足した（Issue #304）。** REST（`gh api .../pulls/<n>/files --paginate`）で取るので、gh の呼び出しが 1 回増える。取得に失敗しても preflight は止まらず、`files` が null になる。
 - **`ticket` ワークフローの実装ステップの出力スキーマ（`implement-result.json`）に必須の `behaviors` を足した（Issue #304）。**
