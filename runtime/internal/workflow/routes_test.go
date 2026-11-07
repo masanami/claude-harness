@@ -9,7 +9,7 @@ import (
 // 付け替え、外せないゲート（decider: human・fail への遷移）、付け替えで到達できなくなったステップ（skipped_steps）。
 
 // ticket.yaml が宣言するのは保守側の 2 行と、quality（品質ゲート。#326）を省く付け替えだけ（O2）。省く付け替えは
-// e2e-route.no と e2e.pass の候補 publish で、quality を overridable.skips に挙げている。
+// e2e-route.no と e2e.pass の候補 publish・respond.pushed の候補 ci で、quality を overridable.skips に挙げている。
 func TestTicketDeclaredRoutes(t *testing.T) {
 	wf, err := loadTicket(t)
 	if err != nil {
@@ -19,7 +19,7 @@ func TestTicketDeclaredRoutes(t *testing.T) {
 	for _, d := range wf.Routes {
 		got = append(got, d.Key()+": "+strings.Join(d.Candidates, ","))
 	}
-	want := "merge-route.integration: merge,human-merge | e2e-route.no: quality,e2e,publish | e2e.pass: quality,publish"
+	want := "merge-route.integration: merge,human-merge | e2e-route.no: quality,e2e,publish | e2e.pass: quality,publish | respond.pushed: quality,ci"
 	if strings.Join(got, " | ") != want {
 		t.Fatalf("routes = %q, want %q", strings.Join(got, " | "), want)
 	}
@@ -28,26 +28,33 @@ func TestTicketDeclaredRoutes(t *testing.T) {
 	}
 }
 
-// 品質ゲート（quality）を省く上書きは、前段の 2 本（e2e-route.no・e2e.pass）を publish へ付け替える 2 行（#326）。quality は
-// fail へ落ちうるので規則 6 で守られるが、overridable.skips に挙がっているので省ける。省いたことは skipped_steps に出る。
-// 1 行だけ付け替えると、もう一方の経路では quality を通るので skipped_steps には出ない（2 行そろえる。overrides.md §5.2）。
+// 品質ゲート（quality）を省く上書きは、quality へ入る 3 本（e2e-route.no・e2e.pass を publish へ、respond.pushed を ci へ）を
+// 付け替える 3 行（#326・#339）。quality は fail へ落ちうるので規則 6 で守られるが、overridable.skips に挙がっているので省ける。
+// 省いたことは skipped_steps に出る。1 本でも残すと、その経路では quality を通るので skipped_steps には出ない
+// （3 行そろえる。overrides.md §5.2）。
 func TestOverrideRouteSkipsQuality(t *testing.T) {
-	wf, err := loadTicket(t, ov(LayerRepo, "steps:\n  e2e-route: { on: { no: publish } }\n  e2e: { on: { pass: publish } }\n"))
+	wf, err := loadTicket(t, ov(LayerRepo, "steps:\n  e2e-route: { on: { no: publish } }\n  e2e: { on: { pass: publish } }\n  respond: { on: { pushed: ci } }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(wf.SkippedSteps, ",") != "quality" {
 		t.Fatalf("skipped_steps = %v, want [quality]", wf.SkippedSteps)
 	}
-	if got, want := changesJSON(t, wf.Changes), `[{"key":"steps.e2e-route.on.no","from":"quality","to":"publish","layer":"repo"},{"key":"steps.e2e.on.pass","from":"quality","to":"publish","layer":"repo"}]`; got != want {
+	if got, want := changesJSON(t, wf.Changes), `[{"key":"steps.e2e-route.on.no","from":"quality","to":"publish","layer":"repo"},{"key":"steps.e2e.on.pass","from":"quality","to":"publish","layer":"repo"},{"key":"steps.respond.on.pushed","from":"quality","to":"ci","layer":"repo"}]`; got != want {
 		t.Fatalf("changes = %s, want %s", got, want)
 	}
-	half, err := loadTicket(t, ov(LayerRepo, "steps:\n  e2e-route: { on: { no: publish } }\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if half.SkippedSteps != nil {
-		t.Fatalf("one of the two lines: skipped_steps = %v, want none (quality is still on the e2e path)", half.SkippedSteps)
+	for _, part := range []string{
+		"steps:\n  e2e-route: { on: { no: publish } }\n",
+		"steps:\n  e2e-route: { on: { no: publish } }\n  e2e: { on: { pass: publish } }\n", // #339 より前の 2 行
+		"steps:\n  respond: { on: { pushed: ci } }\n",
+	} {
+		half, err := loadTicket(t, ov(LayerRepo, part))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if half.SkippedSteps != nil {
+			t.Fatalf("%s: skipped_steps = %v, want none (quality is still on another path)", part, half.SkippedSteps)
+		}
 	}
 	// quality 自身の遷移は宣言していないので付け替えられない（fail を publish へ向けて品質ゲートの失敗を通すことはできない）。
 	if _, err := loadTicket(t, ov(LayerArg, "steps: { quality: { on: { fail: publish } } }\n")); err == nil ||
@@ -118,7 +125,7 @@ func TestOverrideRouteLayers(t *testing.T) {
 func TestOverrideRouteRejects(t *testing.T) {
 	cases := []struct{ name, body, want string }{
 		{"undeclared", "steps: { ci: { on: { green: merge-route } } }\n",
-			"steps.ci.on.green cannot be overridden: workflow ticket does not declare ci.green in overridable.routes (declared: merge-route.integration, e2e-route.no, e2e.pass)"},
+			"steps.ci.on.green cannot be overridden: workflow ticket does not declare ci.green in overridable.routes (declared: merge-route.integration, e2e-route.no, e2e.pass, respond.pushed)"},
 		{"not a candidate", "steps: { merge-route: { on: { integration: cleanup } } }\n",
 			`steps.merge-route.on.integration: "cleanup" is not one of the declared candidates (merge, human-merge)`},
 		{"undeclared outcome of a declared step", "steps: { e2e-route: { on: { yes: publish } } }\n",

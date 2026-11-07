@@ -98,8 +98,9 @@ func TestTicketQualityRunsTheBaseDeclarationOnTheCommit(t *testing.T) {
 	if q.Gates["result"] != "pass" || test["status"] != "pass" || gates["lint"].(map[string]any)["status"] != "skip" {
 		t.Fatalf("gates = %v", q.Gates)
 	}
-	// PR を作った時点では、実際の PR の head（origin の作業ブランチ）が記録の SHA と一致する。照合は head_sha_by_round では
-	// なく実際の PR の head で行う（head_sha_by_round を書くのは publish だけで、respond が push した head は記録されない）。
+	// PR を作った時点では、実際の PR の head（origin の作業ブランチ）が記録の SHA と一致する。respond の後も一致する
+	// （ticket_respond_quality_test.go）。照合は head_sha_by_round ではなく実際の PR の head で行う（head_sha_by_round を
+	// 書くのは publish だけで、quality を省く上書きでは respond が push した head は記録されない）。
 	if remote := strings.Fields(git(t, f.repo, "ls-remote", "--heads", f.origin, f.branch)); len(remote) == 0 || remote[0] != q.CommitSHA {
 		t.Fatalf("the PR head on origin = %v, quality commit_sha = %s", remote, q.CommitSHA)
 	}
@@ -190,7 +191,7 @@ func TestTicketQualityUndeclaredWhenNothingRunsOrTheCommandIsRejected(t *testing
 	}
 }
 
-// リポジトリの上書き（.claude-harness/overrides/ticket.yaml）で前段の 2 本を publish へ付け替えると、quality は実行されず、
+// リポジトリの上書き（.claude-harness/overrides/ticket.yaml）で quality へ入る 3 本を付け替えると、quality は実行されず、
 // 宣言が無くても PR へ進む。省いたことは status --json の skipped_steps に出る（pre-commit 等で同じゲートが回るリポジトリ）。
 func TestTicketQualitySkippedByARepositoryOverride(t *testing.T) {
 	f := newTicketFixture(t)
@@ -199,8 +200,7 @@ func TestTicketQualitySkippedByARepositoryOverride(t *testing.T) {
 	git(t, f.repo, "rm", "-q", ".claude-harness/quality-gate.json")
 	git(t, f.repo, "commit", "-q", "-m", "drop the declaration")
 	git(t, f.repo, "push", "-q", "origin", "main")
-	writeFile(t, filepath.Join(f.repo, ".claude-harness", "overrides", "ticket.yaml"),
-		"schema: harness.workflow-override/v1\nworkflow: ticket\nsteps:\n  e2e-route: { on: { no: publish } }\n  e2e: { on: { pass: publish } }\n")
+	writeFile(t, filepath.Join(f.repo, ".claude-harness", "overrides", "ticket.yaml"), skipQualityOverride)
 
 	out, errOut, code := f.h.run("run", "--input", "issue=42", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "ticket")
 	if code != ExitWaiting {
