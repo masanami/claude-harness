@@ -14,6 +14,7 @@
 #   - publish の closes・refs を resolve が Issue 本文の Closes: なし 行・Refs: 行から決めた値にする（#305）
 #   - PR を作る前に、push するコミットに対して品質ゲートを機械で回す quality（command）を e2e の後・publish の前に置く（#326）。
 #     commit は safety net の /quality-check を回さない。pre-commit 等で同じゲートが回るリポジトリは、上書きで省ける
+#   - respond の push の後も quality → publish → ci を通す（#339）。run の記録の SHA を PR の head とそろえるため
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -28,7 +29,8 @@ overridable:                        # 上書きで付け替えてよい遷移と
   routes:
     merge-route.integration: [merge, human-merge]   # 統合ブランチ宛も人のマージにできる
     e2e-route.no: [quality, e2e, publish]           # analyze が E2E 不要と判断しても E2E を書ける。publish は quality の省略（#326）
-    e2e.pass: [quality, publish]                    # publish は quality の省略（#326。e2e-route.no と 2 行そろえて付け替える）
+    e2e.pass: [quality, publish]                    # publish は quality の省略（#326。e2e-route.no・respond.pushed と 3 行そろえて付け替える）
+    respond.pushed: [quality, ci]                   # ci は quality の省略（#339。respond の push の後は PR が既にあるので publish を経ずに CI へ）
   skips: [quality]                                  # quality（fail へ落ちうる）を省く付け替えを許す（§6.2 の規則 6・#326）
 
 steps:
@@ -187,7 +189,7 @@ steps:
     budget_usd: 8
     timeout: 60m
     on:
-      pushed:      ci                               # R4: 修正 push 後は CI から
+      pushed:      quality                          # R4: 修正 push 後は quality → publish（既存の PR なので updated）→ ci（#339）
       no_change:   review
       needs_human: { gate: review-human }           # R2 qcFailed・R3 design_change/critical
 
