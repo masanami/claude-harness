@@ -13,7 +13,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" || {
 
 DEFAULT_TIMEOUT_SECONDS=900
 DEFAULT_POLL_INTERVAL_SECONDS=30
-NONE_CONFIRM_ATTEMPTS=2
+# 「CI 無し（none）」と確定するまでに、チェック 0 件が続かなければならない秒数（#341）。
+# 回数ではなく時間で数えるので、poll 間隔を変えても待ちは約 2 分（120 秒に達した最初の poll で確定）。
+NONE_CONFIRM_SECONDS=120
 LOG_TAIL_LINES=100
 LOG_CHAR_BUDGET=4000
 
@@ -79,11 +81,12 @@ classify_checks() {
 
 # ポーリング継続可否を判定する純粋関数。
 # 引数: classification（classify_checksの出力）, attempt（現在の試行回数。初回=1）,
-#       max_attempts, empty_streak（このclassificationが"empty"だった場合の、今回を
-#       含む連続empty回数。呼び出し側が管理する）, max_empty_confirm
+#       max_attempts, empty_elapsed（このclassificationが"empty"だった場合の、0件が続いている
+#       秒数＝連続する0件の最初の観測から今回までの秒数。初回の0件は0。呼び出し側が管理する）,
+#       none_confirm_seconds（empty_elapsed がこの秒数に達したら none と確定する）
 # 戻り値: "stop:green" | "stop:red" | "stop:none" | "stop:timeout" | "continue"
 ci_wait_decision() {
-  local classification="$1" attempt="$2" max_attempts="$3" empty_streak="$4" max_empty_confirm="$5"
+  local classification="$1" attempt="$2" max_attempts="$3" empty_elapsed="$4" none_confirm_seconds="$5"
 
   case "$classification" in
     red)
@@ -95,7 +98,7 @@ ci_wait_decision() {
       return
       ;;
     empty)
-      if [ "$empty_streak" -ge "$max_empty_confirm" ]; then
+      if [ "$empty_elapsed" -ge "$none_confirm_seconds" ]; then
         echo "stop:none"
         return
       fi
@@ -246,6 +249,7 @@ main() {
 
   local attempt=1
   local empty_streak=0
+  local empty_elapsed=0
   local checks_json="[]"
   local classification
   local decision
@@ -260,7 +264,14 @@ main() {
       empty_streak=0
     fi
 
-    decision="$(ci_wait_decision "$classification" "$attempt" "$max_attempts" "$empty_streak" "$NONE_CONFIRM_ATTEMPTS")"
+    # 0件が続いた秒数は、連続する0件の観測の間に挟んだ sleep の合計（poll 間隔×(回数-1)）。
+    # gh の呼び出しにかかった時間は数えないので、実際に待つ時間はこれ以上になる（短くはならない）。
+    empty_elapsed=0
+    if [ "$empty_streak" -gt 0 ]; then
+      empty_elapsed=$(((empty_streak - 1) * poll_interval))
+    fi
+
+    decision="$(ci_wait_decision "$classification" "$attempt" "$max_attempts" "$empty_elapsed" "$NONE_CONFIRM_SECONDS")"
 
     if [ "$decision" != "continue" ]; then
       final_status="${decision#stop:}"
