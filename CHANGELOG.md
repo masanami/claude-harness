@@ -8,6 +8,29 @@
 
 ---
 
+## [Unreleased]
+
+次のリリースに入る変更。リリースのときに版の見出しへ付け替える。
+
+### 変更
+
+- **`ticket` ワークフロー（`/impl`）のレビュー対応（`respond`）が push した後、品質ゲート（`quality`）を通ってから CI の確認（`ci`）へ進むようにした（`respond → quality → publish → ci`。Issue #339・PR #342）。** これまでは push の後に直接 `ci` へ進んでいた。run の記録の SHA を PR の head とそろえるためで、`quality` が落ちれば `fix` へ差し戻し、E2E・CI と共有の上限を使う。
+  - **移行が要るのは、上書き（`.claude-harness/overrides/ticket.yaml`）で `quality` を省いているリポジトリ。** 5.0.0 で案内した 2 行（`e2e-route.no`・`e2e.pass` を `publish` へ）に、`respond.pushed` を `ci` へ付け替える 3 行目を足す。完成形は次のとおり（`docs/harness-runtime-overrides.md` §5.2・`runtime/README.md`「品質ゲートのステップ」と同じ）。
+
+    ```yaml
+    # .claude-harness/overrides/ticket.yaml
+    schema: harness.workflow-override/v1
+    workflow: ticket
+    steps:
+      e2e-route: { on: { no: publish } }
+      e2e: { on: { pass: publish } }
+      respond: { on: { pushed: ci } }
+    ```
+
+  - **2 行のままだと**、上書きの検査は通るが、`respond` の push の後に `quality` が走る。品質ゲートの宣言（`.claude-harness/quality-gate.json`）が無ければ `quality_gate_undeclared` で止まる。黙って省かれて進むのではなく、目に見えて止まる。このとき `quality` は到達できるので、`status --json` の `skipped_steps` と `harness graph` の `skipped` には出ない。3 行そろえた後は、どちらにも `quality` が出ることで省けたと確かめられる。
+
+---
+
 ## 5.0.0（harness CLI: `runtime/v5.0.0`）
 
 ### 破壊的変更
