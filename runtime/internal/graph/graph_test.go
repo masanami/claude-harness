@@ -280,7 +280,7 @@ func TestJSONShape(t *testing.T) {
 		}
 	}
 	if !reflect.DeepEqual(declared, map[string]any{"merge-route.integration": []any{"merge", "human-merge"}, "e2e-route.no": []any{"quality", "e2e", "publish"},
-		"e2e.pass": []any{"quality", "publish"}}) {
+		"e2e.pass": []any{"quality", "publish"}, "respond.pushed": []any{"quality", "ci"}}) {
 		t.Fatalf("overridable edges = %v", declared)
 	}
 }

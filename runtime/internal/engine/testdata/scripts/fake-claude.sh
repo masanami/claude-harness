@@ -3,6 +3,7 @@
 #   responses/<n>（無ければ responses/default）を n 回目の応答にする: 1 行目が終了コード、2 行目以降が stdout。
 #     応答中の @SID@ は --session-id / --resume に渡された session id に置き換える。
 #   responses/<n>.sleep があれば、自分の PID を pids へ書いて眠る（runner が落ちる場合を作る）。
+#   responses/<n>.run があれば、応答を返す前にカレントディレクトリで bash に渡す（子がコミット・push する場合を作る）。
 #   受け取った argv を calls/<n>.argv（1 行 1 引数）、stdin を calls/<n>.stdin、カレントディレクトリを calls/<n>.pwd に残す。
 #   FAKE_CLAUDE_EVENTS が指す events.jsonl に、起動した時点で session id が記録されていたかを calls/<n>.recorded に残す。
 set -u
@@ -28,6 +29,9 @@ if [ -e "$dir/responses/$n.sleep" ]; then
   sleep 60 &
   wait
   exit 0
+fi
+if [ -f "$dir/responses/$n.run" ]; then
+  bash "$dir/responses/$n.run" >&2 || exit 1
 fi
 resp="$dir/responses/$n"
 [ -f "$resp" ] || resp="$dir/responses/default"
