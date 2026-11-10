@@ -286,6 +286,10 @@ assert_contains "(E) --worktree の経路で CI の差し戻しを runtime の�
   '「CI の red の差し戻しは runtime の中で最大3回まで済ませた'
 assert_contains "(E) run を review ゲートで待たせたまま残す" "$IMPL_REPORT" \
   'run は `review` ゲートで待たせたまま残す（取り消さない）'
+assert_contains "(E) run の外で終わった作業（取り消し・合流できない・手で仕上げた）を返却の項目にする" "$IMPL_REPORT" \
+  '**run の外で終わった作業の明記**（run が取り消された・合流できなかった・runtime の外で手で仕上げた場合。'
+assert_contains "(E) run の外で終わった作業はセルフレビュー・独立レビュー・E2E を経ていない未検証の事項として書かせる" "$IMPL_REPORT" \
+  '**「セルフレビュー・独立レビュー・E2E を経ていない」ことを未検証の事項として必ず書く**'
 assert_contains "(E) --worktree が無い経路では harness の再開手段を案内する" "$IMPL_REPORT" \
   '`harness resume {run-id} --input respond`'
 assert_contains "(E) /explain-e2e は実施せず案内する" "$IMPL_REPORT" \
@@ -299,9 +303,19 @@ assert_contains "(E) 自分のプラグイン版を CLI へ渡す（版の照合
 assert_contains "(E) 子の permission mode は既定 auto・利用者の設定で上書きできる" "$IMPL_START" \
   'HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}"'
 assert_contains "(E) 前面の Bash の上限を超えるのでバックグラウンドで起動する" "$IMPL_START" '**`run_in_background: true`**'
+# バックグラウンドの Bash も timeout の既定 600000（10 分）で止められ、run が取り消される（C-474 の run 20261109-060337-52eadd:
+# timeout を省いて起動し、起動のちょうど 10 分後に cancelled.actor=signal。timeout: 7200000 で起動し直した run はゲートまで進んだ）。
+assert_contains "(E) 起動のタスクに最大の timeout を付ける（既定の 10 分で止められると run が取り消される）" "$IMPL_START" \
+  '**`timeout: 7200000`**'
+assert_contains "(E) timeout を省いた起動を禁じ、理由（10 分で止められ取り消される）を書く" "$IMPL_START" \
+  '**`timeout` を省いて起動しない。** バックグラウンドの Bash も `timeout` の既定の 600000（10 分）に達すると止められ、止められた `harness run` は run を取り消しとして記録する'
+assert_contains "(E) run_in_background を付けない前面の起動を禁じる" "$IMPL_START" \
+  '**`run_in_background: true` を付けずに前面で起動しない。**'
 assert_contains "(E) 版の不一致（終了コード 5）で止まる" "$IMPL_START" '| 5 | プラグインと CLI の版が合わない |'
 IMPL_JOIN="$(section_body "$IMPL_FILE" '### 4. 合流（run がゲートか終端に達するまでターンを終えない）')"
 assert_contains "(E) 合流してから返す" "$IMPL_JOIN" '**`harness run` が終わる前に最終応答・返却をしない**'
+assert_contains "(E) 起動のタスクの完了通知を受けたら status を読み、上限による取り消しを見分ける" "$IMPL_JOIN" \
+  '`.status` が `cancelled`・`.cancelled.actor` が `signal` なら、起動のタスクの上限で run が取り消されている'
 assert_contains "(E) 合流の待ちは上限付きの until ループ（先頭が sleep のコマンドは拒否される）" "$IMPL_JOIN" \
   'until [ "$(harness status {run-id} --json | jq -r .status)" != running ]'
 
