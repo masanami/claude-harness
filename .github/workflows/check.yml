@@ -1,0 +1,46 @@
+# PR ごとの品質ゲート（make check。docs/harness-runtime-design.md §6.3）。
+# 起動は main 宛の PR だけ。ubuntu だけで回す（macOS の分数は 10 倍に数えられるため CI に置かない）。
+# macOS での確認は、手元で `make check` を回して行う（README.md「開発」）。
+name: check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  make-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: runtime/go.mod
+          cache-dependency-path: runtime/go.sum
+
+      # node は skills/demo の mjs を読むテストと、テスト用の stub（jest の代わり）が使う。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # check-bash のテストが使う外部コマンド: jq（JSON の組み立てと検証）・node（mjs の純粋関数と
+      # テスト用の stub）・git・ps。どれかが無いとテストは skip せず失敗する（検査していないものを
+      # 通過と報告しない）。ubuntu-latest の既定のイメージに入っていない場合に限って足す。
+      - name: Install the tools the bash tests need
+        run: |
+          missing=""
+          for c in jq git ps; do command -v "$c" >/dev/null 2>&1 || missing="$missing $c"; done
+          if [ -n "$missing" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq jq git procps
+          fi
+          jq --version; git --version; node --version; bash --version | head -1
+
+      - name: Quality gates
+        run: make check
