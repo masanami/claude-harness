@@ -117,7 +117,7 @@ func TestDetachedRunOutlivesTheCaller(t *testing.T) {
 	if v.Status != runstate.StatusRunning || v.RunnerAlive == nil || !*v.RunnerAlive || v.PIDStart == "" {
 		t.Fatalf("while the step runs: status %s runner_alive %v pid_start %q", v.Status, v.RunnerAlive, v.PIDStart)
 	}
-	if sid, err := syscall.Getsid(v.PID); err != nil || sid != v.PID {
+	if sid, err := getsid(v.PID); err != nil || sid != v.PID {
 		t.Fatalf("the runner (pid %d) does not lead its own session: sid %d %v", v.PID, sid, err)
 	}
 	if c, _ := h.contractNow("status", id); c.State != runstate.StatusRunning {
