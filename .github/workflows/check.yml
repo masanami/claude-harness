@@ -56,6 +56,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run the 4 tests as the owner did (jq and procps added, no node)
+        shell: bash {0}
         run: |
           apt-get update -qq >/dev/null && apt-get install -y -qq jq procps >/dev/null
           id; git --version; bash --version | head -1; command -v node || echo "node: none"
