@@ -43,4 +43,26 @@ jobs:
           jq --version; git --version; node --version; bash --version | head -1
 
       - name: Quality gates
-        run: make check
+        run: |
+          grep -E '^Sig(Ign|Blk)' /proc/self/status
+          perl -e '$SIG{PIPE} = "DEFAULT"; exec @ARGV or die "exec: $!"' bash -c 'grep -E "^SigIgn" /proc/self/status; make check'
+
+  # 一時: オーナーの確認と同じ golang:1.25-bookworm で 4 本を流して原因を切り分ける（PR を出す前に消す）。
+  diag-bookworm:
+    runs-on: ubuntu-latest
+    container: golang:1.25-bookworm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run the 4 tests as the owner did (jq and procps added, no node)
+        run: |
+          apt-get update -qq >/dev/null && apt-get install -y -qq jq procps >/dev/null
+          id; git --version; bash --version | head -1; command -v node || echo "node: none"
+          git config --global --list || echo "no global git config"
+          for t in mutation-run run-walkthrough-pause-ms worktree-cleanup worktree-setup; do
+            echo "##### $t"; bash -x plugin/scripts/tests/test-$t.sh > /tmp/$t.log 2>&1; echo "exit=$?"
+            grep -E 'NG -|expected:|actual:|pass: ' /tmp/$t.log || true
+          done
+          echo "##### worktree-setup trace (errors)"; grep -nE 'fatal|error|Error|warning' /tmp/worktree-setup.log | head -40
+          echo "##### worktree-cleanup trace (errors)"; grep -nE 'fatal|error|Error|warning' /tmp/worktree-cleanup.log | head -40
