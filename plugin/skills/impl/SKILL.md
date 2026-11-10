@@ -61,7 +61,10 @@ command -v harness
 
 ### 3. 起動
 
-`--worktree` があればその絶対パス、無ければ現在のリポジトリのルートを `{起点}` として、Bash ツールで **`run_in_background: true`** を指定して起動する（`ticket` は数十分〜数時間かかり、前面の Bash の上限 10 分に収まらない）:
+`--worktree` があればその絶対パス、無ければ現在のリポジトリのルートを `{起点}` として、Bash ツールで **`run_in_background: true`** と **`timeout: 7200000`**（指定できる最大の 2 時間）を指定して起動する（`ticket` は数十分〜数時間かかり、前面の Bash の上限 10 分に収まらない）:
+
+- **`timeout` を省いて起動しない。** バックグラウンドの Bash も `timeout` の既定の 600000（10 分）に達すると止められ、止められた `harness run` は run を取り消しとして記録する（`harness status {run-id} --json` の `.status` が `cancelled`、`.cancelled.actor` が `signal`）。実例では、`timeout` を省いた run が起動のちょうど 10 分後に取り消され、`timeout: 7200000` で起動し直した run はゲートまで進んだ
+- **`run_in_background: true` を付けずに前面で起動しない。** 前面の Bash は 10 分で打ち切られ（バックグラウンドへ移されても、そこで同じ既定の上限に達すると止められる）、run は同じく取り消される
 
 ```bash
 cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}" harness run --input issue={番号} ticket
@@ -87,7 +90,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 ```
 
 - 先頭が `sleep` のコマンドは拒否される。上の形（上限付きの `until` ループ）のまま使う
-- 起動したタスクの完了通知が先に届いたら、そこで繰り返しをやめてよい
+- 起動したタスクの完了通知が先に届いたら、そこで繰り返しをやめ、`harness status {run-id} --json` を読む。通知が「時間の上限で止められた」旨で、`.status` が `cancelled`・`.cancelled.actor` が `signal` なら、起動のタスクの上限で run が取り消されている（`timeout: 7200000` でも 2 時間を超えると起こる）。**同じ作業ツリーで run を起動し直す前に、取り消された run の ID と費用（`.units[0].budget.spent_usd`）を返却に残す**
 - `harness status {run-id} --json` の `runner_alive` が `false` のまま `running` なら、run を進めるプロセスが落ちている。繰り返しをやめ、`harness status {run-id}` が示す状態（`interrupted` ゲート）を下の表に従って扱う
 - 合流できないまま返却せざるを得ない場合は、**run を取り消さず**、`<run-id>` と回収手段（`harness status {run-id} --json`）と「合流できていない」事実を返却に明記する
 
@@ -147,7 +150,8 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
    - 決めきれないときは `文脈不足` を選び、根拠に決めきれなかったことを書く（打てる手がある区分を先に試す）
    - 実装に入る前の失敗（`base_missing`・`worktree_conflict`・版の不一致など run の前提の欠落）は区分の対象外とし、`reason` をそのまま報告する
 9. **`--worktree` がある場合**: 「CI の red の差し戻しは runtime の中で最大3回まで済ませた（使った回数 `limits_used.rework`）。`ci_red` で失敗した場合は、同じ修正を差し戻しても直らない」と明記する。run は `review` ゲートで待たせたまま残す（取り消さない）
-10. **次のアクションの案内**（`--worktree` が無い場合）:
+10. **run の外で終わった作業の明記**（run が取り消された・合流できなかった・runtime の外で手で仕上げた場合。起動し直した run が後で通っても、取り消された run があれば書く）: その事実と run ID（複数あれば全件）を書き、**「セルフレビュー・独立レビュー・E2E を経ていない」ことを未検証の事項として必ず書く**。手で仕上げた変更や PR は、runtime のゲートを通ったものとして報告しない（手で仕上げること自体は禁止事項の「`harness` を使わずに実装フローを自分で進めること」に当たる。呼び出し元の指示で仕上げた場合も、この明記は省かない）
+11. **次のアクションの案内**（`--worktree` が無い場合）:
    - レビュー対応: `harness resume {run-id} --input respond`
    - マージへ進める: `harness resume {run-id} --input ready`（統合ブランチ宛は runtime がマージする。既定ブランチ宛は人がマージした後に `harness resume {run-id}`）
    - 人の判断が要るゲート: 端末から `harness approve {run-id} --input <値> [--note <指示>]`
