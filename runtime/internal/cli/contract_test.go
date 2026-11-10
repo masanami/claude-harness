@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
 )
@@ -14,8 +15,40 @@ import (
 // contractKeys は契約 v1 の JSON が持つキー（過不足なし）。
 var contractKeys = "artifacts,contract_version,cost_usd,requested_action,run_id,state,summary"
 
-// contract は harness contract <args> を実行し、終了コード 0 と契約 v1 の形を確かめて返す。
+// contract は harness contract <args> を実行し、終了コード 0 と契約 v1 の形を確かめて返す。start は run を切り離して
+// すぐ戻る（#347）ので、run を始めた start は、返った JSON が running であることを確かめてから、contract status で
+// run が running でなくなるまで待ち、その status の JSON を返す（start の直後の JSON そのものは contractNow で読む）。
 func (h *harness) contract(args ...string) (contractDoc, string) {
+	h.t.Helper()
+	d, errOut := h.contractNow(args...)
+	if len(args) == 0 || args[0] != "start" || d.RunID == nil {
+		return d, errOut
+	}
+	if d.State != runstate.StatusRunning {
+		h.t.Fatalf("contract start returned %q, want running (it does not wait for the run)\n%+v", d.State, d)
+	}
+	return h.settle(*d.RunID), errOut
+}
+
+// settle は contract status を run が running でなくなるまで読み、その JSON を返す。
+func (h *harness) settle(id string) contractDoc {
+	h.t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		d, _ := h.contractNow("status", id)
+		if d.State != runstate.StatusRunning {
+			h.waitRunnerExit(h.statusOf(id))
+			return d
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatalf("run %s is still running: %+v", id, d)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// contractNow は harness contract <args> を 1 回実行し、終了コード 0 と契約 v1 の形を確かめて返す。
+func (h *harness) contractNow(args ...string) (contractDoc, string) {
 	h.t.Helper()
 	out, errOut, code := h.run(append([]string{"contract"}, args...)...)
 	if code != ExitOK {

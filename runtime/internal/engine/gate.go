@@ -55,7 +55,7 @@ func gateOpenedEvent(unit string, g *workflow.Step) runstate.Event {
 // 自動で再実行はしない（LLM ステップは部分的な変更を残しうるため冪等ではない）。
 // 子プロセスのグループがまだ生きている実行は対象にしない（呼び出し元が止めてから呼ぶ）。
 func InterruptEvents(st *runstate.State) []runstate.Event {
-	if runstate.Terminal(st.Status) || runstate.Alive(st.PID) {
+	if runstate.Terminal(st.Status) || runstate.RunnerAlive(st) {
 		return nil
 	}
 	var evs []runstate.Event
@@ -92,7 +92,7 @@ func Interrupt(run *runstate.Run) (*runstate.State, error) {
 // StopOrphans は、runner が生きていない run で running のまま残ったステップ実行の子プロセスを止める
 // （resume が interrupted へ送る前に行う。記録されない結果を出し続けるプロセスを残さない）。
 func StopOrphans(st *runstate.State, grace time.Duration) {
-	if runstate.Terminal(st.Status) || runstate.Alive(st.PID) {
+	if runstate.Terminal(st.Status) || runstate.RunnerAlive(st) {
 		return
 	}
 	for _, u := range st.Units {
@@ -346,13 +346,13 @@ func (e *Engine) Resolve(ctx context.Context, req Resolution) (*runstate.State, 
 			return nil, refused("unit %s changed while resolving (another resume?); nothing was recorded", u.Key)
 		}
 		// ゲートで待っている run には runner が居ない（run は待機で終わる）。runner が居るのは running の run だけ。
-		if cur.Status == runstate.StatusRunning && runstate.Alive(cur.PID) && cur.PID != os.Getpid() {
+		if cur.Status == runstate.StatusRunning && runstate.RunnerAlive(cur) && cur.PID != os.Getpid() {
 			return nil, refused("run %s is being advanced by pid %d; nothing to resume", cur.RunID, cur.PID)
 		}
 		if cu.Gate == nil && cu.Running() != nil {
 			return nil, refused("unit %s has a running step whose process is still alive; cancel the run or wait", u.Key)
 		}
-		evs := []runstate.Event{{Type: runstate.EvRunnerStarted, RunnerStarted: &runstate.RunnerStarted{PID: os.Getpid(), Command: req.Actor}}}
+		evs := []runstate.Event{{Type: runstate.EvRunnerStarted, RunnerStarted: &runstate.RunnerStarted{PID: os.Getpid(), PIDStart: runstate.SelfStart(), Command: req.Actor}}}
 		if cu.Gate == nil {
 			return evs, nil
 		}

@@ -32,6 +32,7 @@ type State struct {
 	Origin      string                     `json:"origin"`
 	Cwd         string                     `json:"cwd"`
 	PID         int                        `json:"pid"`
+	PIDStart    string                     `json:"pid_start,omitempty"` // runner の開始時刻（PID の再利用を見分ける。#347）
 	ScriptsDir  string                     `json:"scripts_dir"`
 	WorkflowDir string                     `json:"workflow_dir"`
 	CLIVersion  string                     `json:"cli_version,omitempty"`
@@ -277,7 +278,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		p := ev.RunStarted
 		s = &State{
 			RunID: p.RunID, Workflow: p.Workflow.WorkflowRef, Overrides: p.Workflow.OverrideRecord, Inputs: p.Inputs, Limits: p.Limits,
-			Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID,
+			Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID, PIDStart: p.PIDStart,
 			ScriptsDir: p.ScriptsDir, WorkflowDir: p.WorkflowDir, CLIVersion: p.CLIVersion, Embedded: p.Embedded, Units: []*Unit{},
 		}
 		for _, k := range p.Units {
@@ -512,7 +513,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		u.Status = StatusRunning
 		s.Status = StatusRunning
 	case EvRunnerStarted:
-		s.PID = ev.RunnerStarted.PID
+		s.PID, s.PIDStart = ev.RunnerStarted.PID, ev.RunnerStarted.PIDStart
 	case EvWorkspace:
 		p := ev.Workspace
 		u, err := unit(p.Unit)

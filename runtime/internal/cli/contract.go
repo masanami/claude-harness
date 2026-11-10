@@ -72,6 +72,9 @@ const contractUsage = `usage: harness contract <start|status|resume|cancel> [opt
   resume [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
   cancel <run-id>
 
+start always returns at once: the run is advanced by a detached process (as run --detach), so start prints
+the run id with the state it has then (usually "running"); read its progress and its end with status.
+
 the connection contract v1 for flywheel: each command prints one JSON document
 {"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}
 and exits 0 whenever it printed it; waiting, success and failure are in "state", not in the exit code.
@@ -101,10 +104,11 @@ func cmdContract(args []string, env Env) int {
 	return contractOut(env, failedDoc(nil, fmt.Sprintf("unknown contract command %q (start, status, resume or cancel)", sub)))
 }
 
-// contractStart は run を始める。run を始められなかった（引数・ワークフロー定義の誤り等）ときは run_id を null にした
+// contractStart は run を始め、切り離した runner に進めさせて（run --detach と同じ。#347）すぐ戻る。run の終わりを
+// 待たないので、state は多くの場合 running で、その後の進み具合と終わりは contract status で読む。run を始められなかった（引数・ワークフロー定義の誤り等）ときは run_id を null にした
 // failed を出す。始めた後に内部エラーで止まったときは、その run の状態を読み直して出す。
 func contractStart(args []string, env Env) int {
-	out, res := captured(env, cmdRun, args)
+	out, res := captured(env, cmdRun, append([]string{"--detach"}, args...))
 	if v, ok := decodeView(out); ok {
 		return contractOut(env, contractFromView(v, res.note()))
 	}
