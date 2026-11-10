@@ -185,6 +185,12 @@ main() {
 
   jq -n --arg wp "$worktree_path" --argjson dirty "$dirty" \
     '{worktree_path: $wp, removed: true, skipped: false, dirty: $dirty, reason: null}'
+  # 正常に return する経路でも、ここでロックを解放して trap を外す。EXIT の trap は、スクリプトとして
+  # 実行したときは末尾の exit で発火するが、関数を source してコマンド置換（$(main ...)）の中で呼んだときは、
+  # bash の版によってサブシェルの自然終了で発火しない（Debian 12 の bash 5.2.15 で実測。macOS の bash 3.2 と
+  # bash 5.3 では発火する）。発火しないとロックが残り、次の呼び出しが待ち時間の上限まで待って失敗する。
+  release_worktree_lock "$lock_dir"
+  trap - EXIT
 }
 
 # `source` された場合は main を実行しない（テストからの関数直接呼び出しを可能にするため）。

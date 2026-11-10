@@ -55,15 +55,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Run the 4 tests as the owner did (jq and procps added, no node)
+      - name: Minimal EXIT-trap cases in command substitution
         shell: bash {0}
         run: |
-          apt-get update -qq >/dev/null && apt-get install -y -qq jq procps >/dev/null
-          id; git --version; bash --version | head -1; command -v node || echo "node: none"
-          git config --global --list || echo "no global git config"
+          bash --version | head -1
+          cat > /tmp/t.sh <<'X'
+          f() { trap 'echo "  TRAP_FIRED($1)" >&2' EXIT; echo body; }
+          g() { trap 'echo "  TRAP_FIRED($1)" >&2' EXIT; echo body; exit 0; }
+          echo "case A: \$(f)";            a="$(f A)"
+          echo "case B: \$(cd /tmp && f)"; b="$(cd /tmp && f B)"
+          echo "case C: \$(f; true)";      c="$(f C; true)"
+          echo "case D: \$(g) explicit exit"; d="$(g D)"
+          echo "case E: \$(cd /tmp && g)"; e="$(cd /tmp && g E)"
+          X
+          bash /tmp/t.sh
+      - name: Run the 4 tests with the fix and node (apt nodejs)
+        shell: bash {0}
+        run: |
+          apt-get update -qq >/dev/null && apt-get install -y -qq jq procps nodejs >/dev/null
+          node --version
           for t in mutation-run run-walkthrough-pause-ms worktree-cleanup worktree-setup; do
-            echo "##### $t"; bash -x plugin/scripts/tests/test-$t.sh > /tmp/$t.log 2>&1; echo "exit=$?"
+            echo "##### $t"; bash plugin/scripts/tests/test-$t.sh > /tmp/$t.log 2>&1; echo "exit=$?"
             grep -E 'NG -|expected:|actual:|pass: ' /tmp/$t.log || true
           done
-          echo "##### worktree-setup trace (errors)"; grep -nE 'fatal|error|Error|warning' /tmp/worktree-setup.log | head -40
-          echo "##### worktree-cleanup trace (errors)"; grep -nE 'fatal|error|Error|warning' /tmp/worktree-cleanup.log | head -40
