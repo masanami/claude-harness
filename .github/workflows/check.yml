@@ -42,39 +42,10 @@ jobs:
           fi
           jq --version; git --version; node --version; bash --version | head -1
 
+      # GitHub Actions の run の段は SIGPIPE を無視した状態（/proc/self/status の SigIgn に 0x1000）で始まる。
+      # そのままだと `| head` で読み手が先に閉じたとき、書き手は SIGPIPE で終わらず EPIPE のエラーで終わる
+      # （GNU sed は終了コード 4）。手元の端末と同じく既定の扱いへ戻してから make check を回す
+      # （test-read-plugin-doc.sh のパイプ早期終了の診断が、端末と同じ条件で確かめられるように）。
       - name: Quality gates
         run: |
-          printf '%s\n' 'e() { trap "echo FIRED >&2" EXIT; /bin/echo body; }' 'x="$(cd /tmp && e)"' > /tmp/t2.sh; bash --version | head -1; bash /tmp/t2.sh
-          grep -E '^Sig(Ign|Blk)' /proc/self/status
-          perl -e '$SIG{PIPE} = "DEFAULT"; exec @ARGV or die "exec: $!"' bash -c 'grep -E "^SigIgn" /proc/self/status; make check'
-
-  # 一時: オーナーの確認と同じ golang:1.25-bookworm で 4 本を流して原因を切り分ける（PR を出す前に消す）。
-  diag-bookworm:
-    runs-on: ubuntu-latest
-    container: golang:1.25-bookworm
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: EXIT trap when the last command of $(...) is external
-        shell: bash {0}
-        run: |
-          bash --version | head -1
-          cat > /tmp/t.sh <<'X'
-          b() { trap 'echo "  FIRED" >&2' EXIT; echo body; }
-          e() { trap 'echo "  FIRED" >&2' EXIT; /bin/echo body; }
-          echo "builtin last:            \$(cd /tmp && b)"; x="$(cd /tmp && b)"
-          echo "external last:           \$(cd /tmp && e)"; x="$(cd /tmp && e)"
-          echo "external last, no cd:    \$(e)";           x="$(e)"
-          X
-          bash /tmp/t.sh
-          echo "--- same script on the runner image's bash is in the make-check job"
-      - name: Run the 4 tests with the fix and node (apt nodejs)
-        shell: bash {0}
-        run: |
-          apt-get update -qq >/dev/null && apt-get install -y -qq jq procps nodejs >/dev/null
-          node --version
-          for t in mutation-run run-walkthrough-pause-ms worktree-cleanup worktree-setup; do
-            echo "##### $t"; bash plugin/scripts/tests/test-$t.sh > /tmp/$t.log 2>&1; echo "exit=$?"
-            grep -E 'NG -|expected:|actual:|pass: ' /tmp/$t.log || true
-          done
+          perl -e '$SIG{PIPE} = "DEFAULT"; exec @ARGV or die "exec: $!"' make check
