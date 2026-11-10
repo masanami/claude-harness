@@ -55,20 +55,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Minimal EXIT-trap cases in command substitution
+          fetch-depth: 0
+      - name: Trace the original worktree-setup.sh main() inside $(...)
         shell: bash {0}
         run: |
-          bash --version | head -1
-          cat > /tmp/t.sh <<'X'
-          f() { trap 'echo "  TRAP_FIRED($1)" >&2' EXIT; echo body; }
-          g() { trap 'echo "  TRAP_FIRED($1)" >&2' EXIT; echo body; exit 0; }
-          echo "case A: \$(f)";            a="$(f A)"
-          echo "case B: \$(cd /tmp && f)"; b="$(cd /tmp && f B)"
-          echo "case C: \$(f; true)";      c="$(f C; true)"
-          echo "case D: \$(g) explicit exit"; d="$(g D)"
-          echo "case E: \$(cd /tmp && g)"; e="$(cd /tmp && g E)"
+          apt-get update -qq >/dev/null && apt-get install -y -qq jq >/dev/null
+          git config --global user.email t@example.com; git config --global user.name t
+          mkdir -p /tmp/orig/lib
+          git show a3630da:plugin/scripts/worktree-setup.sh > /tmp/orig/worktree-setup.sh
+          git show a3630da:plugin/scripts/lib/common.sh > /tmp/orig/lib/common.sh
+          T=$(mktemp -d); git init -q --bare $T/o.git; git clone -q $T/o.git $T/r 2>/dev/null
+          (cd $T/r && echo h > R && git add R && git commit -qm i && git branch -M main && git push -q -u origin main)
+          cat > /tmp/drive.sh <<'X'
+          set -u
+          source /tmp/orig/worktree-setup.sh
+          T="$1"
+          out="$(cd "$T/r" && PS4='+[$BASH_SUBSHELL] ' && set -x && main 45 feature/issue-45-add-x main "$T/wt" 2> >(grep -E 'trap|release_worktree_lock|rm -rf|exit' >&2))"
+          sleep 1
+          echo "out=$out"
+          ls -la "$T/r/.git/claude-harness-worktree-ops.lock" 2>&1 | head -3
           X
-          bash /tmp/t.sh
+          bash /tmp/drive.sh "$T"
       - name: Run the 4 tests with the fix and node (apt nodejs)
         shell: bash {0}
         run: |
