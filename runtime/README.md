@@ -10,7 +10,7 @@
 - 同梱のワークフロー `ticket`（1 チケットの実装フロー。§3.4）。shadow run（§8 C3 の段階 A）の手順と指標の取り方は [`docs/harness-runtime-shadow.md`](../docs/harness-runtime-shadow.md)
 - unit の累計予算と費用の fail-closed（§4.3）・ラウンド（ゲートとゲートの間。§4.2）
 - `run` / `status [--json]` / `runs [--json]` / `resume` / `approve` / `cancel`（§5.1）
-- runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）
+- runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）。ステップの間で runner が落ちた unit も同じゲートで止まる（#347）
 - 切り離した run（Issue #347。下の「切り離した run」）: `run --detach` と `contract start` は、run を進めるプロセスを新しいセッションへ切り離して起動し、すぐ戻る
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
@@ -158,7 +158,7 @@ go run ./cmd/harness graph --run <run-id>            # run が使った定義の
 - 環境変数（`HARNESS_PLUGIN_VERSION`・`HARNESS_CLAUDE_PERMISSION_MODE`・`HARNESS_STATE_DIR` ほか）と作業ディレクトリは、呼び出し元のものをそのまま引き継ぐ。
 - runner は引き継いだときに `runner_started`（`command: detached`）に自分の PID と開始時刻（`pid_start`）を記録する。呼び出し元は、この記録を確かめてから戻る（30 秒以内に引き継がなければ終了コード 1 で、`runner.log` を見るよう標準エラーに出す）。
 - run ID ごとのロック（run ディレクトリの `runner.lock` への `flock`）で、同じ run を 2 つのプロセスが進めないようにする。runner・同期の `run`・`resume`・`approve` がこのロックを取り、取れなければ何も記録せずに終了コード 1 で止まる。ロックはプロセスが終われば（落ちても）外れる。
-- runner の生存は、PID の存在に加えて、記録した開始時刻と今のプロセスの開始時刻（`ps -o lstart=`）が一致することで確かめる（落ちた runner の PID が別のプロセスに再利用されても、生きているとみなさない）。開始時刻を記録する前の版で始めた run は、PID の存在だけで確かめる。runner が落ちた run の見え方は従来どおり（§4.5。`status --json` の `runner_alive: false`、ステップのプロセスも消えていれば `interrupted` ゲート）。
+- runner の生存は、PID の存在に加えて、記録した開始時刻と今のプロセスの開始時刻（`ps -o lstart=`）が一致することで確かめる（落ちた runner の PID が別のプロセスに再利用されても、生きているとみなさない）。開始時刻を記録する前の版で始めた run は、PID の存在だけで確かめる。runner が落ちた run は、次の `status`／`resume` で組み込みの `interrupted` ゲート（`rerun`／`abort`。契約では `answer` × `parent`）で待つ（§4.5）。ステップとステップの間で落ちた場合も同じで、`running` のまま残らない。ステップのプロセスがまだ生きている間だけは `running`・`runner_alive: false` のまま（プロセスが終われば、または `resume` が止めれば `interrupted` になる）。`rerun` は打ち切ったステップ（ステップの間で落ちた場合は次に実行するはずだったステップ）を新しいラウンドで実行する。
 
 ## 衝突の予測（`predict-conflicts`。§5.4.1・Issue #288）
 

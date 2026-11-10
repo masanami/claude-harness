@@ -537,7 +537,7 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 - runtime は起動した子プロセス（スクリプト・`claude -p`）を自分で待つ。**起動台帳は runtime の状態そのもの**になり、`join-gate.md` の起動台帳・決定表・中断報告のうち、**runtime 直下の子に関する部分は散文が不要になる**。
 - `harness run` / `resume` は、全 unit がゲートか終端に達するまでプロセスとして生存する（daemon は持たない）。
 - **切り離した run（#347・2026-11-10）**: `harness run --detach` と `harness contract start` は、run を始めた後、`harness` 自身の実行ファイルを新しいセッションの子プロセス（runner）として起動し直して run を進めさせ、run ID を返してすぐ戻る。runner も daemon ではなく、全 unit がゲートか終端に達したら終わる。呼び出し元のプロセスの寿命・待ち時間の上限・シグナルから切り離すためである（Claude Code の Bash ツールの既定の上限 600000 ミリ秒で `harness run` が止められ、run がシグナルによる取り消しとして記録された実例が 2 件ある。#346 は起動に `timeout: 7200000` を付けるつなぎだった）。runner の出力は run ディレクトリの `runner.log`、二重起動は run ID ごとの `runner.lock`（`flock`）で防ぐ。runner の生存は PID と開始時刻（`pid_start`）で確かめ、PID の再利用を見分ける。`harness run` の既定は同期のまま。
-- runtime が落ちた場合（副次）: 次の `resume` / `status` で「`running` のまま生存プロセスが無い」ステップ実行を `interrupted` とし、その unit を `interrupted` ゲートへ送る（自動の再実行はしない。LLM ステップは部分的なコミットを残しうるため冪等ではない）。
+- runtime が落ちた場合（副次）: 次の `resume` / `status` で「`running` のまま生存プロセスが無い」ステップ実行を `interrupted` とし、その unit を `interrupted` ゲートへ送る（自動の再実行はしない。LLM ステップは部分的なコミットを残しうるため冪等ではない）。ステップとステップの間で落ちた（実行中のステップが無い）unit も同じゲートへ送り、`running` のまま残さない（#347。`rerun` は次に実行するはずだったステップを新しいラウンドで実行する）。runtime の生存は PID と開始時刻で確かめる。
 
 ### 4.6 置き場と形式（Q1・Q2 でオーナーが決定: L2・F1）
 
@@ -980,7 +980,7 @@ PR-7 の着手前に上げた問いの決定。§11.1〜§11.5 の記録は書�
 | --- | --- |
 | Q1 | `contract start` は常にすぐ戻る形に変え、`harness run` にだけ `--detach` を足す。`harness run` の既定は同期のまま。接続契約の版は v1 のまま |
 | Q2 | `harness` 自身を新しいセッションの子プロセスとして起動し直して切り離す。出力は run ディレクトリのログ（`runner.log`）へ流し、二重起動は run ID ごとのロック（`runner.lock`）で防ぐ。常駐のデーモン・launchd・systemd は使わない |
-| Q3 | `status` を読むときに PID と開始時刻で runner の生存を確かめる。新しい状態（orphaned 等）と心拍のファイルは使わない。死んだ runner の run を `failed`（実行プロセスの消失）として返し `contract resume` で再開する部分は、§4.5 の `interrupted` ゲート（runner が落ちた run は `waiting` で `rerun`／`abort` を待つ）と終端の `failed` を再開できない既存の規則に合わないため、オーナーへ問い直している。#347 の PR の時点では §4.5 の見え方のまま |
+| Q3 | `status` を読むときに PID と開始時刻で runner の生存を確かめる。新しい状態（orphaned 等）と心拍のファイルは使わない。死んだ runner の run は、当初の「`failed`（実行プロセスの消失）として返す」を、終端の `failed` は再開できないという既存の規則と合わないため問い直し、オーナーの回答（2026-11-10、案 A）で §4.5 に寄せた: ステップの間で落ちた場合も含めて `interrupted` ゲート（`waiting`・`rerun`／`abort`・契約では `answer` × `parent`）で待たせ、`running` のまま残さない。`failed` は使わない。再開は `contract resume --input rerun` |
 | Q4 | run を起動するスキル（`/impl`）を同じ PR で書き換える（`harness run --detach` で始め、`harness status` で合流する。`timeout: 7200000` の指示は外す） |
 
 ## 12. 未検証事項

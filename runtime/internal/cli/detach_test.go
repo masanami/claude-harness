@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -10,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/masanami/claude-harness/runtime/internal/engine"
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
+	"github.com/masanami/claude-harness/runtime/internal/version"
+	"github.com/masanami/claude-harness/runtime/internal/workflow"
 )
 
 // 切り離した run（#347）のテスト。run の中身は sleeper（孫の sleep を待つ command ステップ）で、孫の sleep を止めると
@@ -308,5 +312,56 @@ func TestRunWithoutDetachIsSynchronous(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(v.RunDir, runstate.RunnerLogFile)); !os.IsNotExist(err) {
 		t.Fatalf("a synchronous run wrote %s (%v)", runstate.RunnerLogFile, err)
+	}
+}
+
+// ステップとステップの間で runner が落ちた run（実行中のステップが無い）も、status を読んだときに interrupted ゲートで
+// 待たせ、running のまま残さない（#347・オーナーの回答 A）。contract では answer × parent で、contract resume --input rerun が
+// 次に実行するはずだったステップから続ける。
+func TestStatusInterruptsARunWhoseRunnerDiedBetweenSteps(t *testing.T) {
+	state := t.TempDir()
+	h := newHarness(t, "HARNESS_STATE_DIR="+state)
+	sd := abs(t, testScripts)
+	wf, err := workflow.LoadAndValidate(filepath.Join(abs(t, testWorkflows), "gates.yaml"), workflow.Options{ScriptsDir: sd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := parseInputs(wf, []string{`json={"outcome":"parent"}`, "log=" + filepath.Join(t.TempDir(), "log"), "state=x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := engine.Start(engine.StartParams{RunsDir: filepath.Join(state, "runs"), WF: wf, Inputs: inputs, ScriptsDir: sd,
+		WorkflowDir: abs(t, testWorkflows), Cwd: h.cwd, Origin: "cli", CLIVersion: version.CLI()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.Run.Append(runstate.Event{Type: runstate.EvRunnerStarted, RunnerStarted: &runstate.RunnerStarted{
+		PID: dead.Process.Pid, PIDStart: "Thu Jan  1 00:00:00 1970", Command: "detached"}}); err != nil {
+		t.Fatal(err)
+	}
+	id := eng.Run.ID
+
+	v := h.statusOf(id)
+	if v.Status != runstate.StatusWaiting || len(v.Waiting) != 1 || v.Waiting[0].Gate != "interrupted" ||
+		!strings.Contains(v.Waiting[0].RequestedAction, "died before step route started") || v.Units[0].CurrentStep != "route" {
+		t.Fatalf("status = %s %+v", v.Status, v.Waiting)
+	}
+	c, _ := h.contractNow("status", id)
+	if c.State != runstate.StatusWaiting || c.RequestedAction == nil || c.RequestedAction.Kind != "answer" || c.RequestedAction.Decider != "parent" ||
+		!strings.Contains(c.RequestedAction.Text, "harness contract resume "+id+" --unit main --input <rerun|abort>") {
+		t.Fatalf("contract status = %+v %+v", c, c.RequestedAction)
+	}
+	before := eventTypes(t, v.RunDir)
+	h.run("status", id) // 2 回目の status は何も記録しない
+	if after := eventTypes(t, v.RunDir); after != before {
+		t.Fatalf("status recorded again:\n%s\n%s", before, after)
+	}
+	r, _ := h.contractNow("resume", id, "--input", "rerun")
+	if r.State != runstate.StatusWaiting || r.RequestedAction == nil || !strings.Contains(r.Summary, "at gate ask-parent") {
+		t.Fatalf("contract resume --input rerun = %+v", r)
 	}
 }

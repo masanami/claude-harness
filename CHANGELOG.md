@@ -14,6 +14,7 @@
 
 - **`harness contract start` は常にすぐ戻るようになった（Issue #347）。** run を始めた後、run を進めるプロセスを新しいセッションへ切り離して起動し、run の終わりやゲートを待たずに、その時点の状態（多くは `state: running`・`requested_action: null`）の契約 v1 の JSON を返す。進み具合・ゲートでの待機・終わりは `harness contract status <run-id>` で読む。契約の版は v1 のまま（キーと値の集合は変えていない）。**利用者が取る操作**: `contract start` の JSON の `state` が `waiting` や終端になるのを前提にしていた呼び出し元は、`contract status` で読み直す。
 - **`/impl` は `harness run --detach` で run を始め、`harness status` で合流するようになった（Issue #347）。** run は呼び出し元の Bash の寿命と待ち時間の上限から切り離されて進むので、Bash の上限で run が取り消される（`cancelled.actor=signal`）ことは無くなった。#346 の `run_in_background: true`・`timeout: 7200000` の指示は外した。**利用者が取る操作**: このプラグインの版と、`--detach` を持つ harness CLI を合わせて更新する（古い CLI は `--detach` を知らず、`/impl` は終了コード 2 で止まる）。
+- **runner がステップとステップの間で落ちた run も、`interrupted` ゲートで待つようになった（Issue #347）。** これまでは `running`・`runner_alive: false` のまま残り、`harness resume <run>`（入力なし）で続けられた。今後は次の `status`／`resume` で組み込みの `interrupted` ゲートへ送られ、`harness resume <run> --input rerun`（契約では `harness contract resume <run> --input rerun`）で次のステップから続ける。やめるなら `--input abort`。**利用者が取る操作**: 入力なしの `resume` で続けていた手順は `--input rerun` を付ける。
 
 ### 追加
 
