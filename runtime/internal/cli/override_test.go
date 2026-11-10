@@ -328,10 +328,13 @@ func TestContractStartAcceptsOverride(t *testing.T) {
 	for k := range doc {
 		keys = append(keys, k)
 	}
-	// start は run の終わりを待たない（#347）。run は切り離した runner が進め、ゲートで待つ。
-	if len(keys) != 7 || doc["state"] != "running" || doc["run_id"] == nil {
+	// start は run の終わりを待たない（#347）。run は切り離した runner が進め、ゲートで待つ。start の直後は running か、
+	// runner が既にゲートへ着いていれば waiting（checkJustStarted）。
+	if len(keys) != 7 || doc["run_id"] == nil {
 		t.Fatalf("contract start = %s", out)
 	}
+	startState, _ := doc["state"].(string)
+	checkJustStarted(t, startState, doc["requested_action"] != nil)
 	if s := h.settle(doc["run_id"].(string)); s.State != "waiting" {
 		t.Fatalf("contract status after start = %+v", s)
 	}

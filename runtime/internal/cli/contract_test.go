@@ -16,18 +16,30 @@ import (
 var contractKeys = "artifacts,contract_version,cost_usd,requested_action,run_id,state,summary"
 
 // contract は harness contract <args> を実行し、終了コード 0 と契約 v1 の形を確かめて返す。start は run を切り離して
-// すぐ戻る（#347）ので、run を始めた start は、返った JSON が running であることを確かめてから、contract status で
-// run が running でなくなるまで待ち、その status の JSON を返す（start の直後の JSON そのものは contractNow で読む）。
+// すぐ戻る（#347）ので、run を始めた start は、返った JSON が start の直後の状態であることを確かめてから、contract
+// status で run が running でなくなるまで待ち、その status の JSON を返す（start の直後の JSON そのものは contractNow
+// で読む）。
 func (h *harness) contract(args ...string) (contractDoc, string) {
 	h.t.Helper()
 	d, errOut := h.contractNow(args...)
 	if len(args) == 0 || args[0] != "start" || d.RunID == nil {
 		return d, errOut
 	}
-	if d.State != runstate.StatusRunning {
-		h.t.Fatalf("contract start returned %q, want running (it does not wait for the run)\n%+v", d.State, d)
-	}
+	checkJustStarted(h.t, d.State, d.RequestedAction != nil)
 	return h.settle(*d.RunID), errOut
+}
+
+// checkJustStarted は contract start が返した state が、start の直後にありうる値かを確かめる。start は run の終わりを
+// 待たないが、契約の state は run の状態そのもの（§5.6）なので、切り離した runner が start の読む前にゲートへ着いて
+// いれば waiting になる（Linux で短い run を流すとそうなる）。終わりの状態（succeeded・failed・cancelled）は、start が
+// run の終わりを待ったことを意味するので受け付けない。waiting なら requested_action があり、running なら無い。
+func checkJustStarted(t *testing.T, state string, hasAction bool) {
+	t.Helper()
+	switch {
+	case state == runstate.StatusRunning && !hasAction, state == runstate.StatusWaiting && hasAction:
+	default:
+		t.Fatalf("contract start returned state %q (requested_action present: %v), want running or waiting (it does not wait for the run to end)", state, hasAction)
+	}
 }
 
 // settle は contract status を run が running でなくなるまで読み、その JSON を返す。

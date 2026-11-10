@@ -150,6 +150,8 @@ func TestContractStartReturnsAtOnce(t *testing.T) {
 	d, _ := h.contractNow(append([]string{"start"}, args[1:]...)...)
 	took := time.Since(began)
 	id := runIDOf(t, d)
+	// sleeper はゲートを持たず、孫の sleep を止めるまでステップが終わらないので、start の直後は必ず running になる
+	// （runner の速さに依らない。ゲートを持つ run の start は waiting も返しうる＝checkJustStarted）。
 	if d.State != runstate.StatusRunning || d.RequestedAction != nil || d.CostUSD == nil || took > 20*time.Second {
 		t.Fatalf("contract start = %+v (took %s)", d, took)
 	}
