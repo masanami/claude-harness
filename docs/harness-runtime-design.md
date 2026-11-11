@@ -42,7 +42,7 @@
 | bash テスト | 44 本 | `ls scripts/tests \| wc -l` |
 | `skills/` `agents/` `scripts/` の `.md`/`.sh`（`*/tests/*` 除外） | 19,394 行 | `find … -not -path '*/tests/*' \| xargs cat \| wc -l` |
 | 実装委譲フローの散文（`skills/impl/SKILL.md`・`skills/para-impl/SKILL.md`・`references/join-gate.md`・`references/star-parallel.md`・`agents/ticket-worker.md`） | **82,139 B**（261＋184＋64＋170＋79 行） | `wc -c` |
-| PR CI | 無し（`.github/` が存在しない） | — |
+| PR CI | 測った時点では未設置（`.github/` が存在しない）。その後 #349 で ubuntu の PR CI を追加した（現状は §6.3） | — |
 | リリース自動化 | 無し（版上げは `chore(release): bump plugin version` の手動 PR） | `git log` |
 | 単一の bash テスト入口 | 無し（各テストを `bash scripts/tests/xxx.sh` で個別に実行） | `scripts/README.md`「テスト」 |
 
@@ -745,7 +745,9 @@ make check
 
 - `go` が無い環境では **skip ではなく失敗**にする（`quality-check-runner` が「ゲートが 1 つも実行されていない」を `pass` にしない理由と同じ。検査していないものを通過と報告しない）。
 - `harness validate` が検査するもの: 未知のキーの拒否（`when:` のような式の混入を構文として受け付けない）・`on` が `output` の `outcome` enum を網羅していること・全参照が参照先の出力スキーマに存在し型が合うこと・到達不能なステップ・`limit` が `limits` に定義されていること・`agent`/`run` の参照先が実在すること。
-- 本リポジトリには PR CI が無い。`make check` をそのまま CI の 1 ジョブにできる形にしておく（CI の追加は §6.4 のリリース用ワークフローと一緒に人が判断する）。
+- **CI（ubuntu だけ）**: main 宛の PR ごとに、GitHub Actions が ubuntu で `make check` を回す（定義は `.github/workflows/check.yml`。チェック名は `check / make-check`）。`make check` をそのまま CI の 1 ジョブにしている。
+- **macOS のジョブは無い**（Actions の macOS の分数は 10 倍に数えられるため置いていない）。macOS に固有の確認は、PR を出す前に手元の macOS で `make check` を回して行う（README「開発（品質ゲートと CI）」）。
+- したがって CI で捕まるのは ubuntu で再現する問題だけである。macOS でだけ起きる問題は CI が green でも残りうる。
 
 ### 6.4 OS・アーキテクチャ別のビルドとリリース
 
