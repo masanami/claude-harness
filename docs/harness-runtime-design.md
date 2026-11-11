@@ -586,6 +586,18 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 
 成功扱いにも無限待機にもせず、**状態・要求操作・再開方法を構造化 JSON と終了コードで返して終了する**（Issue 成功基準）。「待機中」と「失敗」と「成功」は別の終了コードにする。
 
+再開方法は `status --json`（と同じ JSON を出す `run`・`resume`・`approve`・`cancel`）の `waiting[].resume_command` と、テキスト表示・`harness graph --run` の `resume:` 行に出す（どちらも同じ値を写す）。形はゲートの種類で 3 つに分かれる。
+
+| ゲート | `resume_command` |
+| --- | --- |
+| `type: observe`（`human-merge` 等） | `harness resume --detach <run> --unit <key>` |
+| TTY を要求する（§5.3。`design-deviation`・`review-human`） | `harness approve <run> --unit <key> --input <値|…> [--note <text>]  # from a terminal, by a person` |
+| それ以外（`review`・`ci-pending`・`interrupted` 等） | `harness resume --detach <run> --unit <key> --input <値|…> [--note <text>]` |
+
+- **`resume` の案内は `--detach` 付き（#359 の追補・2026-11-12）**: 案内をそのまま実行する呼び出し元（`/impl` の報告を読んだ親・Claude Code の Bash ツール）には待ち時間の上限があり、同期の `resume` は再開の後ろの段で止められて run がシグナルによる取り消しになる（§4.5 の切り離した再開の実例）。`observe` 型も `--detach` で解決できる（観測は解決の一部として同期に行い、観測の結果でゲートに戻れば runner を起動せずにその場で返る）。`resume` の既定（フラグなし）は同期のままで、変えたのは案内の文字列だけである。
+- **`approve` の案内は同期のまま**: 人が端末で打つ前提で、呼び出し元の時間の上限が無いため。切り離したいときは人が `approve --detach` を手で付けられる。
+- `--detach` を知らない古い CLI では案内の `resume` が使えないので、プラグインと CLI は合わせて更新する。
+
 ### 5.3 ゲートの解決経路と安全性（Q9 でオーナーが決定）
 
 flywheel は承認を**人間の直接操作に限り**、CLI の承認は端末（TTY）が無ければ拒否する設計を採っている（flywheel `docs/architecture.md` §9。理由: Claude から承認コマンドが呼べると、自走中の Claude が自分で承認できる経路が開く）。**決定: harness では `decider: human` のゲートにだけ TTY を必須にする**。`decider: parent`（CLAUDE.md の判定表で親が決めてよい問い）と `any`（レビュー待ちのような外部待ち）は TTY を要求しない。

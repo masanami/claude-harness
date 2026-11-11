@@ -116,7 +116,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 | `waiting` で `review` ゲート | **通常完了**として返す | 完了として報告し、下記「次のアクションの案内」を出す |
 | `waiting` で `design-deviation` ゲート | **判断待ち**として返す（`deviation_report` を添える） | `deviation_report` をユーザーに提示し、判断は端末から `harness approve` で行うよう案内する |
 | `waiting` で `ci-pending` ゲート | **`failure`** として返す（CI を待ちきれなかった。または CI が失敗ログの無い失敗で終わった） | 状態を報告し、CI を確かめてから `harness resume --detach {run-id} --input recheck`（やめるなら `abort`）を案内する |
-| `waiting` でその他のゲート（`interrupted` 等） | **`failure`** として返す（ゲート名と `requested_action` を添える） | 状態と `resume_command` を報告する |
+| `waiting` でその他のゲート（`interrupted` 等） | **`failure`** として返す（ゲート名と `requested_action` を添える） | 状態と `resume_command` を報告する（`resume` の形は `--detach` 付き。実行した後は下記「再開と合流」に従って合流する。`approve` の形は人が端末から打つ） |
 | `failed` | **`failure`** として返す（`reason` を添える） | 同左を報告する |
 | `cancelled` | **`failure`** として返す | 同左を報告する |
 | `succeeded` | 完了として返す | 完了として報告する |

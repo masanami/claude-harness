@@ -292,14 +292,16 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 		t.Fatalf("resume ready exit %d\n%s\n%s", code, out, errOut)
 	}
 	v = decode[statusView](t, out)
-	if v.Waiting[0].Gate != "human-merge" || v.Waiting[0].Type != "observe" || v.Waiting[0].RequiresTTY {
+	if v.Waiting[0].Gate != "human-merge" || v.Waiting[0].Type != "observe" || v.Waiting[0].RequiresTTY ||
+		v.Waiting[0].ResumeCommand != "harness resume --detach "+runID+" --unit main" {
 		t.Fatalf("waiting = %+v", v.Waiting)
 	}
 	if strings.TrimSpace(readFile(t, filepath.Join(fdir, "count"))) != "5" {
 		t.Errorf("claude was called %s times; merging to the default branch must not launch claude", readFile(t, filepath.Join(fdir, "count")))
 	}
-	// まだ open なら待ち続ける（人の申告を信じない）
-	out, _, code = h.run("resume", runID)
+	// まだ open なら待ち続ける（人の申告を信じない）。status が案内する --detach 付きの再開も observe を受け付け、
+	// 観測の結果でゲートに戻ったので runner を起動せずに同期で返る（#359）。
+	out, _, code = h.run("resume", "--detach", runID)
 	if code != ExitWaiting || decode[statusView](t, out).Waiting[0].Gate != "human-merge" {
 		t.Fatalf("an open PR must keep the run waiting: exit %d\n%s", code, out)
 	}
