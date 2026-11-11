@@ -8,7 +8,7 @@
 
 ---
 
-## [Unreleased]
+## 5.0.2（harness CLI: `runtime/v5.0.2`）
 
 ### 変更
 
