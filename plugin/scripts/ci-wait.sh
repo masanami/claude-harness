@@ -38,7 +38,7 @@ fetch_pr_view() {
 }
 
 # fetch_pr_checks は lib/common.sh（scripts/lib/common.sh）に集約（pr-merge-preflight.sh と
-# 同じ実装。ここでは warn_on_empty を渡さないため Warning は出さない元の挙動を維持する）。
+# 同じ実装。ここでは warn_on_empty を渡さないため 0 件の Warning は出さない。取得失敗は exit 1 で返るので再試行する）。
 
 # 失敗ジョブのログ末尾を取得する。run_id 単位（複数チェックが同一 run に属しうる）。
 fetch_run_log_failed() {
@@ -256,7 +256,18 @@ main() {
   local final_status=""
 
   while true; do
-    checks_json="$(fetch_pr_checks "$pr_number")"
+    # 取得の失敗は「0 件」でも「CI 無し」でもない。0 件の継続を数え直し、同じ timeout の枠の中で
+    # 再試行する。枠を使い切っても取得できなければ exit 1（none にはしない）。
+    if ! checks_json="$(fetch_pr_checks "$pr_number")"; then
+      empty_streak=0
+      if [ "$attempt" -ge "$max_attempts" ]; then
+        echo "Error: failed to fetch CI checks for PR #${pr_number} (gh pr checks failed until timeout)" >&2
+        exit 1
+      fi
+      "$POLL_SLEEP_CMD" "$poll_interval"
+      attempt=$((attempt + 1))
+      continue
+    fi
     classification="$(classify_checks "$checks_json")"
     if [ "$classification" = "empty" ]; then
       empty_streak=$((empty_streak + 1))
