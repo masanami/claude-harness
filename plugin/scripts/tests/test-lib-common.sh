@@ -104,17 +104,34 @@ echo "=== fetch_pr_checks ==="
     '[{"name":"build","state":"SUCCESS","bucket":"pass","description":"","workflow":"CI","link":"l"}]' \
     "$result"
 
+  gh() { echo "boom" >&2; return 1; }
+  result_fail="$(fetch_pr_checks 42 2>/dev/null)"
+  rc_fail=0
+  fetch_pr_checks 42 >/dev/null 2>&1 || rc_fail=$?
+  assert_eq "取得失敗時は stdout を空にする(0件の[]と区別)" "" "$result_fail"
+  assert_eq "取得失敗時は exit 1" "1" "$rc_fail"
+
+  gh() { echo '[]'; return 0; }
+  assert_eq "成功した0件は[]を返す" "[]" "$(fetch_pr_checks 42)"
+  rc_zero=0
+  fetch_pr_checks 42 >/dev/null || rc_zero=$?
+  assert_eq "成功した0件は exit 0" "0" "$rc_zero"
+
+  gh() { echo "no checks reported on the 'x' branch" >&2; return 1; }
+  assert_eq "gh の no checks reported は0件として[]を返す" "[]" "$(fetch_pr_checks 42 2>/dev/null)"
+  rc_nc=0
+  fetch_pr_checks 42 >/dev/null 2>&1 || rc_nc=$?
+  assert_eq "no checks reported は exit 0" "0" "$rc_nc"
+
   gh() { echo ""; return 1; }
-  result_empty="$(fetch_pr_checks 42)"
-  assert_eq "gh失敗/空出力時は空配列を返す" "[]" "$result_empty"
+  stderr_no_warn="$(fetch_pr_checks 42 2>&1 1>/dev/null)"
+  assert_eq "取得失敗時はwarn_on_empty省略でもWarningをstderrに出す" \
+    "Warning: failed to fetch CI checks for PR #42" "$stderr_no_warn"
 
-  stderr_no_warn="$(gh() { echo ""; return 1; }; fetch_pr_checks 42 2>&1 1>/dev/null)"
-  assert_eq "warn_on_empty省略時はWarningを出さない(ci-wait.sh互換)" "" "$stderr_no_warn"
-
-  stderr_warn="$(gh() { echo ""; return 1; }; fetch_pr_checks 42 1 2>&1 1>/dev/null)"
-  assert_eq "warn_on_empty=1指定時はWarningをstderrに出す(pr-merge-preflight.sh互換)" \
-    "Warning: no CI checks data available for PR #42 (no checks configured, or fetch failed)" \
-    "$stderr_warn"
+  gh() { echo '[]'; return 0; }
+  assert_eq "warn_on_empty省略時、0件はWarningを出さない" "" "$(fetch_pr_checks 42 2>&1 1>/dev/null)"
+  assert_eq "warn_on_empty=1指定時、0件はWarningを出す" \
+    "Warning: no CI checks reported for PR #42" "$(fetch_pr_checks 42 1 2>&1 1>/dev/null)"
 
   # exit code非依存の設計意図を固定する回帰テスト。gh pr checks は CI が pending/fail の
   # 場合に非0 exitを返す仕様のため、fetch_pr_checks は exit code を見ず「出力の非空性 +
@@ -130,9 +147,12 @@ echo "=== fetch_pr_checks ==="
 
   gh() { echo 'not json'; return 0; }
   result_zero_invalid="$(fetch_pr_checks 42)"
-  assert_eq "rc=0でも非JSON配列出力なら空配列を返す(jq判定が主体)" \
-    "[]" \
+  assert_eq "rc=0でも非JSON配列出力なら取得失敗(stdout空・jq判定が主体)" \
+    "" \
     "$result_zero_invalid"
+  rc_zero_invalid=0
+  fetch_pr_checks 42 >/dev/null 2>&1 || rc_zero_invalid=$?
+  assert_eq "rc=0でも非JSON配列出力なら exit 1" "1" "$rc_zero_invalid"
 
   unset -f gh
 }

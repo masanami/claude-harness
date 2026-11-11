@@ -63,7 +63,7 @@ fetch_pr_view() {
 }
 
 # fetch_pr_checks は lib/common.sh（scripts/lib/common.sh）に集約（ci-wait.sh と同じ実装。
-# ここでは warn_on_empty=1 を渡し、取得失敗/空の際に Warning を出す元の挙動を維持する）。
+# ここでは warn_on_empty=1 を渡し 0 件の Warning を出す。取得失敗は exit 1 で返るので main が exit 1 する）。
 
 # ポーリングループ用の軽量な reviews 再取得。
 fetch_pr_reviews_only() {
@@ -392,7 +392,11 @@ main() {
   # 再取得する（ポーリング中にCIが完了したり、他の変更でmergeableやfilesが変わったりする場合、
   # ポーリング開始前の古いスナップショットのまま judge_blocking / risk算出に渡ってしまうため）。
   local checks_json
-  checks_json="$(fetch_pr_checks "$pr_num" 1)"
+  if ! checks_json="$(fetch_pr_checks "$pr_num" 1)"; then
+    # 取得の失敗を「チェック無し」（空配列）として判定に渡さない
+    echo "Error: failed to fetch CI checks for PR #${pr_num}" >&2
+    exit 1
+  fi
 
   local ci_status
   ci_status="$(determine_ci_status "$checks_json")"

@@ -27,12 +27,14 @@
 #       格納する。3スクリプト（fetch-pr-comments.sh / reply-and-resolve.sh /
 #       check-subtask-completion.sh）で完全に同一実装だったものを集約。
 #   - fetch_pr_checks <pr_num> [warn_on_empty]
-#       `gh pr checks` の結果を取得する。取得失敗/空の場合は空配列を返す。
+#       `gh pr checks` の結果を取得する。成功時（チェック 0 件を含む）は JSON 配列を stdout に出し
+#       exit 0。取得に失敗した場合は stdout へ何も出さず exit 1（「チェック 0 件」の `[]` とは
+#       区別する。呼び出し側は exit code で失敗を判定する）。
 #       gh pr checks は CI が pending/fail の場合に非0 exitを返す仕様のため、
 #       exit code ではなく stdout が有効なJSON配列かどうかで成否を判定する。
-#       warn_on_empty に "1" を渡すと取得失敗/空の際に stderr へ Warning を出す
-#       （pr-merge-preflight.sh の元実装の挙動）。省略時は Warning を出さない
-#       （ci-wait.sh の元実装の挙動。2つの元実装の唯一の差分だったため引数化した）。
+#       0 件の判定: gh が "no checks reported" を stderr に出した場合、または stdout が `[]` の場合。
+#       warn_on_empty は 0 件の Warning だけを制御する（"1" で出す。省略時は出さない）。
+#       取得失敗の Warning は引数に関わらず常に出す。
 #   - JQ_FAIL_CANCEL_PREDICATE
 #       CIチェックの fail/cancel 判定に使う jq 式の述語部分（4箇所で重複していたもの）。
 #       利用側は `jq -e "any(.[]; ${JQ_FAIL_CANCEL_PREDICATE})"` や
@@ -78,16 +80,29 @@ resolve_repo() {
 fetch_pr_checks() {
   local pr_num="$1"
   local warn_on_empty="${2:-}"
-  local output
-  output=$(gh pr checks "$pr_num" --json name,state,bucket,description,workflow,link 2>/dev/null)
-  if [ -z "$output" ] || ! jq -e 'type == "array"' <<<"$output" >/dev/null 2>&1; then
+  local output err_file err
+  err_file="$(mktemp)"
+  output=$(gh pr checks "$pr_num" --json name,state,bucket,description,workflow,link 2>"$err_file")
+  err="$(cat "$err_file" 2>/dev/null)"
+  rm -f "$err_file"
+  if [ -n "$output" ] && jq -e 'type == "array"' <<<"$output" >/dev/null 2>&1; then
+    if [ "$warn_on_empty" = "1" ] && [ "$(jq 'length' <<<"$output")" = "0" ]; then
+      echo "Warning: no CI checks reported for PR #${pr_num}" >&2
+    fi
+    printf '%s' "$output"
+    return 0
+  fi
+  # gh は「チェックが 1 件も無い」ときに stdout を空にして "no checks reported" を stderr に出す。
+  # これは取得の失敗ではなく 0 件。
+  if [ -z "$output" ] && grep -qi "no checks reported" <<<"$err"; then
     if [ "$warn_on_empty" = "1" ]; then
-      echo "Warning: no CI checks data available for PR #${pr_num} (no checks configured, or fetch failed)" >&2
+      echo "Warning: no CI checks reported for PR #${pr_num}" >&2
     fi
     printf '[]'
     return 0
   fi
-  printf '%s' "$output"
+  echo "Warning: failed to fetch CI checks for PR #${pr_num}${err:+: ${err}}" >&2
+  return 1
 }
 
 # shellcheck disable=SC2034 # source する各スクリプト側の jq 式に文字列展開して使われる

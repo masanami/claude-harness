@@ -223,6 +223,28 @@ fetch_run_log_failed() { printf 'FAIL: late check\n'; }
 POLL_SLEEP_CMD=clock_sleep
 
 echo ""
+echo "=== main(): 取得の失敗は none にしない (#343) ==="
+{
+  fetch_pr_checks() { echo "Warning: failed" >&2; return 1; }
+  reset_clock
+  rc=0
+  output="$(main "11" 300 30 2>/dev/null)" || rc=$?
+  assert_eq "取得失敗が続けば exit 1" "1" "$rc"
+  assert_eq "取得失敗では ci: none を出さない" "" "$output"
+  assert_eq "取得失敗でも timeout の枠(300秒)を使い切るまで再試行する" "300" "$(elapsed_seconds)"
+
+  CALLS_FILE="$STATE_DIR/calls"; echo 0 >"$CALLS_FILE"
+  fetch_pr_checks() {
+    local n; n=$(($(cat "$CALLS_FILE") + 1)); echo "$n" >"$CALLS_FILE"
+    if [ "$n" -le 2 ]; then return 1; fi
+    echo "$fake_checks_pass"
+  }
+  reset_clock
+  output="$(main "11" 300 30 2>/dev/null)"
+  assert_eq "失敗の後に取得できれば green" "green" "$(jq -r '.ci' <<<"$output")"
+}
+
+echo ""
 echo "=== main(): ① ③ チェック 0 件のまま -> 約 120 秒経つまで none にならず、120 秒で none (#341) ==="
 {
   fetch_pr_checks() { echo '[]'; }
