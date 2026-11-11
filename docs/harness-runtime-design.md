@@ -42,7 +42,7 @@
 | bash テスト | 44 本 | `ls scripts/tests \| wc -l` |
 | `skills/` `agents/` `scripts/` の `.md`/`.sh`（`*/tests/*` 除外） | 19,394 行 | `find … -not -path '*/tests/*' \| xargs cat \| wc -l` |
 | 実装委譲フローの散文（`skills/impl/SKILL.md`・`skills/para-impl/SKILL.md`・`references/join-gate.md`・`references/star-parallel.md`・`agents/ticket-worker.md`） | **82,139 B**（261＋184＋64＋170＋79 行） | `wc -c` |
-| PR CI | 無し（`.github/` が存在しない） | — |
+| PR CI | 測った時点では未設置（`.github/` が存在しない）。その後 #349 で ubuntu の PR CI を追加した（現状は §6.3） | — |
 | リリース自動化 | 無し（版上げは `chore(release): bump plugin version` の手動 PR） | `git log` |
 | 単一の bash テスト入口 | 無し（各テストを `bash scripts/tests/xxx.sh` で個別に実行） | `scripts/README.md`「テスト」 |
 
@@ -536,7 +536,8 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 
 - runtime は起動した子プロセス（スクリプト・`claude -p`）を自分で待つ。**起動台帳は runtime の状態そのもの**になり、`join-gate.md` の起動台帳・決定表・中断報告のうち、**runtime 直下の子に関する部分は散文が不要になる**。
 - `harness run` / `resume` は、全 unit がゲートか終端に達するまでプロセスとして生存する（daemon は持たない）。
-- runtime が落ちた場合（副次）: 次の `resume` / `status` で「`running` のまま生存プロセスが無い」ステップ実行を `interrupted` とし、その unit を `interrupted` ゲートへ送る（自動の再実行はしない。LLM ステップは部分的なコミットを残しうるため冪等ではない）。
+- **切り離した run（#347・2026-11-10）**: `harness run --detach` と `harness contract start` は、run を始めた後、`harness` 自身の実行ファイルを新しいセッションの子プロセス（runner）として起動し直して run を進めさせ、run ID を返してすぐ戻る。runner も daemon ではなく、全 unit がゲートか終端に達したら終わる。呼び出し元のプロセスの寿命・待ち時間の上限・シグナルから切り離すためである（Claude Code の Bash ツールの既定の上限 600000 ミリ秒で `harness run` が止められ、run がシグナルによる取り消しとして記録された実例が 2 件ある。#346 は起動に `timeout: 7200000` を付けるつなぎだった）。runner の出力は run ディレクトリの `runner.log`、二重起動は run ID ごとの `runner.lock`（`flock`）で防ぐ。runner の生存は PID と開始時刻（`pid_start`）で確かめ、PID の再利用を見分ける。`harness run` の既定は同期のまま。
+- runtime が落ちた場合（副次）: 次の `resume` / `status` で「`running` のまま生存プロセスが無い」ステップ実行を `interrupted` とし、その unit を `interrupted` ゲートへ送る（自動の再実行はしない。LLM ステップは部分的なコミットを残しうるため冪等ではない）。ステップとステップの間で落ちた（実行中のステップが無い）unit も同じゲートへ送り、`running` のまま残さない（#347。`rerun` は次に実行するはずだったステップを新しいラウンドで実行する）。runtime の生存は PID と開始時刻で確かめる。
 
 ### 4.6 置き場と形式（Q1・Q2 でオーナーが決定: L2・F1）
 
@@ -647,12 +648,14 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 
 | 契約 v1 のコマンド | harness | 引数（既存コマンドと同じ） |
 | --- | --- | --- |
-| `start` | `harness contract start` → `run` | `[--workflow-dir DIR] [--scripts-dir DIR] [--input NAME=VALUE]... <workflow>` |
+| `start` | `harness contract start` → `run --detach`（#347。常にすぐ戻る） | `[--workflow-dir DIR] [--scripts-dir DIR] [--input NAME=VALUE]... <workflow>` |
 | `status` | `harness contract status` → `status --json` | `<run-id>` |
 | `resume` | `harness contract resume` → `resume` | `[--unit KEY] [--input VALUE] [--note TEXT] <run-id>` |
 | `cancel` | `harness contract cancel` → `cancel` | `<run-id>` |
 
-`cancel` の出力は契約 v1 が求めていないが、同じ形の JSON（停止後の状態）を出す。flywheel の宣言の引数の配列では、差し込む値（ワークフロー名・入力・run ID・回答）はすべて独立した要素になる。
+`cancel` の出力は契約 v1 が求めていないが、同じ形の JSON（停止後の状態）を出す。
+
+**`start` は常にすぐ戻る（#347・2026-11-10）**: `contract start` は run を切り離して始め（§4.5）、run の終わりやゲートを待たずに、その時点の状態（多くは `state: running`・`requested_action: null`）の JSON を返す。進み具合と終わり（ゲートでの待機を含む）は `contract status` で読む。契約の版は v1 のまま（出力のキーと値の集合は変えていない）。flywheel の宣言の引数の配列では、差し込む値（ワークフロー名・入力・run ID・回答）はすべて独立した要素になる。
 
 **出力**: `{"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}` を 1 つ出す。
 
@@ -742,7 +745,9 @@ make check
 
 - `go` が無い環境では **skip ではなく失敗**にする（`quality-check-runner` が「ゲートが 1 つも実行されていない」を `pass` にしない理由と同じ。検査していないものを通過と報告しない）。
 - `harness validate` が検査するもの: 未知のキーの拒否（`when:` のような式の混入を構文として受け付けない）・`on` が `output` の `outcome` enum を網羅していること・全参照が参照先の出力スキーマに存在し型が合うこと・到達不能なステップ・`limit` が `limits` に定義されていること・`agent`/`run` の参照先が実在すること。
-- 本リポジトリには PR CI が無い。`make check` をそのまま CI の 1 ジョブにできる形にしておく（CI の追加は §6.4 のリリース用ワークフローと一緒に人が判断する）。
+- **CI（ubuntu だけ）**: main 宛の PR ごとに、GitHub Actions が ubuntu で `make check` を回す（定義は `.github/workflows/check.yml`。チェック名は `check / make-check`）。`make check` をそのまま CI の 1 ジョブにしている。
+- **macOS のジョブは無い**（Actions の macOS の分数は 10 倍に数えられるため置いていない）。macOS に固有の確認は、PR を出す前に手元の macOS で `make check` を回して行う（README「開発（品質ゲートと CI）」）。
+- したがって CI で捕まるのは ubuntu で再現する問題だけである。macOS でだけ起きる問題は CI が green でも残りうる。
 
 ### 6.4 OS・アーキテクチャ別のビルドとリリース
 
@@ -968,6 +973,17 @@ PR-7 の着手前に上げた問いの決定。§11.1〜§11.5 の記録は書�
 | E5 | 薄い `/impl` で古くなる `/para-impl`・`ticket-worker` の文面 | 実態に合わせる最小限の文面の修正だけを許す（§11.4 の「散文のまま残す」を、この範囲に限って緩める）。挙動（役割分担・ループ・返却の分類）は変えない | 人間 |
 | E6 | `self_review: incomplete`（#262）を runtime で扱うか | PR-7 に含める。`implement` の出力に `review_incomplete` を足し、PR へ進めず失敗（`self_review_incomplete`）で止める。旧 `/impl` が行っていた `/self-review` のやり直しは持たない | 人間 |
 | E7 | サブエージェント（`ticket-worker`）の中で、数時間かかる `harness run` と合流できるか | 着手前に実測した: サブエージェントの中で 660 秒のバックグラウンド処理を起動し、上限付きの `until` ループ（1 回 60 秒）で状態を確かめ続けて最後まで合流でき、完了通知もターンの内側で届いた。先頭が `sleep` のコマンドは拒否される。runtime に切り離して実行する口は足さない | 親（実測） |
+
+### 11.7 切り離した run（#347・2026-11-10）
+
+§11.6 の E7 は「runtime に切り離して実行する口は足さない」としたが、バックグラウンドの Bash も既定の待ち時間の上限（600000 ミリ秒）で止められ、`harness run` がシグナルによる取り消しとして記録された実例が 2 件出た（#346 はつなぎ）。flywheel の案 B（masanami/flywheel#532）が `contract start` の即時の戻りを要るため、次をオーナーが決めた。§11.6 の記録は書き換えていない。
+
+| # | 決定 |
+| --- | --- |
+| Q1 | `contract start` は常にすぐ戻る形に変え、`harness run` にだけ `--detach` を足す。`harness run` の既定は同期のまま。接続契約の版は v1 のまま |
+| Q2 | `harness` 自身を新しいセッションの子プロセスとして起動し直して切り離す。出力は run ディレクトリのログ（`runner.log`）へ流し、二重起動は run ID ごとのロック（`runner.lock`）で防ぐ。常駐のデーモン・launchd・systemd は使わない |
+| Q3 | `status` を読むときに PID と開始時刻で runner の生存を確かめる。新しい状態（orphaned 等）と心拍のファイルは使わない。死んだ runner の run は、当初の「`failed`（実行プロセスの消失）として返す」を、終端の `failed` は再開できないという既存の規則と合わないため問い直し、オーナーの回答（2026-11-10、案 A）で §4.5 に寄せた: ステップの間で落ちた場合も含めて `interrupted` ゲート（`waiting`・`rerun`／`abort`・契約では `answer` × `parent`）で待たせ、`running` のまま残さない。`failed` は使わない。再開は `contract resume --input rerun` |
+| Q4 | run を起動するスキル（`/impl`）を同じ PR で書き換える（`harness run --detach` で始め、`harness status` で合流する。`timeout: 7200000` の指示は外す） |
 
 ## 12. 未検証事項
 

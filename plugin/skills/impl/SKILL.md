@@ -61,16 +61,18 @@ command -v harness
 
 ### 3. 起動
 
-`--worktree` があればその絶対パス、無ければ現在のリポジトリのルートを `{起点}` として、Bash ツールで **`run_in_background: true`** を指定して起動する（`ticket` は数十分〜数時間かかり、前面の Bash の上限 10 分に収まらない）:
+`--worktree` があればその絶対パス、無ければ現在のリポジトリのルートを `{起点}` として、次のコマンドを Bash ツールの前面で実行する。`--detach` により、run を進めるプロセスは呼び出し元から切り離されて run がゲートか終端に達するまで動き続け、このコマンドは run ID を標準出力に 1 行出してすぐ終わる:
 
 ```bash
-cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}" harness run --input issue={番号} ticket
+cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}" harness run --detach --input issue={番号} ticket
 ```
+
+- **`--detach` を外して起動しない**（外すと run はこの Bash のプロセスの中で進み、Bash が上限で止められると run も取り消される）
 
 - `--base` があれば `--input base={base}`、`--worktree` があれば `--input worktree={worktreeの絶対パス}` を `ticket` の前に足す
 - `HARNESS_CLAUDE_PERMISSION_MODE` は runtime が起動する `claude -p` に `--permission-mode` で渡るモード。利用者が環境変数で設定していればその値、無ければ `auto` になる（コマンドの `${...:-auto}` のまま渡す。値を自分で書き換えない）
 
-起動したタスクの出力の標準エラーに `harness: run <run-id> started (<run ディレクトリ>)` の行が出る。この `<run-id>` を以降で使う。この行が出ずにタスクが終わった場合は、終了コードで分ける:
+終了コード 0 なら、標準出力の 1 行が `<run-id>` である。これを以降で使う。0 以外なら run を進めていない（run を始めた後に切り離せなかった場合は、標準エラーに `harness: run <run-id> started` の行と理由が出る）。終了コードで分ける:
 
 | 終了コード | 意味 | 本スキルの動作 |
 |---|---|---|
@@ -80,14 +82,14 @@ cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PE
 
 ### 4. 合流（run がゲートか終端に達するまでターンを終えない）
 
-**`harness run` が終わる前に最終応答・返却をしない**（サブエージェントの中では、ターンを終えた時点で呼び出し元へ返却され、後から届く完了通知は受け取れない）。次のコマンドを Bash ツールの前面で（`timeout: 600000` を指定して）、出力が `running` 以外になるまで繰り返す:
+**run がゲートか終端に達する前に最終応答・返却をしない**（サブエージェントの中では、ターンを終えた時点で呼び出し元へ返却される）。次のコマンドを Bash ツールの前面で（`timeout: 600000` を指定して）、出力が `running` 以外になるまで繰り返す:
 
 ```bash
 end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)" != running ] || [ $SECONDS -ge $end ]; do sleep 10; done; harness status {run-id} --json | jq -r .status
 ```
 
 - 先頭が `sleep` のコマンドは拒否される。上の形（上限付きの `until` ループ）のまま使う
-- 起動したタスクの完了通知が先に届いたら、そこで繰り返しをやめてよい
+- `.status` が `cancelled` で終わった run を同じ作業ツリーで起動し直す場合は、**起動し直す前に、取り消された run の ID と費用（`.units[0].budget.spent_usd`）を返却に残す**
 - `harness status {run-id} --json` の `runner_alive` が `false` のまま `running` なら、run を進めるプロセスが落ちている。繰り返しをやめ、`harness status {run-id}` が示す状態（`interrupted` ゲート）を下の表に従って扱う
 - 合流できないまま返却せざるを得ない場合は、**run を取り消さず**、`<run-id>` と回収手段（`harness status {run-id} --json`）と「合流できていない」事実を返却に明記する
 
@@ -127,7 +129,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 
 ## 完了報告 / 呼び出し元への返却
 
-**`harness run` との合流（上記 4）を済ませてから返す。**
+**run との合流（上記 4）を済ませてから返す。**
 
 1. run ID と run の状態（待っているゲート、または終端の理由）
 2. 実装サマリー（`outputs.implement.summary`）
@@ -147,7 +149,8 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
    - 決めきれないときは `文脈不足` を選び、根拠に決めきれなかったことを書く（打てる手がある区分を先に試す）
    - 実装に入る前の失敗（`base_missing`・`worktree_conflict`・版の不一致など run の前提の欠落）は区分の対象外とし、`reason` をそのまま報告する
 9. **`--worktree` がある場合**: 「CI の red の差し戻しは runtime の中で最大3回まで済ませた（使った回数 `limits_used.rework`）。`ci_red` で失敗した場合は、同じ修正を差し戻しても直らない」と明記する。run は `review` ゲートで待たせたまま残す（取り消さない）
-10. **次のアクションの案内**（`--worktree` が無い場合）:
+10. **run の外で終わった作業の明記**（run が取り消された・合流できなかった・runtime の外で手で仕上げた場合。起動し直した run が後で通っても、取り消された run があれば書く）: その事実と run ID（複数あれば全件）を書き、**「セルフレビュー・独立レビュー・E2E を経ていない」ことを未検証の事項として必ず書く**。手で仕上げた変更や PR は、runtime のゲートを通ったものとして報告しない（手で仕上げること自体は禁止事項の「`harness` を使わずに実装フローを自分で進めること」に当たる。呼び出し元の指示で仕上げた場合も、この明記は省かない）
+11. **次のアクションの案内**（`--worktree` が無い場合）:
    - レビュー対応: `harness resume {run-id} --input respond`
    - マージへ進める: `harness resume {run-id} --input ready`（統合ブランチ宛は runtime がマージする。既定ブランチ宛は人がマージした後に `harness resume {run-id}`）
    - 人の判断が要るゲート: 端末から `harness approve {run-id} --input <値> [--note <指示>]`

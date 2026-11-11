@@ -51,16 +51,26 @@ func gateOpenedEvent(unit string, g *workflow.Step) runstate.Event {
 }
 
 // InterruptEvents は、runner が生きていない run で running のまま残り、子プロセスも居ないステップ実行を
-// interrupted として打ち切り、その unit を組み込みの interrupted ゲートへ送るイベントを作る（§4.5）。
+// interrupted として打ち切り、その unit を組み込みの interrupted ゲートへ送るイベントを作る（§4.5）。実行中のステップの
+// 無い unit（ステップの間で runner が落ちた）も同じゲートへ送る（#347: running のまま残さない）。
 // 自動で再実行はしない（LLM ステップは部分的な変更を残しうるため冪等ではない）。
 // 子プロセスのグループがまだ生きている実行は対象にしない（呼び出し元が止めてから呼ぶ）。
 func InterruptEvents(st *runstate.State) []runstate.Event {
-	if runstate.Terminal(st.Status) || runstate.Alive(st.PID) {
+	if runstate.Terminal(st.Status) || runstate.RunnerAlive(st) {
 		return nil
 	}
 	var evs []runstate.Event
 	for _, u := range st.Units {
 		x := u.Running()
+		if x == nil && u.Gate == nil && u.Status == runstate.StatusRunning {
+			// ステップとステップの間で runner が落ちた（#347）: 実行中のステップは無いが、誰も run を進めていない。running の
+			// まま残さず、同じ interrupted ゲートで待たせる。rerun は次に実行するはずだったステップ（current_step）を新しい
+			// ラウンドで実行する。
+			evs = append(evs, interruptedGate(u.Key, fmt.Sprintf("the runner (pid %d) died before step %s started; nothing is advancing the run "+
+				"and it is not continued automatically. Check the working tree, then resume with %s to run step %s or %s to fail the run",
+				st.PID, u.CurrentStep, InterruptedRerun, u.CurrentStep, InterruptedAbort)))
+			continue
+		}
 		if x == nil || (x.PID > 0 && groupAlive(x.PID)) || (x.PID == 0 && len(sessionProcesses(x.SessionID)) > 0) {
 			continue
 		}
@@ -69,17 +79,20 @@ func InterruptEvents(st *runstate.State) []runstate.Event {
 		chargeUnknown(fin, x.BudgetGrantedUSD)
 		evs = append(evs,
 			runstate.Event{Type: runstate.EvStepFinished, StepFinished: fin},
-			runstate.Event{Type: runstate.EvGateOpened, GateOpened: &runstate.GateOpened{
-				Unit: u.Key, Gate: workflow.InterruptedGate, Type: workflow.GateInput, Decider: workflow.DeciderAny,
-				RequestedAction: fmt.Sprintf("step %s (attempt %d) was interrupted because the runner died; it is not re-run automatically "+
-					"(an llm step may have left partial changes). Check the working tree, then resume with %s to run the step again or %s to fail the run",
-					x.Step, x.Attempt, InterruptedRerun, InterruptedAbort),
-				Inputs:  []string{InterruptedRerun, InterruptedAbort},
-				Builtin: true,
-			}},
+			interruptedGate(u.Key, fmt.Sprintf("step %s (attempt %d) was interrupted because the runner died; it is not re-run automatically "+
+				"(an llm step may have left partial changes). Check the working tree, then resume with %s to run the step again or %s to fail the run",
+				x.Step, x.Attempt, InterruptedRerun, InterruptedAbort)),
 		)
 	}
 	return evs
+}
+
+// interruptedGate は組み込みの interrupted ゲートを開くイベント（§4.5）。
+func interruptedGate(unit, action string) runstate.Event {
+	return runstate.Event{Type: runstate.EvGateOpened, GateOpened: &runstate.GateOpened{
+		Unit: unit, Gate: workflow.InterruptedGate, Type: workflow.GateInput, Decider: workflow.DeciderAny,
+		RequestedAction: action, Inputs: []string{InterruptedRerun, InterruptedAbort}, Builtin: true,
+	}}
 }
 
 // Interrupt は InterruptEvents をロックの中で確かめ直して記録する（status / resume が呼ぶ）。
@@ -92,7 +105,7 @@ func Interrupt(run *runstate.Run) (*runstate.State, error) {
 // StopOrphans は、runner が生きていない run で running のまま残ったステップ実行の子プロセスを止める
 // （resume が interrupted へ送る前に行う。記録されない結果を出し続けるプロセスを残さない）。
 func StopOrphans(st *runstate.State, grace time.Duration) {
-	if runstate.Terminal(st.Status) || runstate.Alive(st.PID) {
+	if runstate.Terminal(st.Status) || runstate.RunnerAlive(st) {
 		return
 	}
 	for _, u := range st.Units {
@@ -346,13 +359,13 @@ func (e *Engine) Resolve(ctx context.Context, req Resolution) (*runstate.State, 
 			return nil, refused("unit %s changed while resolving (another resume?); nothing was recorded", u.Key)
 		}
 		// ゲートで待っている run には runner が居ない（run は待機で終わる）。runner が居るのは running の run だけ。
-		if cur.Status == runstate.StatusRunning && runstate.Alive(cur.PID) && cur.PID != os.Getpid() {
+		if cur.Status == runstate.StatusRunning && runstate.RunnerAlive(cur) && cur.PID != os.Getpid() {
 			return nil, refused("run %s is being advanced by pid %d; nothing to resume", cur.RunID, cur.PID)
 		}
 		if cu.Gate == nil && cu.Running() != nil {
 			return nil, refused("unit %s has a running step whose process is still alive; cancel the run or wait", u.Key)
 		}
-		evs := []runstate.Event{{Type: runstate.EvRunnerStarted, RunnerStarted: &runstate.RunnerStarted{PID: os.Getpid(), Command: req.Actor}}}
+		evs := []runstate.Event{{Type: runstate.EvRunnerStarted, RunnerStarted: &runstate.RunnerStarted{PID: os.Getpid(), PIDStart: runstate.SelfStart(), Command: req.Actor}}}
 		if cu.Gate == nil {
 			return evs, nil
 		}

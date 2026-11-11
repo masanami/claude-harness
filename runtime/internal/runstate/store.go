@@ -20,6 +20,10 @@ const (
 	LogsDir    = "logs"
 	CancelFile = "cancel-requested" // runner が見張る印（cancel_requested イベントと同時に置く）
 	lockDir    = "lock"
+
+	// 切り離して起動した runner（harness run --detach・contract start。#347）が使う。
+	RunnerLogFile  = "runner.log"  // runner の標準出力と標準エラー
+	RunnerLockFile = "runner.lock" // runner であることのロック（RunnerLock）
 )
 
 // Run は 1 つの run ディレクトリ。

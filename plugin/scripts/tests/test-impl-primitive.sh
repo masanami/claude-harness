@@ -181,7 +181,7 @@ done
 
 # /impl は手順を持たず、ticket ワークフローを呼ぶ。実装・PR 作成・CI 確認を自分で行う手順を持たない。
 IMPL_ALL="$(cat "$IMPL_FILE")"
-assert_contains "(A) /impl が ticket ワークフローを呼ぶ" "$IMPL_ALL" 'harness run --input issue={番号} ticket'
+assert_contains "(A) /impl が ticket ワークフローを呼ぶ" "$IMPL_ALL" 'harness run --detach --input issue={番号} ticket'
 assert_contains "(A) /impl が手順を持たないと明記している" "$IMPL_ALL" '本スキルは手順を持たず、**起動・合流・結果の読み取りと返却だけ**を行う'
 assert_contains "(A) /impl が harness の無いときに自分でフローを進めない" "$IMPL_ALL" \
   '**`harness` が使えないときに、実装フローを自分で組み立てて代わりに進めない**'
@@ -286,6 +286,10 @@ assert_contains "(E) --worktree の経路で CI の差し戻しを runtime の�
   '「CI の red の差し戻しは runtime の中で最大3回まで済ませた'
 assert_contains "(E) run を review ゲートで待たせたまま残す" "$IMPL_REPORT" \
   'run は `review` ゲートで待たせたまま残す（取り消さない）'
+assert_contains "(E) run の外で終わった作業（取り消し・合流できない・手で仕上げた）を返却の項目にする" "$IMPL_REPORT" \
+  '**run の外で終わった作業の明記**（run が取り消された・合流できなかった・runtime の外で手で仕上げた場合。'
+assert_contains "(E) run の外で終わった作業はセルフレビュー・独立レビュー・E2E を経ていない未検証の事項として書かせる" "$IMPL_REPORT" \
+  '**「セルフレビュー・独立レビュー・E2E を経ていない」ことを未検証の事項として必ず書く**'
 assert_contains "(E) --worktree が無い経路では harness の再開手段を案内する" "$IMPL_REPORT" \
   '`harness resume {run-id} --input respond`'
 assert_contains "(E) /explain-e2e は実施せず案内する" "$IMPL_REPORT" \
@@ -298,10 +302,19 @@ IMPL_START="$(section_body "$IMPL_FILE" '### 3. 起動')"
 assert_contains "(E) 自分のプラグイン版を CLI へ渡す（版の照合。§7.3）" "$IMPL_START" 'HARNESS_PLUGIN_VERSION="{プラグイン版}"'
 assert_contains "(E) 子の permission mode は既定 auto・利用者の設定で上書きできる" "$IMPL_START" \
   'HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}"'
-assert_contains "(E) 前面の Bash の上限を超えるのでバックグラウンドで起動する" "$IMPL_START" '**`run_in_background: true`**'
+# run は呼び出し元の Bash の寿命から切り離して進める（#347）。Bash の待ち時間の上限で止められると、同期の harness run は
+# run を取り消しとして記録する（C-474 の run 20261109-060337-52eadd: 起動のちょうど 10 分後に cancelled.actor=signal）。
+# #346 のつなぎ（run_in_background と timeout: 7200000 の必須化）は外した。
+assert_contains "(E) 切り離して起動する（Bash の上限で run が取り消されない）" "$IMPL_START" \
+  '**`--detach` を外して起動しない**'
+assert_contains "(E) 起動は前面で、run ID を受け取ってすぐ戻る" "$IMPL_START" 'Bash ツールの前面で実行する'
+assert_contains "(E) run ID は標準出力の 1 行で受け取る" "$IMPL_START" '標準出力の 1 行が `<run-id>`'
+for stale in 'timeout: 7200000' 'run_in_background: true'; do
+  assert_not_contains "(E) #346 のつなぎ（${stale}）が残っていない" "$IMPL_ALL" "$stale"
+done
 assert_contains "(E) 版の不一致（終了コード 5）で止まる" "$IMPL_START" '| 5 | プラグインと CLI の版が合わない |'
 IMPL_JOIN="$(section_body "$IMPL_FILE" '### 4. 合流（run がゲートか終端に達するまでターンを終えない）')"
-assert_contains "(E) 合流してから返す" "$IMPL_JOIN" '**`harness run` が終わる前に最終応答・返却をしない**'
+assert_contains "(E) 合流してから返す" "$IMPL_JOIN" '**run がゲートか終端に達する前に最終応答・返却をしない**'
 assert_contains "(E) 合流の待ちは上限付きの until ループ（先頭が sleep のコマンドは拒否される）" "$IMPL_JOIN" \
   'until [ "$(harness status {run-id} --json | jq -r .status)" != running ]'
 

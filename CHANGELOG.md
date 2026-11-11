@@ -14,6 +14,10 @@
 
 ### 変更
 
+- **`harness contract start` は常にすぐ戻るようになった（Issue #347）。** run を始めた後、run を進めるプロセスを新しいセッションへ切り離して起動し、run の終わりやゲートを待たずに、その時点の状態（多くは `state: running`・`requested_action: null`）の契約 v1 の JSON を返す。進み具合・ゲートでの待機・終わりは `harness contract status <run-id>` で読む。契約の版は v1 のまま（キーと値の集合は変えていない）。**利用者が取る操作**: `contract start` の JSON の `state` が `waiting` や終端になるのを前提にしていた呼び出し元は、`contract status` で読み直す。
+- **`/impl` は `harness run --detach` で run を始め、`harness status` で合流するようになった（Issue #347）。** run は呼び出し元の Bash の寿命と待ち時間の上限から切り離されて進むので、Bash の上限で run が取り消される（`cancelled.actor=signal`）ことは無くなった。#346 の `run_in_background: true`・`timeout: 7200000` の指示は外した。**利用者が取る操作**: このプラグインの版と、`--detach` を持つ harness CLI を合わせて更新する（古い CLI は `--detach` を知らず、`/impl` は終了コード 2 で止まる）。
+- **runner がステップとステップの間で落ちた run も、`interrupted` ゲートで待つようになった（Issue #347）。** これまでは `running`・`runner_alive: false` のまま残り、`harness resume <run>`（入力なし）で続けられた。今後は次の `status`／`resume` で組み込みの `interrupted` ゲートへ送られ、`harness resume <run> --input rerun`（契約では `harness contract resume <run> --input rerun`）で次のステップから続ける。やめるなら `--input abort`。**利用者が取る操作**: 入力なしの `resume` で続けていた手順は `--input rerun` を付ける。
+
 - **`ticket` ワークフロー（`/impl`）のレビュー対応（`respond`）が push した後、品質ゲート（`quality`）を通ってから CI の確認（`ci`）へ進むようにした（`respond → quality → publish → ci`。Issue #339・PR #342）。** これまでは push の後に直接 `ci` へ進んでいた。run の記録の SHA を PR の head とそろえるためで、`quality` が落ちれば `fix` へ差し戻し、E2E・CI と共有の上限を使う。
   - **移行が要るのは、上書き（`.claude-harness/overrides/ticket.yaml`）で `quality` を省いているリポジトリ。** 5.0.0 で案内した 2 行（`e2e-route.no`・`e2e.pass` を `publish` へ）に、`respond.pushed` を `ci` へ付け替える 3 行目を足す。完成形は次のとおり（`docs/harness-runtime-overrides.md` §5.2・`runtime/README.md`「品質ゲートのステップ」と同じ）。
 
@@ -28,6 +32,10 @@
     ```
 
   - **2 行のままだと**、上書きの検査は通るが、`respond` の push の後に `quality` が走る。品質ゲートの宣言（`.claude-harness/quality-gate.json`）が無ければ `quality_gate_undeclared` で止まる。黙って省かれて進むのではなく、目に見えて止まる。このとき `quality` は到達できるので、`status --json` の `skipped_steps` と `harness graph` の `skipped` には出ない。3 行そろえた後は、どちらにも `quality` が出ることで省けたと確かめられる。
+
+### 追加
+
+- **`harness run --detach`（Issue #347）。** 付けたときだけ、run を進めるプロセス（runner）を新しいセッションの子プロセスとして切り離して起動し、run ID を標準出力に 1 行出して終了コード 0 ですぐ戻る。付けなければ従来どおり同期。runner の出力は run ディレクトリの `runner.log`、同じ run の二重起動は `runner.lock` で防ぐ（`resume`・`approve` もこのロックを取る）。環境変数と作業ディレクトリは呼び出し元のものを引き継ぐ。run の記録に runner の開始時刻（`pid_start`）を残し、`status` は PID と開始時刻で runner の生存を確かめる（PID の再利用を見分ける）。
 
 ---
 

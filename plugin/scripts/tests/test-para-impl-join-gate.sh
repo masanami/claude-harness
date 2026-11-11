@@ -583,17 +583,17 @@ assert_eq "(9) 「未解消報告を含まない終端返却」の文言規則�
   "3" "$canon_rule_count"
 
 # 接続検査: /impl（#299 で harness の ticket ワークフローを呼ぶ薄いスキルになった）は Task を起動せず、
-# 起動するのはバックグラウンドの `harness run`（有限タスク）だけ。その合流を最終返却の前に済ませることを
+# 起動するのは切り離した `harness run`（有限タスク。#347）だけ。その合流を最終返却の前に済ませることを
 # 規定し、Task の起動行を持たないこと（持つなら条項の転記が要る）を確かめる。star 型（spawn プロンプト
 # 必須項目）からの条項への接続は従来どおり。
-assert_file_contains "(9) /impl はバックグラウンドの harness run と合流してから返す" "$IMPL_FILE" \
-  '**`harness run` が終わる前に最終応答・返却をしない**'
+assert_file_contains "(9) /impl は切り離した harness run と合流してから返す" "$IMPL_FILE" \
+  '**run がゲートか終端に達する前に最終応答・返却をしない**'
 assert_file_not_contains "(9) /impl は Task を起動しない（起動するなら条項の転記が要る）" "$IMPL_FILE" \
   'subagent_type'
 assert_star_contains "(9) star 型の spawn プロンプト必須項目に条項の転記がある" \
   '- **合流ゲート伝播条項**（`references/join-gate.md`「ネストへの伝播」に定義された条項を**逐語で転記する**'
 assert_star_contains "(9) 条項が無い場合の喪失経路（worker のネスト spawn）を明示している" \
-  'worker は CI の差し戻しで `feature-implementer` をさらに spawn し、`/impl` ではバックグラウンドの `harness run` を起動するため'
+  'worker は CI の差し戻しで `feature-implementer` をさらに spawn し、`/impl` では切り離した `harness run` を起動して合流するため'
 assert_file_not_contains "(9) star-parallel.md は条項本文を複製しない（正本は SKILL.md のみ）" "$STAR_FILE" \
   '【合流ゲート伝播条項】'
 

@@ -3,7 +3,7 @@
 # scripts/ci-wait.sh の純粋関数（classify_checks / ci_wait_decision / extract_run_id /
 # extract_run_ids / build_failed_checks_json / tail_lines / truncate_to_budget）と、
 # gh呼び出し関数をスタブで上書きした main() の分岐（pr_exists false / green / red /
-# timeout / none 確定・attempt=1でのsingle-shotモード / 1ジョブ失敗・他ジョブ実行中で run の完了を
+# timeout / none 確定〔チェック 0 件が約 120 秒続いてから。#341〕・attempt=1でのsingle-shotモード / 1ジョブ失敗・他ジョブ実行中で run の完了を
 # 待ってからログを取る〔#295〕）を検証する。
 #
 # 実行方法: bash scripts/tests/test-ci-wait.sh
@@ -49,13 +49,17 @@ echo "=== classify_checks ==="
 echo ""
 echo "=== ci_wait_decision ==="
 {
-  assert_eq "red -> stop:red" "stop:red" "$(ci_wait_decision "red" 1 5 0 2)"
-  assert_eq "green -> stop:green" "stop:green" "$(ci_wait_decision "green" 1 5 0 2)"
-  assert_eq "empty かつ empty_streak未達 かつ attempt未達 -> continue" "continue" "$(ci_wait_decision "empty" 1 5 1 2)"
-  assert_eq "empty かつ empty_streakがmax_empty_confirm到達 -> stop:none" "stop:none" "$(ci_wait_decision "empty" 1 5 2 2)"
-  assert_eq "empty かつ attemptがmax到達(streak未達でも) -> stop:none(timeoutにしない)" "stop:none" "$(ci_wait_decision "empty" 5 5 1 3)"
-  assert_eq "pending かつ attempt未達 -> continue" "continue" "$(ci_wait_decision "pending" 2 5 0 2)"
-  assert_eq "pending かつ attemptがmax到達 -> stop:timeout" "stop:timeout" "$(ci_wait_decision "pending" 5 5 0 2)"
+  # 引数: classification attempt max_attempts empty_elapsed秒 none_confirm秒（#341: 回数ではなく待った時間で none を確定する）
+  assert_eq "red -> stop:red" "stop:red" "$(ci_wait_decision "red" 1 5 0 120)"
+  assert_eq "green -> stop:green" "stop:green" "$(ci_wait_decision "green" 1 5 0 120)"
+  assert_eq "empty かつ 0件の継続が0秒(初回) -> continue" "continue" "$(ci_wait_decision "empty" 1 31 0 120)"
+  assert_eq "empty かつ 0件の継続が30秒(旧実装では none だった) -> continue" "continue" "$(ci_wait_decision "empty" 2 31 30 120)"
+  assert_eq "empty かつ 0件の継続が119秒 -> continue" "continue" "$(ci_wait_decision "empty" 2 31 119 120)"
+  assert_eq "empty かつ 0件の継続が120秒に到達 -> stop:none" "stop:none" "$(ci_wait_decision "empty" 5 31 120 120)"
+  assert_eq "empty かつ 0件の継続が120秒超 -> stop:none" "stop:none" "$(ci_wait_decision "empty" 3 31 126 120)"
+  assert_eq "empty かつ attemptがmax到達(120秒未達でも) -> stop:none(timeoutにしない)" "stop:none" "$(ci_wait_decision "empty" 3 3 60 120)"
+  assert_eq "pending かつ attempt未達 -> continue" "continue" "$(ci_wait_decision "pending" 2 5 0 120)"
+  assert_eq "pending かつ attemptがmax到達 -> stop:timeout" "stop:timeout" "$(ci_wait_decision "pending" 5 5 0 120)"
 }
 
 echo ""
@@ -169,24 +173,6 @@ echo "=== main(): pending続きでtimeout ==="
 }
 
 echo ""
-echo "=== main(): checksが継続して空 -> none確定(2連続で早期確定) ==="
-{
-  fetch_pr_view() {
-    PR_VIEW_JSON='{"number":11,"url":"https://github.com/o/r/pull/11","state":"OPEN"}'
-    return 0
-  }
-  poll_call_count=0
-  fetch_pr_checks() {
-    poll_call_count=$((poll_call_count + 1))
-    echo '[]'
-  }
-  POLL_SLEEP_CMD=noop_sleep
-
-  output="$(main "11" 900 30)"
-  assert_eq "ci: none" "none" "$(jq -r '.ci' <<<"$output")"
-}
-
-echo ""
 echo "=== main(): timeout=0 は single-shot(ポーリングせず1回で確定) ==="
 {
   fetch_pr_view() {
@@ -204,10 +190,117 @@ echo "=== main(): timeout=0 は single-shot(ポーリングせず1回で確定) 
   assert_eq "timeout=0でpending -> stop:timeout相当(1回で確定)" "timeout" "$(jq -r '.ci' <<<"$output")"
 }
 
-# 1ジョブ失敗・他ジョブ実行中（#295）用の状態ディレクトリ。main は $(...) のサブシェルで動くため、
-# 呼び出し回数はファイルで数える。
+# main は $(...) のサブシェルで動くため、呼び出し回数・待った秒数はファイルで数える
+# （#295 の run の完了待ちと、#341 の「CI 無し」の確定の待ちのテストで使う）。
 STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/test-ci-wait.XXXXXX")"
 trap 'rm -rf "$STATE_DIR"' EXIT
+
+# ---------------------------------------------------------------------------
+# #341: 「CI 無し（none）」は、チェック 0 件が約 120 秒続いてから確定する（回数ではなく待った時間）。
+# 偽の時計: sleep を実際には待たず、渡された秒数を足し込むだけにする。偽の gh は、足し込んだ秒数
+# （＝ポーリング開始からの経過秒）に応じてチェックの一覧を返す。
+# ---------------------------------------------------------------------------
+reset_clock() { rm -f "$STATE_DIR"/*; echo 0 > "$STATE_DIR/elapsed"; }
+clock_sleep() { echo $(( $(cat "$STATE_DIR/elapsed") + $1 )) > "$STATE_DIR/elapsed"; }
+elapsed_seconds() { cat "$STATE_DIR/elapsed"; }
+fake_checks_pass='[{"name":"build","state":"SUCCESS","bucket":"pass","description":"","workflow":"CI","link":"l"}]'
+fake_checks_pending='[{"name":"build","state":"IN_PROGRESS","bucket":"pending","description":"","workflow":"CI","link":"l"}]'
+fake_checks_fail='[{"name":"test","state":"FAILURE","bucket":"fail","description":"","workflow":"CI","link":"https://github.com/o/r/actions/runs/777/job/1"}]'
+# CHECKS_APPEAR_AT 秒以降は CHECKS_AFTER を返し、それより前は 0 件を返す。
+fetch_pr_checks_by_clock() {
+  if [ "$(elapsed_seconds)" -ge "$CHECKS_APPEAR_AT" ]; then
+    echo "$CHECKS_AFTER"
+  else
+    echo '[]'
+  fi
+}
+fetch_pr_view() {
+  PR_VIEW_JSON='{"number":11,"url":"https://github.com/o/r/pull/11","state":"OPEN"}'
+  return 0
+}
+fetch_run_status() { echo completed; }
+fetch_run_log_failed() { printf 'FAIL: late check\n'; }
+POLL_SLEEP_CMD=clock_sleep
+
+echo ""
+echo "=== main(): ① ③ チェック 0 件のまま -> 約 120 秒経つまで none にならず、120 秒で none (#341) ==="
+{
+  fetch_pr_checks() { echo '[]'; }
+  reset_clock
+  output="$(main "11" 900 30)"
+  assert_eq "0件が続けば ci: none" "none" "$(jq -r '.ci' <<<"$output")"
+  assert_eq "none の確定までに 120 秒待った(30秒×4。旧実装は30秒)" "120" "$(elapsed_seconds)"
+}
+
+echo ""
+echo "=== main(): ② 60〜90 秒後にチェックが現れたら none ではなく結果の判定へ進む (#341) ==="
+{
+  fetch_pr_checks() { fetch_pr_checks_by_clock; }
+  for at in 60 90; do
+    CHECKS_APPEAR_AT=$at CHECKS_AFTER="$fake_checks_pass"; reset_clock
+    assert_eq "${at}秒後に pass が現れる -> ci: green" "green" "$(jq -r '.ci' <<<"$(main "11" 900 30)")"
+
+    CHECKS_APPEAR_AT=$at CHECKS_AFTER="$fake_checks_fail"; reset_clock
+    output="$(main "11" 900 30)"
+    assert_eq "${at}秒後に fail が現れる -> ci: red" "red" "$(jq -r '.ci' <<<"$output")"
+    assert_eq "${at}秒後に fail が現れる -> 失敗ログを取る" "true" "$(jq -r '.failure_log_excerpt' <<<"$output" | grep -q 'FAIL: late check' && echo true || echo false)"
+
+    CHECKS_APPEAR_AT=$at CHECKS_AFTER="$fake_checks_pending"; reset_clock
+    assert_eq "${at}秒後に pending が現れ終わらない -> ci: timeout(none にしない)" "timeout" "$(jq -r '.ci' <<<"$(main "11" 300 30)")"
+  done
+}
+
+echo ""
+echo "=== main(): ④ poll 間隔を変えても、none の確定までの待ちは約 120 秒 (#341) ==="
+{
+  fetch_pr_checks() { echo '[]'; }
+  # 120 秒に達した最初の poll で確定する（120 以上・120+間隔 未満）。
+  for interval_and_expected in "10:120" "7:126" "45:135" "120:120" "1:120"; do
+    interval="${interval_and_expected%%:*}" expected="${interval_and_expected##*:}"
+    reset_clock
+    output="$(main "11" 900 "$interval")"
+    assert_eq "間隔${interval}秒: ci: none" "none" "$(jq -r '.ci' <<<"$output")"
+    assert_eq "間隔${interval}秒: none の確定までに ${expected} 秒待った" "$expected" "$(elapsed_seconds)"
+  done
+}
+
+echo ""
+echo "=== main(): 0 件が途中で途切れたら、120 秒を数え直す (#341) ==="
+{
+  # 0〜60秒は 0 件、90秒に pending が 1 回だけ出て、その後はまた 0 件。
+  fetch_pr_checks() {
+    if [ "$(elapsed_seconds)" -eq 90 ]; then echo "$fake_checks_pending"; else echo '[]'; fi
+  }
+  reset_clock
+  output="$(main "11" 900 30)"
+  assert_eq "途切れた後も 0 件が続けば ci: none" "none" "$(jq -r '.ci' <<<"$output")"
+  assert_eq "途切れた後の 0 件(120秒〜)から数え直して 240 秒で確定" "240" "$(elapsed_seconds)"
+}
+
+echo ""
+echo "=== main(): timeout が 120 秒より短いときは、今の結果を変えない(timeout の時点で 0 件なら none) (#341) ==="
+{
+  fetch_pr_checks() { echo '[]'; }
+  reset_clock
+  output="$(main "11" 60 30)"
+  assert_eq "timeout=60: 枠の終わりで 0 件 -> ci: none(timeout にしない)" "none" "$(jq -r '.ci' <<<"$output")"
+  assert_eq "timeout=60: timeout の枠(60秒)を超えて待たない" "60" "$(elapsed_seconds)"
+
+  reset_clock
+  output="$(main "11" 0 30)"
+  assert_eq "timeout=0(single-shot): 0 件 -> ci: none" "none" "$(jq -r '.ci' <<<"$output")"
+  assert_eq "timeout=0(single-shot): 待たない" "0" "$(elapsed_seconds)"
+}
+
+echo ""
+echo "=== main(): 既定の timeout(900秒) の中で none が確定する (#341) ==="
+{
+  fetch_pr_checks() { echo '[]'; }
+  reset_clock
+  output="$(main "11")"
+  assert_eq "既定の引数: ci: none" "none" "$(jq -r '.ci' <<<"$output")"
+  assert_eq "既定の引数: 120 秒で確定(900秒の枠と ticket の ci ステップの 20 分に収まる)" "120" "$(elapsed_seconds)"
+}
 
 # 偽の GitHub: run 999 は status を run-finish-after 回目の照会で completed にする。--log-failed は
 # 本物と同じく run が completed になるまで何も返さない（stderr にだけ出す）。
