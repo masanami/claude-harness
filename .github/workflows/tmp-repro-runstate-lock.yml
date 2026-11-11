@@ -1,0 +1,31 @@
+# 一時: TestStaleLockTakeoverIsExclusive を Linux で再現・確認するためのジョブ。PR の最後のコミットで外す。
+name: tmp-repro-runstate-lock
+
+on:
+  push:
+    branches:
+      - fix/runstate-stale-lock-empty-owner
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    container: golang:1.25-bookworm
+    defaults:
+      run:
+        working-directory: runtime
+    env:
+      RUNSTATE_LOCK_DEBUG: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: count=50
+        run: go test -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ 2>&1 | tee /tmp/plain.log; echo "exit=${PIPESTATUS[0]}"; echo "fail lines: $(grep -c -- '--- FAIL' /tmp/plain.log)"; echo "debug lines: $(grep -c 'DEBUG' /tmp/plain.log)"
+        shell: bash
+      - name: count=50 -race
+        if: always()
+        run: go test -race -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ 2>&1 | tee /tmp/race.log; echo "exit=${PIPESTATUS[0]}"; echo "fail lines: $(grep -c -- '--- FAIL' /tmp/race.log)"; echo "debug lines: $(grep -c 'DEBUG' /tmp/race.log)"
+        shell: bash

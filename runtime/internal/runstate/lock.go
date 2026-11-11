@@ -68,6 +68,14 @@ func stale(dir string) bool {
 	}
 	fields := strings.Fields(string(data))
 	if len(fields) == 0 {
+		if os.Getenv("RUNSTATE_LOCK_DEBUG") != "" { // 一時: 原因の確認用。最後のコミットで外す
+			fi, _ := os.Stat(dir)
+			age := time.Duration(-1)
+			if fi != nil {
+				age = time.Since(fi.ModTime())
+			}
+			fmt.Fprintf(os.Stderr, "DEBUG stale: empty owner judged stale (lock dir age %v) %s\n", age, dir)
+		}
 		return true
 	}
 	pid, err := strconv.Atoi(fields[0])
@@ -91,6 +99,10 @@ func breakStale(dir string) {
 	}
 	defer os.Remove(guard)
 	if stale(dir) {
+		if os.Getenv("RUNSTATE_LOCK_DEBUG") != "" { // 一時: 原因の確認用。最後のコミットで外す
+			b, _ := os.ReadFile(filepath.Join(dir, "owner"))
+			fmt.Fprintf(os.Stderr, "DEBUG breakStale: removing lock whose owner was %q\n", b)
+		}
 		os.RemoveAll(dir)
 	}
 }
