@@ -11,29 +11,45 @@ permissions:
 
 jobs:
   repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [container, runner]
     runs-on: ubuntu-latest
-    container: golang:1.25-bookworm
+    container: ${{ matrix.env == 'container' && 'golang:1.25-bookworm' || null }}
     defaults:
       run:
         working-directory: runtime
+        shell: bash
     env:
       RUNSTATE_LOCK_DEBUG: "1"
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - if: matrix.env == 'runner'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: runtime/go.mod
+          cache-dependency-path: runtime/go.sum
       - name: count=50
+        if: always()
         run: |
-          go test -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ 2>&1 | tee /tmp/plain.log
-          echo "exit=${PIPESTATUS[0]}"
-          echo "fail lines: $(grep -c -- '--- FAIL' /tmp/plain.log)"
-          echo "debug lines: $(grep -c 'DEBUG' /tmp/plain.log)"
-        shell: bash
+          nproc; go version
+          go test -v -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ > /tmp/plain.log 2>&1; echo "exit=$?"
+          echo "fail=$(grep -c -- '--- FAIL' /tmp/plain.log) pass=$(grep -c -- '--- PASS' /tmp/plain.log) debug=$(grep -c 'DEBUG' /tmp/plain.log)"
+          grep -E 'DEBUG|does not follow|events, want' /tmp/plain.log | head -20
+      - name: count=50 under CPU load
+        if: always()
+        run: |
+          for i in $(seq 1 $(( $(nproc) * 2 ))); do (while :; do :; done) & done
+          go test -v -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ > /tmp/load.log 2>&1; echo "exit=$?"
+          kill $(jobs -p) 2>/dev/null
+          echo "fail=$(grep -c -- '--- FAIL' /tmp/load.log) pass=$(grep -c -- '--- PASS' /tmp/load.log) debug=$(grep -c 'DEBUG' /tmp/load.log)"
+          grep -E 'DEBUG|does not follow|events, want' /tmp/load.log | head -20
       - name: count=50 -race
         if: always()
         run: |
-          go test -race -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ 2>&1 | tee /tmp/race.log
-          echo "exit=${PIPESTATUS[0]}"
-          echo "fail lines: $(grep -c -- '--- FAIL' /tmp/race.log)"
-          echo "debug lines: $(grep -c 'DEBUG' /tmp/race.log)"
-        shell: bash
+          go test -v -race -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ > /tmp/race.log 2>&1; echo "exit=$?"
+          echo "fail=$(grep -c -- '--- FAIL' /tmp/race.log) pass=$(grep -c -- '--- PASS' /tmp/race.log) debug=$(grep -c 'DEBUG' /tmp/race.log)"
+          grep -E 'DEBUG|does not follow|events, want' /tmp/race.log | head -20
