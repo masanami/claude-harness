@@ -21,8 +21,6 @@ jobs:
       run:
         working-directory: runtime
         shell: bash
-    env:
-      RUNSTATE_LOCK_DEBUG: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,6 +47,15 @@ jobs:
           kill $(jobs -p) 2>/dev/null
           echo "fail=$(grep -c -- '--- FAIL' /tmp/load.log) pass=$(grep -c -- '--- PASS' /tmp/load.log) debug=$(grep -c 'DEBUG' /tmp/load.log)"
           echo "conflicts=$(grep -cE 'does not follow|events, want' /tmp/load.log)"; grep -m 10 -E 'does not follow|events, want' /tmp/load.log; grep -m 3 'DEBUG stale' /tmp/load.log
+      - name: count=200 under CPU load
+        if: always()
+        run: |
+          set +e +o pipefail
+          for i in $(seq 1 $(( $(nproc) * 2 ))); do (while :; do :; done) & done
+          go test -v -run TestStaleLockTakeoverIsExclusive -count=200 ./internal/runstate/ > /tmp/load200.log 2>&1; echo "exit=$?"
+          kill $(jobs -p) 2>/dev/null
+          echo "fail=$(grep -c -- '--- FAIL' /tmp/load200.log) pass=$(grep -c -- '--- PASS' /tmp/load200.log)"
+          echo "conflicts=$(grep -cE 'does not follow|events, want' /tmp/load200.log)"; grep -m 10 -E 'does not follow|events, want' /tmp/load200.log
       - name: count=50 -race
         if: always()
         run: |
