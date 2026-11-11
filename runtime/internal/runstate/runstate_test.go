@@ -477,6 +477,68 @@ func TestStaleLockTakeoverIsExclusive(t *testing.T) {
 	}
 }
 
+// 取られた直後で owner の中身がまだ空のロック（mkdir と owner の書き込みの間）は、古いと判定しない。
+// 空の owner を「持ち主が居ない」とみなすと、取られたばかりのロックを他の書き手が消し、2 者が同時にロックを持つ。
+func TestFreshLockWithEmptyOwnerIsNotStale(t *testing.T) {
+	r := newRun(t)
+	dir := filepath.Join(r.Dir, lockDir)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "owner"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if stale(dir) {
+		t.Fatal("a just-taken lock whose owner is still empty was judged stale")
+	}
+	breakStale(dir)
+	if _, err := os.Stat(filepath.Join(dir, "owner")); err != nil {
+		t.Fatalf("a just-taken lock was broken: %v", err)
+	}
+}
+
+// 空の owner のまま放置されたロック（書き込みの前に落ちた）は、owner の無いロックと同じく十分に古ければ奪う。
+func TestOldLockWithEmptyOwnerIsStale(t *testing.T) {
+	r := newRun(t)
+	dir := filepath.Join(r.Dir, lockDir)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "owner"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * lockOrphanAt)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if !stale(dir) {
+		t.Fatal("an abandoned lock with an empty owner was not judged stale")
+	}
+	if _, err := r.Append(sample()[0]); err != nil {
+		t.Fatalf("append with an abandoned lock: %v", err)
+	}
+}
+
+// ロックを取った書き手の owner は、中身の無い状態で他者から見えない（一時ファイルに書いてから置く）。
+func TestLockLeavesNoTemporaryOwner(t *testing.T) {
+	r := newRun(t)
+	unlock, err := r.lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(r.Dir, lockDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "owner" {
+		t.Fatalf("lock directory holds %v, want only owner", entries)
+	}
+	unlock()
+	if _, err := os.Stat(filepath.Join(r.Dir, lockDir)); !os.IsNotExist(err) {
+		t.Fatalf("lock directory left behind: %v", err)
+	}
+}
+
 func TestUnlockLeavesOthersLock(t *testing.T) {
 	r := newRun(t)
 	unlock, err := r.lock()
