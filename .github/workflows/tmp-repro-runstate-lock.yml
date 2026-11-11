@@ -23,9 +23,17 @@ jobs:
         with:
           persist-credentials: false
       - name: count=50
-        run: go test -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ 2>&1 | tee /tmp/plain.log; echo "exit=${PIPESTATUS[0]}"; echo "fail lines: $(grep -c -- '--- FAIL' /tmp/plain.log)"; echo "debug lines: $(grep -c 'DEBUG' /tmp/plain.log)"
+        run: |
+          go test -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ 2>&1 | tee /tmp/plain.log
+          echo "exit=${PIPESTATUS[0]}"
+          echo "fail lines: $(grep -c -- '--- FAIL' /tmp/plain.log)"
+          echo "debug lines: $(grep -c 'DEBUG' /tmp/plain.log)"
         shell: bash
       - name: count=50 -race
         if: always()
-        run: go test -race -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ 2>&1 | tee /tmp/race.log; echo "exit=${PIPESTATUS[0]}"; echo "fail lines: $(grep -c -- '--- FAIL' /tmp/race.log)"; echo "debug lines: $(grep -c 'DEBUG' /tmp/race.log)"
+        run: |
+          go test -race -run TestStaleLockTakeoverIsExclusive -count=50 ./internal/runstate/ 2>&1 | tee /tmp/race.log
+          echo "exit=${PIPESTATUS[0]}"
+          echo "fail lines: $(grep -c -- '--- FAIL' /tmp/race.log)"
+          echo "debug lines: $(grep -c 'DEBUG' /tmp/race.log)"
         shell: bash
