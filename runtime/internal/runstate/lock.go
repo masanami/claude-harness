@@ -30,7 +30,7 @@ func (r *Run) lock() (func(), error) {
 		err := os.Mkdir(dir, 0o755)
 		if err == nil {
 			owner := filepath.Join(dir, "owner")
-			if werr := os.WriteFile(owner, []byte(token), 0o644); werr != nil {
+			if werr := writeOwner(dir, token); werr != nil {
 				os.RemoveAll(dir)
 				return nil, werr
 			}
@@ -55,28 +55,29 @@ func (r *Run) lock() (func(), error) {
 	}
 }
 
+// writeOwner は owner を一時ファイルに書いてから rename で置く。os.WriteFile で owner を直接書くと、
+// ファイルができてから中身が書かれるまでの間、他の書き手に空の owner が見える。
+func writeOwner(dir, token string) error {
+	tmp := filepath.Join(dir, "owner.tmp")
+	if err := os.WriteFile(tmp, []byte(token), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, "owner"))
+}
+
 // stale は持ち主が居ないロックかを返す。
 func stale(dir string) bool {
 	data, err := os.ReadFile(filepath.Join(dir, "owner"))
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return false
-		}
-		// mkdir と owner の書き込みの間に落ちたロック。作られてから十分に時間が経っていれば放棄とみなす。
-		fi, serr := os.Stat(dir)
-		return serr == nil && time.Since(fi.ModTime()) > lockOrphanAt
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false
 	}
 	fields := strings.Fields(string(data))
 	if len(fields) == 0 {
-		if os.Getenv("RUNSTATE_LOCK_DEBUG") != "" { // 一時: 原因の確認用。最後のコミットで外す
-			fi, _ := os.Stat(dir)
-			age := time.Duration(-1)
-			if fi != nil {
-				age = time.Since(fi.ModTime())
-			}
-			fmt.Fprintf(os.Stderr, "DEBUG stale: empty owner judged stale (lock dir age %v) %s\n", age, dir)
-		}
-		return true
+		// owner が無いか空のロック: 取られた直後（mkdir と owner の書き込みの間）か、その間に落ちたロック。
+		// 中身では見分けられないので、作られてから十分に時間が経っていれば放棄とみなす。空の owner を
+		// 即座に放棄とみなすと、取られたばかりのロックを消し、2 者が同時にロックを持つ。
+		fi, serr := os.Stat(dir)
+		return serr == nil && time.Since(fi.ModTime()) > lockOrphanAt
 	}
 	pid, err := strconv.Atoi(fields[0])
 	if err != nil || pid <= 0 {
@@ -99,10 +100,6 @@ func breakStale(dir string) {
 	}
 	defer os.Remove(guard)
 	if stale(dir) {
-		if os.Getenv("RUNSTATE_LOCK_DEBUG") != "" { // 一時: 原因の確認用。最後のコミットで外す
-			b, _ := os.ReadFile(filepath.Join(dir, "owner"))
-			fmt.Fprintf(os.Stderr, "DEBUG breakStale: removing lock whose owner was %q\n", b)
-		}
 		os.RemoveAll(dir)
 	}
 }
