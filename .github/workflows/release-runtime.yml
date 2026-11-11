@@ -35,8 +35,30 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
+      # make check の前提と回し方は PR の CI（.github/workflows/check.yml）と同じにする（#353）。
+      # node は skills/demo の mjs を読むテストと、テスト用の stub（jest の代わり）が使う。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # check-bash のテストが使う外部コマンド: jq・node・git・ps。ubuntu-latest の既定のイメージに
+      # 入っていない場合に限って足す（check.yml と同じ）。
+      - name: Install the tools the bash tests need
+        run: |
+          missing=""
+          for c in jq git ps; do command -v "$c" >/dev/null 2>&1 || missing="$missing $c"; done
+          if [ -n "$missing" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq jq git procps
+          fi
+          jq --version; git --version; node --version; bash --version | head -1
+
+      # GitHub Actions の run の段は SIGPIPE を無視した状態で始まる。そのままだと test-read-plugin-doc.sh の
+      # パイプ早期終了の診断が EPIPE のエラーで落ちる（runtime/v5.0.0 のリリースで実際に落ちた。#353）。
+      # check.yml と同じく既定の扱いへ戻してから make check を回す。
       - name: Quality gates
-        run: make check
+        run: |
+          perl -e '$SIG{PIPE} = "DEFAULT"; exec @ARGV or die "exec: $!"' make check
 
       - name: Build the release archives
         run: make dist VERSION="${{ steps.version.outputs.version }}" DIST_DIR=dist
