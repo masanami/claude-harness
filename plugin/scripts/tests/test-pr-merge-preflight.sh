@@ -406,6 +406,13 @@ MAIN_OUTPUT="$(main "123" 1)"
 assert_eq "fetch_pr_checksはポーリング後に1回だけ呼ばれる" "1" "$(cat "$CHECKS_CALL_COUNT_FILE")"
 assert_eq "fetch_pr_recheckが1回呼ばれる" "1" "$(cat "$RECHECK_CALL_COUNT_FILE")"
 
+# 取得の失敗は「チェック無し」扱いにせず exit 1（#343）
+fetch_pr_checks() { return 1; }
+FAIL_RC=0
+FAIL_OUT="$(main "123" 1 2>/dev/null)" || FAIL_RC=$?
+assert_eq "fetch_pr_checks失敗時は exit 1" "1" "$FAIL_RC"
+assert_eq "fetch_pr_checks失敗時は判定JSONを出さない" "" "$FAIL_OUT"
+
 rm -f "$CHECKS_CALL_COUNT_FILE" "$RECHECK_CALL_COUNT_FILE"
 unset -f fetch_default_branch fetch_pr_view fetch_pr_reviews_only fetch_pr_checks fetch_pr_recheck fetch_pr_review_decision
 
@@ -475,11 +482,11 @@ fetch_pr_recheck() {
 # shellcheck disable=SC2329  # main から間接的に呼ばれる（関数上書き）
 fetch_pr_review_decision() { printf 'APPROVED'; }
 
-# gh pr checks のみ「空出力+失敗」を返す最小スタブ（fetch_pr_checks は common.sh の実物）
+# gh pr checks のみ「no checks reported（0件）」を返す最小スタブ（fetch_pr_checks は common.sh の実物）
 # shellcheck disable=SC2329  # fetch_pr_checks(common.sh実物)から間接的に呼ばれる
 gh() {
   if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
-    printf ''
+    echo "no checks reported on the 'x' branch" >&2
     return 1
   fi
   return 1
@@ -491,7 +498,7 @@ MAIN_OUTPUT_WARN="$(main "999" 0 2>"$WARN_STDERR_FILE")"
 
 assert_eq "main()経由のfetch_pr_checks呼び出し(warn_on_empty=1合成)はCI空時にWarningをstderrへ出す" \
   "1" \
-  "$(grep -c 'Warning: no CI checks data available for PR #999' "$WARN_STDERR_FILE")"
+  "$(grep -c 'Warning: no CI checks reported for PR #999' "$WARN_STDERR_FILE")"
 assert_eq "main()経由でもCI空時はci.statusがnoneになる(fetch_pr_checksが空配列を返す経路の確認)" \
   "none" \
   "$(jq -r '.ci.status' <<<"$MAIN_OUTPUT_WARN")"
