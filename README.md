@@ -171,6 +171,7 @@ make check
 
 - **CI（ubuntu だけ）**: main 宛の PR ごとに、GitHub Actions が ubuntu で `make check` を回します（`.github/workflows/check.yml`。チェック名は `check / make-check`）。
 - **macOS は CI で回りません**（Actions の macOS の分数は 10 倍に数えられるため置いていません）。macOS で動く変更は、PR を出す前に手元の macOS で `make check` を回して確かめてください。
+- **Linux 向けのクロス検査**: `make check`（`check-go`）は、どの OS で回しても Linux の amd64・arm64 向けに `go vet ./...` とテストのビルドを行います（`make check-go-linux`。ビルドだけで、テストは実行しません）。
 - 手元で必要なもの: Go（版は `runtime/go.mod`）・`jq`・`node`・`git`。どれかが無いとゲートは skip せず失敗します。
 
 ---

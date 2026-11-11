@@ -3,7 +3,8 @@
 #
 #   make check           次の 3 つをすべて実行し、1 つでも落ちれば非 0 で終わる。
 #   make check-bash      bash テスト全件（plugin/scripts/tests/*.sh）を順に実行し、失敗したテスト名を集計する。
-#   make check-go        runtime/ の gofmt・go vet ./...・go test ./...
+#   make check-go        runtime/ の gofmt・go vet ./...・go test ./...・check-go-linux
+#   make check-go-linux  Linux（amd64・arm64）向けの go vet ./... とテストバイナリのビルド（Linux 上での実行はしない）
 #   make check-validate  harness validate（runtime/workflows/*.yaml の静的検証。作業ツリーの定義と、埋め込んだ定義の両方）
 #   make bundle          埋め込む定義・スクリプトの写しを runtime/internal/bundle/files/ へ作る（§6.5 の S1。check-go・dist の前提）
 #   make dist VERSION=X.Y.Z  リリースの成果物を $(DIST_DIR)/ へ作る（§6.4。タグ runtime/vX.Y.Z の push で GitHub Actions が呼ぶ）
@@ -19,8 +20,9 @@ BUNDLE_DIR := $(RUNTIME_DIR)/internal/bundle/files
 VERSION_PKG := github.com/masanami/claude-harness/runtime/internal/version
 DIST_DIR ?= dist
 PLATFORMS ?= darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
+LINUX_CHECK_ARCHS ?= amd64 arm64
 
-.PHONY: check check-bash check-go check-validate require-go bundle dist
+.PHONY: check check-bash check-go check-go-linux check-validate require-go bundle dist
 
 check:
 	@failed=""; \
@@ -86,6 +88,23 @@ check-go: require-go bundle
 	cd $(RUNTIME_DIR) && go vet ./...
 	@echo "=== go test ./..."
 	cd $(RUNTIME_DIR) && go test ./...
+	@$(MAKE) --no-print-directory check-go-linux
+
+# 手元の OS（macOS）だけで通すと、Linux に無い API（syscall.Getsid 等）を使ったテストが、Linux でビルドできないまま
+# 通過してしまう（PR #348）。Linux の各アーキテクチャ向けに vet とテストのビルドだけを行う（Linux 上での実行はしない）。
+# テストのビルドは -exec /usr/bin/true で全パッケージを一度に通す（go test -c -o /dev/null は 1 パッケージしか取れない）。
+# 走らせるのは true なので、ok と表示されてもテストは実行されていない。cgo は使わない（dist と同じく CGO_ENABLED=0）。
+# 途中で落ちても全アーキテクチャを最後まで回し、落ちたものをまとめて報告する。
+check-go-linux: require-go bundle
+	@failed=""; \
+	for arch in $(LINUX_CHECK_ARCHS); do \
+	  echo "=== GOOS=linux GOARCH=$${arch} go vet ./..."; \
+	  (cd $(RUNTIME_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH="$${arch}" go vet ./...) || failed="$${failed} vet/linux/$${arch}"; \
+	  echo "=== GOOS=linux GOARCH=$${arch} go test -run '^$$' -exec /usr/bin/true ./... (build only)"; \
+	  (cd $(RUNTIME_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH="$${arch}" go test -run '^$$' -exec /usr/bin/true ./...) || failed="$${failed} test-build/linux/$${arch}"; \
+	done; \
+	if [ -n "$${failed}" ]; then echo "NG: Linux cross check failed:$${failed}"; exit 1; fi; \
+	echo "=== check-go-linux: passed ($(LINUX_CHECK_ARCHS))"
 
 # 2 回目は埋め込んだ定義を、作業ツリーの外（一時ディレクトリ）から --workflow-dir / --scripts-dir 無しで検証する。
 # 展開先（HARNESS_DATA_DIR）も一時ディレクトリへ向け、利用者の ~/.local/share を汚さない。
