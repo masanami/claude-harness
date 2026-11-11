@@ -739,8 +739,9 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 ```text
 make check
   ├─ bash テスト全件（plugin/scripts/tests/*.sh を順に実行し、失敗したテスト名を集計。1 本でも落ちれば非 0）
-  ├─ cd runtime && go vet ./... && go test ./...
-  └─ harness validate（runtime/workflows/*.yaml の静的検証）
+  ├─ cd runtime && gofmt -l .（未整形のファイルが 1 つでもあれば非 0）&& go vet ./... && go test ./...
+  │    └─ Linux（amd64・arm64）向けの go vet ./... とテストのビルド（make check-go-linux。Linux 上での実行はしない）
+  └─ harness validate（runtime/workflows/*.yaml の静的検証。作業ツリーの定義と、埋め込んだ定義の両方）
 ```
 
 - `go` が無い環境では **skip ではなく失敗**にする（`quality-check-runner` が「ゲートが 1 つも実行されていない」を `pass` にしない理由と同じ。検査していないものを通過と報告しない）。
