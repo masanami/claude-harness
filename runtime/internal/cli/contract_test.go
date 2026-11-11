@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/masanami/claude-harness/runtime/internal/runstate"
 )
@@ -14,8 +15,52 @@ import (
 // contractKeys は契約 v1 の JSON が持つキー（過不足なし）。
 var contractKeys = "artifacts,contract_version,cost_usd,requested_action,run_id,state,summary"
 
-// contract は harness contract <args> を実行し、終了コード 0 と契約 v1 の形を確かめて返す。
+// contract は harness contract <args> を実行し、終了コード 0 と契約 v1 の形を確かめて返す。start は run を切り離して
+// すぐ戻る（#347）ので、run を始めた start は、返った JSON が start の直後の状態であることを確かめてから、contract
+// status で run が running でなくなるまで待ち、その status の JSON を返す（start の直後の JSON そのものは contractNow
+// で読む）。
 func (h *harness) contract(args ...string) (contractDoc, string) {
+	h.t.Helper()
+	d, errOut := h.contractNow(args...)
+	if len(args) == 0 || args[0] != "start" || d.RunID == nil {
+		return d, errOut
+	}
+	checkJustStarted(h.t, d.State, d.RequestedAction != nil)
+	return h.settle(*d.RunID), errOut
+}
+
+// checkJustStarted は contract start が返した state が、start の直後にありうる値かを確かめる。start は run の終わりを
+// 待たないが、契約の state は run の状態そのもの（§5.6）なので、切り離した runner が start の読む前にゲートへ着いて
+// いれば waiting になる（Linux で短い run を流すとそうなる）。終わりの状態（succeeded・failed・cancelled）は、start が
+// run の終わりを待ったことを意味するので受け付けない。waiting なら requested_action があり、running なら無い。
+func checkJustStarted(t *testing.T, state string, hasAction bool) {
+	t.Helper()
+	switch {
+	case state == runstate.StatusRunning && !hasAction, state == runstate.StatusWaiting && hasAction:
+	default:
+		t.Fatalf("contract start returned state %q (requested_action present: %v), want running or waiting (it does not wait for the run to end)", state, hasAction)
+	}
+}
+
+// settle は contract status を run が running でなくなるまで読み、その JSON を返す。
+func (h *harness) settle(id string) contractDoc {
+	h.t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		d, _ := h.contractNow("status", id)
+		if d.State != runstate.StatusRunning {
+			h.waitRunnerExit(h.statusOf(id))
+			return d
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatalf("run %s is still running: %+v", id, d)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// contractNow は harness contract <args> を 1 回実行し、終了コード 0 と契約 v1 の形を確かめて返す。
+func (h *harness) contractNow(args ...string) (contractDoc, string) {
 	h.t.Helper()
 	out, errOut, code := h.run(append([]string{"contract"}, args...)...)
 	if code != ExitOK {

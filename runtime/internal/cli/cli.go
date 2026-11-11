@@ -80,8 +80,10 @@ func (env Env) channel() string {
 const usage = `usage: harness <command> [options]
 
 commands:
-  run [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [--input NAME=VALUE]... <workflow>
-      start a run and advance it until it ends or waits at a gate (exit 3 with the gate as JSON)
+  run [--detach] [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [--input NAME=VALUE]... <workflow>
+      start a run and advance it until it ends or waits at a gate (exit 3 with the gate as JSON);
+      with --detach, advance it in a detached process instead (a new session, its output in <run dir>/runner.log),
+      print the run id and exit 0 at once; follow it with status. The run then outlives this command and its caller
   status [--json] <run-id>
       show where a run is (the event log is the source of truth)
   runs [--json]
@@ -141,6 +143,8 @@ func Main(args []string, env Env) int {
 	switch cmd {
 	case "run":
 		return cmdRun(rest, env)
+	case detachedRunnerCmd:
+		return cmdRunDetached(rest, env)
 	case "status":
 		return cmdStatus(rest, env)
 	case "runs":
@@ -326,7 +330,7 @@ func runsDir(env Env) (string, error) {
 func cmdRun(args []string, env Env) int {
 	flags, pos, err := parseArgs(args,
 		flagSpec{name: "workflow-dir", value: true}, flagSpec{name: "scripts-dir", value: true},
-		flagSpec{name: "override", value: true}, flagSpec{name: "input", value: true, multi: true})
+		flagSpec{name: "override", value: true}, flagSpec{name: "input", value: true, multi: true}, flagSpec{name: "detach"})
 	if err != nil {
 		return usageErr(env, err)
 	}
@@ -383,6 +387,21 @@ func cmdRun(args []string, env Env) int {
 	}
 	tools(eng, env)
 	fmt.Fprintf(env.Stderr, startedMsg, eng.Run.ID, eng.Run.Dir)
+	if _, ok := flags["detach"]; ok {
+		// 切り離す（#347）: 進めるのは起動した runner。この呼び出しは run ID を出してすぐ戻る。
+		if _, err := detach(env, eng.Run, cwd); err != nil {
+			fmt.Fprintf(env.Stderr, "harness: run %s: %v\n", eng.Run.ID, err)
+			return ExitFailed
+		}
+		fmt.Fprintln(env.Stdout, eng.Run.ID)
+		return ExitOK
+	}
+	unlock, err := eng.Run.RunnerLock()
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+		return ExitFailed
+	}
+	defer unlock()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	st, err := eng.Loop(ctx)
@@ -597,7 +616,7 @@ func runnerAlive(st *runstate.State) *bool {
 	if st.Status != runstate.StatusRunning {
 		return nil
 	}
-	alive := runstate.Alive(st.PID)
+	alive := runstate.RunnerAlive(st)
 	return &alive
 }
 
@@ -665,7 +684,7 @@ func cmdStatus(args []string, env Env) int {
 	if st.Reason != "" {
 		fmt.Fprintf(env.Stdout, " (%s)", st.Reason)
 	}
-	if !runstate.Terminal(st.Status) && !runstate.Alive(st.PID) {
+	if !runstate.Terminal(st.Status) && !runstate.RunnerAlive(st) {
 		fmt.Fprintf(env.Stdout, " (runner pid %d is not alive; nothing is advancing this run)", st.PID)
 	}
 	fmt.Fprintf(env.Stdout, "\nupdated:  %s\nrun dir:  %s\n", st.UpdatedAt, run.Dir)
@@ -798,6 +817,14 @@ func cmdResolve(actor string, args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "harness: run %s already ended as %s; nothing to %s\n", st.RunID, st.Status, actor)
 		return ExitFailed
 	}
+	// 同じ run を 2 つのプロセスが進めない（切り離した runner が進めている run を横から進めない。#347）。
+	unlock, err := run.RunnerLock()
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
+		writeJSON(env.Stdout, view(run, st, nil))
+		return ExitFailed
+	}
+	defer unlock()
 	// runner が落ちていれば、残った子プロセスを止め、実行中だったステップを interrupted にする（§4.5。自動で再実行しない）。
 	engine.StopOrphans(st, 5*time.Second)
 	if st, err = engine.Interrupt(run); err != nil {
@@ -923,7 +950,7 @@ func cmdCancel(args []string, env Env) int {
 		if runstate.Terminal(st.Status) {
 			break
 		}
-		if st.Status == runstate.StatusWaiting || !runstate.Alive(st.PID) {
+		if st.Status == runstate.StatusWaiting || !runstate.RunnerAlive(st) {
 			// runner が居ない（ゲートで待っている run、または落ちた run）。子プロセスが残っていれば止め、停止を自分で記録する。
 			// 待機中の run の PID は終わった runner のもので、別のプロセスに再利用されていても待たない。
 			for _, u := range st.Units {

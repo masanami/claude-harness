@@ -61,19 +61,18 @@ command -v harness
 
 ### 3. 起動
 
-`--worktree` があればその絶対パス、無ければ現在のリポジトリのルートを `{起点}` として、Bash ツールで **`run_in_background: true`** と **`timeout: 7200000`**（指定できる最大の 2 時間）を指定して起動する（`ticket` は数十分〜数時間かかり、前面の Bash の上限 10 分に収まらない）:
-
-- **`timeout` を省いて起動しない。** バックグラウンドの Bash も `timeout` の既定の 600000（10 分）に達すると止められ、止められた `harness run` は run を取り消しとして記録する（`harness status {run-id} --json` の `.status` が `cancelled`、`.cancelled.actor` が `signal`）。実例では、`timeout` を省いた run が起動のちょうど 10 分後に取り消され、`timeout: 7200000` で起動し直した run はゲートまで進んだ
-- **`run_in_background: true` を付けずに前面で起動しない。** 前面の Bash は 10 分で打ち切られ（バックグラウンドへ移されても、そこで同じ既定の上限に達すると止められる）、run は同じく取り消される
+`--worktree` があればその絶対パス、無ければ現在のリポジトリのルートを `{起点}` として、次のコマンドを Bash ツールの前面で実行する。`--detach` により、run を進めるプロセスは呼び出し元から切り離されて run がゲートか終端に達するまで動き続け、このコマンドは run ID を標準出力に 1 行出してすぐ終わる:
 
 ```bash
-cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}" harness run --input issue={番号} ticket
+cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}" harness run --detach --input issue={番号} ticket
 ```
+
+- **`--detach` を外して起動しない**（外すと run はこの Bash のプロセスの中で進み、Bash が上限で止められると run も取り消される）
 
 - `--base` があれば `--input base={base}`、`--worktree` があれば `--input worktree={worktreeの絶対パス}` を `ticket` の前に足す
 - `HARNESS_CLAUDE_PERMISSION_MODE` は runtime が起動する `claude -p` に `--permission-mode` で渡るモード。利用者が環境変数で設定していればその値、無ければ `auto` になる（コマンドの `${...:-auto}` のまま渡す。値を自分で書き換えない）
 
-起動したタスクの出力の標準エラーに `harness: run <run-id> started (<run ディレクトリ>)` の行が出る。この `<run-id>` を以降で使う。この行が出ずにタスクが終わった場合は、終了コードで分ける:
+終了コード 0 なら、標準出力の 1 行が `<run-id>` である。これを以降で使う。0 以外なら run を進めていない（run を始めた後に切り離せなかった場合は、標準エラーに `harness: run <run-id> started` の行と理由が出る）。終了コードで分ける:
 
 | 終了コード | 意味 | 本スキルの動作 |
 |---|---|---|
@@ -83,14 +82,14 @@ cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PE
 
 ### 4. 合流（run がゲートか終端に達するまでターンを終えない）
 
-**`harness run` が終わる前に最終応答・返却をしない**（サブエージェントの中では、ターンを終えた時点で呼び出し元へ返却され、後から届く完了通知は受け取れない）。次のコマンドを Bash ツールの前面で（`timeout: 600000` を指定して）、出力が `running` 以外になるまで繰り返す:
+**run がゲートか終端に達する前に最終応答・返却をしない**（サブエージェントの中では、ターンを終えた時点で呼び出し元へ返却される）。次のコマンドを Bash ツールの前面で（`timeout: 600000` を指定して）、出力が `running` 以外になるまで繰り返す:
 
 ```bash
 end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)" != running ] || [ $SECONDS -ge $end ]; do sleep 10; done; harness status {run-id} --json | jq -r .status
 ```
 
 - 先頭が `sleep` のコマンドは拒否される。上の形（上限付きの `until` ループ）のまま使う
-- 起動したタスクの完了通知が先に届いたら、そこで繰り返しをやめ、`harness status {run-id} --json` を読む。通知が「時間の上限で止められた」旨で、`.status` が `cancelled`・`.cancelled.actor` が `signal` なら、起動のタスクの上限で run が取り消されている（`timeout: 7200000` でも 2 時間を超えると起こる）。**同じ作業ツリーで run を起動し直す前に、取り消された run の ID と費用（`.units[0].budget.spent_usd`）を返却に残す**
+- `.status` が `cancelled` で終わった run を同じ作業ツリーで起動し直す場合は、**起動し直す前に、取り消された run の ID と費用（`.units[0].budget.spent_usd`）を返却に残す**
 - `harness status {run-id} --json` の `runner_alive` が `false` のまま `running` なら、run を進めるプロセスが落ちている。繰り返しをやめ、`harness status {run-id}` が示す状態（`interrupted` ゲート）を下の表に従って扱う
 - 合流できないまま返却せざるを得ない場合は、**run を取り消さず**、`<run-id>` と回収手段（`harness status {run-id} --json`）と「合流できていない」事実を返却に明記する
 
@@ -130,7 +129,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 
 ## 完了報告 / 呼び出し元への返却
 
-**`harness run` との合流（上記 4）を済ませてから返す。**
+**run との合流（上記 4）を済ませてから返す。**
 
 1. run ID と run の状態（待っているゲート、または終端の理由）
 2. 実装サマリー（`outputs.implement.summary`）

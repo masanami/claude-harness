@@ -103,3 +103,24 @@ func Alive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
+
+// RunnerLock は run を進めるプロセス（runner）であることのロックを取る（run ディレクトリの runner.lock への flock。
+// 取れなければ、ほかのプロセスが同じ run を進めている）。ロックはプロセスが終われば（落ちても）OS が外すので、
+// 落ちた runner のロックが残ることはない。返す関数で外す（#347: 同じ run を 2 つのプロセスが進めない）。
+func (r *Run) RunnerLock() (func(), error) {
+	f, err := os.OpenFile(filepath.Join(r.Dir, RunnerLockFile), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("run %s is already being advanced by another runner (%s is locked)", r.ID, RunnerLockFile)
+		}
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}

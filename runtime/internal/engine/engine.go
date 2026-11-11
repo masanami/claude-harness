@@ -95,6 +95,7 @@ func Start(p StartParams) (*Engine, error) {
 			Origin:      p.Origin,
 			Cwd:         p.Cwd,
 			PID:         os.Getpid(),
+			PIDStart:    runstate.SelfStart(),
 			ScriptsDir:  p.ScriptsDir,
 			WorkflowDir: p.WorkflowDir,
 			CLIVersion:  p.CLIVersion,

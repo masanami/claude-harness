@@ -92,15 +92,17 @@ type WorkflowRecord struct {
 
 // RunStarted は run の開始。
 type RunStarted struct {
-	RunID       string                     `json:"run_id"`
-	Workflow    WorkflowRecord             `json:"workflow"`
-	Inputs      map[string]json.RawMessage `json:"inputs"`
-	Limits      map[string]float64         `json:"limits,omitempty"`
-	Origin      string                     `json:"origin"`
-	Cwd         string                     `json:"cwd"`
-	PID         int                        `json:"pid"`
-	ScriptsDir  string                     `json:"scripts_dir"`
-	WorkflowDir string                     `json:"workflow_dir"`
+	RunID    string                     `json:"run_id"`
+	Workflow WorkflowRecord             `json:"workflow"`
+	Inputs   map[string]json.RawMessage `json:"inputs"`
+	Limits   map[string]float64         `json:"limits,omitempty"`
+	Origin   string                     `json:"origin"`
+	Cwd      string                     `json:"cwd"`
+	PID      int                        `json:"pid"`
+	// PIDStart は PID のプロセスの開始時刻（ProcStart。PID の再利用を見分ける。#347）。この版より前の run には無い。
+	PIDStart    string `json:"pid_start,omitempty"`
+	ScriptsDir  string `json:"scripts_dir"`
+	WorkflowDir string `json:"workflow_dir"`
 	// CLIVersion は run を始めた CLI の版、Embedded は定義・スクリプトをその版の展開ディレクトリ（埋め込み）から読んだか
 	// （--workflow-dir / --scripts-dir で指した場合は false）。resume で別の版の CLI が続けるときの照合の材料（§7.3・N3）。
 	CLIVersion string   `json:"cli_version,omitempty"`
@@ -197,10 +199,11 @@ type GateResolved struct {
 	Channel  string          `json:"channel"`
 }
 
-// RunnerStarted は run を進めるプロセスが替わったこと（resume / approve）。
+// RunnerStarted は run を進めるプロセスが替わったこと（resume / approve・切り離して起動した runner〔detached〕）。
 type RunnerStarted struct {
-	PID     int    `json:"pid"`
-	Command string `json:"command"`
+	PID      int    `json:"pid"`
+	PIDStart string `json:"pid_start,omitempty"`
+	Command  string `json:"command"`
 }
 
 // Transition は遷移の決定。Action は step / gate / fail / done（retry は同じステップへの step）。

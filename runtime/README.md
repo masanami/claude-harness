@@ -10,7 +10,8 @@
 - 同梱のワークフロー `ticket`（1 チケットの実装フロー。§3.4）。shadow run（§8 C3 の段階 A）の手順と指標の取り方は [`docs/harness-runtime-shadow.md`](../docs/harness-runtime-shadow.md)
 - unit の累計予算と費用の fail-closed（§4.3）・ラウンド（ゲートとゲートの間。§4.2）
 - `run` / `status [--json]` / `runs [--json]` / `resume` / `approve` / `cancel`（§5.1）
-- runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）
+- runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）。ステップの間で runner が落ちた unit も同じゲートで止まる（#347）
+- 切り離した run（Issue #347。下の「切り離した run」）: `run --detach` と `contract start` は、run を進めるプロセスを新しいセッションへ切り離して起動し、すぐ戻る
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
 - 定義の上書きの段 1（数値のキー・2 層の置き場・run の記録と `resume`。Issue #312）と段 2（宣言した遷移の付け替えと外せないゲート。Issue #313）。下の「定義の上書き」
@@ -130,6 +131,7 @@ steps:
 cd runtime
 go run ./cmd/harness validate --workflow-dir workflows --scripts-dir ../plugin/scripts  # 作業ツリーの定義を検証（フラグ無しなら埋め込んだ写し）
 go run ./cmd/harness run list-tests --input root=.. # command 種類だけのサンプルを実行
+go run ./cmd/harness run --detach list-tests --input root=..  # 切り離して始め、run ID を出してすぐ戻る（status で追う）
 go run ./cmd/harness runs --json
 go run ./cmd/harness status <run-id> --json
 go run ./cmd/harness resume <run-id> --input <値>    # ゲートを解決して次のラウンドへ
@@ -146,6 +148,17 @@ go run ./cmd/harness graph --run <run-id>            # run が使った定義の
 - `llm` 種類が起動する `claude` は `$HARNESS_CLAUDE_BIN`、無ければ PATH の `claude`。`$HARNESS_CLAUDE_PERMISSION_MODE` が設定されていれば、その値を `claude` に `--permission-mode` でそのまま渡す（設定されていなければ渡さず、`claude` の既定と利用者の settings の allow で動く）。run には記録しないので、run を進めるプロセス（`run`・`resume`・`approve`・`contract start`・`contract resume`・`predict-conflicts`）ごとに設定する。薄い `/impl` は既定で `auto` を渡す（#299）。`workspace`・`pull-request` 種類と `pr-state` の観測が起動する `git`・`gh` は `$HARNESS_GIT_BIN`・`$HARNESS_GH_BIN`、無ければ PATH のもの（`command` 種類のスクリプトは PATH の `git`・`gh` を使う）。
 - 終了コード（0 成功・1 失敗・2 使い方の誤り／定義の不正・3 待機〔ゲートで止まった〕・4 停止・5 版の不一致）は人向けのコマンドの割り当てである。flywheel 向けの接続契約 v1 は別の入口 `harness contract start|status|resume|cancel` が担い、JSON（`contract_version: 1`）を出力できたら終了コード 0 で終わる。待機・成功・失敗は JSON の `state` で表す（§5.6）。
 - `predict-conflicts` も終了コードは「JSON を出力できたか」だけを表す（0 = 出力した）。
+
+## 切り離した run（`run --detach`・`contract start`。Issue #347）
+
+`harness run` は既定では呼び出したプロセスの中で run を進めるので、呼び出し元が止められると（Claude Code の Bash ツールの待ち時間の上限など）、run はシグナルによる取り消し（`cancelled.actor=signal`）として記録される。`--detach` を付けると、run を始めた後、run を進めるプロセス（runner）を切り離して起動し、run ID を標準出力に 1 行出して終了コード 0 ですぐ戻る。その後の進み具合と終わりは `harness status <run-id> [--json]` で読む。`harness contract start` はフラグなしで常にこの形で始め、その時点の状態（多くは `running`）の契約 v1 の JSON をすぐ返す。
+
+- runner は `harness` 自身の実行ファイルを新しいセッション（`setsid`）の子プロセスとして起動し直したもので、呼び出し元のプロセスグループ・端末・シグナルから切り離される。常駐のデーモンは持たない（run がゲートか終端に達したら終わる）。
+- runner の標準入力は閉じ（`/dev/null`）、標準出力と標準エラーは run ディレクトリの `runner.log` へ流す（ゲートか終端に達したときの `status --json` と同じ JSON が最後に出る）。
+- 環境変数（`HARNESS_PLUGIN_VERSION`・`HARNESS_CLAUDE_PERMISSION_MODE`・`HARNESS_STATE_DIR` ほか）と作業ディレクトリは、呼び出し元のものをそのまま引き継ぐ。
+- runner は引き継いだときに `runner_started`（`command: detached`）に自分の PID と開始時刻（`pid_start`）を記録する。呼び出し元は、この記録を確かめてから戻る（30 秒以内に引き継がなければ終了コード 1 で、`runner.log` を見るよう標準エラーに出す）。
+- run ID ごとのロック（run ディレクトリの `runner.lock` への `flock`）で、同じ run を 2 つのプロセスが進めないようにする。runner・同期の `run`・`resume`・`approve` がこのロックを取り、取れなければ何も記録せずに終了コード 1 で止まる。ロックはプロセスが終われば（落ちても）外れる。
+- runner の生存は、PID の存在に加えて、記録した開始時刻と今のプロセスの開始時刻（`ps -o lstart=`）が一致することで確かめる（落ちた runner の PID が別のプロセスに再利用されても、生きているとみなさない）。開始時刻を記録する前の版で始めた run は、PID の存在だけで確かめる。runner が落ちた run は、次の `status`／`resume` で組み込みの `interrupted` ゲート（`rerun`／`abort`。契約では `answer` × `parent`）で待つ（§4.5）。ステップとステップの間で落ちた場合も同じで、`running` のまま残らない。ステップのプロセスがまだ生きている間だけは `running`・`runner_alive: false` のまま（プロセスが終われば、または `resume` が止めれば `interrupted` になる）。`rerun` は打ち切ったステップ（ステップの間で落ちた場合は次に実行するはずだったステップ）を新しいラウンドで実行する。
 
 ## 衝突の予測（`predict-conflicts`。§5.4.1・Issue #288）
 

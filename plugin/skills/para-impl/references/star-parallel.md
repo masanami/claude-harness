@@ -94,7 +94,7 @@ spawn プロンプトに含めるもの:
   `--worktree` を渡すことで `/impl` はリードが作成した worktree をそのまま使い、PR 作成・CI 確認の後で返る（`/explain-e2e` は実施しない）。**`/impl` は通常のスキルであり、その呼び出しは Task ネスト深度を消費しない**（worker〔深度1〕→ `feature-implementer`〔深度2〕→ `code-reviewer`〔深度3〕の鎖は現状のまま保たれる）
 - 要件チケットの「クリティカル設計決定」セクション
 - **`ci-wait.sh` の絶対パス**（worker の CI 確認のフォールバック用。worker は第一手として `claude-harness-run ci-wait {PR番号}` を使うが、ランチャー未導入環境に備えて絶対パスも渡す。`${CLAUDE_PLUGIN_ROOT}` をリードが絶対パスへ解決してから渡す——worker はプレースホルダを解決できない）
-- **合流ゲート伝播条項**（`references/join-gate.md`「ネストへの伝播」に定義された条項を**逐語で転記する**。worker は CI の差し戻しで `feature-implementer` をさらに spawn し、`/impl` ではバックグラウンドの `harness run` を起動するため、この条項が無いと worker がネストの完了前に返却し、リードが worker を合流済みと誤認したままネストの処理が道連れで強制終了される）
+- **合流ゲート伝播条項**（`references/join-gate.md`「ネストへの伝播」に定義された条項を**逐語で転記する**。worker は CI の差し戻しで `feature-implementer` をさらに spawn し、`/impl` では切り離した `harness run` を起動して合流するため、この条項が無いと worker がネストの完了前に返却し、リードが worker を合流済みと誤認したままネストの処理が道連れで強制終了される）
 
 > 行動規範（permission 拒否時の振る舞い・headless 制約・worktree 内でのコマンド形式・CI確認と loop-until-green の規律）は `ticket-worker` のエージェント定義に含まれ、spawn 時に自動で伝播する。プロンプトへの手動注入は不要。
 

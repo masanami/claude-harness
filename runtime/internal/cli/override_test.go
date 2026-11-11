@@ -328,8 +328,15 @@ func TestContractStartAcceptsOverride(t *testing.T) {
 	for k := range doc {
 		keys = append(keys, k)
 	}
-	if len(keys) != 7 || doc["state"] != "waiting" || doc["run_id"] == nil {
+	// start は run の終わりを待たない（#347）。run は切り離した runner が進め、ゲートで待つ。start の直後は running か、
+	// runner が既にゲートへ着いていれば waiting（checkJustStarted）。
+	if len(keys) != 7 || doc["run_id"] == nil {
 		t.Fatalf("contract start = %s", out)
+	}
+	startState, _ := doc["state"].(string)
+	checkJustStarted(t, startState, doc["requested_action"] != nil)
+	if s := h.settle(doc["run_id"].(string)); s.State != "waiting" {
+		t.Fatalf("contract status after start = %+v", s)
 	}
 	rs := runStarted(t, filepath.Join(state, "runs", doc["run_id"].(string)))
 	if len(rs.Workflow.Overrides) != 1 || rs.Workflow.Overrides[0].Layer != "arg" || rs.Limits["rework"] != 2 {
