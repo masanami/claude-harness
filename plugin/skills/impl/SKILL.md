@@ -115,7 +115,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 |---|---|---|
 | `waiting` で `review` ゲート | **通常完了**として返す | 完了として報告し、下記「次のアクションの案内」を出す |
 | `waiting` で `design-deviation` ゲート | **判断待ち**として返す（`deviation_report` を添える） | `deviation_report` をユーザーに提示し、判断は端末から `harness approve` で行うよう案内する |
-| `waiting` で `ci-pending` ゲート | **`failure`** として返す（CI を待ちきれなかった。または CI が失敗ログの無い失敗で終わった） | 状態を報告し、CI を確かめてから `harness resume {run-id} --input recheck`（やめるなら `abort`）を案内する |
+| `waiting` で `ci-pending` ゲート | **`failure`** として返す（CI を待ちきれなかった。または CI が失敗ログの無い失敗で終わった） | 状態を報告し、CI を確かめてから `harness resume --detach {run-id} --input recheck`（やめるなら `abort`）を案内する |
 | `waiting` でその他のゲート（`interrupted` 等） | **`failure`** として返す（ゲート名と `requested_action` を添える） | 状態と `resume_command` を報告する |
 | `failed` | **`failure`** として返す（`reason` を添える） | 同左を報告する |
 | `cancelled` | **`failure`** として返す | 同左を報告する |
@@ -151,10 +151,26 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 9. **`--worktree` がある場合**: 「CI の red の差し戻しは runtime の中で最大3回まで済ませた（使った回数 `limits_used.rework`）。`ci_red` で失敗した場合は、同じ修正を差し戻しても直らない」と明記する。run は `review` ゲートで待たせたまま残す（取り消さない）
 10. **run の外で終わった作業の明記**（run が取り消された・合流できなかった・runtime の外で手で仕上げた場合。起動し直した run が後で通っても、取り消された run があれば書く）: その事実と run ID（複数あれば全件）を書き、**「セルフレビュー・独立レビュー・E2E を経ていない」ことを未検証の事項として必ず書く**。手で仕上げた変更や PR は、runtime のゲートを通ったものとして報告しない（手で仕上げること自体は禁止事項の「`harness` を使わずに実装フローを自分で進めること」に当たる。呼び出し元の指示で仕上げた場合も、この明記は省かない）
 11. **次のアクションの案内**（`--worktree` が無い場合）:
-   - レビュー対応: `harness resume {run-id} --input respond`
-   - マージへ進める: `harness resume {run-id} --input ready`（統合ブランチ宛は runtime がマージする。既定ブランチ宛は人がマージした後に `harness resume {run-id}`）
+   - レビュー対応: `harness resume --detach {run-id} --input respond`
+   - マージへ進める: `harness resume --detach {run-id} --input ready`（統合ブランチ宛は runtime がマージする。既定ブランチ宛は人がマージした後に `harness resume --detach {run-id}`）
+   - 再開の後の合流（下記「再開と合流」）
    - 人の判断が要るゲート: 端末から `harness approve {run-id} --input <値> [--note <指示>]`
    - E2E 対象だった場合: `/explain-e2e`（テストシナリオ解説と独立検証。本スキルは実施しない）
+
+---
+
+## 再開と合流
+
+ゲートで待つ run を再開する `harness resume`（`respond`・`ready`・`recheck`・`interrupted` の `rerun` など）は、**`--detach` を付けて Bash ツールの前面で実行する**。`--detach` により、このコマンドはゲートを解いた後の進行を呼び出し元から切り離したプロセスに渡し、run の状態の JSON を標準出力に出してすぐ終わる（始めの起動の `--detach` と同じ。#359）。`--detach` を外すと、run は Bash のプロセスの中で次のゲートか終端まで進み、Bash が上限で止められると run も取り消される。
+
+```bash
+cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}" harness resume --detach {run-id} --input {値}
+```
+
+- 終了コード 0 なら、ゲートは解かれ、run は切り離したプロセスが進めている。直後の状態は `running` とは限らない（速ければ次のゲートで `waiting`）。
+- 0 以外なら、ゲートを解いていない（受け付けない入力・終わった run・版の不一致など）か、解いた後の run を渡せなかった。標準エラーをそのまま報告する。渡せなかった run は、次の `harness status` で `interrupted` ゲートで待つ。
+- 再開の後は、上記「4. 合流」と同じコマンド（上限付きの `until` ループで `harness status {run-id} --json` の `.status` が `running` 以外になるまで）で合流し、「5. 結果の読み取り」に従って読む。合流の前に返却しない。
+- `harness approve` は人が端末から実行する（本スキルは実行しない）。
 
 ---
 

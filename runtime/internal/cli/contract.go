@@ -74,6 +74,9 @@ const contractUsage = `usage: harness contract <start|status|resume|cancel> [opt
 
 start always returns at once: the run is advanced by a detached process (as run --detach), so start prints
 the run id with the state it has then (usually "running"); read its progress and its end with status.
+resume also always returns at once (as resume --detach): it resolves the gate itself (a refused input is reported
+at once, with the state unchanged), then a detached process advances the run, so resume prints the state it has
+then ("running", or "waiting" / an end when the run got there already); read the rest with status.
 
 the connection contract v1 for flywheel: each command prints one JSON document
 {"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}
@@ -93,7 +96,9 @@ func cmdContract(args []string, env Env) int {
 	case "status":
 		return contractByRun(rest, env, func(a []string, e Env) int { return cmdStatus(append(a, "--json"), e) }, statusBlock)
 	case "resume":
-		return contractByRun(rest, env, func(a []string, e Env) int { return cmdResolve("resume", a, e) }, resumeBlock,
+		// 常に切り離して再開する（resume --detach。#359）: ゲートの解決はこのプロセスで行い、その後の進行は runner に
+		// 渡してすぐ戻る。--detach は契約の引数ではないので、利用者が渡すと usage の誤りになる。
+		return contractByRun(rest, env, func(a []string, e Env) int { return cmdResolve("resume", append([]string{"--detach"}, a...), e) }, resumeBlock,
 			flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true})
 	case "cancel":
 		return contractByRun(rest, env, cmdCancel, nil)

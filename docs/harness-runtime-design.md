@@ -537,6 +537,7 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 - runtime は起動した子プロセス（スクリプト・`claude -p`）を自分で待つ。**起動台帳は runtime の状態そのもの**になり、`join-gate.md` の起動台帳・決定表・中断報告のうち、**runtime 直下の子に関する部分は散文が不要になる**。
 - `harness run` / `resume` は、全 unit がゲートか終端に達するまでプロセスとして生存する（daemon は持たない）。
 - **切り離した run（#347・2026-11-10）**: `harness run --detach` と `harness contract start` は、run を始めた後、`harness` 自身の実行ファイルを新しいセッションの子プロセス（runner）として起動し直して run を進めさせ、run ID を返してすぐ戻る。runner も daemon ではなく、全 unit がゲートか終端に達したら終わる。呼び出し元のプロセスの寿命・待ち時間の上限・シグナルから切り離すためである（Claude Code の Bash ツールの既定の上限 600000 ミリ秒で `harness run` が止められ、run がシグナルによる取り消しとして記録された実例が 2 件ある。#346 は起動に `timeout: 7200000` を付けるつなぎだった）。runner の出力は run ディレクトリの `runner.log`、二重起動は run ID ごとの `runner.lock`（`flock`）で防ぐ。runner の生存は PID と開始時刻（`pid_start`）で確かめ、PID の再利用を見分ける。`harness run` の既定は同期のまま。
+- **切り離した再開（#359・2026-11-11）**: `harness resume --detach`・`harness approve --detach` と `harness contract resume`（常に）は、ゲートの解決（入力の検証・`observe` 型の観測・解決と遷移の記録）だけを呼び出し元のプロセスで同期に行い、その後の進行を上と同じ runner に渡してすぐ戻る。拒否はその場で返り、何も記録しない。`runner.lock` は解決の前に取り（別の runner が持っていれば解かずに止まる）、解決を記録した後に放して runner に渡す。解決の記録で run がゲートか終端に着いたなら runner は起動しない。runner が引き継げなかった場合は、ゲートを解いた後の run が runner の居ない `running` として残り、下の規則どおり `interrupted` ゲートで待つ（新しい状態・遷移は作らない）。`resume`・`approve` の既定は同期のまま。再開の後ろの段（レビュー対応の `respond`・マージへ進める `ready` など）で、前面の `resume` が呼び出し元の上限で止められ、run がシグナルによる取り消しとして記録された実例（2026-11-11）による。
 - runtime が落ちた場合（副次）: 次の `resume` / `status` で「`running` のまま生存プロセスが無い」ステップ実行を `interrupted` とし、その unit を `interrupted` ゲートへ送る（自動の再実行はしない。LLM ステップは部分的なコミットを残しうるため冪等ではない）。ステップとステップの間で落ちた（実行中のステップが無い）unit も同じゲートへ送り、`running` のまま残さない（#347。`rerun` は次に実行するはずだったステップを新しいラウンドで実行する）。runtime の生存は PID と開始時刻で確かめる。
 
 ### 4.6 置き場と形式（Q1・Q2 でオーナーが決定: L2・F1）
@@ -650,12 +651,14 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 | --- | --- | --- |
 | `start` | `harness contract start` → `run --detach`（#347。常にすぐ戻る） | `[--workflow-dir DIR] [--scripts-dir DIR] [--input NAME=VALUE]... <workflow>` |
 | `status` | `harness contract status` → `status --json` | `<run-id>` |
-| `resume` | `harness contract resume` → `resume` | `[--unit KEY] [--input VALUE] [--note TEXT] <run-id>` |
+| `resume` | `harness contract resume` → `resume --detach`（#359。常にすぐ戻る） | `[--unit KEY] [--input VALUE] [--note TEXT] <run-id>` |
 | `cancel` | `harness contract cancel` → `cancel` | `<run-id>` |
 
 `cancel` の出力は契約 v1 が求めていないが、同じ形の JSON（停止後の状態）を出す。
 
 **`start` は常にすぐ戻る（#347・2026-11-10）**: `contract start` は run を切り離して始め（§4.5）、run の終わりやゲートを待たずに、その時点の状態（多くは `state: running`・`requested_action: null`）の JSON を返す。進み具合と終わり（ゲートでの待機を含む）は `contract status` で読む。契約の版は v1 のまま（出力のキーと値の集合は変えていない）。flywheel の宣言の引数の配列では、差し込む値（ワークフロー名・入力・run ID・回答）はすべて独立した要素になる。
+
+**`resume` も常にすぐ戻る（#359・2026-11-11）**: `contract resume` はゲートを解いた後の進行を切り離し（§4.5）、その時点の状態の JSON を返す。多くは `state: running`・`requested_action: null` で、速い runner なら次のゲートの `waiting`、解決で終端に着けばその終端の状態になる。拒否（受け付けない入力・`decider: human` のゲート・終わった run・版の不一致）は従来どおり、run の状態のまま理由を `summary` に添えて返る。続きは `contract status` で読む。契約の版は v1 のまま。
 
 **出力**: `{"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}` を 1 つ出す。
 
@@ -985,6 +988,16 @@ PR-7 の着手前に上げた問いの決定。§11.1〜§11.5 の記録は書�
 | Q2 | `harness` 自身を新しいセッションの子プロセスとして起動し直して切り離す。出力は run ディレクトリのログ（`runner.log`）へ流し、二重起動は run ID ごとのロック（`runner.lock`）で防ぐ。常駐のデーモン・launchd・systemd は使わない |
 | Q3 | `status` を読むときに PID と開始時刻で runner の生存を確かめる。新しい状態（orphaned 等）と心拍のファイルは使わない。死んだ runner の run は、当初の「`failed`（実行プロセスの消失）として返す」を、終端の `failed` は再開できないという既存の規則と合わないため問い直し、オーナーの回答（2026-11-10、案 A）で §4.5 に寄せた: ステップの間で落ちた場合も含めて `interrupted` ゲート（`waiting`・`rerun`／`abort`・契約では `answer` × `parent`）で待たせ、`running` のまま残さない。`failed` は使わない。再開は `contract resume --input rerun` |
 | Q4 | run を起動するスキル（`/impl`）を同じ PR で書き換える（`harness run --detach` で始め、`harness status` で合流する。`timeout: 7200000` の指示は外す） |
+
+### 11.8 切り離した再開（#359・2026-11-11）
+
+§11.7 は始めの起動だけを切り離した。ゲートで止まった run の再開（`resume`・`approve`・`contract resume`）は呼び出し元のプロセスの中で進めたままで、review ゲートで前面から実行した `resume --input respond` が 12 分後にシグナルによる取り消し（`run_cancelled`・`actor: signal`）で止まった実例が出た（2026-11-11）。flywheel の案 B（masanami/flywheel#532）の後半は `contract resume` で判断待ちに答えるので、再開もすぐ戻る必要がある。計画で次を決めた。
+
+| # | 決定 |
+| --- | --- |
+| R1 | `resume`・`approve` に `--detach` を足す。既定は同期のまま。`contract resume` はフラグを持たず、常に切り離す。runner は §11.7 の Q2 と同じもの（`runner.lock`・`runner.log`） |
+| R2 | ゲートの解決は呼び出し元で同期に行い、拒否はその場で返す。解いた後の進行だけを runner に渡す。`runner.lock` は解決の前に取るので、別の runner が持っていればゲートを解かずに止まる（従来の `resume` と同じ）。runner が引き継げなかった場合は §4.5 の既存の規則（`interrupted` ゲート）に従い、新しい状態・遷移は作らない |
+| R3 | `/impl` の再開の案内（`respond`・`ready`・`recheck` などの `harness resume`）を `--detach` 付きにし、再開の後は `harness status` で合流する（始めの起動と同じ形） |
 
 ## 12. 未検証事項
 

@@ -362,8 +362,10 @@ func TestStatusInterruptsARunWhoseRunnerDiedBetweenSteps(t *testing.T) {
 	if after := eventTypes(t, v.RunDir); after != before {
 		t.Fatalf("status recorded again:\n%s\n%s", before, after)
 	}
+	// contract resume は切り離して再開し、すぐ戻る（#359）ので、直後の state は running か waiting。続きは status で読む。
 	r, _ := h.contractNow("resume", id, "--input", "rerun")
-	if r.State != runstate.StatusWaiting || r.RequestedAction == nil || !strings.Contains(r.Summary, "at gate ask-parent") {
-		t.Fatalf("contract resume --input rerun = %+v", r)
+	checkJustStarted(t, r.State, r.RequestedAction != nil)
+	if r = h.settle(id); r.State != runstate.StatusWaiting || r.RequestedAction == nil || !strings.Contains(r.Summary, "at gate ask-parent") {
+		t.Fatalf("contract resume --input rerun, then status = %+v", r)
 	}
 }

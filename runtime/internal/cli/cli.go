@@ -88,11 +88,14 @@ commands:
       show where a run is (the event log is the source of truth)
   runs [--json]
       list runs in the state directory
-  resume [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
+  resume [--detach] [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
       resolve the gate a run waits at and advance it to the next gate or the end
-      (gates decided by a human with an input are not resolvable here; use approve)
-  approve [--unit KEY] --input VALUE [--note TEXT] <run-id>
-      resolve a gate from a terminal: shows what is approved and asks for confirmation (refused without a TTY)
+      (gates decided by a human with an input are not resolvable here; use approve);
+      with --detach, resolve the gate here (errors are reported at once), then advance the run in a detached process
+      (as run --detach, its output in <run dir>/runner.log), print the state as JSON and exit 0; follow it with status
+  approve [--detach] [--unit KEY] --input VALUE [--note TEXT] <run-id>
+      resolve a gate from a terminal: shows what is approved and asks for confirmation (refused without a TTY);
+      --detach as in resume
   cancel <run-id>
       stop a run: stop its child process and record the stop
   validate [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [<workflow>...]
@@ -782,13 +785,15 @@ func cmdRuns(args []string, env Env) int {
 // cmdResolve は resume と approve（§5.1・§5.3）。approve は端末が無ければ拒否し、あれば対象の要約を表示して
 // 確認の入力を求める。どちらも解決の記録に actor（コマンド）と channel（tty / non-tty）を残す。
 func cmdResolve(actor string, args []string, env Env) int {
-	flags, pos, err := parseArgs(args, flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true})
+	flags, pos, err := parseArgs(args, flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true},
+		flagSpec{name: "detach"})
 	if err != nil {
 		return usageErr(env, err)
 	}
 	if len(pos) != 1 {
 		return usageErr(env, fmt.Errorf("%s takes exactly one run id", actor))
 	}
+	_, detached := flags["detach"]
 	_, hasInput := flags["input"]
 	_, hasNote := flags["note"]
 	if actor == "approve" && !hasInput {
@@ -818,11 +823,19 @@ func cmdResolve(actor string, args []string, env Env) int {
 		return ExitFailed
 	}
 	// 同じ run を 2 つのプロセスが進めない（切り離した runner が進めている run を横から進めない。#347）。
-	unlock, err := run.RunnerLock()
+	// --detach でも、ゲートを解く前にこのロックを取る: 別の runner が持っていれば、何も記録せずにここで拒否する。
+	lock, err := run.RunnerLock()
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "harness: %v\n", err)
 		writeJSON(env.Stdout, view(run, st, nil))
 		return ExitFailed
+	}
+	locked := true
+	unlock := func() {
+		if locked {
+			locked = false
+			lock()
+		}
 	}
 	defer unlock()
 	// runner が落ちていれば、残った子プロセスを止め、実行中だったステップを interrupted にする（§4.5。自動で再実行しない）。
@@ -861,6 +874,9 @@ func cmdResolve(actor string, args []string, env Env) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+	if detached {
+		return resolveDetached(env, eng, ctx, req, unlock)
+	}
 	st, err = eng.Resolve(ctx, req)
 	if err != nil {
 		var ref *engine.RefusedError
@@ -873,6 +889,54 @@ func cmdResolve(actor string, args []string, env Env) int {
 	}
 	writeJSON(env.Stdout, view(run, st, nil))
 	return exitFor(st.Status)
+}
+
+// resolveDetached は切り離した再開（resume --detach・approve --detach・contract resume。#359）: ゲートの解決
+// （入力の検証・観測・記録）はこのプロセスで同期に行い、失敗はその場で返す。解いた後の run の進行だけを、
+// run --detach と同じ切り離した runner（#347）に渡してすぐ戻る。解決の記録で run がゲートか終端に着いた（abort・
+// 遷移先が終端など）なら、進めるものが無いので runner を起動しない。標準出力には runner に渡した後の状態の JSON
+// （status --json と同じ）を出し、渡せたら 0 で終わる。
+//
+// ロックは解決の間だけ持ち、runner を起動する前に放す（runner が取る）。放してから runner が引き継ぐまでの間は、
+// runner_started に記録したこのプロセスの PID が生きているので、ほかの resume・runner は「進めている」として拒否される。
+// runner が引き継ぐ前に終わった・起動できなかったときは、run は runner の居ない running として残り、既存の規則
+// （§4.5）どおり次の status・resume で interrupted ゲートへ送られる。
+func resolveDetached(env Env, eng *engine.Engine, ctx context.Context, req engine.Resolution, unlock func()) int {
+	run := eng.Run
+	st, err := eng.ResolveGate(ctx, req)
+	if err != nil {
+		var ref *engine.RefusedError
+		if errors.As(err, &ref) {
+			cur, _, _ := run.Load()
+			return resolveErr(env, run, cur, err)
+		}
+		fmt.Fprintf(env.Stderr, "harness: run %s stopped with an internal error: %v\n", run.ID, err)
+		return ExitFailed
+	}
+	if st.Status != runstate.StatusRunning {
+		writeJSON(env.Stdout, view(run, st, nil))
+		return exitFor(st.Status)
+	}
+	unlock()
+	// runner の作業ディレクトリは、同期の再開と同じく呼び出し元のもの（run を始めたディレクトリはステップが使う。e.Cwd）。
+	cwd, err := env.Getwd()
+	if err != nil {
+		cwd = eng.Cwd
+	}
+	if _, err := detach(env, run, cwd); err != nil {
+		fmt.Fprintf(env.Stderr, "harness: run %s: %v\n", run.ID, err)
+		if cur, _, lerr := run.Load(); lerr == nil {
+			writeJSON(env.Stdout, view(run, cur, nil))
+		}
+		return ExitFailed
+	}
+	fmt.Fprintf(env.Stderr, "harness: run %s is advanced by a detached runner (its output in %s); follow it with status\n",
+		run.ID, filepath.Join(run.Dir, runstate.RunnerLogFile))
+	if cur, _, err := run.Load(); err == nil {
+		st = cur
+	}
+	writeJSON(env.Stdout, view(run, st, nil))
+	return ExitOK
 }
 
 // resolveErr は解決できなかった理由を出す。状態は変えていないので、現在地（待っているゲートと再開方法）も JSON で返す。
