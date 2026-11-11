@@ -290,8 +290,8 @@ assert_contains "(E) run の外で終わった作業（取り消し・合流で�
   '**run の外で終わった作業の明記**（run が取り消された・合流できなかった・runtime の外で手で仕上げた場合。'
 assert_contains "(E) run の外で終わった作業はセルフレビュー・独立レビュー・E2E を経ていない未検証の事項として書かせる" "$IMPL_REPORT" \
   '**「セルフレビュー・独立レビュー・E2E を経ていない」ことを未検証の事項として必ず書く**'
-assert_contains "(E) --worktree が無い経路では harness の再開手段を案内する" "$IMPL_REPORT" \
-  '`harness resume {run-id} --input respond`'
+assert_contains "(E) --worktree が無い経路では harness の再開手段を案内する（切り離して再開する。#359）" "$IMPL_REPORT" \
+  '`harness resume --detach {run-id} --input respond`'
 assert_contains "(E) /explain-e2e は実施せず案内する" "$IMPL_REPORT" \
   '`/explain-e2e`（テストシナリオ解説と独立検証。本スキルは実施しない）'
 # 差し戻しの上限 3 は ticket.yaml の rework が持つ（/impl の文言と数がずれたら落ちる）
@@ -317,6 +317,20 @@ IMPL_JOIN="$(section_body "$IMPL_FILE" '### 4. 合流（run がゲートか終�
 assert_contains "(E) 合流してから返す" "$IMPL_JOIN" '**run がゲートか終端に達する前に最終応答・返却をしない**'
 assert_contains "(E) 合流の待ちは上限付きの until ループ（先頭が sleep のコマンドは拒否される）" "$IMPL_JOIN" \
   'until [ "$(harness status {run-id} --json | jq -r .status)" != running ]'
+# 再開も呼び出し元の Bash の寿命から切り離す（#359）。前面の同期の harness resume は、review ゲートからの respond の
+# 12 分後に cancelled.actor=signal で止まった（run 20261111-064215-258678）。
+IMPL_RESUME="$(section_body "$IMPL_FILE" '## 再開と合流')"
+assert_contains "(E) 再開は --detach を付けて前面で実行する" "$IMPL_RESUME" '**`--detach` を付けて Bash ツールの前面で実行する**'
+assert_contains "(E) 再開のコマンドも版と permission mode を渡す" "$IMPL_RESUME" \
+  'HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PERMISSION_MODE="${HARNESS_CLAUDE_PERMISSION_MODE:-auto}" harness resume --detach {run-id} --input {値}'
+assert_contains "(E) 再開の後は「4. 合流」と同じ手順で status を読んで合流する" "$IMPL_RESUME" '上記「4. 合流」と同じコマンド'
+assert_contains "(E) 再開の直後の状態を running と決めつけない" "$IMPL_RESUME" '直後の状態は `running` とは限らない'
+# 再開の案内（respond・ready・recheck）はすべて --detach 付き。--detach の無い harness resume の案内が残っていない。
+for guide in '`harness resume --detach {run-id} --input ready`' '`harness resume --detach {run-id} --input recheck`'; do
+  assert_contains "(E) 再開の案内が --detach 付き: ${guide}" "$IMPL_ALL" "$guide"
+done
+assert_eq "(E) --detach の無い harness resume の案内が残っていない" "0" \
+  "$(grep -c 'harness resume {run-id}' "$IMPL_FILE")"
 
 echo ""
 echo "=== (F) 失敗・差し戻しの原因区分（3 分類）が完了報告に在る ==="

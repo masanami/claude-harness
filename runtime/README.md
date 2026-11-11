@@ -11,7 +11,7 @@
 - unit の累計予算と費用の fail-closed（§4.3）・ラウンド（ゲートとゲートの間。§4.2）
 - `run` / `status [--json]` / `runs [--json]` / `resume` / `approve` / `cancel`（§5.1）
 - runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）。ステップの間で runner が落ちた unit も同じゲートで止まる（#347）
-- 切り離した run（Issue #347。下の「切り離した run」）: `run --detach` と `contract start` は、run を進めるプロセスを新しいセッションへ切り離して起動し、すぐ戻る
+- 切り離した run（Issue #347。下の「切り離した run」）: `run --detach` と `contract start` は、run を進めるプロセスを新しいセッションへ切り離して起動し、すぐ戻る。再開も同じ形にできる（Issue #359）: `resume --detach`・`approve --detach`、`contract resume` は常に
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
 - 定義の上書きの段 1（数値のキー・2 層の置き場・run の記録と `resume`。Issue #312）と段 2（宣言した遷移の付け替えと外せないゲート。Issue #313）。下の「定義の上書き」
@@ -135,6 +135,7 @@ go run ./cmd/harness run --detach list-tests --input root=..  # 切り離して�
 go run ./cmd/harness runs --json
 go run ./cmd/harness status <run-id> --json
 go run ./cmd/harness resume <run-id> --input <値>    # ゲートを解決して次のラウンドへ
+go run ./cmd/harness resume --detach <run-id> --input <値>  # ゲートを解決し、その後の進行を切り離してすぐ戻る（status で追う）
 go run ./cmd/harness approve <run-id> --input <値>   # 人が端末から解決するゲート（decider: human の input 型）
 go run ./cmd/harness cancel <run-id>
 go run ./cmd/harness contract status <run-id>        # flywheel の接続契約 v1 の JSON（start・status・resume・cancel）
@@ -149,7 +150,7 @@ go run ./cmd/harness graph --run <run-id>            # run が使った定義の
 - 終了コード（0 成功・1 失敗・2 使い方の誤り／定義の不正・3 待機〔ゲートで止まった〕・4 停止・5 版の不一致）は人向けのコマンドの割り当てである。flywheel 向けの接続契約 v1 は別の入口 `harness contract start|status|resume|cancel` が担い、JSON（`contract_version: 1`）を出力できたら終了コード 0 で終わる。待機・成功・失敗は JSON の `state` で表す（§5.6）。
 - `predict-conflicts` も終了コードは「JSON を出力できたか」だけを表す（0 = 出力した）。
 
-## 切り離した run（`run --detach`・`contract start`。Issue #347）
+## 切り離した run（`run --detach`・`contract start`。Issue #347。再開は Issue #359）
 
 `harness run` は既定では呼び出したプロセスの中で run を進めるので、呼び出し元が止められると（Claude Code の Bash ツールの待ち時間の上限など）、run はシグナルによる取り消し（`cancelled.actor=signal`）として記録される。`--detach` を付けると、run を始めた後、run を進めるプロセス（runner）を切り離して起動し、run ID を標準出力に 1 行出して終了コード 0 ですぐ戻る。その後の進み具合と終わりは `harness status <run-id> [--json]` で読む。`harness contract start` はフラグなしで常にこの形で始め、その時点の状態（多くは `running`）の契約 v1 の JSON をすぐ返す。
 
@@ -159,6 +160,16 @@ go run ./cmd/harness graph --run <run-id>            # run が使った定義の
 - runner は引き継いだときに `runner_started`（`command: detached`）に自分の PID と開始時刻（`pid_start`）を記録する。呼び出し元は、この記録を確かめてから戻る（30 秒以内に引き継がなければ終了コード 1 で、`runner.log` を見るよう標準エラーに出す）。
 - run ID ごとのロック（run ディレクトリの `runner.lock` への `flock`）で、同じ run を 2 つのプロセスが進めないようにする。runner・同期の `run`・`resume`・`approve` がこのロックを取り、取れなければ何も記録せずに終了コード 1 で止まる。ロックはプロセスが終われば（落ちても）外れる。
 - runner の生存は、PID の存在に加えて、記録した開始時刻と今のプロセスの開始時刻（`ps -o lstart=`）が一致することで確かめる（落ちた runner の PID が別のプロセスに再利用されても、生きているとみなさない）。開始時刻を記録する前の版で始めた run は、PID の存在だけで確かめる。runner が落ちた run は、次の `status`／`resume` で組み込みの `interrupted` ゲート（`rerun`／`abort`。契約では `answer` × `parent`）で待つ（§4.5）。ステップとステップの間で落ちた場合も同じで、`running` のまま残らない。ステップのプロセスがまだ生きている間だけは `running`・`runner_alive: false` のまま（プロセスが終われば、または `resume` が止めれば `interrupted` になる）。`rerun` は打ち切ったステップ（ステップの間で落ちた場合は次に実行するはずだったステップ）を新しいラウンドで実行する。
+
+### 切り離した再開（`resume --detach`・`approve --detach`・`contract resume`。Issue #359）
+
+`resume`・`approve` も既定では呼び出したプロセスの中で run を次のゲートか終端まで進めるので、レビュー対応（`respond`）やマージへ進める（`ready`）段で呼び出し元が止められると、run はシグナルによる取り消しになる。`--detach` を付けると、ゲートの解決だけをこのプロセスで行い、その後の進行を `run --detach` と同じ runner に渡してすぐ戻る。`harness contract resume` はフラグなしで常にこの形で再開する。付けなければ従来どおり同期。
+
+- ゲートの解決（入力の検証・`observe` 型の観測・解決と遷移の記録）は呼び出したプロセスで同期に行う。拒否（受け付けない入力・`decider: human` のゲートへの `resume`・終わった run〔`already ended`〕・版の不一致など）は、従来どおりその場で終了コード 1（版の不一致は 5）と理由を返し、何も記録しない。`approve --detach` も端末での確認を取ってから解決する。
+- `runner.lock` は解決の前に取る。別の runner が持っていれば、ゲートを解かずに終了コード 1 で止まる（従来の `resume` と同じ）。解決を記録した後にロックを放し、runner を起動する。解決の記録に入る `runner_started`（`command: resume`／`approve`）の PID はこのプロセスのもので、runner はそれを親から引き継ぐ（`command: detached`）。runner が引き継ぐまでの間はこのプロセスが生きているので、ほかの `resume`・runner は「進めている」として拒否される。
+- 解決の記録で run がゲートか終端に着いた（遷移先が終端・`interrupted` ゲートの `abort` など）ときは、進めるものが無いので runner を起動せず、従来どおりその状態と終了コード（0・1・3）を返す。
+- runner に渡せたら、その時点の状態（`status --json` と同じ JSON。多くは `running`、速い runner なら次のゲートで `waiting`）を標準出力に出し、終了コード 0 で戻る。その後は `harness status <run-id> [--json]` で読む。`contract resume` はその状態の契約 v1 の JSON を返す。
+- runner が引き継ぐ前に終わった・起動できなかった場合は終了コード 1 で、`runner.log` を見るよう標準エラーに出す。ゲートは解かれた後なので、run は runner の居ない `running` として残り、上の規則どおり次の `status`／`resume` で `interrupted` ゲートで待つ（`rerun` で続ける）。新しい状態は作らない。
 
 ## 衝突の予測（`predict-conflicts`。§5.4.1・Issue #288）
 

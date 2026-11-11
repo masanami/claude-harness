@@ -322,6 +322,17 @@ func contains(xs []string, x string) bool {
 // 閉じたラウンドのステップ実行は再実行しない: 解決したゲートの遷移先から始める（§4.2）。
 // unit がゲートで待っていない（runner が落ちた run）なら、runner を引き継いで現在のステップから進める。
 func (e *Engine) Resolve(ctx context.Context, req Resolution) (*runstate.State, error) {
+	if _, err := e.ResolveGate(ctx, req); err != nil {
+		return nil, err
+	}
+	return e.Loop(ctx)
+}
+
+// ResolveGate は Resolve のうち、ゲートの解決（入力の検証・observe の観測・解決と遷移の記録・runner_started）だけを行い、
+// run を進めずに記録後の状態を返す。切り離した再開（resume --detach・approve --detach・contract resume。#359）は、
+// これを呼び出し元のプロセスで同期に行い、その後の進行だけを切り離した runner に渡す。runner_started にはこの
+// プロセスの PID を記録するので、このプロセスが起動した runner はそれを引き継げる（親からの引き継ぎ。#347）。
+func (e *Engine) ResolveGate(ctx context.Context, req Resolution) (*runstate.State, error) {
 	st, _, err := e.Run.Load()
 	if err != nil {
 		return nil, err
@@ -350,7 +361,7 @@ func (e *Engine) Resolve(ctx context.Context, req Resolution) (*runstate.State, 
 	if req.GateOpenedAt != "" && req.GateOpenedAt != openedAt {
 		return nil, refused("gate %s of unit %s was reopened after it was shown; nothing was recorded", gateAt, u.Key)
 	}
-	_, err = e.Run.AppendIf(func(cur *runstate.State) ([]runstate.Event, error) {
+	return e.Run.AppendIf(func(cur *runstate.State) ([]runstate.Event, error) {
 		cu := cur.Unit(u.Key)
 		if runstate.Terminal(cur.Status) {
 			return nil, refused("run %s already ended as %s", cur.RunID, cur.Status)
@@ -385,10 +396,6 @@ func (e *Engine) Resolve(ctx context.Context, req Resolution) (*runstate.State, 
 		}
 		return append(evs, next...), nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return e.Loop(ctx)
 }
 
 // afterGate はゲートを抜けた後のイベント（遷移と、新しいラウンドの開始／次のゲート／終端）を作る。

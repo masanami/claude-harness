@@ -18,14 +18,22 @@ var contractKeys = "artifacts,contract_version,cost_usd,requested_action,run_id,
 // contract は harness contract <args> を実行し、終了コード 0 と契約 v1 の形を確かめて返す。start は run を切り離して
 // すぐ戻る（#347）ので、run を始めた start は、返った JSON が start の直後の状態であることを確かめてから、contract
 // status で run が running でなくなるまで待ち、その status の JSON を返す（start の直後の JSON そのものは contractNow
-// で読む）。
+// で読む）。resume も切り離して再開する（#359）ので、running を返した resume は同じく running でなくなるまで待つ
+// （ゲートの解決で終端・次のゲートに着いた resume、拒否された resume は、返った JSON をそのまま返す）。
 func (h *harness) contract(args ...string) (contractDoc, string) {
 	h.t.Helper()
 	d, errOut := h.contractNow(args...)
-	if len(args) == 0 || args[0] != "start" || d.RunID == nil {
+	if len(args) == 0 || d.RunID == nil {
 		return d, errOut
 	}
-	checkJustStarted(h.t, d.State, d.RequestedAction != nil)
+	switch {
+	case args[0] == "start":
+		checkJustStarted(h.t, d.State, d.RequestedAction != nil)
+	case args[0] == "resume" && d.State == runstate.StatusRunning:
+		checkJustStarted(h.t, d.State, d.RequestedAction != nil)
+	default:
+		return d, errOut
+	}
 	return h.settle(*d.RunID), errOut
 }
 

@@ -8,6 +8,19 @@
 
 ---
 
+## [Unreleased]
+
+### 変更
+
+- **`harness contract resume` は常にすぐ戻るようになった（Issue #359）。** ゲートの解決（入力の検証・解決の記録）はその場で行い、拒否は従来どおり run の状態のまま理由を `summary` に添えて返す。解いた後の run の進行は、`contract start` と同じく新しいセッションへ切り離したプロセスに渡し、その時点の状態（多くは `state: running`・`requested_action: null`）の契約 v1 の JSON を返す。続き（次のゲートでの待機・終わり）は `harness contract status <run-id>` で読む。契約の版は v1 のまま。**利用者が取る操作**: `contract resume` の JSON の `state` が次のゲートの `waiting` や終端になるのを前提にしていた呼び出し元は、`contract status` で読み直す。
+- **`/impl` の再開の案内（`respond`・`ready`・`recheck` などの `harness resume`）は `--detach` 付きになり、再開の後は `harness status` で合流する手順を書いた（Issue #359）。** 前面の `harness resume` が Bash の上限で止められ、レビュー対応の途中で run が取り消される（`cancelled.actor=signal`）ことを防ぐ。**利用者が取る操作**: このプラグインの版と、`resume --detach` を持つ harness CLI を合わせて更新する（古い CLI は `--detach` を知らず、終了コード 2 で止まる）。
+
+### 追加
+
+- **`harness resume --detach`・`harness approve --detach`（Issue #359）。** 付けたときだけ、ゲートを解いた後の run の進行を `run --detach` と同じ切り離したプロセス（`runner.log`・`runner.lock`）に渡し、その時点の状態の JSON を出して終了コード 0 ですぐ戻る。ゲートの解決と拒否は呼び出したプロセスで同期に行う。解決で run がゲートか終端に着いたときは切り離さず、従来どおりの状態と終了コードを返す。付けなければ従来どおり同期。
+
+---
+
 ## 5.0.1（harness CLI: `runtime/v5.0.1`）
 
 ### 変更
