@@ -1,7 +1,7 @@
 ---
 name: pr-merge
 description: "PRのレビューとマージを実施する。Triggers on: '/pr-merge', 'PRをマージして', 'マージして'"
-argument-hint: "[PR番号]"
+argument-hint: "[PR番号] [--auto-merge-timeout <分>]"
 model: opus
 # effort: 定型・機械的なマージ処理のため low。
 effort: low
@@ -28,6 +28,8 @@ PR番号: $ARGUMENTS
 > **注意**: PR番号が指定されない場合は、現在のブランチに関連付けられたPRを対象とします。
 > GitHub CLIは引数なしで実行すると、現在のブランチのPRを自動検出します。
 
+- `--auto-merge-timeout <分>`（省略可。既定 30）: 自動マージを予約したとき（Phase 4 の「before-merge の既定ブランチ宛て」）に、結果を待つ上限。それ以外のマージでは使わない。
+
 ---
 
 ## 実行手順
@@ -39,9 +41,11 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
 > **スクリプトの実行形（重要）**: 本スキルはプラグインとして配布されるため、スクリプトは**ユーザーのプロジェクトroot ではなく、プラグイン配下**にある。スクリプトを実行する際は必ず PATH 上のランチャー経由で `claude-harness-run pr-merge-preflight <PR番号>` の形式（パス・バージョン・引用符を付けない。この形だけが `Bash(claude-harness-run:*)` の1行で allowlist できる）を用い、相対パス `scripts/pr-merge-preflight.sh` では呼び出さないこと。`claude-harness-run: command not found` になった場合のみ `bash "<プラグインルート>/scripts/pr-merge-preflight.sh" <PR番号>` にフォールバックする（パスは引用符で囲む。プラグインルートはスキル起動時の「Base directory for this skill」から解決した絶対パス。`${CLAUDE_PLUGIN_ROOT}` は表記上のプレースホルダであり環境変数ではない）。フォールバックした場合はユーザーにランチャー導入を案内すること。
 <!-- 正本: docs/plugin-path-conventions.md -->
 
-1. **PR番号の解決**（`$ARGUMENTS` が空の場合は現在のブランチのPRを自動検出する）
+1. **PR番号の解決**（`$ARGUMENTS` から PR 番号と `--auto-merge-timeout <分>` を取り出す。PR 番号が無い場合は現在のブランチのPRを自動検出する）
    ```bash
-   PR_NUM="${ARGUMENTS:-$(gh pr view --json number -q .number)}"
+   AUTO_MERGE_TIMEOUT=30   # $ARGUMENTS に --auto-merge-timeout <分> があればその値（正の整数）
+   PR_NUM="<$ARGUMENTS の PR 番号。無ければ空>"
+   PR_NUM="${PR_NUM:-$(gh pr view --json number -q .number)}"
    ```
 
 2. **preflight スクリプトの実行**
@@ -65,6 +69,14 @@ base ブランチ判定（承認ゲートの決定）、PR情報・CI・mergeabl
    BLOCKING=$(jq -r '.blocking' <<<"$PREFLIGHT")  # true なら block_reasons を確認
    ```
    `block_reasons` はスクリプトが機械的に判定済みであり **LLM 側での再判定は不要**。`conflicting` を含む場合のみ Phase 2 へ進む。それ以外の理由（`changes_requested` / `ci_failed` / `merge_blocked`）はマージ不可として原因を報告する。
+
+   **CI の運用の宣言（`.claude-harness/ci.json`。#363）の読み取り**: preflight の後に、PR の宛先の宣言を読む（ランチャーの形・`command not found` のときのフォールバックは preflight と同じ）。
+   ```bash
+   CI_TRIGGER=$(claude-harness-run ci-trigger --base "$BASE" | jq -r '.trigger')   # per-push | before-merge
+   ```
+   - 宣言は作業ブランチではなく PR の宛先（`origin/$BASE`。スクリプトが取り直す）から読む。宣言・キーが無ければ `per-push`。壊れた宣言・知らない値はスクリプトが stderr に `Warning:` を出して `per-push` を返すので、警告を完了報告に書く。スクリプトが非0 で終わった・JSON を返さなかった場合も `per-push` として扱い、その事実を報告する（CI を待つ側に倒す）
+   - **`CI_TRIGGER == before-merge` かつ `GATE == production`** のときは、CI は自動マージの予約で初めて走る運用なので、preflight の時点で必須チェックがそろっていない。この組み合わせに限り、`block_reasons` の `merge_blocked`（必須条件の未達）だけではマージ不可としない（予約の後に GitHub が必須条件を待つ。必須レビューが足りない等で満たされなければ Phase 4 の待ちが `timeout` で返る）。`merge_blocked` 以外の理由（`changes_requested` / `ci_failed` / `conflicting`）の扱いは変わらない
+   - 統合ブランチ宛て（`GATE == integration`）は宣言に関わらず今の即時マージのまま（統合ブランチには必須チェックがかからず、before-merge の運用では CI も走らない。Linux 等での確認は既定ブランチへ上げる PR の予約のときに拾う。`runtime/README.md` の「CI の運用の宣言」）
 
    > **本番ゲート**（`production`、base = 既定ブランチ）は人間承認必須（本番影響あり・実質不可逆）。**統合ブランチゲート**（`integration`）は本番影響がなく可逆のため自律マージ可。承認ゲートは「本番への影響と可逆性」で決まり、統合 → 既定ブランチへの昇格 PR（本番ゲート）が統合ブランチ方式における唯一の人間ゲートである。
 
@@ -227,14 +239,28 @@ Phase 3 で問題が無かった PR について、マージのリスク区分�
    - **本番ゲート**（`GATE == "production"`）: 本番昇格のため、マージ前に**ユーザーの承認を得る**（統合ブランチ方式では最終動作確認 `/demo` 済みが前提）。承認が取れるまでマージしない
    - **統合ブランチゲート**（`GATE == "integration"`）: 本番影響がなく可逆のため、CI グリーン＋レビュー対応済みなら**ユーザー確認なしで自律マージ**してよい
 
-2. **マージ実行**
+2. **マージ実行**（Phase 0-1 で読んだ `$CI_TRIGGER` と `$GATE` で 2 つに分ける）
+
+   **a. 即時マージ**（`CI_TRIGGER == per-push`、または `GATE == integration`。宣言の無いリポジトリと統合ブランチ宛てはすべてこちら）
    ```bash
    gh pr merge "$PR_NUM" --squash --delete-branch
    ```
    - `--squash`: コミットを1つにまとめる
    - `--delete-branch`: マージ後にブランチを削除
 
-3. **マージ確認**
+   **b. 自動マージの予約**（`CI_TRIGGER == before-merge` かつ `GATE == production`。手順 1 の承認を得た後に行う）
+   ```bash
+   AUTO_MERGE=$(claude-harness-run auto-merge-wait "$PR_NUM" --timeout-minutes "$AUTO_MERGE_TIMEOUT")
+   ```
+   - スクリプトが `gh pr merge "$PR_NUM" --auto --squash --delete-branch` で予約し（必須チェックが通ったら GitHub がマージする）、上限つきで状態を見る。出力の定義は `claude-harness-run read-plugin-doc "scripts/specs/ci-trigger.md"`（読み出しの規律は Phase 2 の「参照ファイルの読み出し」と同じ）
+   - 待ちの上限（既定 30 分）は Bash ツールの 1 回の上限より長いので、**バックグラウンドで実行して終了を待つ**（前面で実行すると途中で打ち切られ、結果を読めない）
+   - `.result` で報告する（LLM 側で再判定しない）:
+     - `merged`: マージされた
+     - `checks_failed`: チェックが落ちた。`.failed_checks` を報告し、「問題がある場合の共通ステップ」で修正を依頼する。**予約は残る**（直して push し直せば、通った後にマージされる）
+     - `timeout`: 上限（`.timeout_minutes` 分）に達した。**予約は残っており、GitHub が後でマージしうる**。マージ完了とは報告せず「自動マージ予約中」として報告し、`gh pr view "$PR_NUM" --json state,autoMergeRequest` で後から確かめるよう案内する
+   - 非0 終了（予約に失敗した・PR が閉じられた・予約が外れた・状態を取れなかった）は stderr を報告してマージ不可として止まる。予約の失敗は、リポジトリの設定で自動マージが許可されていない・既定ブランチに必須チェックが無いことが多い（`runtime/README.md` の「CI の運用の宣言」のリポジトリ側の準備）
+
+3. **マージ確認**（a の即時マージのとき。b はスクリプトの `.result` が確認を兼ねる）
    ```bash
    gh pr view "$PR_NUM" --json state
    ```
@@ -274,7 +300,7 @@ Phase 3 で問題が無かった PR について、マージのリスク区分�
 ## 作業完了時
 
 作業が完了したら、以下を報告してください：
-1. PRの状態（マージ完了 / 保留 / 修正依頼）
+1. PRの状態（マージ完了 / 保留 / 修正依頼 / 自動マージ予約中〔before-merge で上限に達した。予約は残る〕）。自動マージを予約した場合は `auto-merge-wait` の `.result`（`merged` / `checks_failed` / `timeout`）と、`ci-trigger` の警告（あれば）
 2. コンフリクト解消の有無と内容
 3. レビューで発見した問題点（あれば）
 4. マージのリスク区分と根拠（Phase 3.5 の `label` と `reasons` の全件。Phase 3.5 に進まなかった場合はその事実）

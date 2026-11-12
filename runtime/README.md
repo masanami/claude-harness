@@ -100,6 +100,34 @@ steps:
   respond: { on: { pushed: ci } }
 ```
 
+## CI の運用の宣言（`.claude-harness/ci.json`。Issue #363）
+
+CI を「PR の push のたびに走らせる」か「マージ前に 1 回だけ走らせる」かを、リポジトリごとに宣言で選べる。既定は push のたび（今までどおり）。「マージ前に 1 回」は、CI を自動マージの予約（`pull_request` の `auto_merge_enabled`）のときだけ走らせ、必須チェックが通ったら GitHub がマージする運用で、委譲の子が push の前に手元で品質ゲート（上の `quality`）を通しているリポジトリで、CI の時間×push の回数の待ちを省くためのもの（マージキューは organization のリポジトリでしか使えないので、その代わり）。
+
+- 形は `{"trigger": "per-push" | "before-merge"}`（キーはこの 1 つ）。
+  - `per-push`: push のたびに CI が走る。`ticket` の `ci` の段は CI の結果を待つ（チェックが 1 件も出ないまま約 2 分続けば「CI 無し」〔`none`〕と確定する。#341）。
+  - `before-merge`: CI は自動マージの予約のときだけ走る。`ticket` の `ci` の段は CI を待たず（ポーリングも、約 2 分の `none` の確定もしない）、PR の存在だけを確かめて `ci: skipped` で `review` へ進む。`skipped` は `none` とは別の値で、`status --json` の `units[].outputs.ci.ci` と round の記録（`ci:skipped`）で見分けられる。`/pr-merge` は既定ブランチ宛ての PR を即時マージではなく自動マージの予約（`gh pr merge --auto --squash --delete-branch`）でマージし、上限つき（既定 30 分。`/pr-merge <PR> --auto-merge-timeout <分>` で変える）で待って「マージされた」「チェックが落ちた（予約は残る）」「上限に達した（予約は残る）」のどれかを報告する。
+- ファイルが無い・`trigger` キーが無いときは `per-push`。JSON として読めない・オブジェクト 1 つでない・`trigger` が文字列でない・知らない値のときは、警告（stderr の `Warning:` の 1 行）を出して `per-push` として扱う。CI を待たない側（`before-merge`）へは、正しく宣言したときだけ倒す。`trigger` 以外のキーは無視する。
+- 宣言は品質ゲートの宣言と同じく、作業ブランチではなく PR の宛先（`origin/<base>`。読むたびに origin から取り直す。取れなければ警告を出して `per-push`）から読む。同じ PR の中で宣言を書き換えて CI の待ちを飛ばせないようにするためで、宣言を足す PR 自身ではその宣言は効かない（先に宛先へ入れる）。
+- 読み手は `plugin/scripts/ci-trigger.sh --base <宛先>` の 1 つで、`ticket` の `ci` の段（`workflows/scripts/ci-wait-pr.sh` に `base` を渡す）と `/pr-merge` の両方がこれを使う。出力の定義は `plugin/scripts/specs/ci-trigger.md`。
+
+### 統合ブランチ宛ての PR は即時マージのまま
+
+`before-merge` のリポジトリでも、統合ブランチ宛ての PR（`ticket` の `merge` の段が `/pr-merge` でマージする）は今までどおり即時マージする。自動マージの予約は既定ブランチ宛て（`/pr-merge` の preflight の `gate` が `production`。`gh repo view` の既定ブランチと PR の宛先が一致する）だけで行う。
+
+- 統合ブランチには必須チェックがかからない。待つべき条件が無い宛先で予約しても、マージ前の検査を待つことにならない。
+- `before-merge` の運用では CI が `auto_merge_enabled` でしか走らないので、統合ブランチ宛てには CI が走らない。統合ブランチ宛ての PR の確認は、手元の品質ゲート（`quality`）が担う。
+- Linux での確認と、他の PR と合わさった状態の確認は、統合ブランチを既定ブランチへ上げる PR を予約するときの 1 回で拾う。
+
+### この運用にするときにリポジトリの側で行うこと
+
+宣言を置くだけでは CI の起動条件は変わらない。`{"trigger": "before-merge"}` を既定ブランチ（と統合ブランチ）に入れる前に、次をそろえる。
+
+1. CI のワークフロー（例: `.github/workflows/ci.yml`）の起動を、自動マージの予約にする（例: `on: pull_request: types: [auto_merge_enabled]`）。予約の後に push し直したときにも走らせるなら、`synchronize` を足して、ジョブを `if: github.event.pull_request.auto_merge != null` で絞る等にする。
+2. リポジトリの設定（Settings → General → Pull Requests）で「Allow auto-merge」を有効にする。無効のままだと `/pr-merge` の予約が失敗して止まる。
+3. 既定ブランチの必須チェック（branch protection・ruleset の required status checks）を残す。必須チェックが無いと、予約の後に CI を待たずにマージされうる（または予約が断られる）。
+4. 宣言 `.claude-harness/ci.json` を既定ブランチ（統合ブランチ方式なら統合ブランチにも。宣言は PR の宛先から読む）へ入れる。
+
 ## 版の照合（§7.3）
 
 - CLI は独立した semver（タグ `runtime/vX.Y.Z`）。対応するプラグイン版の範囲（現在 `>=4.9.0 <6.0.0`。上限は薄い `/impl` を載せるプラグイン 5.x を受けるため。#299）と、読めるワークフロースキーマ版（`harness.workflow/v1`）を内蔵する。

@@ -10,6 +10,10 @@
 
 ## [Unreleased]
 
+### 追加
+
+- **CI の運用の宣言 `.claude-harness/ci.json`（`{"trigger": "per-push" | "before-merge"}`）で、CI を「マージ前に 1 回」にする運用をリポジトリごとに選べるようになった（Issue #363）。** 宣言は品質ゲートの宣言と同じく PR の宛先（`origin/<base>`）から読む。`before-merge` のとき、`harness run ticket` の `ci` の段は CI を待たずに（約 2 分の「CI 無し」の確定もせずに）新しい結果 `ci: skipped`（`none` とは別の値）で `review` へ進み、`/pr-merge` は既定ブランチ宛ての PR を即時マージではなく自動マージの予約（`gh pr merge --auto --squash --delete-branch`）でマージし、上限つき（既定 30 分。`/pr-merge <PR> --auto-merge-timeout <分>`）で待って「マージされた」「チェックが落ちた」「上限に達した（予約は残る）」のどれかを報告する。統合ブランチ宛ては即時マージのまま。宣言が無い・`per-push` のときは今までと同じ。壊れた宣言・知らない値は警告を出して `per-push` として扱う。新しいスクリプト `plugin/scripts/ci-trigger.sh`（宣言の読み手）・`plugin/scripts/auto-merge-wait.sh`（予約と待ち）。**利用者が取る操作**: 使わないなら何もしない。使うなら、CI の起動を自動マージの予約（`pull_request` の `auto_merge_enabled`）にし、リポジトリの設定で自動マージを許可し、既定ブランチの必須チェックを残してから、宣言を既定ブランチ（統合ブランチ方式なら統合ブランチにも）へ入れる（手順は `runtime/README.md` の「CI の運用の宣言」）。`status --json` の `units[].outputs.ci.ci` を読む呼び出し元は、新しい値 `skipped` を `green`・`none` と同じく先へ進んだものとして扱う。このプラグインの版と harness CLI を合わせて更新する（`ci` の段の定義とスクリプトは harness CLI に埋め込まれている）。
+
 ### 変更
 
 - **`harness status` が案内する再開のコマンド（`status --json` の `waiting[].resume_command`、テキスト表示と `harness graph --run` の `resume:` 行）は、`resume` の形が `harness resume --detach <run-id> --unit …` になった（Issue #359 の追補）。** `observe` 型のゲート（`human-merge` 等）と、`review`・`ci-pending`・`interrupted` などの既定の形が対象。案内をそのまま実行しても、ゲートを解いた後の進行が呼び出し元の時間の上限・シグナルから切り離される。人が端末で打つ `approve` の形（`requires_tty: true`）は同期のまま変わらない。`harness resume` の既定（フラグなし）の動きも変わらない。**利用者が取る操作**: 古い harness CLI は `--detach` を知らず、案内のコマンドが終了コード 2 で止まるので、このプラグインの版と harness CLI を合わせて更新する。案内の文字列を照合していた呼び出し元は `--detach` 付きの形に合わせる。
