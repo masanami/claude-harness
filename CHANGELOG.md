@@ -8,6 +8,14 @@
 
 ---
 
+## [Unreleased]
+
+### 変更
+
+- **`harness status` が案内する再開のコマンド（`status --json` の `waiting[].resume_command`、テキスト表示と `harness graph --run` の `resume:` 行）は、`resume` の形が `harness resume --detach <run-id> --unit …` になった（Issue #359 の追補）。** `observe` 型のゲート（`human-merge` 等）と、`review`・`ci-pending`・`interrupted` などの既定の形が対象。案内をそのまま実行しても、ゲートを解いた後の進行が呼び出し元の時間の上限・シグナルから切り離される。人が端末で打つ `approve` の形（`requires_tty: true`）は同期のまま変わらない。`harness resume` の既定（フラグなし）の動きも変わらない。**利用者が取る操作**: 古い harness CLI は `--detach` を知らず、案内のコマンドが終了コード 2 で止まるので、このプラグインの版と harness CLI を合わせて更新する。案内の文字列を照合していた呼び出し元は `--detach` 付きの形に合わせる。
+
+---
+
 ## 5.0.2（harness CLI: `runtime/v5.0.2`）
 
 ### 変更

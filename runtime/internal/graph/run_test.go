@@ -60,7 +60,7 @@ func TestTextRunMarksMultipleUnits(t *testing.T) {
 	g := Build(load(t, testWorkflows, testScripts, "llm"), SourceWorkflowDir, "dev")
 	g.Run = &Run{RunID: "r", Status: "waiting", Units: []RunUnit{
 		{Key: "a", Status: "waiting", CurrentStep: "review", Round: 1, Visited: []Visit{{"implement", 1, "pass"}},
-			Waiting: &Waiting{Gate: "review", Decider: "any", ResumeCommand: "harness resume r --unit a --input <respond|ready>"}},
+			Waiting: &Waiting{Gate: "review", Decider: "any", ResumeCommand: "harness resume --detach r --unit a --input <respond|ready>"}},
 		{Key: "b", Status: "running", CurrentStep: "fix", Round: 2, Visited: []Visit{{"implement", 1, "pass"}}},
 	}}
 	lines := text(g, 0)
@@ -76,7 +76,7 @@ func TestTextRunMarksMultipleUnits(t *testing.T) {
 		t.Fatalf("step lines:\n%s", strings.Join(steps, "\n"))
 	}
 	all := strings.Join(lines, "\n")
-	for _, want := range []string{"run r unit a: waiting at review (decider any), round 1", "  resume: harness resume r --unit a --input <respond|ready>",
+	for _, want := range []string{"run r unit a: waiting at review (decider any), round 1", "  resume: harness resume --detach r --unit a --input <respond|ready>",
 		"run r unit b: running at fix, round 2"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("text does not contain %q:\n%s", want, all)

@@ -93,7 +93,7 @@ func TestRunWaitsAtGateAndResumes(t *testing.T) {
 	}
 	w := v.Waiting[0]
 	if w.Gate != "review" || w.RequiresTTY || strings.Join(w.Inputs, ",") != "respond,ready" ||
-		w.ResumeCommand != "harness resume "+v.RunID+" --unit main --input <respond|ready> [--note <text>]" || w.RequestedAction == "" {
+		w.ResumeCommand != "harness resume --detach "+v.RunID+" --unit main --input <respond|ready> [--note <text>]" || w.RequestedAction == "" {
 		t.Fatalf("waiting = %+v", w)
 	}
 	if b := v.Units[0].Budget; b == nil || b.SpentUSD != 0.4 || b.LimitUSD != 5 {
@@ -132,7 +132,8 @@ func TestHumanInputGateNeedsApproveFromATerminal(t *testing.T) {
 		t.Fatalf("run exit %d\n%s", code, errOut)
 	}
 	v := decode[statusView](t, out)
-	if w := v.Waiting[0]; !w.RequiresTTY || !strings.HasPrefix(w.ResumeCommand, "harness approve ") {
+	// 人が端末で打つ approve の案内は同期のまま（呼び出し元の時間の上限が無い。切り離したければ人が --detach を足す）。
+	if w := v.Waiting[0]; !w.RequiresTTY || !strings.HasPrefix(w.ResumeCommand, "harness approve ") || strings.Contains(w.ResumeCommand, "--detach") {
 		t.Fatalf("waiting = %+v", w)
 	}
 	before := eventTypes(t, filepath.Join(state, "runs", v.RunID))
@@ -275,7 +276,7 @@ func TestStatusInterruptsAStepLeftByADeadRunner(t *testing.T) {
 	if u.Budget.SpentUSD != 2 || u.Budget.UnknownCostCount != 1 {
 		t.Fatalf("budget = %+v", u.Budget)
 	}
-	if len(v.Waiting) != 1 || !strings.Contains(v.Waiting[0].ResumeCommand, "<rerun|abort>") {
+	if len(v.Waiting) != 1 || v.Waiting[0].ResumeCommand != "harness resume --detach "+id+" --unit main --input <rerun|abort> [--note <text>]" {
 		t.Fatalf("waiting = %+v", v.Waiting)
 	}
 	// 2 回目の status は何も記録しない。

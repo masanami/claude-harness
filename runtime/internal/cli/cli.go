@@ -623,16 +623,19 @@ func runnerAlive(st *runstate.State) *bool {
 	return &alive
 }
 
+// waiting は待っているゲートの表示を作る。resume の案内は --detach 付き（ゲートを解いた後の進行を呼び出し元の
+// 時間の上限・シグナルから切り離す。#359）。人が端末で打つ approve の案内は同期のまま（呼び出し元の上限が無い。
+// 切り離したければ人が --detach を足せる）。
 func waiting(runID string, u *runstate.Unit) waitingView {
 	g := u.Gate
 	w := waitingView{Unit: u.Key, Gate: g.Gate, Type: g.Type, Decider: g.Decider, RequestedAction: g.RequestedAction, Inputs: g.Inputs, RequiresTTY: g.RequiresTTY}
 	switch {
 	case g.Type == workflow.GateObserve:
-		w.ResumeCommand = fmt.Sprintf("harness resume %s --unit %s", runID, u.Key)
+		w.ResumeCommand = fmt.Sprintf("harness resume --detach %s --unit %s", runID, u.Key)
 	case g.RequiresTTY:
 		w.ResumeCommand = fmt.Sprintf("harness approve %s --unit %s --input <%s> [--note <text>]  # from a terminal, by a person", runID, u.Key, strings.Join(g.Inputs, "|"))
 	default:
-		w.ResumeCommand = fmt.Sprintf("harness resume %s --unit %s --input <%s> [--note <text>]", runID, u.Key, strings.Join(g.Inputs, "|"))
+		w.ResumeCommand = fmt.Sprintf("harness resume --detach %s --unit %s --input <%s> [--note <text>]", runID, u.Key, strings.Join(g.Inputs, "|"))
 	}
 	return w
 }

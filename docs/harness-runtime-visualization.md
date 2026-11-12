@@ -139,7 +139,7 @@ YAML の `on` に書かれていない予約値（`step_error`・`step_timeout`�
     "current_step": "review",
     "round": 3,
     "waiting": {"gate": "review", "type": "input", "decider": "any", "requires_tty": false,
-                "inputs": ["respond", "ready"], "resume_command": "harness resume … --input <respond|ready> …"},
+                "inputs": ["respond", "ready"], "resume_command": "harness resume --detach … --input <respond|ready> …"},
     "visited": [
       {"step": "implement", "executions": 1, "last_outcome": "pass"},
       {"step": "ci", "executions": 2, "last_outcome": "green"}
@@ -215,7 +215,7 @@ legend: [human] decided by a person  [tty] needs a terminal  ! fail  = done  ~ g
 * ci                command 20m   green -> review | ...                      (x2, last green)
 > review            gate input any            respond -> respond | ready -> merge-route
 run …: waiting at review (decider any) round 3, rework 1/3, spent 21.30/40.00 USD
-  resume: harness resume … --unit … --input <respond|ready> [--note <text>]
+  resume: harness resume --detach … --unit … --input <respond|ready> [--note <text>]
 ```
 
 テキストの文言は既存の `status` のテキスト表示と同じく英語にする（CLI の出力は英語。`cli.go` の表示文。実コード確証・high）。

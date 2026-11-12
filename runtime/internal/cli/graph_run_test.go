@@ -119,7 +119,7 @@ func TestGraphRunWaiting(t *testing.T) {
 		"\n* implement ", "(x1, last pass)\n",
 		"\n* fix ", "\n> review ",
 		"\nrun " + id + ": waiting at review (decider any), round 2, spent 0.70/5.00 USD\n",
-		"\n  resume: harness resume " + id + " --unit " + u.Key + " --input <respond|ready> [--note <text>]\n",
+		"\n  resume: harness resume --detach " + id + " --unit " + u.Key + " --input <respond|ready> [--note <text>]\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("text does not contain %q:\n%s", want, text)
