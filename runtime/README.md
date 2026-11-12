@@ -100,6 +100,32 @@ steps:
   respond: { on: { pushed: ci } }
 ```
 
+## CI の運用の宣言（`.claude-harness/ci.json`。Issue #363）
+
+CI を「PR の push のたびに走らせる」か「既定ブランチへのマージの後だけ走らせる」かを、リポジトリごとに宣言で選べる。既定は push のたび（今までどおり）。「マージの後だけ」は、委譲の子が push の前に手元で品質ゲート（上の `quality`）を通しているリポジトリで、PR ごとに同じ検査を CI でもう一度回して待つ時間（CI の時間×push の回数）を省くためのもの。
+
+- 形は `{"trigger": "per-push" | "after-merge"}`（キーはこの 1 つ）。
+  - `per-push`: push のたびに CI が走る。`ticket` の `ci` の段は CI の結果を待つ（チェックが 1 件も出ないまま約 2 分続けば「CI 無し」〔`none`〕と確定する。#341）。
+  - `after-merge`: PR では CI が走らず、既定ブランチへのマージの後（既定ブランチへの push）だけ走る。`ticket` の `ci` の段は CI を待たず（ポーリングも、約 2 分の `none` の確定もしない）、PR の存在だけを確かめて `ci: skipped` で `review` へ進む。`skipped` は `none` とは別の値で、`status --json` の `units[].outputs.ci.ci` と round の記録（`ci:skipped`）で見分けられる。
+- ファイルが無い・`trigger` キーが無いときは `per-push`。JSON として読めない・オブジェクト 1 つでない・`trigger` が文字列でない・知らない値（`before-merge` も受け付けず、知らない値として扱う）のときは、警告（stderr の `Warning:` の 1 行）を出して `per-push` として扱う。CI を待たない側（`after-merge`）へは、正しく宣言したときだけ倒す。`trigger` 以外のキーは無視する。
+- 宣言は品質ゲートの宣言と同じく、作業ブランチではなく PR の宛先（`origin/<base>`。読むたびに origin から取り直す。取れなければ警告を出して `per-push`）から読む。同じ PR の中で宣言を書き換えて CI の待ちを飛ばせないようにするためで、宣言を足す PR 自身ではその宣言は効かない（先に宛先へ入れる）。
+- 読み手は `plugin/scripts/ci-trigger.sh --base <宛先>` で、`ticket` の `ci` の段（`workflows/scripts/ci-wait-pr.sh` に `base` を渡す）が使う。出力の定義は `plugin/scripts/specs/ci-trigger.md`。
+
+### `/pr-merge` の動きは宣言で変わらない
+
+`/pr-merge` はこの宣言を読まない。`after-merge` のリポジトリでも、既定ブランチ宛て・統合ブランチ宛て（`ticket` の `merge` の段が `/pr-merge` でマージする）のどちらも、今までどおりの即時マージ（`gh pr merge --squash --delete-branch`）でマージする。
+
+- `after-merge` のリポジトリでは PR に CI が走らず、既定ブランチの保護にも必須チェックを置かない（下の 2）。マージを待たせる条件が無いので、即時マージで通る。
+- 本番ゲート（既定ブランチ宛ての人間の承認）・統合ブランチゲートの扱いも変わらない。
+
+### この運用にするときにリポジトリの側で行うこと
+
+宣言を置くだけでは CI の起動条件は変わらない。`{"trigger": "after-merge"}` を既定ブランチ（統合ブランチ方式なら統合ブランチにも。宣言は PR の宛先から読む）へ入れるときに、次をそろえる。
+
+1. CI のワークフロー（例: `.github/workflows/ci.yml`）の起動を、既定ブランチへの push だけにする（例: `on: push: branches: [main]`。手で回したいときは `workflow_dispatch` を足す）。`pull_request` の起動は外す。
+2. 既定ブランチの保護（branch protection・ruleset）の必須チェック（required status checks）を外す。PR に CI が走らないので、残すと必須チェックがそろわず PR がマージできない。
+3. Linux 固有の不具合（手元の品質ゲートを macOS 等で回しているとき）と、他の PR と合わさった状態の不具合は、PR の段では見つからず、マージの後の既定ブランチの CI で見つかる。CI が落ちたら既定ブランチを直す PR を出す運用にする。
+
 ## 版の照合（§7.3）
 
 - CLI は独立した semver（タグ `runtime/vX.Y.Z`）。対応するプラグイン版の範囲（現在 `>=4.9.0 <6.0.0`。上限は薄い `/impl` を載せるプラグイン 5.x を受けるため。#299）と、読めるワークフロースキーマ版（`harness.workflow/v1`）を内蔵する。

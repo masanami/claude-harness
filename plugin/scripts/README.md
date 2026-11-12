@@ -14,6 +14,7 @@
 | collect-promotion-context.sh / check-subtask-completion.sh | `scripts/specs/collect-promotion-context.md` |
 | fetch-pr-comments.sh / reply-and-resolve.sh | `scripts/specs/fetch-pr-comments.md` |
 | ci-wait.sh | `scripts/specs/ci-wait.md` |
+| ci-trigger.sh | `scripts/specs/ci-trigger.md` |
 | worktree-setup.sh / worktree-cleanup.sh | `scripts/specs/worktree-setup.md` |
 | demo-e2e-out.sh | `scripts/specs/demo-e2e-out.md` |
 | promotion-decision.sh | `scripts/specs/promotion-decision.md` |

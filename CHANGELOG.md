@@ -10,6 +10,10 @@
 
 ## [Unreleased]
 
+### 追加
+
+- **CI の運用の宣言 `.claude-harness/ci.json`（`{"trigger": "per-push" | "after-merge"}`）で、CI を「既定ブランチへのマージの後だけ」走らせる運用をリポジトリごとに選べるようになった（Issue #363）。** 宣言は品質ゲートの宣言と同じく PR の宛先（`origin/<base>`）から読む。`after-merge`（PR では CI が走らず、既定ブランチへのマージの後だけ走る）のとき、`harness run ticket` の `ci` の段は CI を待たずに（約 2 分の「CI 無し」の確定もせずに）新しい結果 `ci: skipped`（`none` とは別の値）で `review` へ進む。宣言が無い・`per-push` のときは今までと同じ。壊れた宣言・知らない値は警告を出して `per-push` として扱う。`/pr-merge` は宣言を読まず、どの宛先でも今までどおり即時マージする。新しいスクリプト `plugin/scripts/ci-trigger.sh`（宣言の読み手）。**利用者が取る操作**: 使わないなら何もしない。使うなら、CI のワークフローの起動を既定ブランチへの push（と必要なら `workflow_dispatch`）だけにし、既定ブランチの保護の必須チェックを外し（残すと PR がマージできない）、宣言を既定ブランチ（統合ブランチ方式なら統合ブランチにも）へ入れる。Linux 固有の不具合と他の PR と合わさった状態の不具合はマージの後の CI で見つかる（手順は `runtime/README.md` の「CI の運用の宣言」）。`status --json` の `units[].outputs.ci.ci` を読む呼び出し元は、新しい値 `skipped` を `green`・`none` と同じく先へ進んだものとして扱う。このプラグインの版と harness CLI を合わせて更新する（`ci` の段の定義とスクリプトは harness CLI に埋め込まれている）。
+
 ### 変更
 
 - **`harness status` が案内する再開のコマンド（`status --json` の `waiting[].resume_command`、テキスト表示と `harness graph --run` の `resume:` 行）は、`resume` の形が `harness resume --detach <run-id> --unit …` になった（Issue #359 の追補）。** `observe` 型のゲート（`human-merge` 等）と、`review`・`ci-pending`・`interrupted` などの既定の形が対象。案内をそのまま実行しても、ゲートを解いた後の進行が呼び出し元の時間の上限・シグナルから切り離される。人が端末で打つ `approve` の形（`requires_tty: true`）は同期のまま変わらない。`harness resume` の既定（フラグなし）の動きも変わらない。**利用者が取る操作**: 古い harness CLI は `--detach` を知らず、案内のコマンドが終了コード 2 で止まるので、このプラグインの版と harness CLI を合わせて更新する。案内の文字列を照合していた呼び出し元は `--detach` 付きの形に合わせる。
