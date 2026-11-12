@@ -331,6 +331,65 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 	}
 }
 
+// マージの後に status が案内する形（harness resume --detach <run> --unit main）で再開すると、observe ゲートの観測
+// （merged）はこのプロセスで同期に行い、片付け以降の進行は切り離した runner に渡してすぐ戻る（#359・#364）。
+// 返す状態は再開の直後の値で、速い runner（Linux）では runner がもう先へ進んでいることがあるので、running の 1 値に
+// 決めつけず checkJustResumed の集合（running で待つゲートが無い・waiting）で受ける。そのあと run が片付けを終えて
+// merged で成功するまで、切り離した run のテストと同じ waitStatus（上限つきのポーリング）で待つ。
+func TestTicketWorkflowDetachedResumeAfterMerge(t *testing.T) {
+	f := newTicketFixture(t)
+	h, root := f.h, f.root
+	out, errOut, code := h.run("run", "--input", "issue=42", "ticket", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts))
+	if code != ExitWaiting {
+		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
+	}
+	runID := decode[statusView](t, out).RunID
+	f.write("checks", check("test", "pass"))
+	if out, errOut, code = h.run("resume", runID, "--input", "recheck"); code != ExitWaiting {
+		t.Fatalf("resume recheck exit %d\n%s\n%s", code, out, errOut)
+	}
+	out, errOut, code = h.run("resume", runID, "--input", "ready")
+	if code != ExitWaiting {
+		t.Fatalf("resume ready exit %d\n%s\n%s", code, out, errOut)
+	}
+	v := decode[statusView](t, out)
+	resumeCommand := "harness resume --detach " + runID + " --unit main"
+	if len(v.Waiting) != 1 || v.Waiting[0].Gate != "human-merge" || v.Waiting[0].Type != "observe" || v.Waiting[0].ResumeCommand != resumeCommand {
+		t.Fatalf("waiting = %+v", v.Waiting)
+	}
+
+	// マージを観測させる。案内どおりの引数（先頭の harness を除いたもの）で再開する。
+	f.write("pr-state", "MERGED")
+	out, errOut, code = h.run(strings.Fields(resumeCommand)[1:]...)
+	if code != ExitOK {
+		t.Fatalf("resume --detach after merge exit %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "advanced by a detached runner") {
+		t.Fatalf("resume --detach after merge did not hand the run to a runner:\n%s", errOut)
+	}
+	checkJustResumed(t, decode[statusView](t, out))
+
+	v = h.waitStatus(runID, runstate.StatusSucceeded)
+	if v.Reason != "merged" {
+		t.Fatalf("final = %s (%s)", v.Status, v.Reason)
+	}
+	if ws := v.Unit("main").Workspace; ws == nil || !ws.Released || !ws.Removed {
+		t.Errorf("workspace = %+v", ws)
+	}
+	if _, err := os.Stat(filepath.Join(root, "repo-worktrees", "issue-42")); !os.IsNotExist(err) {
+		t.Errorf("the worktree the run created is still there: %v", err)
+	}
+	if cmds := runnerCommands(t, v.RunDir); !strings.HasSuffix(cmds, "resume detached") {
+		t.Errorf("runner commands = %s, want the last ones to be the resume and the detached runner", cmds)
+	}
+	if r := v.Unit("main").Rounds; r[len(r)-1].Trigger.Gate != "human-merge" || r[len(r)-1].Trigger.Input != "merged" {
+		t.Errorf("last round trigger = %+v", r[len(r)-1].Trigger)
+	}
+	if cd, _ := h.contractNow("status", runID); cd.State != runstate.StatusSucceeded || cd.RequestedAction != nil {
+		t.Errorf("contract status at the end = %+v", cd)
+	}
+}
+
 // base の統合ブランチが remote に無ければ、作業ツリーを払い出す前に base_missing で止まる（I3）。
 func TestTicketWorkflowStopsWhenTheIntegrationBranchIsMissing(t *testing.T) {
 	_, repo, _ := tempRepo(t)
