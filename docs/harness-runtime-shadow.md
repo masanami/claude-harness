@@ -78,7 +78,7 @@ runtime の外（再開を指示する側）の費用なので、runtime の状�
   jq -r 'select(.type=="gate_resolved") | [.ts, .gate_resolved.gate, .gate_resolved.outcome, ((.gate_resolved.note // "") | length)] | @tsv' "$S"/*/events.jsonl
   ```
 
-- **親のエージェント（flywheel の Tom 等）が Bash から `harness` を回す場合**: 親のセッションの記録（Claude Code の transcript）で、`harness run`/`resume` の終了（終了コード 3。`resume --detach` で再開した場合は、`harness status` の合流で次のゲートの `waiting`）を受け取ってから次の `harness resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和。導入前（`delegate_end` から同じ `session_id` の次の `delegate_start` まで）と同じ区切りで数える。
+- **親のエージェント（flywheel の Tom 等）が Bash から `harness` を回す場合**: 親のセッションの記録（Claude Code の transcript）で、`harness run`/`resume` の終了（終了コード 3。`run --detach` で起動した場合と `resume --detach` で再開した場合は、`harness status` の合流で次のゲートの `waiting`）を受け取ってから次の `harness resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和。導入前（`delegate_end` から同じ `session_id` の次の `delegate_start` まで）と同じ区切りで数える。
 
 ### M2: 取り違えの件数
 
@@ -238,9 +238,9 @@ claude -p --output-format json --max-budget-usd 1 \
 
 ### 8.6 起動と記録
 
-- 親は `harness run` を**ハーネスの追跡内のバックグラウンド実行**で起動する。終了（`0`／`1`／`3`／`4`）を受け取ってから次の操作をする。
+- 親は `harness run --detach ...`（§3 の起動例に `--detach` を付けた形。`/impl` の SKILL.md の始めの起動と同じ）で起動する。Bash ツールのように呼び出し元に時間の上限があると、同期の `run` は上限で止められて run がシグナルによる取り消しになりうるため（下の `resume` と同じ理由）。`--detach` を付けると、run を進めるプロセスを切り離し、run id を標準出力に出して終了コード `0` ですぐ戻る。**起動の後は `harness status <run> --json` で合流する**: `.status` が `running` 以外になるまで上限付きで読み直し、`waiting`（ゲート）か終端（`succeeded`／`failed`／`cancelled`）を受け取ってから次の操作をする（`/impl` の SKILL.md の「4. 合流」と同じ流れ）。
 - 親はゲートで待つ run を `harness resume --detach <run> …` で再開する（§8.7 の表の形）。Bash ツールのように呼び出し元に時間の上限があると、同期の `resume` は上限で止められて run がシグナルによる取り消しになりうるため（[`harness-runtime-design.md`](harness-runtime-design.md) §5.2）。`--detach` を付けると、ゲートの解決はその場で行い、解いた後の進行を切り離したプロセスに渡して終了コード `0` ですぐ戻る（解決で run がゲートか終端に着いたときは、切り離さずに従来どおりの状態と終了コードを返す）。**再開の後は `harness status <run> --json` で合流する**: `.status` が `running` 以外になるまで上限付きで読み直し、`waiting`（次のゲート）か終端を受け取ってから次の操作をする（`/impl` の SKILL.md の「再開と合流」と同じ流れ）。
-- 親の実行イベントログには `delegate_start`／`delegate_end` で挟んで 1 件とする。実行スキルは `harness run ticket`、結果に run id を書く。
+- 親の実行イベントログには `delegate_start`／`delegate_end` で挟んで 1 件とする。`delegate_start` は `harness run --detach` の起動の前、`delegate_end` は `harness status` の合流で `waiting` か終端を読んだ時点に置く（`run --detach` の終了コード `0` は起動を受け付けたことしか表さないため、その時点では閉じない）。実行スキルは `harness run ticket`、結果に run id を書く。
 
 ### 8.7 ゲートの対応（親の承認ゲートとの対応）
 
@@ -257,7 +257,7 @@ claude -p --output-format json --max-budget-usd 1 \
 ### 8.8 記録の置き場と M1
 
 - run ごとの §5 の行は、親のサイクルジャーナルに書く。
-- M1（再開 1 回あたりの親側の消費）は、親セッションの transcript（`~/.claude/projects/<プロジェクト>/<セッション>.jsonl`）から取る。`harness` の終了（`resume --detach` なら `harness status` の合流で `waiting` を読んだ時点）を受け取ってから次の `resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和（§4 M1 の 2 つ目の箇条書きと同じ区切り）。
+- M1（再開 1 回あたりの親側の消費）は、親セッションの transcript（`~/.claude/projects/<プロジェクト>/<セッション>.jsonl`）から取る。`harness` の終了（`run --detach`・`resume --detach` なら `harness status` の合流で `waiting` を読んだ時点）を受け取ってから次の `resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和（§4 M1 の 2 つ目の箇条書きと同じ区切り）。
 
 ### 8.9 実装前に止まった run
 
