@@ -103,7 +103,30 @@ func startDetached(t *testing.T, h *harness) (string, string) {
 	if id == "" || strings.ContainsAny(id, " \n{") || !strings.Contains(errOut, "run "+id+" started") {
 		t.Fatalf("run --detach must print only the run id: stdout %q\n%s", out, errOut)
 	}
+	// 一時ディレクトリ（HARNESS_STATE_DIR・pidfile）は、この登録より前に作ったので、t.Cleanup の逆順により
+	// この片付けの後に消える。runner は孫の sleep が終わると run の記録（events・状態・runner.log）を書いてから
+	// 終わるので、それを待たずに一時ディレクトリを消すと、runner の書き込みと競合して RemoveAll が
+	// directory not empty で落ちる。
+	t.Cleanup(func() { stopDetached(t, h, id, pidfile) })
 	return id, pidfile
+}
+
+// stopDetached は、startDetached で始めた run の runner がまだ生きていれば、孫の sleep を止めて run を終わらせ、
+// runner が終わるまで待つ。テストが途中で落ちたときも runner と sleep を残さない。
+func stopDetached(t *testing.T, h *harness, id, pidfile string) {
+	t.Helper()
+	v := h.statusOf(id)
+	if !runstate.Alive(v.PID) || v.PID == os.Getpid() {
+		return
+	}
+	if b, err := os.ReadFile(pidfile); err == nil {
+		if f := strings.Fields(string(b)); len(f) == 2 {
+			if child, err := strconv.Atoi(f[1]); err == nil {
+				_ = syscall.Kill(child, syscall.SIGTERM) // 孫の sleep を止めるとステップが終わり、runner も終わる
+			}
+		}
+	}
+	h.waitRunnerExit(v)
 }
 
 // (a) 切り離して始めた run は、呼び出し元のプロセスが終わった後も最後まで進み、status・contract status で終わりまで読める。
@@ -170,8 +193,7 @@ func TestContractStartReturnsAtOnce(t *testing.T) {
 func TestDetachedRunnerLockRefusesASecondRunner(t *testing.T) {
 	h := newHarness(t, "HARNESS_STATE_DIR="+t.TempDir())
 	id, pidfile := startDetached(t, h)
-	_, child := sleeperPIDs(t, pidfile)
-	defer syscall.Kill(child, syscall.SIGTERM)
+	sleeperPIDs(t, pidfile) // ステップが走っている（runner がロックを持っている）。片付けは startDetached が登録した stopDetached
 	dir := h.statusOf(id).RunDir
 	before := eventTypes(t, dir)
 
