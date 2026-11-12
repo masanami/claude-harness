@@ -92,7 +92,7 @@ func TestTicketNodes(t *testing.T) {
 		t.Fatalf("edges into fail:quality_gate = %d, want 2 (implement.failure and fix.failure)", into)
 	}
 	// 設計文書 §12 の数: 53 本（尽きたときの辺 3 本を含む）に、quality（#326）の 4 本（pass・fail・fail が尽きたとき・undeclared）と、
-	// ci の skipped（#363。CI の運用の宣言が before-merge で CI を待たなかった）の 1 本を足した 58 本。
+	// ci の skipped（#363。CI の運用の宣言が after-merge で CI を待たなかった）の 1 本を足した 58 本。
 	if len(g.Edges) != 58 {
 		t.Fatalf("edges = %d, want 58", len(g.Edges))
 	}

@@ -3,8 +3,8 @@
 # scripts/ci-trigger.sh（CI の運用の宣言 .claude-harness/ci.json を PR の宛先 origin/<base> から読む。#363）を、
 # 一時 git リポジトリ（bare の origin と clone）の上で実際に動かして検証する。
 #   - 宣言が無い・trigger キーが無い -> per-push（警告なし）
-#   - per-push / before-merge -> その値（警告なし）
-#   - 壊れた JSON・知らない値・オブジェクトでない・文字列でない -> 警告を 1 つ出して per-push
+#   - per-push / after-merge -> その値（警告なし）
+#   - 壊れた JSON・知らない値（受け付けない before-merge を含む）・オブジェクトでない・文字列でない -> 警告を 1 つ出して per-push
 #   - 作業ブランチではなく origin/<base> から読む（作業ツリー・HEAD の宣言は使わない）
 #   - origin から base を取れない -> 警告を出して per-push（CI を飛ばす側には倒さない）
 #   - 引数の誤りは exit 2
@@ -90,27 +90,27 @@ echo "=== 宣言が無い・キーが無い -> per-push（警告なし） ==="
 }
 
 echo ""
-echo "=== per-push / before-merge -> その値（警告なし） ==="
+echo "=== per-push / after-merge -> その値（警告なし） ==="
 {
   set_base_decl '{"trigger": "per-push"}'
   run_trigger main
   assert_eq "per-push: trigger" "per-push" "$(jq -r '.trigger' <<<"$OUT")"
   assert_eq "per-push: 警告なし" "0" "$(warning_count)"
 
-  set_base_decl '{"trigger": "before-merge"}'
+  set_base_decl '{"trigger": "after-merge"}'
   run_trigger main
-  assert_eq "before-merge: exit 0" "0" "$RC"
-  assert_eq "before-merge: trigger" "before-merge" "$(jq -r '.trigger' <<<"$OUT")"
-  assert_eq "before-merge: declared" "true" "$(jq -r '.declared' <<<"$OUT")"
-  assert_eq "before-merge: warning は空" "" "$(jq -r '.warning' <<<"$OUT")"
-  assert_eq "before-merge: 警告なし" "0" "$(warning_count)"
-  assert_eq "before-merge: stdout は JSON 1 つ" "1" "$(jq -s 'length' <<<"$OUT")"
+  assert_eq "after-merge: exit 0" "0" "$RC"
+  assert_eq "after-merge: trigger" "after-merge" "$(jq -r '.trigger' <<<"$OUT")"
+  assert_eq "after-merge: declared" "true" "$(jq -r '.declared' <<<"$OUT")"
+  assert_eq "after-merge: warning は空" "" "$(jq -r '.warning' <<<"$OUT")"
+  assert_eq "after-merge: 警告なし" "0" "$(warning_count)"
+  assert_eq "after-merge: stdout は JSON 1 つ" "1" "$(jq -s 'length' <<<"$OUT")"
 }
 
 echo ""
 echo "=== 壊れた宣言 -> 警告を 1 つ出して per-push ==="
 {
-  for bad in '{"trigger": "before-merge"' '{"trigger": "nightly"}' '["before-merge"]' '{"trigger": true}' '{"trigger": "before-merge"} {"trigger": "per-push"}' '{"trigger": "Before-Merge"}'; do
+  for bad in '{"trigger": "after-merge"' '{"trigger": "nightly"}' '["after-merge"]' '{"trigger": true}' '{"trigger": "after-merge"} {"trigger": "per-push"}' '{"trigger": "After-Merge"}' '{"trigger": "before-merge"}'; do
     set_base_decl "$bad"
     run_trigger main
     assert_eq "壊れた宣言 [${bad}]: exit 0" "0" "$RC"
@@ -119,9 +119,9 @@ echo "=== 壊れた宣言 -> 警告を 1 つ出して per-push ==="
     assert_eq "壊れた宣言 [${bad}]: JSON の warning も空でない" "true" "$(jq -r '.warning != ""' <<<"$OUT")"
   done
   # 知らないキーは無視する（trigger だけを読む）。キーが増えた将来の宣言を古い版が読んでも per-push に落ちないように。
-  set_base_decl '{"trigger": "before-merge", "note": "x"}'
+  set_base_decl '{"trigger": "after-merge", "note": "x"}'
   run_trigger main
-  assert_eq "知らないキーは無視: trigger は before-merge" "before-merge" "$(jq -r '.trigger' <<<"$OUT")"
+  assert_eq "知らないキーは無視: trigger は after-merge" "after-merge" "$(jq -r '.trigger' <<<"$OUT")"
   assert_eq "知らないキーは無視: 警告なし" "0" "$(warning_count)"
 }
 
@@ -131,25 +131,25 @@ echo "=== 作業ブランチではなく origin/<base> から読む ==="
   set_base_decl "-"
   git -C "$REPO" checkout -q -b feature/x
   mkdir -p "$REPO/.claude-harness"
-  printf '%s\n' '{"trigger": "before-merge"}' >"$REPO/.claude-harness/ci.json"
+  printf '%s\n' '{"trigger": "after-merge"}' >"$REPO/.claude-harness/ci.json"
   git -C "$REPO" add .claude-harness/ci.json
   git -C "$REPO" commit -q -m "branch decl"
   run_trigger main
-  assert_eq "作業ブランチに before-merge・宛先に宣言なし -> per-push" "per-push" "$(jq -r '.trigger' <<<"$OUT")"
+  assert_eq "作業ブランチに after-merge・宛先に宣言なし -> per-push" "per-push" "$(jq -r '.trigger' <<<"$OUT")"
 
-  # 宛先に before-merge・作業ブランチ（HEAD）に per-push -> before-merge。
+  # 宛先に after-merge・作業ブランチ（HEAD）に per-push -> after-merge。
   git -C "$REPO" checkout -q main
-  set_base_decl '{"trigger": "before-merge"}'
+  set_base_decl '{"trigger": "after-merge"}'
   git -C "$REPO" checkout -q feature/x
   printf '%s\n' '{"trigger": "per-push"}' >"$REPO/.claude-harness/ci.json"
   git -C "$REPO" commit -q -am "branch per-push"
   run_trigger main
-  assert_eq "宛先に before-merge・作業ブランチに per-push -> before-merge" "before-merge" "$(jq -r '.trigger' <<<"$OUT")"
+  assert_eq "宛先に after-merge・作業ブランチに per-push -> after-merge" "after-merge" "$(jq -r '.trigger' <<<"$OUT")"
 
   # 手元の origin/main が古くても、remote の最新を取り直して読む。
   git -C "$REPO" checkout -q main
   set_base_decl '{"trigger": "per-push"}'
-  git -C "$REPO" update-ref refs/remotes/origin/main HEAD~1   # 手元の追跡ブランチを 1 つ前（before-merge）へ戻す
+  git -C "$REPO" update-ref refs/remotes/origin/main HEAD~1   # 手元の追跡ブランチを 1 つ前（after-merge）へ戻す
   run_trigger main
   assert_eq "手元の origin/main が古くても、取り直した最新（per-push）を読む" "per-push" "$(jq -r '.trigger' <<<"$OUT")"
 }

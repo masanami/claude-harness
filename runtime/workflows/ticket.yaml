@@ -15,7 +15,7 @@
 #   - PR を作る前に、push するコミットに対して品質ゲートを機械で回す quality（command）を e2e の後・publish の前に置く（#326）。
 #     commit は safety net の /quality-check を回さない。pre-commit 等で同じゲートが回るリポジトリは、上書きで省ける
 #   - respond の push の後も quality → publish → ci を通す（#339）。run の記録の SHA を PR の head とそろえるため
-#   - ci に base を渡し、PR の宛先の CI の運用の宣言（.claude-harness/ci.json）が before-merge なら、CI を待たずに skipped で
+#   - ci に base を渡し、PR の宛先の CI の運用の宣言（.claude-harness/ci.json）が after-merge なら、CI を待たずに skipped で
 #     review へ進む（#363。none とは別の値。宣言が無い・per-push・壊れた宣言では今の動きのまま）
 schema: harness.workflow/v1
 id: ticket
@@ -161,7 +161,7 @@ steps:
     on:
       green: review
       none:  review                                 # CI 未設定は green 相当
-      skipped: review                               # #363: 宣言が before-merge。CI は自動マージの予約のときに走る（待たない）
+      skipped: review                               # #363: 宣言が after-merge。PR では CI が走らない（マージの後だけ。待たない）
       red:   { goto: fix, with: { failure: $steps.ci.failure_log_excerpt },
                limit: rework, exhausted: { fail: ci_red } }
       red_no_log: { gate: ci-pending }              # #278: 何を直すかの入力が無いので fix へ送らない（W1）

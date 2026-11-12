@@ -8,10 +8,10 @@
 # （例: Actions が Billing でジョブを起動しない。steps が 0 件で --log-failed が空）ものは、何を直すかの入力が無いので
 # fix へ送らない。ci-wait.sh の出力（スキルも読む）は変えず、runtime の包みの中だけで区別する。
 # --base を渡すと、CI の運用の宣言 .claude-harness/ci.json を PR の宛先（origin/<base>）から plugin/scripts/ci-trigger.sh で読む
-# （#363。/pr-merge と同じ読み手）。{"trigger": "before-merge"}（CI は自動マージの予約のときだけ走る）なら ci-wait.sh を呼ばず
+# （#363）。{"trigger": "after-merge"}（PR では CI が走らず、既定ブランチへのマージの後だけ走る）なら ci-wait.sh を呼ばず
 # （ポーリングも、チェック 0 件を約 2 分待つ none の確定〔#341〕もしない）、PR の存在だけを確かめて ci: skipped を出す（none とは
 # 別の値。run の記録で見分ける）。宣言が無い・per-push・壊れた宣言（ci-trigger.sh が警告を出して per-push を返す）・読み手が
-# 失敗したときは、今までどおり ci-wait.sh を同じ引数で呼ぶ。CI を飛ばすのは before-merge と正しく読めたときだけ。
+# 失敗したときは、今までどおり ci-wait.sh を同じ引数で呼ぶ。CI を飛ばすのは after-merge と正しく読めたときだけ。
 # ci-wait.sh・ci-trigger.sh の置き場は runtime が HARNESS_SCRIPTS_DIR で渡す。
 
 set -u
@@ -55,7 +55,7 @@ if [ -n "$base" ]; then
     trigger="$(jq -r '.trigger // "per-push"' <<<"$decl_out" 2>/dev/null || echo per-push)"
   fi
 fi
-if [ "$trigger" = "before-merge" ]; then
+if [ "$trigger" = "after-merge" ]; then
   if ! view="$(gh pr view "$pr" --json number,url 2>/dev/null)" || [ "$(jq -r '.number' <<<"$view" 2>/dev/null)" != "$pr" ]; then
     echo "Error: PR #${pr} was not found (gh pr view failed); not treating it as a skipped CI" >&2
     exit 1
