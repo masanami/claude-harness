@@ -53,6 +53,7 @@ harness run --workflow-dir "$HW" --scripts-dir "$HS" --input issue=<番号> tick
 | `design-deviation` | クリティカル設計の逸脱（I8） | **端末から** `harness approve <run> --input follow-decision --note <指示>`（`abort` も可） |
 | `interrupted` | runner が落ちて止まったステップ（§4.5） | 作業ツリーを確かめてから `harness resume <run> --input rerun`（`abort` も可） |
 
+- 上の表の `harness resume` は**同期の形（`--detach` なし）のまま**にしてある。この節は人が端末から前景で回す手順で、呼び出し元に時間の上限が無く、次のゲートか終端までの進みと終了コードをその場で見られるため（`approve` を同期のまま案内する [`harness-runtime-design.md`](harness-runtime-design.md) §5.2 と同じ理由）。`status` が出す `resume_command` は `harness resume --detach <run> --unit <key> …` の形だが、端末から打つなら `--detach` を外してよい。Claude Code の Bash ツールなど時間の上限がある呼び出し元から再開するときは、§8.6 の形（`--detach` を付けて `harness status` で合流）にする。
 - `design-deviation`・`review-human` は `decider: human` の input 型ゲートなので、**端末（TTY）からの `approve` でしか解決できない**（Q9）。Claude に解決させない。
 - 途中の様子は `harness status <run> --json`（run ディレクトリ・ラウンド・残予算・作業ツリー・PR 番号）と `harness runs --json`。ログ（プロンプト・claude の出力・git/gh の実行記録・PR 本文）は run ディレクトリの `logs/` にある。
 - 止めるときは `harness cancel <run>`（作業ツリーは消さない）。
@@ -77,7 +78,7 @@ runtime の外（再開を指示する側）の費用なので、runtime の状�
   jq -r 'select(.type=="gate_resolved") | [.ts, .gate_resolved.gate, .gate_resolved.outcome, ((.gate_resolved.note // "") | length)] | @tsv' "$S"/*/events.jsonl
   ```
 
-- **親のエージェント（flywheel の Tom 等）が Bash から `harness` を回す場合**: 親のセッションの記録（Claude Code の transcript）で、`harness run`/`resume` の終了（終了コード 3）を受け取ってから次の `harness resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和。導入前（`delegate_end` から同じ `session_id` の次の `delegate_start` まで）と同じ区切りで数える。
+- **親のエージェント（flywheel の Tom 等）が Bash から `harness` を回す場合**: 親のセッションの記録（Claude Code の transcript）で、`harness run`/`resume` の終了（終了コード 3。`resume --detach` で再開した場合は、`harness status` の合流で次のゲートの `waiting`）を受け取ってから次の `harness resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和。導入前（`delegate_end` から同じ `session_id` の次の `delegate_start` まで）と同じ区切りで数える。
 
 ### M2: 取り違えの件数
 
@@ -237,23 +238,26 @@ claude -p --output-format json --max-budget-usd 1 \
 
 ### 8.6 起動と記録
 
-- 親は `harness run`・`resume` を**ハーネスの追跡内のバックグラウンド実行**で起動する。終了（`0`／`1`／`3`／`4`）を受け取ってから次の操作をする。
+- 親は `harness run` を**ハーネスの追跡内のバックグラウンド実行**で起動する。終了（`0`／`1`／`3`／`4`）を受け取ってから次の操作をする。
+- 親はゲートで待つ run を `harness resume --detach <run> …` で再開する（§8.7 の表の形）。Bash ツールのように呼び出し元に時間の上限があると、同期の `resume` は上限で止められて run がシグナルによる取り消しになりうるため（[`harness-runtime-design.md`](harness-runtime-design.md) §5.2）。`--detach` を付けると、ゲートの解決はその場で行い、解いた後の進行を切り離したプロセスに渡して終了コード `0` ですぐ戻る（解決で run がゲートか終端に着いたときは、切り離さずに従来どおりの状態と終了コードを返す）。**再開の後は `harness status <run> --json` で合流する**: `.status` が `running` 以外になるまで上限付きで読み直し、`waiting`（次のゲート）か終端を受け取ってから次の操作をする（`/impl` の SKILL.md の「再開と合流」と同じ流れ）。
 - 親の実行イベントログには `delegate_start`／`delegate_end` で挟んで 1 件とする。実行スキルは `harness run ticket`、結果に run id を書く。
 
 ### 8.7 ゲートの対応（親の承認ゲートとの対応）
 
 | ゲート | 親がすること |
 | --- | --- |
-| `review` | 親が自分の検証（ローカルの品質ゲート）をしてから、オーナーの完了確認（FR-32）へ出す。オーナーが直しを求めたら PR にその内容を残してから `harness resume <run> --input respond`。承認されたら `--input ready` |
-| `human-merge` | オーナーの昇格承認（FR-22）を受けて親が既定ブランチへマージし、その後 `harness resume <run>`（runtime が実状態を確かめる） |
-| `design-deviation`・`review-human` | **オーナーが端末から `approve` する**（TTY 必須。親は代行しない）。Claude Code の対話セッションなら `! harness approve ...` で打てる |
-| `ci-pending` | CI の完了後（失敗ログが空の `red_no_log` なら、原因を解消して CI を再実行した後）に親が `harness resume <run> --input recheck`。`abort` の理由はどちらの場合も `ci_timeout` |
-| `interrupted` | 親が作業ツリーを確かめてから `harness resume <run> --input rerun` |
+| `review` | 親が自分の検証（ローカルの品質ゲート）をしてから、オーナーの完了確認（FR-32）へ出す。オーナーが直しを求めたら PR にその内容を残してから `harness resume --detach <run> --input respond`。承認されたら `--input ready` |
+| `human-merge` | オーナーの昇格承認（FR-22）を受けて親が既定ブランチへマージし、その後 `harness resume --detach <run>`（runtime が実状態を確かめる） |
+| `design-deviation`・`review-human` | **オーナーが端末から `approve` する**（TTY 必須。親は代行しない）。Claude Code の対話セッションなら `! harness approve ...` で打てる。人が端末で打つので同期のまま（§5.2 と同じ理由） |
+| `ci-pending` | CI の完了後（失敗ログが空の `red_no_log` なら、原因を解消して CI を再実行した後）に親が `harness resume --detach <run> --input recheck`。`abort` の理由はどちらの場合も `ci_timeout` |
+| `interrupted` | 親が作業ツリーを確かめてから `harness resume --detach <run> --input rerun` |
+
+表の `harness resume --detach` は、どれも再開の後に §8.6 のとおり `harness status <run> --json` で合流する。
 
 ### 8.8 記録の置き場と M1
 
 - run ごとの §5 の行は、親のサイクルジャーナルに書く。
-- M1（再開 1 回あたりの親側の消費）は、親セッションの transcript（`~/.claude/projects/<プロジェクト>/<セッション>.jsonl`）から取る。`harness` の終了を受け取ってから次の `resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和（§4 M1 の 2 つ目の箇条書きと同じ区切り）。
+- M1（再開 1 回あたりの親側の消費）は、親セッションの transcript（`~/.claude/projects/<プロジェクト>/<セッション>.jsonl`）から取る。`harness` の終了（`resume --detach` なら `harness status` の合流で `waiting` を読んだ時点）を受け取ってから次の `resume`／`approve` を呼ぶまでの、親のターンの usage（入力・出力トークン）の和（§4 M1 の 2 つ目の箇条書きと同じ区切り）。
 
 ### 8.9 実装前に止まった run
 
