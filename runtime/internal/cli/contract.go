@@ -61,11 +61,16 @@ type contractDoc struct {
 // requestedAction は契約 v1 の requested_action。ResolvableBy は後方互換の任意項目（#378・masanami/flywheel#631）で、
 // 値は閉集合の answer／terminal。harness は resume では解けない端末が要るゲートにだけ terminal を出し、resume で解ける
 // ゲートでは出さない（項目が無いときは answer として扱う決まり。既存の出力を変えない）。
+//
+// Options も後方互換の任意項目（#384・masanami/flywheel#592）で、ゲートが受け付ける選択肢（resume・approve の --input と
+// engine が照らす一覧＝ゲートの inputs。text の「choices: …」も同じ一覧から作る）を定義の順に出す。選択肢の無い待ち
+// （observe ゲート・inputs の無いゲート）では出さない。
 type requestedAction struct {
-	Kind         string `json:"kind"`
-	Decider      string `json:"decider"`
-	Text         string `json:"text"`
-	ResolvableBy string `json:"resolvable_by,omitempty"`
+	Kind         string   `json:"kind"`
+	Decider      string   `json:"decider"`
+	Text         string   `json:"text"`
+	ResolvableBy string   `json:"resolvable_by,omitempty"`
+	Options      []string `json:"options,omitempty"`
 }
 
 // requested_action.resolvable_by の値。answer（resume で答えれば解ける）は項目を出さないことで表すので定数を持たない。
@@ -454,6 +459,9 @@ func lastHead(heads map[string]string) string {
 //
 // resolvable_by は、resume では解けない（engine が断る）端末が要るゲートにだけ terminal を入れる（#378）。ほかの行は
 // resume で解ける（observe × human も、人が外部で操作した後は resume で観測し直す）ので、項目を出さない。
+//
+// options は input 型のゲート（approve・answer・review）にだけ、ゲートの inputs を入れる（#384）。observe は --input を
+// 受け付けないので出さない。
 func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 	decider := contractParent
 	if w.Decider == workflow.DeciderHuman {
@@ -465,7 +473,7 @@ func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 		return &requestedAction{Kind: actionObserve, Decider: decider, Text: fmt.Sprintf(
 			"%s [%s]. Then resume re-checks the state: harness contract resume %s --unit %s", w.RequestedAction, where, runID, w.Unit)}
 	case w.RequiresTTY:
-		return &requestedAction{Kind: actionApprove, Decider: contractHuman, ResolvableBy: resolvableTerminal, Text: fmt.Sprintf(
+		return &requestedAction{Kind: actionApprove, Decider: contractHuman, ResolvableBy: resolvableTerminal, Options: options(w.Inputs), Text: fmt.Sprintf(
 			"%s [%s; choices: %s]. A person resolves it from a terminal: harness approve %s --unit %s --input <%s> [--note <text>]",
 			w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
 	}
@@ -473,9 +481,18 @@ func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 	if acc.review && w.ContractKind == workflow.ContractKindReview {
 		kind = actionReview
 	}
-	return &requestedAction{Kind: kind, Decider: decider, Text: fmt.Sprintf(
+	return &requestedAction{Kind: kind, Decider: decider, Options: options(w.Inputs), Text: fmt.Sprintf(
 		"%s [%s; choices: %s]. Answer with: harness contract resume %s --unit %s --input <%s> [--note <text>]",
 		w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
+}
+
+// options は requested_action.options の値: ゲートの inputs（text の choices と --input の照合に使う一覧）の写し。
+// 空なら nil にして項目を省く。呼び出し元の一覧と配列を共有しない。
+func options(inputs []string) []string {
+	if len(inputs) == 0 {
+		return nil
+	}
+	return append([]string(nil), inputs...)
 }
 
 // pickAction の順位（小さいほど先に選ぶ）。

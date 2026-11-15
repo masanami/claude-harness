@@ -696,6 +696,7 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 
 - `input` × `human` を `answer` でなく `approve` にするのは、解決の経路が端末からの `approve`（確認の入力つき）に限られるためである。どちらでも flywheel は回答しない（契約 v1）。
 - `requested_action` は `kind`・`decider`・`text` に加えて、任意の項目 `resolvable_by` を持ちうる（下の「解き方 `resolvable_by`」）。harness が出すのは、上の表の `input` × `human`（端末が要るゲート）だけである。
+- `requested_action` は任意の項目 `options`（文字列の配列）も持ちうる（下の「選択肢 `options`」）。harness が出すのは、上の表の `input` 型のゲート（`approve`・`answer`・`review`）で、選択肢の一覧を持つときだけである。
 - harness の `decider: any` は「TTY を要求しない・誰が resume してもよい」ゲートで、自走中に進めるのは呼び出し元（flywheel）である。そのため契約上は `parent` で出す（契約 v1 の `any` は使わない）。
 - 契約 v1 の `requested_action` は 1 つだけである。fan-out の run で複数の unit がゲートで待つ場合は、`approve` → `answer` → `observe` の順（同順位は unit の順）で 1 つを選び、ほかに待っている unit の数を `text` に添える（現行のワークフローの unit は 1 つなので、この場合は起きない）。`--accept-kind review` を宣言した呼び出しだけは、この順の `answer` の直後に `review` を差し込み、`approve` → `answer` → `review` → `observe` の順にする（下の「レビュー待ち `review`」）。
 
@@ -713,6 +714,14 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 - **値（閉集合）**: `answer`（答えを `harness contract resume` で返せば解ける）と `terminal`（人が接続ツールの外の端末で解く必要があり、`resume` では解けない）の 2 つ。
 - **受け手の扱い**: 項目が無いときは `answer` として扱う。閉集合の外の値は、安全側に `terminal` として扱う。
 - **harness が出すもの**: `terminal` を出すのは、端末が要るゲート（`input` × `human`。`requires_tty`。`resume` は engine が断る）の `approve` だけである。`resume` で解けるゲート（`answer`・`review`・`observe`。人が外部で操作した後に `resume` で観測し直す `observe` × `human` を含む）では項目そのものを出さず、`answer` を明示しても出さない（既存の出力を変えない）。複数の待ちから 1 つを選ぶ場合も、選ばれた待ちの値がそのまま出る（端末が要るゲートが待っていれば `approve` が最優先で選ばれ、`terminal` が出る）。版の不一致で続けられないときの `observe` × `human`（下の「JSON を出せない失敗の線引き」の版の不一致の項）にも出さない。
+
+**選択肢 `options`（#384・2026-11-16）**: 待っているゲートが受け付ける選択肢を表す、`requested_action` の任意の項目（文字列の配列）。flywheel が、保留へのオーナーの答えを選択肢の値と添え書き（`--note`）に分けて `resume` へ渡すために、選択肢の一覧を `text` を読まずに得られるよう足した（オーナーの決定で選択肢の正本をこの項目にした。masanami/flywheel#592）。
+
+- **後方互換**: 任意の項目で、契約の版は v1 のまま（v2 にしない）。この項目を知らない呼び出し元は読み飛ばせばよい。
+- **値**: `harness contract resume <run> --unit <u> --input <値>`（端末が要るゲートでは `harness approve … --input <値>`）に渡せる値の一覧。engine が `--input` を照らし合わせる一覧（ゲートの定義の `inputs`。run の記録では `status --json` の `waiting[].inputs`）と同じもので、並びも定義の順である。各値はそのまま `--input` に渡せる。
+- **出さない場合**: 選択肢が無いときはキーごと省く。`observe` 型のゲート（`--input` を受け付けない）・選択肢の一覧を持たないゲート・`requested_action` が `null` の出力（`state` が `waiting` 以外）・版の不一致で続けられないときの `observe` × `human` が該当する。
+- **`kind` との関係**: `--accept-kind review` を宣言して `kind` が `review` になっても値は同じ。端末が要るゲートの `approve`（`resolvable_by: terminal`）にも出すが、その値は `resume` では解けず、人が端末の `harness approve` に渡すものである（`resolvable_by` を先に見ること）。
+- **`text` の「choices: …」**: 同じ一覧から作る説明文で、互換のため残す。選択肢の値は `text` を解析せず、この項目から読む。
 
 **費用（`cost_usd`）と Q15**: 費用を得られなかった実行は、付与した上限額（`--max-budget-usd`）を消費したものとして unit の累計に入っている（§4.3・Q15 の fail-closed）。`cost_usd` はその累計のまま出し、`null` にしない。`null` にすると呼び出し元は「不明」を自分で上限額へ倒す手段を持たず、費用を少なく見る側へ倒れうるためである。費用不明の実行を含むこと（`unknown_cost_count`）は `summary` に書く。
 

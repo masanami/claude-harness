@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -46,7 +47,7 @@ func TestContractPluginMismatchAsksAPersonToUpdate(t *testing.T) {
 				t.Errorf("the refused resume recorded events:\n%s\n%s", before, after)
 			}
 			ok, _ := h.with(PluginVersionEnv+"=4.9.0").contract("status", id)
-			if *ok.RequestedAction != *start.RequestedAction {
+			if !reflect.DeepEqual(*ok.RequestedAction, *start.RequestedAction) {
 				t.Errorf("in range: action = %+v, want %+v", ok.RequestedAction, start.RequestedAction)
 			}
 		}

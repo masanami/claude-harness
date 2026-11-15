@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -43,7 +44,7 @@ func TestContractReviewKindNeedsTheDeclaration(t *testing.T) {
 		}
 	}
 	// 宣言は run に記録しない: 宣言した後の、宣言の無い status は answer のまま。
-	if again, _ := h.contract("status", id); again.RequestedAction == nil || *again.RequestedAction != *a {
+	if again, _ := h.contract("status", id); again.RequestedAction == nil || !reflect.DeepEqual(*again.RequestedAction, *a) {
 		t.Fatalf("status without --accept-kind after a declared one = %+v", again.RequestedAction)
 	}
 	// 契約の kind 以外を宣言すると、引数の誤りとして failed の JSON（run_id は null）を返す。
