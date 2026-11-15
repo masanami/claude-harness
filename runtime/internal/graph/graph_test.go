@@ -54,10 +54,10 @@ func edgesFrom(g *Graph, from, outcome string) []Edge {
 	return out
 }
 
-// ticket.yaml の 20 ステップが定義の順に並び、終端はその後に初出の順で、同じ理由の終端は 1 つにまとまる（§3.2）。
+// ticket.yaml の 21 ステップが定義の順に並び、終端はその後に初出の順で、同じ理由の終端は 1 つにまとまる（§3.2）。
 func TestTicketNodes(t *testing.T) {
 	g := Build(load(t, repoWorkflows, repoScripts, "ticket"), SourceWorkflowDir, "1.2.3")
-	wantSteps := []string{"resolve", "analyze", "workspace", "implement", "fix", "commit", "e2e-route", "e2e", "quality", "publish", "ci",
+	wantSteps := []string{"resolve", "analyze", "workspace", "implement", "self-review-route", "fix", "commit", "e2e-route", "e2e", "quality", "publish", "ci",
 		"ci-pending", "review", "respond", "review-human", "merge-route", "merge", "human-merge", "design-deviation", "cleanup"}
 	var steps, terms []string
 	for _, n := range g.Nodes {
@@ -92,9 +92,10 @@ func TestTicketNodes(t *testing.T) {
 		t.Fatalf("edges into fail:quality_gate = %d, want 2 (implement.failure and fix.failure)", into)
 	}
 	// 設計文書 §12 の数: 53 本（尽きたときの辺 3 本を含む）に、quality（#326）の 4 本（pass・fail・fail が尽きたとき・undeclared）と、
-	// ci の skipped（#363。CI の運用の宣言が after-merge で CI を待たなかった）の 1 本を足した 58 本。
-	if len(g.Edges) != 58 {
-		t.Fatalf("edges = %d, want 58", len(g.Edges))
+	// ci の skipped（#363。CI の運用の宣言が after-merge で CI を待たなかった）の 1 本と、self-review-route（#381）の 5 本
+	// （complete・incomplete と not_run の implement へ戻る辺 2 本と、それぞれが尽きたときの辺 2 本）を足した 63 本。
+	if len(g.Edges) != 63 {
+		t.Fatalf("edges = %d, want 63", len(g.Edges))
 	}
 	if n := node(t, g, "implement"); n.Kind != "llm" || n.Agent != "claude-harness:feature-implementer" || n.BudgetUSD != 15 ||
 		FormatDuration(n.Timeout) != "90m" {
@@ -231,7 +232,7 @@ func TestJSONShape(t *testing.T) {
 			t.Fatalf("workflow.%s = %#v, want []", k, w[k])
 		}
 	}
-	if !reflect.DeepEqual(doc["limits"], []any{map[string]any{"name": "budget_usd", "value": 40.0}, map[string]any{"name": "rework", "value": 3.0}}) {
+	if !reflect.DeepEqual(doc["limits"], []any{map[string]any{"name": "budget_usd", "value": 40.0}, map[string]any{"name": "rework", "value": 3.0}, map[string]any{"name": "self_review", "value": 1.0}}) {
 		t.Fatalf("limits = %v", doc["limits"])
 	}
 	if !reflect.DeepEqual(doc["builtin_gates"], []any{map[string]any{"id": "interrupted", "type": "input", "decider": "any",

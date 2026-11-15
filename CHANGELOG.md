@@ -10,6 +10,10 @@
 
 ## [Unreleased]
 
+### 変更
+
+- **`harness run ticket` の実装の段で、`/self-review` が変更の種類に関わらず必須になった（Issue #381）。** テストだけ・文書だけの変更や小さな変更でも省けない。実装の段（`implement`）の出力に必須の欄 `self_review`（`complete` | `incomplete` | `not_run`。`/self-review` を実行したかと、その結果）を足した。`self_review` が `complete` でない出力は、`outcome` が `pass`・`skip` でもコミット・PR へ進まず、新しい段 `self-review-route` から実装の段へ 1 回だけ戻される（戻された実装の段は、作業ツリーの変更に対して `/self-review` を実行してから出力し直す）。2 回目も `complete` でなければ、PR を作らずに既存の `self_review_incomplete` で止まる。戻す回数の上限は `limits.self_review`（既定 1。上書きで変えられる）。あわせて、実装の段の指示文に、Issue の本文が求めた確認（例: 処理を外すとテストが落ちること）の結果を `summary` に、できなかった確認を理由とともに `unverified` に書くことを足した。`outcome` の値と意味は変わらない（`skip` は「`/self-review` を省いた」ことには使わず、`self_review: not_run` で表す）。**利用者が取る操作**: このプラグインの版と harness CLI を合わせて更新する（`ticket` の定義・型・指示文は harness CLI に埋め込まれている）。`status --json` の `units[].outputs.implement` を読む呼び出し元は、新しい欄 `self_review` が増えたことと、`implement` の後に `self-review-route` の段が入る（実装の段が 2 回走ることがある）ことに備える。`self_review_incomplete` で止まった run は、レビュアーと合流できなかった場合に加えて、`/self-review` を 2 回続けて実行しなかった場合も含む。
+
 ---
 
 ## 5.0.5（harness CLI: `runtime/v5.0.5`）
