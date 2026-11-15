@@ -2,9 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "ticket ワークフローの implement（feature-implementer）の型付き出力。behaviors・residual_findings・unverified・cross_repo_attestation は pull-request 種類が PR 本文へそのまま転記する（I7・I13）",
   "type": "object",
-  "required": ["outcome", "pr_title", "summary", "behaviors", "residual_findings", "unverified", "cross_repo_attestation", "deviation_report"],
+  "required": ["outcome", "self_review", "pr_title", "summary", "behaviors", "residual_findings", "unverified", "cross_repo_attestation", "deviation_report"],
   "properties": {
     "outcome": { "type": "string", "enum": ["pass", "skip", "failure", "deviation", "review_incomplete"] },
+    "self_review": { "type": "string", "enum": ["complete", "incomplete", "not_run"], "description": "/self-review を実行したか。complete（実行し、報告が self_review: complete）/ incomplete（実行したが complete でない）/ not_run（実行していない）。complete 以外は PR へ進めない（#381）" },
     "pr_title": { "type": "string" },
     "summary": { "type": "string" },
     "behaviors": {

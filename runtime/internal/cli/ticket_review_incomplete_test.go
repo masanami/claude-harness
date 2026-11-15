@@ -12,7 +12,7 @@ import (
 func TestTicketStopsWhenSelfReviewIsIncomplete(t *testing.T) {
 	f := newTicketFixture(t)
 	h, fdir, ghDir := f.h, f.fdir, f.ghDir
-	respond(t, fdir, 2, 0, claudeStructured(map[string]any{"outcome": "review_incomplete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
+	respond(t, fdir, 2, 0, claudeStructured(map[string]any{"outcome": "review_incomplete", "self_review": "incomplete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
 		"behaviors": []map[string]string{}, "residual_findings": []map[string]string{}, "unverified": []string{"unrecovered: claude-harness:code-reviewer"},
 		"cross_repo_attestation": "", "deviation_report": ""}, 4.0))
 

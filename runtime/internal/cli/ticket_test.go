@@ -117,7 +117,7 @@ func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
 	behaviors := []map[string]string{
 		{"kind": "test", "name": "TestWidgetRejectsEmpty", "guarantees": "空の入力は 400 を返す"},
 	}
-	respond(t, fdir, 2, 0, claudeStructured(map[string]any{"outcome": "pass", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
+	respond(t, fdir, 2, 0, claudeStructured(map[string]any{"outcome": "pass", "self_review": "complete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
 		"behaviors": behaviors, "residual_findings": findings, "unverified": []string{}, "cross_repo_attestation": "", "deviation_report": ""}, 4.0))
 	respond(t, fdir, 3, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "abc", "summary": "committed"}, 4.5))
 	respond(t, fdir, 4, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed the failing test", "deviation_report": ""}, 5.25))
@@ -216,7 +216,7 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 	for _, x := range u.Rounds[0].Steps {
 		seq = append(seq, x.Step+":"+x.Outcome)
 	}
-	want := "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:red " +
+	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:red " +
 		"fix:pass commit:committed e2e-route:no quality:pass publish:updated ci:timeout ci:timeout"
 	if strings.Join(seq, " ") != want {
 		t.Fatalf("round 1 steps:\n got %s\nwant %s", strings.Join(seq, " "), want)
@@ -242,7 +242,7 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 			t.Errorf("claude call %d ran in %s, want the worktree %s", n, pwd, wt)
 		}
 	}
-	implement, fix := u.Rounds[0].Steps[3], u.Rounds[0].Steps[9]
+	implement, fix := u.Rounds[0].Steps[3], u.Rounds[0].Steps[10]
 	if implement.Resume || !fix.Resume || fix.SessionID != implement.SessionID || fix.SessionID == "" {
 		t.Errorf("session hand-over: implement %s (resume %v), fix %s (resume %v)", implement.SessionID, implement.Resume, fix.SessionID, fix.Resume)
 	}

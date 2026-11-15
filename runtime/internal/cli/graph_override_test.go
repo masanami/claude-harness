@@ -158,8 +158,8 @@ func TestGraphOverrideTicketRoute(t *testing.T) {
 		"\noverrides: arg " + ov + "\n",
 		"\nchanges: steps.merge-route.on.integration: merge -> human-merge (arg)\n",
 		"  - skipped by an override  ..> transition of a skipped step\n",
-		"\n  merge-route       select $steps.resolve.base_kind  integration -> human-merge (override arg, was merge) | default -> human-merge\n",
-		"\n- merge             llm $3 30m                merged ..> cleanup | blocked ..> review-human\n",
+		"\n  merge-route        select $steps.resolve.base_kind  integration -> human-merge (override arg, was merge) | default -> human-merge\n",
+		"\n- merge              llm $3 30m                merged ..> cleanup | blocked ..> review-human\n",
 		"\n  cleanup ", "\n  review-human ",
 	} {
 		if !strings.Contains(text, want) {
@@ -172,24 +172,24 @@ func TestGraphOverrideTicketRoute(t *testing.T) {
 	if code != ExitOK || errOut != "" {
 		t.Fatalf("graph --format mermaid: exit %d\n%s", code, errOut)
 	}
-	// merge-route=n15・merge=n16・review-human=n14・human-merge=n17・cleanup=n19。
+	// merge-route=n16・merge=n17・review-human=n15・human-merge=n18・cleanup=n20。
 	for _, want := range []string{
 		"\n  %% overrides: arg " + ov + "\n",
 		"\n  %% changes: steps.merge-route.on.integration: merge -> human-merge (arg)\n",
-		"\n  n15 ==>|\"integration (override arg, was merge)\"| n17\n",
-		"\n  n15 -->|\"default\"| n17\n",
-		"\n  n16 -.->|\"merged\"| n19\n", "\n  n16 -.->|\"blocked\"| n14\n",
-		"\n  class n16 skipped\n",
+		"\n  n16 ==>|\"integration (override arg, was merge)\"| n18\n",
+		"\n  n16 -->|\"default\"| n18\n",
+		"\n  n17 -.->|\"merged\"| n20\n", "\n  n17 -.->|\"blocked\"| n15\n",
+		"\n  class n17 skipped\n",
 	} {
 		if !strings.Contains(mmd, want) {
 			t.Errorf("mermaid does not contain %q", want)
 		}
 	}
-	if strings.Contains(mmd, "| n16\n") {
+	if strings.Contains(mmd, "| n17\n") {
 		t.Errorf("mermaid draws a line into the skipped merge")
 	}
 	// linkStyle の番号は、merge から出る 2 本の線を指す（線は書いた順に 0 から数える）。
-	if got := greyLinks(t, mmd); got != "n16 -.->|\"merged\"| n19,n16 -.->|\"blocked\"| n14" {
+	if got := greyLinks(t, mmd); got != "n17 -.->|\"merged\"| n20,n17 -.->|\"blocked\"| n15" {
 		t.Errorf("grey links = %s", got)
 	}
 	if t.Failed() {

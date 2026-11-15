@@ -19,6 +19,9 @@
 #     review へ進む（#363。none とは別の値。宣言が無い・per-push・壊れた宣言では今の動きのまま）
 #   - review に contract_kind: review を書き、接続契約でレビュー待ち（kind: review）として見せる（#372。呼び出し元が
 #     --accept-kind review で受け付けを宣言したときだけ。宣言が無ければ今までどおり answer）
+#   - implement の self_review（/self-review を実行したか）が complete でなければ、outcome が pass・skip でも PR へ進めない（#381）。
+#     self-review-route（select）で 1 回だけ implement へ戻して /self-review を実行させ、2 回目も complete でなければ
+#     review_incomplete と同じ self_review_incomplete で止める。回数は goto の limit（limits.self_review）で数える
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -29,6 +32,7 @@ inputs:
 limits:
   budget_usd: 40                    # この unit 全ラウンドの累計上限（仮の値。shadow run で較正する。§12）
   rework: 3                         # Phase 4→8 の差し戻し上限（W2・Q8）
+  self_review: 1                    # /self-review を実行しなかった implement を戻す上限（#381）
 overridable:                        # 上書きで付け替えてよい遷移と候補（docs/harness-runtime-overrides.md §5.2。保守側だけ＝O2 と、quality の省略＝#326）
   routes:
     merge-route.integration: [merge, human-merge]   # 統合ブランチ宛も人のマージにできる
@@ -79,11 +83,19 @@ steps:
     budget_usd: 15
     timeout: 90m
     on:
-      pass:      commit
-      skip:      commit                             # I7: 未検証は pull-request が本文に明記する
+      pass:      self-review-route                  # #381: /self-review を実行したかを見てから commit へ
+      skip:      self-review-route                  # I7: 未検証は pull-request が本文に明記する。skip でも /self-review は省けない（#381）
       failure:   { fail: quality_gate }             # W2: 初回 failure は再委譲しない
       deviation: { gate: design-deviation }         # I8
       review_incomplete: { fail: self_review_incomplete }  # #262: セルフレビューと合流できないまま PR へ進めない
+
+  self-review-route:                                # #381: 変更の種類（テストだけ・文書だけを含む）に関わらず /self-review を必須にする
+    kind: select
+    value: $steps.implement.self_review
+    on:
+      complete:   commit
+      incomplete: { goto: implement, limit: self_review, exhausted: { fail: self_review_incomplete } }
+      not_run:    { goto: implement, limit: self_review, exhausted: { fail: self_review_incomplete } }
 
   fix:                                              # W1: スコープ付き修正（Step a〜e を開始しない）
     kind: llm

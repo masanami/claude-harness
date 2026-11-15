@@ -82,7 +82,7 @@ func TestTicketQualityRunsTheBaseDeclarationOnTheCommit(t *testing.T) {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:provided implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:green"; got != want {
+	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:provided implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:green"; got != want {
 		t.Fatalf("steps:\n got %s\nwant %s", got, want)
 	}
 	q := qualityOf(t, v)
@@ -122,7 +122,7 @@ func TestTicketQualityFailGoesToFixAndRunsAgain(t *testing.T) {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	want := "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no quality:fail " +
+	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:fail " +
 		"fix:pass commit:committed e2e-route:no quality:pass publish:opened ci:green"
 	if got := stepSeq(v); got != want {
 		t.Fatalf("steps:\n got %s\nwant %s", got, want)
@@ -207,7 +207,7 @@ func TestTicketQualitySkippedByARepositoryOverride(t *testing.T) {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no publish:opened ci:green"; got != want {
+	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no publish:opened ci:green"; got != want {
 		t.Fatalf("steps:\n got %s\nwant %s", got, want)
 	}
 	if _, ran := v.Unit("main").Outputs["quality"]; ran {

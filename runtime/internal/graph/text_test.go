@@ -26,14 +26,14 @@ func stepLines(lines []string) []string {
 func TestTextUnwrapped(t *testing.T) {
 	g := Build(load(t, repoWorkflows, repoScripts, "ticket"), SourceEmbedded, "1.2.3")
 	lines := text(g, 0)
-	if lines[0] != "workflow ticket (embedded, cli 1.2.3)  entry: resolve" || lines[1] != "limits: budget_usd=40 rework=3" {
+	if lines[0] != "workflow ticket (embedded, cli 1.2.3)  entry: resolve" || lines[1] != "limits: budget_usd=40 rework=3 self_review=1" {
 		t.Fatalf("header = %q", lines[:2])
 	}
 	if !strings.HasPrefix(lines[2], "legend: [human] decided by a person") || !strings.Contains(lines[3], "interrupted") {
 		t.Fatalf("legend = %q", lines[2:4])
 	}
 	steps := stepLines(lines)
-	if len(steps) != 20 {
+	if len(steps) != 21 {
 		t.Fatalf("%d step lines:\n%s", len(steps), strings.Join(steps, "\n"))
 	}
 	want := map[string][]string{
@@ -45,7 +45,9 @@ func TestTextUnwrapped(t *testing.T) {
 		"review-human": {"gate input [human] [tty]", "abort ! aborted_by_human"},
 		"human-merge":  {"gate observe [human] pr-state", "open -> human-merge"},
 		"merge-route":  {"select $steps.resolve.base_kind", "integration -> merge | default -> human-merge"},
-		"cleanup":      {"released = merged | kept = merged | dirty = merged_worktree_dirty"},
+		"self-review-route": {"select $steps.implement.self_review", "complete -> commit",
+			"incomplete ~ implement (self_review<=1, then ! self_review_incomplete)", "not_run ~ implement (self_review<=1, then ! self_review_incomplete)"},
+		"cleanup": {"released = merged | kept = merged | dirty = merged_worktree_dirty"},
 	}
 	human := 0
 	for _, l := range steps {

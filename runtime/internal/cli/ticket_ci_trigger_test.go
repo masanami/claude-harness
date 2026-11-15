@@ -86,7 +86,7 @@ func ticketCIAfterMerge(t *testing.T, embedded bool) {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:skipped"; got != want {
+	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:skipped"; got != want {
 		t.Fatalf("steps:\n got %s\nwant %s", got, want)
 	}
 	if len(v.Waiting) != 1 || v.Waiting[0].Gate != "review" {
@@ -125,7 +125,7 @@ func TestTicketCIWithoutAfterMergeKeepsTheNoneConfirmation(t *testing.T) {
 				t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 			}
 			v := decode[statusView](t, out)
-			if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:none"; got != want {
+			if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:none"; got != want {
 				t.Fatalf("steps:\n got %s\nwant %s", got, want)
 			}
 			if v.Waiting[0].Gate != "review" {
@@ -149,7 +149,7 @@ func TestTicketCIPerPushStillSendsRedToFix(t *testing.T) {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	want := "resolve:ok analyze:ok workspace:created implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:red " +
+	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:red " +
 		"fix:pass commit:committed e2e-route:no quality:pass publish:updated ci:green"
 	if got := stepSeq(v); got != want {
 		t.Fatalf("steps:\n got %s\nwant %s", got, want)
@@ -172,7 +172,7 @@ func TestTicketCITriggerIsReadFromTheBase(t *testing.T) {
 			t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 		}
 		v := decode[statusView](t, out)
-		if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:provided implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:green"; got != want {
+		if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:provided implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:green"; got != want {
 			t.Fatalf("steps:\n got %s\nwant %s", got, want)
 		}
 		if n := ghChecksCalls(t, f.ghDir); n == 0 {
@@ -193,7 +193,7 @@ func TestTicketCITriggerIsReadFromTheBase(t *testing.T) {
 			t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 		}
 		v := decode[statusView](t, out)
-		if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:provided implement:pass commit:committed e2e-route:no quality:pass publish:opened ci:skipped"; got != want {
+		if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:provided implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:skipped"; got != want {
 			t.Fatalf("steps:\n got %s\nwant %s", got, want)
 		}
 		if n := ghChecksCalls(t, f.ghDir); n != 0 {
