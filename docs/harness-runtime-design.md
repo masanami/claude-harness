@@ -687,7 +687,7 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 
 | ゲートの型 × decider | `kind` | `decider` | 本文の YAML の例 | `text` が案内する解決 |
 | --- | --- | --- | --- | --- |
-| `input` × `human`（TTY を要求する。§5.3） | `approve` | `human` | `design-deviation`・`review-human` | 人が端末から `harness approve <run> --unit <u> --input <値>` |
+| `input` × `human`（TTY を要求する。§5.3） | `approve`（`resolvable_by: terminal` を添える） | `human` | `design-deviation`・`review-human` | 人が端末から `harness approve <run> --unit <u> --input <値>` |
 | `input` × `parent` | `answer` | `parent` | — | `harness contract resume <run> --unit <u> --input <値>` |
 | `input` × `any` | `answer` | `parent` | `ci-pending`・組み込みの `interrupted` | 同上 |
 | `input` × `parent`・`any` で、定義に `contract_kind: review`（#372） | 呼び出し元が `--accept-kind review` を宣言したときだけ `review`。宣言が無ければ `answer` | `parent` | `review` | 同上（`answer` と同じ） |
@@ -695,6 +695,7 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 | `observe` × `parent`・`any` | `observe` | `parent` | — | 同上（外部の状態の変化を待つ） |
 
 - `input` × `human` を `answer` でなく `approve` にするのは、解決の経路が端末からの `approve`（確認の入力つき）に限られるためである。どちらでも flywheel は回答しない（契約 v1）。
+- `requested_action` は `kind`・`decider`・`text` に加えて、任意の項目 `resolvable_by` を持ちうる（下の「解き方 `resolvable_by`」）。harness が出すのは、上の表の `input` × `human`（端末が要るゲート）だけである。
 - harness の `decider: any` は「TTY を要求しない・誰が resume してもよい」ゲートで、自走中に進めるのは呼び出し元（flywheel）である。そのため契約上は `parent` で出す（契約 v1 の `any` は使わない）。
 - 契約 v1 の `requested_action` は 1 つだけである。fan-out の run で複数の unit がゲートで待つ場合は、`approve` → `answer` → `observe` の順（同順位は unit の順）で 1 つを選び、ほかに待っている unit の数を `text` に添える（現行のワークフローの unit は 1 つなので、この場合は起きない）。`--accept-kind review` を宣言した呼び出しだけは、この順の `answer` の直後に `review` を差し込み、`approve` → `answer` → `review` → `observe` の順にする（下の「レビュー待ち `review`」）。
 
@@ -705,6 +706,13 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 - **受け付けの宣言のフラグ**: `harness contract status` と `harness contract resume` の `--accept-kind KIND`（`--accept-kind=KIND` も可。繰り返してよい。位置は run ID の前でも後でもよい）。`KIND` は契約の `kind`（`answer`・`approve`・`observe`・`review`）に限り、それ以外は引数の誤りとして `state: failed`・`run_id: null` の JSON を返す（綴りの誤りで黙って `answer` に倒さない）。`answer`・`approve`・`observe` は宣言しなくても出るので、書いても何も変わらない。宣言はその呼び出しの出力にだけ効き、run には記録しない（同じ run でも、宣言した `status` は `review`、宣言しない `status` は `answer` を返す）。`start` と `cancel` は受け付けない（`start` の直後の待機と `cancel` の出力は宣言なしの形で出る。レビュー待ちは `start` の直後には来ない）。
 - **複数の待ちの順位**: 宣言した呼び出しは `approve` → `answer` → `review` → `observe`（宣言の無い順を保ったまま `review` を `answer` の直後に差し込む。オーナーの決定 Q3。#374 で直した）。宣言の無い呼び出しは今の `approve` → `answer` → `observe` のままで、`contract_kind: review` のゲートは `answer` として同じ順位（unit の順）で選ぶ。
 - **run の記録**: ゲートを開いたとき（`gate_opened`）に定義の `contract_kind` を写し、`status --json` の `waiting[].contract_kind`（と `harness graph --run`）に出す（書かれていないゲートには出さない）。`contract` は `status --json` を読み直して写すので、定義を読み込まない。この版より前の harness で開いたゲートには値が無く、宣言しても `answer` で出る（次にゲートを開いたときから `review`）。
+
+**解き方 `resolvable_by`（#378・2026-11-16）**: 待ちが「答えを `resume` で返せば解けるか」を表す、`requested_action` の任意の項目。flywheel が、端末でしか解けない承認へ回答で `resume` を送り、断られて保留を重ねることを避けるために足した（オーナーの決定。masanami/flywheel#631）。flywheel は接続ツール固有の語を本体に書かないので、`text` を読んで分けることはしない。
+
+- **後方互換**: 任意の項目で、契約の版は v1 のまま（v2 にしない）。この項目を知らない呼び出し元は読み飛ばせばよい。
+- **値（閉集合）**: `answer`（答えを `harness contract resume` で返せば解ける）と `terminal`（人が接続ツールの外の端末で解く必要があり、`resume` では解けない）の 2 つ。
+- **受け手の扱い**: 項目が無いときは `answer` として扱う。閉集合の外の値は、安全側に `terminal` として扱う。
+- **harness が出すもの**: `terminal` を出すのは、端末が要るゲート（`input` × `human`。`requires_tty`。`resume` は engine が断る）の `approve` だけである。`resume` で解けるゲート（`answer`・`review`・`observe`。人が外部で操作した後に `resume` で観測し直す `observe` × `human` を含む）では項目そのものを出さず、`answer` を明示しても出さない（既存の出力を変えない）。複数の待ちから 1 つを選ぶ場合も、選ばれた待ちの値がそのまま出る（端末が要るゲートが待っていれば `approve` が最優先で選ばれ、`terminal` が出る）。版の不一致で続けられないときの `observe` × `human`（下の「JSON を出せない失敗の線引き」の版の不一致の項）にも出さない。
 
 **費用（`cost_usd`）と Q15**: 費用を得られなかった実行は、付与した上限額（`--max-budget-usd`）を消費したものとして unit の累計に入っている（§4.3・Q15 の fail-closed）。`cost_usd` はその累計のまま出し、`null` にしない。`null` にすると呼び出し元は「不明」を自分で上限額へ倒す手段を持たず、費用を少なく見る側へ倒れうるためである。費用不明の実行を含むこと（`unknown_cost_count`）は `summary` に書く。
 

@@ -58,11 +58,18 @@ type contractDoc struct {
 	CostUSD         *float64         `json:"cost_usd"`
 }
 
+// requestedAction は契約 v1 の requested_action。ResolvableBy は後方互換の任意項目（#378・masanami/flywheel#631）で、
+// 値は閉集合の answer／terminal。harness は resume では解けない端末が要るゲートにだけ terminal を出し、resume で解ける
+// ゲートでは出さない（項目が無いときは answer として扱う決まり。既存の出力を変えない）。
 type requestedAction struct {
-	Kind    string `json:"kind"`
-	Decider string `json:"decider"`
-	Text    string `json:"text"`
+	Kind         string `json:"kind"`
+	Decider      string `json:"decider"`
+	Text         string `json:"text"`
+	ResolvableBy string `json:"resolvable_by,omitempty"`
 }
+
+// requested_action.resolvable_by の値。answer（resume で答えれば解ける）は項目を出さないことで表すので定数を持たない。
+const resolvableTerminal = "terminal"
 
 type artifact struct {
 	Kind string `json:"kind"`
@@ -437,13 +444,16 @@ func lastHead(heads map[string]string) string {
 
 // gateAction はゲート 1 つを requested_action へ写す（§5.6 の表）。
 //
-//	input × human（TTY を要求する）  → approve / human   人が端末から harness approve で解決する
+//	input × human（TTY を要求する）  → approve / human   人が端末から harness approve で解決する（resolvable_by: terminal）
 //	input × parent・any               → answer  / parent  呼び出し元が harness contract resume --input で答える
 //	observe × human                   → observe / human   人が外部で操作する（例: マージ）。その後 resume で観測し直す
 //	observe × parent・any             → observe / parent  外部の状態が変わるのを待つ。resume で観測し直す
 //
 // answer になるゲートのうち、定義に contract_kind: review と書かれたもの（ゲート名では決めない）は、呼び出し元が
 // review の受け付けを宣言したときだけ kind を review にする（#372）。decider・text・解決の仕方は answer と同じ。
+//
+// resolvable_by は、resume では解けない（engine が断る）端末が要るゲートにだけ terminal を入れる（#378）。ほかの行は
+// resume で解ける（observe × human も、人が外部で操作した後は resume で観測し直す）ので、項目を出さない。
 func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 	decider := contractParent
 	if w.Decider == workflow.DeciderHuman {
@@ -455,7 +465,7 @@ func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 		return &requestedAction{Kind: actionObserve, Decider: decider, Text: fmt.Sprintf(
 			"%s [%s]. Then resume re-checks the state: harness contract resume %s --unit %s", w.RequestedAction, where, runID, w.Unit)}
 	case w.RequiresTTY:
-		return &requestedAction{Kind: actionApprove, Decider: contractHuman, Text: fmt.Sprintf(
+		return &requestedAction{Kind: actionApprove, Decider: contractHuman, ResolvableBy: resolvableTerminal, Text: fmt.Sprintf(
 			"%s [%s; choices: %s]. A person resolves it from a terminal: harness approve %s --unit %s --input <%s> [--note <text>]",
 			w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
 	}
