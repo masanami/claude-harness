@@ -12,6 +12,14 @@
 
 ---
 
+## 5.0.5（harness CLI: `runtime/v5.0.5`）
+
+### 追加
+
+- **接続契約 v1 の `requested_action` に、後方互換の任意項目 `resolvable_by` を足した（Issue #378）。** 端末が要るゲート（`requires_tty`。例: 設計とのずれのゲート）で止まった run の `harness contract status` は、`requested_action` に `"resolvable_by": "terminal"` を出す。このゲートは `contract resume` では解けず、人が端末で `harness approve` を打つ必要があることを、呼び出し元が `text` を読まずに判別できる。resume で答えを返せば解けるゲート（回答待ち・レビュー待ち・観測）の出力は変わらず、この項目は出ない。契約の版は 1 のまま。**利用者が取る操作**: 何もしなくてよい。呼び出し元は、項目が無いときを今までどおり「答えで解ける」として扱えばよい（flywheel 側の扱いは masanami/flywheel#631）。
+
+---
+
 ## 5.0.4（harness CLI: `runtime/v5.0.4`）
 
 ### 追加
