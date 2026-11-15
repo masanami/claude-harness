@@ -184,6 +184,9 @@ type GateOpened struct {
 	Observe         string   `json:"observe,omitempty"`
 	RequiresTTY     bool     `json:"requires_tty"`
 	Builtin         bool     `json:"builtin,omitempty"`
+	// ContractKind はゲートの定義の contract_kind（§5.6.1・#372。書かれていなければ空）。contract の出力が定義を
+	// 読み直さずに kind を決められるよう、開いたときに写しておく。
+	ContractKind string `json:"contract_kind,omitempty"`
 }
 
 // GateResolved はゲートの解決。Outcome は input 型なら渡された値、observe 型なら観測の結果。

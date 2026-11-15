@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,9 @@ const (
 	actionAnswer  = "answer"
 	actionApprove = "approve"
 	actionObserve = "observe"
+	// actionReview はレビュー待ち（#372）。呼び出し元が --accept-kind review で受け付けを宣言したときだけ出す。
+	// 解決の仕方は answer と同じ。宣言が無ければ answer で出す（今の flywheel は知らない kind を不正として扱う）。
+	actionReview = "review"
 
 	contractHuman  = "human"
 	contractParent = "parent"
@@ -68,8 +72,8 @@ type artifact struct {
 const contractUsage = `usage: harness contract <start|status|resume|cancel> [options]
 
   start [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [--input NAME=VALUE]... <workflow>
-  status <run-id>
-  resume [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
+  status [--accept-kind KIND]... <run-id>
+  resume [--accept-kind KIND]... [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
   cancel <run-id>
 
 start always returns at once: the run is advanced by a detached process (as run --detach), so start prints
@@ -81,7 +85,12 @@ then ("running", or "waiting" / an end when the run got there already); read the
 the connection contract v1 for flywheel: each command prints one JSON document
 {"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}
 and exits 0 whenever it printed it; waiting, success and failure are in "state", not in the exit code.
-the options and the arguments are the same as those of run / status / resume / cancel.
+the options and the arguments are the same as those of run / status / resume / cancel, except --accept-kind.
+
+--accept-kind KIND (status and resume; repeatable) declares a requested_action.kind the caller accepts beyond
+answer, approve and observe. The only such kind is review (a gate whose definition says contract_kind: review,
+waiting for its artifact to be reviewed; it is resolved as answer is). Without the declaration such a gate is
+shown as answer. The declaration applies to that call only; it is not recorded in the run.
 `
 
 // cmdContract は契約 v1 の 4 コマンド。JSON を出力できなかったときだけ非 0 で終わる。
@@ -93,20 +102,73 @@ func cmdContract(args []string, env Env) int {
 	switch sub {
 	case "start":
 		return contractStart(rest, env)
-	case "status":
-		return contractByRun(rest, env, func(a []string, e Env) int { return cmdStatus(append(a, "--json"), e) }, statusBlock)
-	case "resume":
+	case "status", "resume":
+		acc, rest, err := acceptKinds(rest, "unit", "input", "note")
+		if err != nil {
+			return contractOut(env, failedDoc(nil, err.Error()))
+		}
+		if sub == "status" {
+			return contractByRun(rest, env, acc, func(a []string, e Env) int { return cmdStatus(append(a, "--json"), e) }, statusBlock)
+		}
 		// 常に切り離して再開する（resume --detach。#359）: ゲートの解決はこのプロセスで行い、その後の進行は runner に
 		// 渡してすぐ戻る。--detach は契約の引数ではないので、利用者が渡すと usage の誤りになる。
-		return contractByRun(rest, env, func(a []string, e Env) int { return cmdResolve("resume", append([]string{"--detach"}, a...), e) }, resumeBlock,
+		return contractByRun(rest, env, acc, func(a []string, e Env) int { return cmdResolve("resume", append([]string{"--detach"}, a...), e) }, resumeBlock,
 			flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true})
 	case "cancel":
-		return contractByRun(rest, env, cmdCancel, nil)
+		return contractByRun(rest, env, accepted{}, cmdCancel, nil)
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, contractUsage)
 		return ExitOK
 	}
 	return contractOut(env, failedDoc(nil, fmt.Sprintf("unknown contract command %q (start, status, resume or cancel)", sub)))
+}
+
+// accepted は呼び出し元が受け付けると宣言した requested_action.kind（--accept-kind。#372）。契約 v1 の answer・approve・
+// observe は常に受け付けるものとし、ここには足した kind（review）だけを持つ。宣言はその呼び出しにだけ効き、run には
+// 記録しない（同じ run の status と resume で別々に宣言してよい）。
+type accepted struct {
+	review bool
+}
+
+// acceptKinds は --accept-kind KIND（--accept-kind=KIND も可。繰り返してよい）を取り除き、残りの引数を返す。KIND は契約の
+// kind（answer・approve・observe・review）に限る。それ以外は誤り（綴りの誤りで黙って answer に倒さない）。
+// -- の後は位置引数なので見ない。valued は値を次の引数に取るほかのオプションの名前で、その値（--note の文など）は
+// --accept-kind と同じ綴りでも取り除かない。
+func acceptKinds(args []string, valued ...string) (accepted, []string, error) {
+	var acc accepted
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+		if name, ok := strings.CutPrefix(a, "--"); ok && i+1 < len(args) && slices.Contains(valued, name) {
+			rest = append(rest, a, args[i+1])
+			i++
+			continue
+		}
+		val, ok := strings.CutPrefix(a, "--accept-kind=")
+		if !ok {
+			if a != "--accept-kind" {
+				rest = append(rest, a)
+				continue
+			}
+			if i+1 >= len(args) {
+				return accepted{}, nil, errors.New("option --accept-kind needs a value")
+			}
+			i++
+			val = args[i]
+		}
+		switch val {
+		case actionReview:
+			acc.review = true
+		case actionAnswer, actionApprove, actionObserve:
+		default:
+			return accepted{}, nil, fmt.Errorf("option --accept-kind: unknown kind %q (answer, approve, observe or review)", val)
+		}
+	}
+	return acc, rest, nil
 }
 
 // contractStart は run を始め、切り離した runner に進めさせて（run --detach と同じ。#347）すぐ戻る。run の終わりを
@@ -115,11 +177,11 @@ func cmdContract(args []string, env Env) int {
 func contractStart(args []string, env Env) int {
 	out, res := captured(env, cmdRun, append([]string{"--detach"}, args...))
 	if v, ok := decodeView(out); ok {
-		return contractOut(env, contractFromView(v, res.note()))
+		return contractOut(env, contractFromView(v, res.note(), accepted{}))
 	}
 	if res.runID != "" {
 		if v, ok := loadView(env, res.runID); ok {
-			return contractOut(env, contractFromView(v, res.note()))
+			return contractOut(env, contractFromView(v, res.note(), accepted{}))
 		}
 		id := res.runID
 		return contractOut(env, failedDoc(&id, res.note()))
@@ -129,8 +191,9 @@ func contractStart(args []string, env Env) int {
 
 // contractByRun は run ID を取るコマンド（status・resume・cancel）。コマンドが状態を出さなかった（run が終わっていて
 // resume できない・cancel した等）ときは状態を読み直して出す。run を読めなければ、渡された ID で failed を出す。
-// block は、この CLI の版では run を続けられない理由（無ければ空）。nil なら調べない。
-func contractByRun(args []string, env Env, f func([]string, Env) int, block blockFunc, specs ...flagSpec) int {
+// block は、この CLI の版では run を続けられない理由（無ければ空）。nil なら調べない。acc は呼び出し元が受け付けると
+// 宣言した kind（--accept-kind。取り除いた後の args を渡す）。
+func contractByRun(args []string, env Env, acc accepted, f func([]string, Env) int, block blockFunc, specs ...flagSpec) int {
 	out, res := captured(env, f, args)
 	v, ok := decodeView(out)
 	if !ok {
@@ -143,7 +206,7 @@ func contractByRun(args []string, env Env, f func([]string, Env) int, block bloc
 			return contractOut(env, failedDoc(&id, res.note()))
 		}
 	}
-	d := contractFromView(v, res.note())
+	d := contractFromView(v, res.note(), acc)
 	if block != nil && !runstate.Terminal(v.State.Status) {
 		if why := block(env, v.State, res); why != "" {
 			if res.note() == "" {
@@ -283,14 +346,15 @@ func failedDoc(runID *string, why string) contractDoc {
 
 // contractFromView は run の状態を契約 v1 へ写す。note は既存コマンドが失敗で終わった理由（resume の拒否等）。
 // state は run の汎用状態（§4.1）そのもの: コマンドが失敗しても run の状態は変わっていないので、failed にしない。
-func contractFromView(v statusView, note string) contractDoc {
+// acc は呼び出し元が受け付けると宣言した kind。
+func contractFromView(v statusView, note string, acc accepted) contractDoc {
 	st := v.State
 	id := st.RunID
 	d := contractDoc{ContractVersion: ContractVersion, RunID: &id, State: st.Status, Artifacts: artifacts(st)}
 	cost, unknown := runCost(st)
 	d.CostUSD = &cost
 	if !runstate.Terminal(st.Status) {
-		d.RequestedAction = pickAction(st.RunID, v.Waiting)
+		d.RequestedAction = pickAction(st.RunID, v.Waiting, acc)
 	}
 	d.Summary = summarize(v, unknown, note)
 	return d
@@ -377,7 +441,10 @@ func lastHead(heads map[string]string) string {
 //	input × parent・any               → answer  / parent  呼び出し元が harness contract resume --input で答える
 //	observe × human                   → observe / human   人が外部で操作する（例: マージ）。その後 resume で観測し直す
 //	observe × parent・any             → observe / parent  外部の状態が変わるのを待つ。resume で観測し直す
-func gateAction(runID string, w waitingView) *requestedAction {
+//
+// answer になるゲートのうち、定義に contract_kind: review と書かれたもの（ゲート名では決めない）は、呼び出し元が
+// review の受け付けを宣言したときだけ kind を review にする（#372）。decider・text・解決の仕方は answer と同じ。
+func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 	decider := contractParent
 	if w.Decider == workflow.DeciderHuman {
 		decider = contractHuman
@@ -392,22 +459,42 @@ func gateAction(runID string, w waitingView) *requestedAction {
 			"%s [%s; choices: %s]. A person resolves it from a terminal: harness approve %s --unit %s --input <%s> [--note <text>]",
 			w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
 	}
-	return &requestedAction{Kind: actionAnswer, Decider: decider, Text: fmt.Sprintf(
+	kind := actionAnswer
+	if acc.review && w.ContractKind == workflow.ContractKindReview {
+		kind = actionReview
+	}
+	return &requestedAction{Kind: kind, Decider: decider, Text: fmt.Sprintf(
 		"%s [%s; choices: %s]. Answer with: harness contract resume %s --unit %s --input <%s> [--note <text>]",
 		w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
 }
 
-// pickAction は待っているゲートから 1 つを選ぶ（契約 v1 の requested_action は 1 つ）。人の判断（approve）を最優先し、
-// 次に呼び出し元が答えるもの（answer）、最後に観測（observe）。同じ順位なら unit の順。ほかにも待っている unit が
+// pickAction の順位（小さいほど先に選ぶ）。
+//
+// 宣言が無いとき（今までの呼び出し）は approve → answer → observe のまま。review の欄を持つゲートも answer として
+// この順で選ぶ（並びを変えない）。
+//
+// review の受け付けを宣言したときは answer → review → approve → observe（オーナーの決定 Q3: review を answer の直後、
+// 承認・観察より先。#372）。この順を満たすため、宣言したときは answer も approve より先になる。
+var (
+	actionRank       = map[string]int{actionApprove: 0, actionAnswer: 1, actionObserve: 2}
+	actionRankReview = map[string]int{actionAnswer: 0, actionReview: 1, actionApprove: 2, actionObserve: 3}
+)
+
+// pickAction は待っているゲートから 1 つを選ぶ（契約 v1 の requested_action は 1 つ）。宣言が無ければ人の判断（approve）を
+// 最優先し、次に呼び出し元が答えるもの（answer）、最後に観測（observe）。review の受け付けを宣言したときは
+// answer → review → approve → observe（actionRankReview）。同じ順位なら unit の順。ほかにも待っている unit が
 // あれば text に数を添える（fan-out の run。現行のワークフローの unit は 1 つ）。
-func pickAction(runID string, ws []waitingView) *requestedAction {
+func pickAction(runID string, ws []waitingView, acc accepted) *requestedAction {
 	if len(ws) == 0 {
 		return nil
 	}
-	rank := map[string]int{actionApprove: 0, actionAnswer: 1, actionObserve: 2}
+	rank := actionRank
+	if acc.review {
+		rank = actionRankReview
+	}
 	acts := make([]*requestedAction, len(ws))
 	for i, w := range ws {
-		acts[i] = gateAction(runID, w)
+		acts[i] = gateAction(runID, w, acc)
 	}
 	order := make([]int, len(ws))
 	for i := range order {

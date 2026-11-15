@@ -168,7 +168,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 
 - 定義の同定と入口: `schema`・`id`・`description`・`inputs`
 - ステップの振る舞い: `kind`・`run`・`prompt`・`agent`・`output`・`outcome_field`・`exit`・`session`・`with`・`value`・`action`
-- ゲート: `type`・`decider`・`inputs`・`observe`・`requested_action`（`decider` を `human` から `any` へ変えると、TTY を要求しない経路でゲートを解決できてしまう。設計書 §5.3）
+- ゲート: `type`・`decider`・`inputs`・`observe`・`requested_action`・`contract_kind`（`decider` を `human` から `any` へ変えると、TTY を要求しない経路でゲートを解決できてしまう。設計書 §5.3）
 - 遷移: `overridable.routes` に宣言の無い `on` のすべて。`limit`・`exhausted`・`retry` の形も変えられない（回数は `limits` の値で変える）
 - `overridable` 自体（上書きで候補を広げることはできない）
 

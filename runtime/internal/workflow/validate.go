@@ -201,6 +201,13 @@ func (v *validator) gate(s *Step) {
 	if strings.TrimSpace(s.RequestedAction) == "" {
 		v.errf(s.Line, "steps.%s: requested_action is required for kind gate (what the resolver is asked to do)", s.ID)
 	}
+	switch {
+	case s.ContractKind == "":
+	case s.ContractKind != ContractKindReview:
+		v.errf(s.Line, "steps.%s: contract_kind %q must be %s (the only kind a gate can declare for the connection contract)", s.ID, s.ContractKind, ContractKindReview)
+	case s.GateType != GateInput || RequiresTTY(s.GateType, s.Decider):
+		v.errf(s.Line, "steps.%s: contract_kind %s is only valid for type input with decider parent or any (a gate the caller answers with resume --input)", s.ID, s.ContractKind)
+	}
 	switch s.GateType {
 	case GateInput:
 		if len(s.GateInputs) == 0 {

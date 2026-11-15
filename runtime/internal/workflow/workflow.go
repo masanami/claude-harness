@@ -43,6 +43,11 @@ const (
 	DeciderAny    = "any"
 )
 
+// ContractKindReview はゲートの contract_kind に書ける唯一の値（§5.6.1・#372）: 成果物（PR 等）を出して、それを見て
+// もらう待ち（レビュー待ち）。解決の仕方は answer と同じ（resume --input）なので、answer になるゲート（input 型で
+// decider が human でない）にだけ書ける。
+const ContractKindReview = "review"
+
 // RequiresTTY は、ゲートの解決に端末（TTY）が要るかを返す。要るのは input 型かつ decider: human のゲートだけ
 // （Q9・N1。observe 型は resume が判断を運ばず、runtime が外部の実状態を確かめるだけなので要求しない）。
 func RequiresTTY(gateType, decider string) bool {
@@ -205,6 +210,9 @@ type Step struct {
 	RequestedAction string
 	GateInputs      []string // input 型: resume で受け付ける値（そのまま outcome になる）
 	Observe         string   // observe 型: 登録された観測の名前
+	// ContractKind は接続契約で見せる requested_action.kind（§5.6.1・#372）。書けるのは ContractKindReview だけで、
+	// 書かなければ空（ゲートの型 × decider の対応表のまま）。runtime はゲート名でなく、この宣言で kind を決める。
+	ContractKind string
 
 	// select 種類（§3.2・Q12）: 参照 1 つ。その enum 値がそのまま outcome になる（読み込み時に SelectOutcomes へ解決する）
 	Value          *Ref

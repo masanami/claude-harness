@@ -165,6 +165,7 @@ go run ./cmd/harness resume --detach <run-id> --input <値>  # ゲートを解�
 go run ./cmd/harness approve <run-id> --input <値>   # 人が端末から解決するゲート（decider: human の input 型）
 go run ./cmd/harness cancel <run-id>
 go run ./cmd/harness contract status <run-id>        # flywheel の接続契約 v1 の JSON（start・status・resume・cancel）
+go run ./cmd/harness contract status --accept-kind review <run-id>  # レビュー待ちを kind: review で受け取る（宣言しなければ answer。設計 §5.6.1）
 go run ./cmd/harness predict-conflicts 12 13         # 衝突の予測（読み取り専用。JSON を 1 つ出す）
 go run ./cmd/harness graph ticket                    # ワークフローの形（読み取り専用。--json で JSON）
 go run ./cmd/harness graph --run <run-id>            # run が使った定義の形に現在地を重ねる（状態は変えない）

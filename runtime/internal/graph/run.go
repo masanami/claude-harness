@@ -41,6 +41,7 @@ type Waiting struct {
 	Inputs          []string `json:"inputs,omitempty"`
 	RequiresTTY     bool     `json:"requires_tty"`
 	ResumeCommand   string   `json:"resume_command"`
+	ContractKind    string   `json:"contract_kind,omitempty"`
 }
 
 // Visit は全ラウンドのステップ実行（rounds[].steps[]）をステップごとに数えたもの。LastOutcome は最後の実行の outcome で、
