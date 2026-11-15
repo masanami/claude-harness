@@ -596,6 +596,8 @@ type waitingView struct {
 	Inputs          []string `json:"inputs,omitempty"`
 	RequiresTTY     bool     `json:"requires_tty"`
 	ResumeCommand   string   `json:"resume_command"`
+	// ContractKind はゲートの定義の contract_kind（§5.6.1・#372）。contract は status --json を読み直して写すので、ここに出す。
+	ContractKind string `json:"contract_kind,omitempty"`
 }
 
 func view(run *runstate.Run, st *runstate.State, torn *runstate.Torn) statusView {
@@ -628,7 +630,7 @@ func runnerAlive(st *runstate.State) *bool {
 // 切り離したければ人が --detach を足せる）。
 func waiting(runID string, u *runstate.Unit) waitingView {
 	g := u.Gate
-	w := waitingView{Unit: u.Key, Gate: g.Gate, Type: g.Type, Decider: g.Decider, RequestedAction: g.RequestedAction, Inputs: g.Inputs, RequiresTTY: g.RequiresTTY}
+	w := waitingView{Unit: u.Key, Gate: g.Gate, Type: g.Type, Decider: g.Decider, RequestedAction: g.RequestedAction, Inputs: g.Inputs, RequiresTTY: g.RequiresTTY, ContractKind: g.ContractKind}
 	switch {
 	case g.Type == workflow.GateObserve:
 		w.ResumeCommand = fmt.Sprintf("harness resume --detach %s --unit %s", runID, u.Key)

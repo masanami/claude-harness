@@ -139,7 +139,8 @@ YAML の `on` に書かれていない予約値（`step_error`・`step_timeout`�
     "current_step": "review",
     "round": 3,
     "waiting": {"gate": "review", "type": "input", "decider": "any", "requires_tty": false,
-                "inputs": ["respond", "ready"], "resume_command": "harness resume --detach … --input <respond|ready> …"},
+                "inputs": ["respond", "ready"], "resume_command": "harness resume --detach … --input <respond|ready> …",
+                "contract_kind": "review"},
     "visited": [
       {"step": "implement", "executions": 1, "last_outcome": "pass"},
       {"step": "ci", "executions": 2, "last_outcome": "green"}

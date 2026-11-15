@@ -1,0 +1,25 @@
+# 接続契約のレビュー待ち（§5.6.1・#372）を確かめる: contract_kind: review を書いた input × any のゲート。
+# respond は同じゲートへ戻り（もう一度レビューを待つ）、ready で終わる。
+schema: harness.workflow/v1
+id: review
+inputs:
+  json: { type: string, required: true }
+steps:
+  publish:
+    kind: command
+    run: emit
+    with: { json: $inputs.json, code: 0 }
+    output: schemas/emit.json
+    on:
+      ok: { gate: review }
+      other: { fail: other }
+  review:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: wait for the PR review; respond to address it, ready to merge
+    inputs: [respond, ready]
+    contract_kind: review
+    on:
+      respond: { gate: review }
+      ready: { done: ready }

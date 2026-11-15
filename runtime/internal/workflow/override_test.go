@@ -108,6 +108,7 @@ func TestOverrideRejects(t *testing.T) {
 		{"prompt", "steps: { implement: { prompt: other.md } }\n", "steps.implement.prompt cannot be overridden"},
 		{"agent", "steps: { implement: { agent: claude-harness:other } }\n", "steps.implement.agent cannot be overridden"},
 		{"decider", "steps: { review: { decider: human } }\n", "steps.review.decider cannot be overridden"},
+		{"contract_kind", "steps: { review: { contract_kind: review } }\n", "steps.review.contract_kind cannot be overridden"},
 		{"on", "steps: { ci: { on: { green: merge-route } } }\n", "steps.ci.on.green cannot be overridden"},
 		{"kind", "steps: { analyze: { kind: command } }\n", "steps.analyze.kind cannot be overridden"},
 		{"with", "steps: { analyze: { with: { issue: 1 } } }\n", "steps.analyze.with cannot be overridden"},

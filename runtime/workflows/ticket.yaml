@@ -17,6 +17,8 @@
 #   - respond の push の後も quality → publish → ci を通す（#339）。run の記録の SHA を PR の head とそろえるため
 #   - ci に base を渡し、PR の宛先の CI の運用の宣言（.claude-harness/ci.json）が after-merge なら、CI を待たずに skipped で
 #     review へ進む（#363。none とは別の値。宣言が無い・per-push・壊れた宣言では今の動きのまま）
+#   - review に contract_kind: review を書き、接続契約でレビュー待ち（kind: review）として見せる（#372。呼び出し元が
+#     --accept-kind review で受け付けを宣言したときだけ。宣言が無ければ今までどおり answer）
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -181,6 +183,7 @@ steps:
     decider: any
     requested_action: PR のレビューを待つ。対応が要れば respond、マージしてよければ ready を渡して resume
     inputs: [respond, ready]
+    contract_kind: review                           # 接続契約で review（レビュー待ち）として見せる（受け付けを宣言した呼び出し元だけ。§5.6.1・#372）
     on: { respond: respond, ready: merge-route }
 
   respond:

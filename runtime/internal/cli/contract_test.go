@@ -264,7 +264,7 @@ func TestContractFromView(t *testing.T) {
 		return &runstate.State{RunID: "R-1", Workflow: runstate.WorkflowRef{ID: "ticket"}, Status: status, Units: units}
 	}
 	for _, status := range []string{"running", "waiting", "succeeded", "failed", "cancelled"} {
-		d := contractFromView(statusView{State: st(status)}, "")
+		d := contractFromView(statusView{State: st(status)}, "", accepted{})
 		if d.State != status || *d.RunID != "R-1" || d.RequestedAction != nil {
 			t.Errorf("%s: %+v", status, d)
 		}
@@ -283,7 +283,7 @@ func TestContractFromView(t *testing.T) {
 		{gate("main", "ask", "input", "parent", false), "answer", "parent"},
 		{gate("main", "wait", "observe", "any", false), "observe", "parent"},
 	} {
-		d := contractFromView(statusView{State: st("waiting"), Waiting: []waitingView{c.w}}, "")
+		d := contractFromView(statusView{State: st("waiting"), Waiting: []waitingView{c.w}}, "", accepted{})
 		a := d.RequestedAction
 		if a == nil || a.Kind != c.kind || a.Decider != c.decider || !strings.Contains(a.Text, "do "+c.w.Gate) || !strings.Contains(a.Text, "gate "+c.w.Gate) {
 			t.Errorf("%s: %+v", c.w.Gate, a)
@@ -292,7 +292,7 @@ func TestContractFromView(t *testing.T) {
 
 	// 複数の unit が待っていれば、人の判断を最優先で出し、ほかの数を添える。
 	d := contractFromView(statusView{State: st("waiting"), Waiting: []waitingView{
-		gate("u1", "wait", "observe", "any", false), gate("u2", "ask", "input", "parent", false), gate("u3", "review-human", "input", "human", true)}}, "")
+		gate("u1", "wait", "observe", "any", false), gate("u2", "ask", "input", "parent", false), gate("u3", "review-human", "input", "human", true)}}, "", accepted{})
 	if a := d.RequestedAction; a.Kind != "approve" || !strings.Contains(a.Text, "unit u3") || !strings.Contains(a.Text, "2 other unit(s)") {
 		t.Errorf("multi-unit action = %+v", a)
 	}
@@ -301,7 +301,7 @@ func TestContractFromView(t *testing.T) {
 	u := &runstate.Unit{Key: "main",
 		Budget:    &runstate.Budget{LimitUSD: 30, SpentUSD: 7.5, UnknownCostCount: 1},
 		Workspace: &runstate.Workspace{Branch: "feature/x", PRNumber: 7, PRURL: "https://github.com/o/r/pull/7", HeadSHAs: map[string]string{"1": "aaa", "10": "ccc", "2": "bbb"}}}
-	d = contractFromView(statusView{State: st("succeeded", u)}, "")
+	d = contractFromView(statusView{State: st("succeeded", u)}, "", accepted{})
 	arts, _ := json.Marshal(d.Artifacts)
 	if string(arts) != `[{"kind":"pr","ref":"https://github.com/o/r/pull/7"},{"kind":"branch","ref":"feature/x"},{"kind":"commit","ref":"ccc"}]` {
 		t.Errorf("artifacts = %s", arts)
@@ -310,7 +310,7 @@ func TestContractFromView(t *testing.T) {
 		t.Errorf("cost = %v summary = %q", d.CostUSD, d.Summary)
 	}
 	u.Workspace.PRURL = ""
-	if d = contractFromView(statusView{State: st("succeeded", u)}, ""); d.Artifacts[0] != (artifact{Kind: "pr", Ref: "#7"}) {
+	if d = contractFromView(statusView{State: st("succeeded", u)}, "", accepted{}); d.Artifacts[0] != (artifact{Kind: "pr", Ref: "#7"}) {
 		t.Errorf("artifacts without a PR URL = %+v", d.Artifacts)
 	}
 }

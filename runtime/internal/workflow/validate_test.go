@@ -400,6 +400,13 @@ func TestRejectsLLMAndGate(t *testing.T) {
 		{"gate note from an llm step", "      bad: { fail: bad }\n", "      bad: { goto: review, with: { x: $gate.note } }\n", "step \"fix\" is not an input gate"},
 		{"note of another type on another transition", `with: { note: "address the review comments" }`, "with: { note: $inputs.n }", "incoming transitions pass different types"},
 		{"note not passed by every transition", `      respond: { goto: fix, with: { note: "address the review comments" } }`, "      respond: fix", `does not pass "note"`},
+		// contract_kind（§5.6.1・#372）: 書けるのは review だけで、answer になるゲート（input × parent・any）にだけ書ける。
+		{"contract_kind other than review", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    contract_kind: approve\n", `contract_kind "approve" must be review`},
+		{"contract_kind answer", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    contract_kind: answer\n", `contract_kind "answer" must be review`},
+		{"contract_kind not a string", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    contract_kind: [review]\n", "contract_kind"},
+		{"contract_kind review on a human gate", "    inputs: [follow, abort]\n", "    inputs: [follow, abort]\n    contract_kind: review\n", "contract_kind review is only valid for type input with decider parent or any"},
+		{"contract_kind review on an observe gate", "    observe: pr\n", "    observe: pr\n    contract_kind: review\n", "contract_kind review is only valid for type input with decider parent or any"},
+		{"contract_kind on an llm step", "    budget_usd: 2\n", "    budget_usd: 2\n    contract_kind: review\n", `unknown key "contract_kind"`},
 		{"interrupted is reserved", "  merged:\n", "  interrupted:\n    kind: gate\n    type: input\n    decider: any\n    requested_action: x\n    inputs: [go]\n    on: { go: { done: x } }\n  merged:\n", `step id "interrupted" is reserved`},
 	}
 	for _, c := range cases {
@@ -415,6 +422,25 @@ func TestRejectsLLMAndGate(t *testing.T) {
 				t.Fatalf("expected rejection containing %q, got:\n%v", c.want, err)
 			}
 		})
+	}
+}
+
+// contract_kind: review を書いた input × any のゲートは通り、読み込んだ定義に値が入る。書かなければ空（今の対応表のまま）。
+func TestGateContractKindReview(t *testing.T) {
+	y := strings.Replace(llmBase, "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    contract_kind: review\n", 1)
+	path, scripts := setup(t, "w", llmWithA(y))
+	wf, err := LoadAndValidate(path, Options{ScriptsDir: scripts})
+	if err != nil {
+		t.Fatalf("contract_kind: review must be accepted: %v", err)
+	}
+	for _, s := range wf.Steps {
+		want := ""
+		if s.ID == "review" {
+			want = ContractKindReview
+		}
+		if s.ContractKind != want {
+			t.Errorf("steps.%s: ContractKind = %q, want %q", s.ID, s.ContractKind, want)
+		}
 	}
 }
 

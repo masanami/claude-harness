@@ -190,7 +190,7 @@ YAML と Go のステップ種類が許す判定は**一致だけ**である。�
 | `command` | `scripts/` のスクリプトを argv で起動。stdout JSON を `output` で検証。`outcome` は JSON の指定フィールド、または `exit:` の終了コード表（リテラル）から得る | I2・I3・W1 |
 | `llm` | `claude -p` を起動。`--json-schema` で型付き出力、`--session-id` を runtime が事前採番、`--max-budget-usd` を**残予算と `budget_usd` の小さいほう**で付与、`--output-format json` の結果から費用を累計。`session: new \| continue:<step>` で再開方針を指定 | I4・I6・I9・I11 |
 | `select` | 参照 1 つが指す **enum 値をそのまま outcome にする**（副作用なし） | I10（2 段前の値での分岐） |
-| `gate` | ラウンドの区切り。`input` 型（resume 時に型付きの入力を受け、その値が outcome）と `observe` 型（resume 時に外部の実状態を確認し、その結果が outcome。人の申告を信じない）がある。`decider: human \| parent \| any` | I8・P7・R1〜R3・R5 |
+| `gate` | ラウンドの区切り。`input` 型（resume 時に型付きの入力を受け、その値が outcome）と `observe` 型（resume 時に外部の実状態を確認し、その結果が outcome。人の申告を信じない）がある。`decider: human \| parent \| any`。任意の `contract_kind: review` で、接続契約にレビュー待ちとして見せる（§5.6.1・#372） | I8・P7・R1〜R3・R5 |
 | `workspace` | `acquire`: 呼び出し元が worktree を渡していれば検証して `provided`、無ければ `worktree-setup` を呼んで `created`/`reused`。払い出しは run 内で直列化。`release`: 自分が作ったものだけを `worktree-cleanup` で削除（渡されたものは消さない） | I5・P8・P12 |
 | `pull-request` | push → PR 作成（既存なら push のみ）。本文の**転記節（振る舞いの一覧・残指摘の全件・未検証の明記・クロスリポジトリ確証）は型付きの値から Go が生成**する。LLM が書くのは題名と要約だけ | I7・I13・W4 |
 | `fanout`（見送り） | 子ワークフローを項目ごとに起動。`max_parallel`・`serial_groups`・後続の起動条件（`advance_on`）を持つ。各項目は独立に gate で止まってよく、全項目が終端に達したら `all_terminal`、ゲート待ちが残れば run を `waiting` にする | P9・P10・P7 |
@@ -659,11 +659,11 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 
 **入口**: 既存の `run`/`status`/`resume`/`cancel` とは別の `harness contract start|status|resume|cancel` にする。契約 v1 の終了コードは「JSON を出力できたか」だけを表し（0 = 出力した）、§5.2 の「待機・失敗・成功を終了コードで分ける」と意味が違う。同じコマンドにフラグで 2 つの意味を持たせると取り違えの元になるため、入口を分け、人向けの出力と終了コード（§5.1・§5.2）は変えない。`contract` の各コマンドは既存のコマンドをそのまま呼び（run の開始・再開・状態の畳み込みは共有）、その結果（`status --json` と同じ畳み込んだ状態）を写すだけである。
 
-| 契約 v1 のコマンド | harness | 引数（既存コマンドと同じ） |
+| 契約 v1 のコマンド | harness | 引数（既存コマンドと同じ。`--accept-kind` だけは contract に固有。下の「レビュー待ち `review`」） |
 | --- | --- | --- |
 | `start` | `harness contract start` → `run --detach`（#347。常にすぐ戻る） | `[--workflow-dir DIR] [--scripts-dir DIR] [--input NAME=VALUE]... <workflow>` |
-| `status` | `harness contract status` → `status --json` | `<run-id>` |
-| `resume` | `harness contract resume` → `resume --detach`（#359。常にすぐ戻る） | `[--unit KEY] [--input VALUE] [--note TEXT] <run-id>` |
+| `status` | `harness contract status` → `status --json` | `[--accept-kind KIND]... <run-id>` |
+| `resume` | `harness contract resume` → `resume --detach`（#359。常にすぐ戻る） | `[--accept-kind KIND]... [--unit KEY] [--input VALUE] [--note TEXT] <run-id>` |
 | `cancel` | `harness contract cancel` → `cancel` | `<run-id>` |
 
 `cancel` の出力は契約 v1 が求めていないが、同じ形の JSON（停止後の状態）を出す。
@@ -689,13 +689,22 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 | --- | --- | --- | --- | --- |
 | `input` × `human`（TTY を要求する。§5.3） | `approve` | `human` | `design-deviation`・`review-human` | 人が端末から `harness approve <run> --unit <u> --input <値>` |
 | `input` × `parent` | `answer` | `parent` | — | `harness contract resume <run> --unit <u> --input <値>` |
-| `input` × `any` | `answer` | `parent` | `ci-pending`・`review`・組み込みの `interrupted` | 同上 |
+| `input` × `any` | `answer` | `parent` | `ci-pending`・組み込みの `interrupted` | 同上 |
+| `input` × `parent`・`any` で、定義に `contract_kind: review`（#372） | 呼び出し元が `--accept-kind review` を宣言したときだけ `review`。宣言が無ければ `answer` | `parent` | `review` | 同上（`answer` と同じ） |
 | `observe` × `human` | `observe` | `human` | `human-merge` | 人が外部で操作した後、`harness contract resume <run> --unit <u>` で観測し直す |
 | `observe` × `parent`・`any` | `observe` | `parent` | — | 同上（外部の状態の変化を待つ） |
 
 - `input` × `human` を `answer` でなく `approve` にするのは、解決の経路が端末からの `approve`（確認の入力つき）に限られるためである。どちらでも flywheel は回答しない（契約 v1）。
 - harness の `decider: any` は「TTY を要求しない・誰が resume してもよい」ゲートで、自走中に進めるのは呼び出し元（flywheel）である。そのため契約上は `parent` で出す（契約 v1 の `any` は使わない）。
-- 契約 v1 の `requested_action` は 1 つだけである。fan-out の run で複数の unit がゲートで待つ場合は、`approve` → `answer` → `observe` の順（同順位は unit の順）で 1 つを選び、ほかに待っている unit の数を `text` に添える（現行のワークフローの unit は 1 つなので、この場合は起きない）。
+- 契約 v1 の `requested_action` は 1 つだけである。fan-out の run で複数の unit がゲートで待つ場合は、`approve` → `answer` → `observe` の順（同順位は unit の順）で 1 つを選び、ほかに待っている unit の数を `text` に添える（現行のワークフローの unit は 1 つなので、この場合は起きない）。`--accept-kind review` を宣言した呼び出しだけは `answer` → `review` → `approve` → `observe` の順にする（下の「レビュー待ち `review`」）。
+
+**レビュー待ち `review`（#372・2026-11-15）**: 「成果物（PR など）を出して、それを見てもらう待ち」を表す汎用の `kind`。flywheel が、レビュー待ちの run を接続ツール固有の名前（ゲート名）を読まずに見分けるために足した（flywheel#598）。契約の版は v1 のまま（v2 にしない）。
+
+- **宣言の仕方（ゲートの定義）**: ワークフローの YAML の `gate` ステップに任意のキー `contract_kind` を書く。書ける値は `review` だけで、ほかの値（`approve`・`answer` 等）は読み込み（`harness validate` と run の開始）でエラーにする。`review` を書けるのは、`answer` になるゲート（`input` 型で `decider` が `parent` か `any`）だけで、`observe` 型と `decider: human` の `input` 型に書けばエラーにする（解決の仕方が `answer` と同じであることが前提のため）。書かなければ上の表のまま。runtime はゲート名で `kind` を決めない（`review` という名前のゲートでも、`contract_kind` が無ければ `answer`）。上書き（`docs/harness-runtime-overrides.md` §5.3）では変えられない。組み込みの `ticket` ワークフローでは `review` ゲートにだけ書き、`ci-pending`・組み込みの `interrupted`・`human-merge`・`decider: human` の系統には書かない。
+- **出す順番（壊さないための順番）**: 呼び出し元が `review` の受け付けを宣言したときだけ `review` を出す。宣言が無ければ、`contract_kind: review` のゲートも今までどおり `answer` で出す（`decider`・`text`・解決の仕方は同じ）。今の flywheel は `answer`・`approve`・`observe` 以外の `kind` を契約の出力の誤りとして扱うが、宣言しないので `review` を受け取らない。そのため **harness を先に Release しても今の flywheel は壊れない**。flywheel は、宣言のフラグを `.flywheel/connectors.json` の commands に足した時点から `review` を受け取る（flywheel#598）。
+- **受け付けの宣言のフラグ**: `harness contract status` と `harness contract resume` の `--accept-kind KIND`（`--accept-kind=KIND` も可。繰り返してよい。位置は run ID の前でも後でもよい）。`KIND` は契約の `kind`（`answer`・`approve`・`observe`・`review`）に限り、それ以外は引数の誤りとして `state: failed`・`run_id: null` の JSON を返す（綴りの誤りで黙って `answer` に倒さない）。`answer`・`approve`・`observe` は宣言しなくても出るので、書いても何も変わらない。宣言はその呼び出しの出力にだけ効き、run には記録しない（同じ run でも、宣言した `status` は `review`、宣言しない `status` は `answer` を返す）。`start` と `cancel` は受け付けない（`start` の直後の待機と `cancel` の出力は宣言なしの形で出る。レビュー待ちは `start` の直後には来ない）。
+- **複数の待ちの順位**: 宣言した呼び出しは `answer` → `review` → `approve` → `observe`（`review` を `answer` の直後、承認・観察より先に置く。オーナーの決定 Q3）。宣言の無い呼び出しは今の `approve` → `answer` → `observe` のままで、`contract_kind: review` のゲートは `answer` として同じ順位（unit の順）で選ぶ。
+- **run の記録**: ゲートを開いたとき（`gate_opened`）に定義の `contract_kind` を写し、`status --json` の `waiting[].contract_kind`（と `harness graph --run`）に出す（書かれていないゲートには出さない）。`contract` は `status --json` を読み直して写すので、定義を読み込まない。この版より前の harness で開いたゲートには値が無く、宣言しても `answer` で出る（次にゲートを開いたときから `review`）。
 
 **費用（`cost_usd`）と Q15**: 費用を得られなかった実行は、付与した上限額（`--max-budget-usd`）を消費したものとして unit の累計に入っている（§4.3・Q15 の fail-closed）。`cost_usd` はその累計のまま出し、`null` にしない。`null` にすると呼び出し元は「不明」を自分で上限額へ倒す手段を持たず、費用を少なく見る側へ倒れうるためである。費用不明の実行を含むこと（`unknown_cost_count`）は `summary` に書く。
 

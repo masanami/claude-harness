@@ -197,4 +197,17 @@ func TestShippedTicketWorkflowIsValid(t *testing.T) {
 	if got := wf.Step("merge-route").Outcomes(); strings.Join(got, ",") != "integration,default" {
 		t.Errorf("merge-route outcomes = %v", got)
 	}
+	// contract_kind（§5.6.1・#372）を書くのは review ゲートだけ。ci-pending・human-merge・承認（decider: human）の系統には書かない。
+	for _, s := range wf.Steps {
+		want := ""
+		if s.ID == "review" {
+			want = ContractKindReview
+		}
+		if s.ContractKind != want {
+			t.Errorf("steps.%s: contract_kind = %q, want %q", s.ID, s.ContractKind, want)
+		}
+	}
+	if r := wf.Step("review"); r == nil || r.GateType != GateInput || r.Decider != DeciderAny {
+		t.Errorf("review gate = %+v (want an input gate with decider any)", r)
+	}
 }
