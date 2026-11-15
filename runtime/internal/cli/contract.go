@@ -473,16 +473,16 @@ func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 // 宣言が無いとき（今までの呼び出し）は approve → answer → observe のまま。review の欄を持つゲートも answer として
 // この順で選ぶ（並びを変えない）。
 //
-// review の受け付けを宣言したときは answer → review → approve → observe（オーナーの決定 Q3: review を answer の直後、
-// 承認・観察より先。#372）。この順を満たすため、宣言したときは answer も approve より先になる。
+// review の受け付けを宣言したときは approve → answer → review → observe（オーナーの決定 Q3: review を answer の直後。
+// 宣言の無い順を保ったまま review を差し込む。#372・#374）。宣言しても人の承認（approve）が先のまま。
 var (
 	actionRank       = map[string]int{actionApprove: 0, actionAnswer: 1, actionObserve: 2}
-	actionRankReview = map[string]int{actionAnswer: 0, actionReview: 1, actionApprove: 2, actionObserve: 3}
+	actionRankReview = map[string]int{actionApprove: 0, actionAnswer: 1, actionReview: 2, actionObserve: 3}
 )
 
 // pickAction は待っているゲートから 1 つを選ぶ（契約 v1 の requested_action は 1 つ）。宣言が無ければ人の判断（approve）を
 // 最優先し、次に呼び出し元が答えるもの（answer）、最後に観測（observe）。review の受け付けを宣言したときは
-// answer → review → approve → observe（actionRankReview）。同じ順位なら unit の順。ほかにも待っている unit が
+// approve → answer → review → observe（actionRankReview）。同じ順位なら unit の順。ほかにも待っている unit が
 // あれば text に数を添える（fan-out の run。現行のワークフローの unit は 1 つ）。
 func pickAction(runID string, ws []waitingView, acc accepted) *requestedAction {
 	if len(ws) == 0 {

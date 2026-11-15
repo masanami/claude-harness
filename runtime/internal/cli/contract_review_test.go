@@ -143,8 +143,9 @@ func TestContractReviewKindMapping(t *testing.T) {
 	}
 }
 
-// (5) 複数の unit が待つとき、review を受け付ける呼び出しは answer → review → approve → observe の順で選ぶ。宣言の無い
-// 呼び出しは今の順（approve → answer → observe。review のゲートは answer として unit の順）のまま。
+// (5) 複数の unit が待つとき、review を受け付ける呼び出しは approve → answer → review → observe の順で選ぶ（#374。
+// 宣言の無い順に review を answer の直後へ差し込む）。宣言の無い呼び出しは今の順（approve → answer → observe。
+// review のゲートは answer として unit の順）のまま。
 func TestPickActionOrderWithReview(t *testing.T) {
 	ans := waitingView{Unit: "ua", Gate: "ask", Type: "input", Decider: "parent", RequestedAction: "ask", Inputs: []string{"go"}}
 	rev := waitingView{Unit: "ur", Gate: "review", Type: "input", Decider: "any", RequestedAction: "review", Inputs: []string{"respond", "ready"}, ContractKind: "review"}
@@ -157,8 +158,11 @@ func TestPickActionOrderWithReview(t *testing.T) {
 		ws       []waitingView
 		kind, at string
 	}{
-		{[]waitingView{obs, apr, rev, ans}, "answer", "unit ua"},
-		{[]waitingView{obs, apr, rev}, "review", "unit ur"},
+		{[]waitingView{obs, rev, ans, apr}, "approve", "unit up"}, // 宣言しても人の承認が先（#374）
+		{[]waitingView{obs, apr, rev, ans}, "approve", "unit up"},
+		{[]waitingView{obs, rev, ans}, "answer", "unit ua"}, // answer と review だけなら answer が先
+		{[]waitingView{obs, ans, rev}, "answer", "unit ua"},
+		{[]waitingView{obs, rev}, "review", "unit ur"},
 		{[]waitingView{obs, apr}, "approve", "unit up"},
 		{[]waitingView{obs}, "observe", "unit uo"},
 	} {
@@ -171,6 +175,7 @@ func TestPickActionOrderWithReview(t *testing.T) {
 		kind, at string
 	}{
 		{[]waitingView{obs, rev, ans, apr}, "approve", "unit up"},
+		{[]waitingView{obs, apr, rev, ans}, "approve", "unit up"},
 		{[]waitingView{obs, rev, ans}, "answer", "unit ur"}, // review のゲートも answer として、同順位は unit の順
 		{[]waitingView{obs, ans, rev}, "answer", "unit ua"},
 		{[]waitingView{obs}, "observe", "unit uo"},

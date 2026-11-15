@@ -14,6 +14,10 @@
 
 - **接続契約 v1 の `requested_action.kind` に、レビュー待ちを表す `review` を足した（Issue #372）。** ワークフローの `gate` ステップに任意のキー `contract_kind: review`（書けるのは `review` だけで、`input` 型・`decider: parent | any` のゲートに限る。ほかの値・ほかのゲートは読み込みのエラー）を書くと、`harness contract status|resume --accept-kind review` で受け付けを宣言した呼び出しにだけ、そのゲートの待ちを `kind: review`（`decider: parent`。`text` と解決の仕方 `harness contract resume <run> --unit <u> --input <respond|ready>` は `answer` と同じ）で出す。組み込みの `ticket` ワークフローの `review` ゲートに書いた。`status --json` の `waiting[]` に `contract_kind` が出る（書かれたゲートだけ）。宣言の無い呼び出しの出力は変わらない。**利用者が取る操作**: 何もしなくてよい（宣言しない限り今の出力のまま）。`review` を受け取りたい呼び出し元は、`review` を受け付けられるようにしてから、`contract status`・`contract resume` に `--accept-kind review` を足す（設計 §5.6.1）。
 
+### 修正
+
+- **`--accept-kind review` を宣言した呼び出しで、複数の unit がゲートで待つときに `requested_action` として選ぶ順を `approve` → `answer` → `review` → `observe` に直した（Issue #374）。** 直す前は `answer` → `review` → `approve` → `observe` で、宣言すると人の承認（`approve`）より回答待ち（`answer`）が先に選ばれていた。宣言の無い呼び出しの順（`approve` → `answer` → `observe`）は変わらない。**利用者が取る操作**: 何もしなくてよい（現行のワークフローの unit は 1 つなので、この順が効く場面は起きない）。
+
 ---
 
 ## 5.0.3（harness CLI: `runtime/v5.0.3`）
