@@ -103,8 +103,9 @@ func TestContractResolvableByMapping(t *testing.T) {
 		if c.terminal && string(v) != `"terminal"` || !c.terminal && ok {
 			t.Errorf("%s (accept %+v): resolvable_by = %s (present %v), want terminal %v", c.w.Gate, c.acc, v, ok, c.terminal)
 		}
-		if !c.terminal && len(a) != 3 {
-			t.Errorf("%s: keys = %s, want only kind, decider, text", c.w.Gate, b)
+		// options（#384）は input 型のゲートにだけ足される別の任意項目なので、ここでは数に入れない。
+		if _, opt := a["options"]; !c.terminal && len(a) != 3 && !(opt && len(a) == 4) {
+			t.Errorf("%s: keys = %s, want only kind, decider, text (and options)", c.w.Gate, b)
 		}
 	}
 }

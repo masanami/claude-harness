@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -127,7 +128,7 @@ func TestContractRequestedActionPerGate(t *testing.T) {
 			}
 			// status も同じ写像を返す。
 			s, _ := h.contract("status", id)
-			if s.State != "waiting" || *s.RequestedAction != *a {
+			if s.State != "waiting" || !reflect.DeepEqual(*s.RequestedAction, *a) {
 				t.Fatalf("status = %+v", s)
 			}
 		})
