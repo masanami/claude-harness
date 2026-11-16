@@ -402,7 +402,7 @@ func TestRejectsLLMAndGate(t *testing.T) {
 		{"note not passed by every transition", `      respond: { goto: fix, with: { note: "address the review comments" } }`, "      respond: fix", `does not pass "note"`},
 		// 遷移の note（#377）: 受け付ける値は optional だけ。$gate.note を渡す goto にだけ書ける。
 		{"note other than optional", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, note: required }", `note "required" must be optional`},
-		{"note not a string", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, note: [optional] }", "note"},
+		{"note not a string", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, note: [optional] }", "steps.deviation.on.follow.note must be a string"},
 		{"note on a transition that does not pass $gate.note", `respond: { goto: fix, with: { note: "address the review comments" } }`, `respond: { goto: fix, with: { note: "address the review comments" }, note: optional }`, "note: optional is only valid on a transition whose with passes $gate.note"},
 		{"note on a gate transition", "      ready: { gate: merged }\n", "      ready: { gate: merged, note: optional }\n", `unknown key "note"`},
 		// contract_kind（§5.6.1・#372）: 書けるのは review だけで、answer になるゲート（input × parent・any）にだけ書ける。

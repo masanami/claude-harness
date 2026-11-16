@@ -207,6 +207,7 @@ func TestTicketNoteIsOptionalOnlyOnRespond(t *testing.T) {
 
 // 指示文（runtime/workflows/prompts/ticket-respond.md）が、添え書きを対応すべき指摘として扱うこと・PR にコメントが無くても
 // no_change にしないこと・PR へ 1 件コメントすること・空なら PR のコメントだけを読むことを書いている。
+// コメントの本文は作業ツリーの外に置き、打ち切り後のやり直しで同じコメントを 2 件付けないことも書いている。
 func TestTicketRespondPromptHandlesTheNote(t *testing.T) {
 	p := readFile(t, filepath.Join(repoWorkflows, "prompts", "ticket-respond.md"))
 	for _, want := range []string{
@@ -214,6 +215,10 @@ func TestTicketRespondPromptHandlesTheNote(t *testing.T) {
 		"PR にレビューコメントが 1 件も無くても、`inputs.note` が空でなければ `no_change` にしない",
 		"自分の PR へ 1 件のコメントとして残す",
 		"`inputs.note` が空文字なら、今までどおり PR のレビューコメントだけを読む",
+		"コメントの本文のファイルは作業ツリーの外の一時ディレクトリに作る",
+		"mktemp -d",
+		"投稿の前に、同じ添え書きへのコメントが既に PR にあるかを確かめる",
+		"既にあればもう 1 件は付けない",
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("ticket-respond.md does not say %q", want)
