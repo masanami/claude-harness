@@ -372,6 +372,11 @@ func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.St
 		}
 		tr.Action, tr.To = "step", t.Target
 		if len(t.With) > 0 {
+			if t.NoteOptional && cur.note == nil {
+				// note: optional（#377）: --note の無い resume では $gate.note を空文字にする（前の resume の添え書きは持ち越さない）。
+				empty := ""
+				cur.note = &empty
+			}
 			tr.Edge = map[string]json.RawMessage{}
 			for _, b := range t.With {
 				v, err := value(st, cur, nil, b.Value)

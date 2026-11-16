@@ -22,6 +22,8 @@
 #   - implement の self_review（/self-review を実行したか）が complete でなければ、outcome が pass・skip でも PR へ進めない（#381）。
 #     self-review-route（select）で 1 回だけ implement へ戻して /self-review を実行させ、2 回目も complete でなければ
 #     review_incomplete と同じ self_review_incomplete で止める。回数は goto の limit（limits.self_review）で数える
+#   - review・review-human の respond を、resume の添え書き（$gate.note）を respond へ渡す goto にし、note: optional を付ける
+#     （#377。添え書きが無ければ空文字を渡し、今と同じく PR のコメントだけを読む。差し戻しの理由を PR へ手で書かずに済む）
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -196,13 +198,15 @@ steps:
     requested_action: PR のレビューを待つ。対応が要れば respond、マージしてよければ ready を渡して resume
     inputs: [respond, ready]
     contract_kind: review                           # 接続契約で review（レビュー待ち）として見せる（受け付けを宣言した呼び出し元だけ。§5.6.1・#372）
-    on: { respond: respond, ready: merge-route }
+    on:
+      respond: { goto: respond, with: { note: $gate.note }, note: optional }   # #377: 添え書き（差し戻しの理由）を respond へ。無ければ空文字
+      ready: merge-route
 
   respond:
     kind: llm
     prompt: prompts/ticket-respond.md               # /pr-review-respond を呼ぶ
     session: new
-    with: { pr: $steps.publish.pr_number }
+    with: { pr: $steps.publish.pr_number, note: $edge.note }   # note は review・review-human の resume の添え書き（#377。無ければ空文字）
     output: schemas/respond-result.json
     budget_usd: 8
     timeout: 60m
@@ -217,7 +221,9 @@ steps:
     decider: human                                  # R2・R3 を 1 つのゲートのまま扱う（N2 で決定。PR-5 までに見直す）
     requested_action: レビュー対応で人の判断が要る（内容は respond の出力を参照）
     inputs: [respond, abort]
-    on: { respond: respond, abort: { fail: aborted_by_human } }
+    on:
+      respond: { goto: respond, with: { note: $gate.note }, note: optional }   # #377: 人の判断・マージできなかった理由の添え書きも respond へ
+      abort: { fail: aborted_by_human }
 
   merge-route:
     kind: select
