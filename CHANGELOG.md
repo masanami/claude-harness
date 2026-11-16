@@ -10,6 +10,14 @@
 
 ## [Unreleased]
 
+---
+
+## 5.1.0（harness CLI: `runtime/v5.1.0`）
+
+### 追加
+
+- **`harness run ticket` のレビュー待ち（`review`）と人の判断待ち（`review-human`）を `respond` で再開すると、添え書き（`--note`）がレビュー対応の段（`respond`）に届くようになった（Issue #377）。** 直す前は段に PR の番号しか渡らず、PR にレビューコメントが無いと添え書きを読まずに `no_change` で `review` へ戻っていた。今は段の入力 `note` に添え書きが入り、空でなければ PR のレビューコメントと同じく対応すべき指摘として扱う（PR にコメントが無くても `no_change` にしない。直さないと判断したら `needs_human` で人へ上げる）。対応したら、添え書きの要旨とどう対応したかを自分の PR に 1 件コメントする（本文のファイルは作業ツリーの外の一時ディレクトリに作り、打ち切られた段のやり直しでは既にあるコメントを重ねて付けない）。添え書きの無い再開は今までどおり拒否されず、`note` は空文字で、PR のコメントだけを読む。あわせて、ワークフローの遷移（`goto`）に、添え書きを任意にする欄 `note: optional` を足した（`$gate.note` を `with` で渡す遷移にだけ書ける。値は `optional` だけで、ほかの値は読み込みのエラー）。欄を書かない遷移（`design-deviation` の `follow-decision` など）は今までどおり `--note` を必須にする（設計 §3.3）。**利用者が取る操作**: このプラグインの版と harness CLI を合わせて更新する（`ticket` の定義と指示文は harness CLI に埋め込まれている）。呼び出し元は差し戻しの理由を `harness resume`・`harness contract resume`・`harness approve` の `--note` で渡せばよく、同じ文を PR に手でコメントしてから再開する回避策は要らなくなる。
+
 ### 変更
 
 - **`harness run ticket` の実装の段で、`/self-review` が変更の種類に関わらず必須になった（Issue #381）。** テストだけ・文書だけの変更や小さな変更でも省けない。実装の段（`implement`）の出力に必須の欄 `self_review`（`complete` | `incomplete` | `not_run`。`/self-review` を実行したかと、その結果）を足した。`self_review` が `complete` でない出力は、`outcome` が `pass`・`skip` でもコミット・PR へ進まず、新しい段 `self-review-route` から実装の段へ 1 回だけ戻される（戻された実装の段は、作業ツリーの変更に対して `/self-review` を実行してから出力し直す）。2 回目も `complete` でなければ、PR を作らずに既存の `self_review_incomplete` で止まる。戻す回数の上限は `limits.self_review`（既定 1。上書きで変えられる）。あわせて、実装の段の指示文に、Issue の本文が求めた確認（例: 処理を外すとテストが落ちること）の結果を `summary` に、できなかった確認を理由とともに `unverified` に書くことを足した。`outcome` の値と意味は変わらない（`skip` は「`/self-review` を省いた」ことには使わず、`self_review: not_run` で表す）。**利用者が取る操作**: このプラグインの版と harness CLI を合わせて更新する（`ticket` の定義・型・指示文は harness CLI に埋め込まれている）。`status --json` の `units[].outputs.implement` を読む呼び出し元は、新しい欄 `self_review` が増えたことと、`implement` の後に `self-review-route` の段が入る（実装の段が 2 回走ることがある）ことに備える。`self_review_incomplete` で止まった run は、レビュアーと合流できなかった場合に加えて、`/self-review` を 2 回続けて実行しなかった場合も含む。

@@ -1,0 +1,30 @@
+# 遷移の note: optional（#377）を確かめる: ask の again は添え書きが任意（無ければ空文字を渡す）、strict は必須のまま。
+schema: harness.workflow/v1
+id: gate-note
+inputs:
+  log: { type: string, required: true }
+steps:
+  record:
+    kind: command
+    run: recorder
+    with: { log: $inputs.log }
+    output: schemas/pass.json
+    on:
+      pass: { gate: ask }
+  ask:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: again (note optional), strict (note required) or stop
+    inputs: [again, strict, stop]
+    on:
+      again: { goto: echo, with: { note: $gate.note }, note: optional }
+      strict: { goto: echo, with: { note: $gate.note } }
+      stop: { done: stopped }
+  echo:
+    kind: command
+    run: recorder
+    with: { log: $inputs.log, note: $edge.note }
+    output: schemas/pass.json
+    on:
+      pass: { gate: ask }

@@ -323,13 +323,19 @@ const (
 )
 
 // Transition は遷移先。Target は step / goto / gate の行き先、Reason は fail / done の理由。
+// NoteOptional は goto の `note: optional`（#377）: with が $gate.note を渡す遷移で、resume に --note が無ければ
+// 拒否せず空文字を渡す。書かない遷移は --note を必須にする（§3.3）。
 type Transition struct {
-	Kind      TransitionKind
-	Target    string
-	Reason    string
-	With      []*Binding
-	Limit     string
-	Retry     int
-	Exhausted *Transition
-	Line      int
+	Kind         TransitionKind
+	Target       string
+	Reason       string
+	With         []*Binding
+	Limit        string
+	Retry        int
+	Exhausted    *Transition
+	NoteOptional bool
+	Line         int
 }
+
+// NoteOptionalValue は遷移の note に書ける唯一の値。
+const NoteOptionalValue = "optional"

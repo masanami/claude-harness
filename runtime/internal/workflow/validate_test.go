@@ -400,6 +400,11 @@ func TestRejectsLLMAndGate(t *testing.T) {
 		{"gate note from an llm step", "      bad: { fail: bad }\n", "      bad: { goto: review, with: { x: $gate.note } }\n", "step \"fix\" is not an input gate"},
 		{"note of another type on another transition", `with: { note: "address the review comments" }`, "with: { note: $inputs.n }", "incoming transitions pass different types"},
 		{"note not passed by every transition", `      respond: { goto: fix, with: { note: "address the review comments" } }`, "      respond: fix", `does not pass "note"`},
+		// 遷移の note（#377）: 受け付ける値は optional だけ。$gate.note を渡す goto にだけ書ける。
+		{"note other than optional", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, note: required }", `note "required" must be optional`},
+		{"note not a string", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, note: [optional] }", "steps.deviation.on.follow.note must be a string"},
+		{"note on a transition that does not pass $gate.note", `respond: { goto: fix, with: { note: "address the review comments" } }`, `respond: { goto: fix, with: { note: "address the review comments" }, note: optional }`, "note: optional is only valid on a transition whose with passes $gate.note"},
+		{"note on a gate transition", "      ready: { gate: merged }\n", "      ready: { gate: merged, note: optional }\n", `unknown key "note"`},
 		// contract_kind（§5.6.1・#372）: 書けるのは review だけで、answer になるゲート（input × parent・any）にだけ書ける。
 		{"contract_kind other than review", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    contract_kind: approve\n", `contract_kind "approve" must be review`},
 		{"contract_kind answer", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    contract_kind: answer\n", `contract_kind "answer" must be review`},
@@ -440,6 +445,24 @@ func TestGateContractKindReview(t *testing.T) {
 		}
 		if s.ContractKind != want {
 			t.Errorf("steps.%s: ContractKind = %q, want %q", s.ID, s.ContractKind, want)
+		}
+	}
+}
+
+// 遷移の note: optional（#377）は読み込んだ定義に入る。書かない遷移は必須のまま（NoteOptional が偽）。
+func TestTransitionNoteOptional(t *testing.T) {
+	y := strings.Replace(llmBase, "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, note: optional }", 1)
+	path, scripts := setup(t, "w", llmWithA(y))
+	wf, err := LoadAndValidate(path, Options{ScriptsDir: scripts})
+	if err != nil {
+		t.Fatalf("note: optional must be accepted: %v", err)
+	}
+	for _, id := range []string{"deviation", "review"} {
+		for _, o := range wf.Step(id).On {
+			want := id == "deviation" && o.Outcome == "follow"
+			if o.T.NoteOptional != want {
+				t.Errorf("steps.%s.on.%s: NoteOptional = %v, want %v", id, o.Outcome, o.T.NoteOptional, want)
+			}
 		}
 	}
 }

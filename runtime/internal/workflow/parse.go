@@ -649,7 +649,7 @@ func (p *parser) transition(n *yaml.Node, what string, nested bool) *Transition 
 		return nil
 	case "goto":
 		t.Kind = TGoto
-		if !p.allowKeys(pairs, what, "goto", "with", "limit", "exhausted") {
+		if !p.allowKeys(pairs, what, "goto", "with", "limit", "exhausted", "note") {
 			return nil
 		}
 	case "retry":
@@ -694,7 +694,19 @@ func (p *parser) transition(n *yaml.Node, what string, nested bool) *Transition 
 			}
 		case "exhausted":
 			exhausted = pr.val
+		case "note":
+			// #377: 添え書き（$gate.note）を任意にする宣言。受け付ける値は optional だけ。
+			if v, ok := p.str(pr.val, fw); ok {
+				if v != NoteOptionalValue {
+					p.errf(pr.val, "%s: note %q must be %s (the only value; omit note to require --note)", what, v, NoteOptionalValue)
+				} else {
+					t.NoteOptional = true
+				}
+			}
 		}
+	}
+	if t.NoteOptional && !passesGateNote(t.With) {
+		p.errf(n, "%s: note: optional is only valid on a transition whose with passes $gate.note", what)
 	}
 	if nested && (t.Kind == TRetry || t.Limit != "") {
 		p.errf(n, "%s: exhausted must not itself count (no retry or limit inside exhausted)", what)
@@ -710,6 +722,16 @@ func (p *parser) transition(n *yaml.Node, what string, nested bool) *Transition 
 		t.Exhausted = p.transition(exhausted, what+".exhausted", true)
 	}
 	return t
+}
+
+// passesGateNote は with が $gate.note を渡すかを返す。
+func passesGateNote(with []*Binding) bool {
+	for _, b := range with {
+		if b.Value.Ref != nil && b.Value.Ref.Kind == RefGate {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *parser) bindings(n *yaml.Node, what string, nameRe *regexp.Regexp) []*Binding {

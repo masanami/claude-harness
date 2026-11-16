@@ -300,10 +300,13 @@ func (e *Engine) CheckResolution(st *runstate.State, req Resolution) (*runstate.
 	return u, nil
 }
 
+// readsNote は遷移が --note を必須にするか（$gate.note を渡し、note: optional を宣言していない。#377）。
 func readsNote(t *workflow.Transition) bool {
-	for _, b := range t.With {
-		if b.Value.Ref != nil && b.Value.Ref.Kind == workflow.RefGate {
-			return true
+	if !t.NoteOptional {
+		for _, b := range t.With {
+			if b.Value.Ref != nil && b.Value.Ref.Kind == workflow.RefGate {
+				return true
+			}
 		}
 	}
 	return t.Exhausted != nil && readsNote(t.Exhausted)

@@ -170,7 +170,7 @@ YAML に書けるのは次だけ。**条件式・演算・文字列の組み立�
 | `steps.<id>.with` | 名前 → **参照 1 つ**またはリテラル | ステップ入力。参照の文法は §3.3 |
 | `steps.<id>.output` | JSON Schema ファイル | 出力の検証。**`outcome`（enum）を必ず持つ**＝遷移のキー |
 | `steps.<id>.on` | `outcome の値` → 遷移先 | **一致だけ**。すべての enum 値を網羅していなければ読み込み時に拒否 |
-| 遷移先 | ステップ id ／ `{goto, with, limit, exhausted}` ／ `{gate: <id>}` ／ `{fail: <理由>}` ／ `{done: <理由>}` ／ `{retry: <n>, exhausted: …}` | `limit` は `limits` の名前。回数は Go が数える |
+| 遷移先 | ステップ id ／ `{goto, with, limit, exhausted, note}` ／ `{gate: <id>}` ／ `{fail: <理由>}` ／ `{done: <理由>}` ／ `{retry: <n>, exhausted: …}` | `limit` は `limits` の名前。回数は Go が数える。`note: optional` は `$gate.note` を渡す `goto` の添え書きを任意にする（§3.3。#377） |
 | `timeout`・`budget_usd` | リテラル | ステップ単位の上限 |
 
 終了状態も `outcome` として同じ表で扱う。runtime が付与する予約値: `step_error`（非 0 終了・起動失敗）・`step_timeout`（ステップの `timeout` 超過）・`invalid_output`（スキーマ不一致・未知の enum 値）・`budget_exhausted`。予約値はステップの出力の enum 値と衝突してはならず、`harness validate` が衝突を拒否する（例: `ci-wait` は `ci: "timeout"` を返すので、予約値の側に `step_` を付けて分けた）。**予約値を `on` に書かなければ、既定で run を `failed` にする**（fail-closed。書けば明示的に別の遷移へ送れる）。
@@ -208,6 +208,24 @@ $gate.note                                     # input 型ゲートの resume �
 ```
 
 `$gate.note` は **LLM への入力としてだけ**渡せる。遷移のキーにも `select` の値にも使えない（遷移のキーは `outcome` の enum だけ。§3.1 の線引き）。`harness validate` は `$gate.note` が遷移の `with` 以外に現れたら拒否する。
+
+`$gate.note` を `with` で渡す遷移は、既定で添え書きを**必須**にする（resume・approve に `--note` が無ければ `input <値> passes $gate.note to the next step; give --note` で拒否し、何も記録しない）。添え書きが無くても進めてよい遷移は、`goto` に **`note: optional`** を書く（#377）。
+
+```yaml
+review:
+  kind: gate
+  type: input
+  on:
+    respond: { goto: respond, with: { note: $gate.note }, note: optional }   # 添え書きは任意
+respond:
+  kind: llm
+  with: { pr: $steps.publish.pr_number, note: $edge.note }                   # 段の with は $edge.note で受ける
+```
+
+- `note: optional` を書いた遷移は、`--note` が無くても拒否しない。そのとき `$gate.note` は**空文字**（`""`）に解決する（null は持ち込まない）。値は resume ごとに決まり、前の resume の添え書きは次の resume に残らない（段へ入る遷移が `$edge` の値を毎回置き換える）。
+- 書かない遷移（`design-deviation` の `follow-decision` など）は今までどおり `--note` を必須にし、拒否の文言も変えない。`$gate.note` をすべての遷移で任意にはしない（人の指示文が要る遷移の歯止めを残す）。
+- 受け付ける値は `optional` だけで、ほかの値・文字列でない値は読み込み時に拒否する。`goto` 以外の遷移（`gate`・`fail` 等）には書けない（未知のキー）。`with` が `$gate.note` を渡さない遷移に書いたら、意味が無いので読み込み時に拒否する（`note: optional is only valid on a transition whose with passes $gate.note`）。
+- 段の `with` と遷移の `with` は合わさらない: 遷移の `with` は `$edge.<名前>` を作るだけで、段は自分の `with` に `$edge.<名前>` を書いて受け取る（§3.3 の検査: 段へ入るすべての遷移がその名前を渡す）。
 
 - **読み込み時に全参照を検証する**: 参照先ステップの `output` スキーマにそのフィールドが在ること、型が受け手の `with` と一致することを、実行前に機械的に調べる（決定③の「実行前に検証できる」を参照にも効かせる）。
 - **「その経路でまだ実行されていないステップ」への参照が要る箇所は、遷移の `with` へ寄せる**（例: CI 失敗ログは `ci → fix` の遷移に載せる。`fix` の定義が `$steps.ci` を直接読むと、E2E 失敗から来た経路では値が無い）。これで null の扱いを文法に持ち込まずに済む。
@@ -413,7 +431,7 @@ steps:
     on: { released: { done: merged }, kept: { done: merged }, dirty: { done: merged_worktree_dirty } }
 ```
 
-> **PR-4 の実装（`runtime/workflows/ticket.yaml`）で上の書き下ろしから足したもの**（遷移表・決定は変えていない）: ① `ci` は `ci-wait` を直接ではなく、`runtime/workflows/scripts/ci-wait-pr.sh` 経由で呼ぶ（`ci-wait.sh` は位置引数を取り、`command` 種類は `--<名前> <値>` で渡すため。PR が見つからない〔`pr_exists: false`〕ときは `ci: none` と区別できないので失敗にする）。② `resolve-ticket` は `runtime/workflows/scripts/resolve-ticket.sh` に置いた（`command` の `run` は `<workflow-dir>/scripts/` と `plugin/scripts/` のどちらか一方にだけ在る名前を指す。S1 の埋め込み対象〔`runtime/workflows/`〕に含まれる）。③ `human-merge` に観測する PR の番号を `with: { pr: $steps.publish.pr_number }` で渡す。④ `publish` に `implement` の `unverified`（未検証の事項）を渡す。`respond`・`merge` に PR 番号（`merge` には base も）を渡す。⑤ `resolve`・`ci`・各 `llm` ステップに `timeout` を付けた。⑥ `workspace` で払い出した後のステップは作業ツリーの中で動く（§4.1 Workspace。`release` の後は run を開始したディレクトリに戻る）。 ⑦ `implement` の出力に `review_incomplete`（`/self-review` が `self_review: incomplete` で終わった）を足し、`{ fail: self_review_incomplete }` へ送る（#299。§11.6 の E6）。 ⑧ `publish` の `closes`・`refs` を、`resolve` が Issue 本文の `Closes: なし` 行・`Refs: #N` 行から決めた値にする（`pull-request` 種類の `closes` は省略可・0 で closing キーワードを書かない。読めない行は `links_invalid` で止める。#305）。 ⑨ `e2e` の後・`publish` の前に、品質ゲートを機械で回す `quality`（`command`。`runtime/workflows/scripts/quality-gate.sh`）を置き、`e2e-route.no`・`e2e.pass` をそこへ向ける。宣言 `.claude-harness/quality-gate.json` を PR の宛先から読み、結果を回したコミットの SHA と一緒に出力に残す。`fail` は `{ goto: fix, limit: rework, exhausted: { fail: quality_gate_red } }`、宣言が無ければ `{ fail: quality_gate_undeclared }`。あわせて `commit` は `/commit`（I9 の safety net の `/quality-check`）を使わず git で直接コミットする。pre-commit 等で同じゲートが回るリポジトリは上書きで `quality` を省ける（`overridable.skips: [quality]`。[harness-runtime-overrides.md](harness-runtime-overrides.md) §5.2。#326）。 ⑩ `respond.pushed` を `ci` から `quality` へ向け、レビュー対応の push の後も `quality → publish → ci` を通す（上の書き下ろしの `pushed: ci` を置き換える。PR が既にあるので `publish` は `updated` で本文を書かない。run の記録の SHA を PR の head とそろえるため。#339）。 ⑪ `ci` に `base: $steps.resolve.base` を渡し、PR の宛先の CI の運用の宣言 `.claude-harness/ci.json` が `{"trigger": "after-merge"}`（PR では CI が走らず、既定ブランチへのマージの後だけ走る）なら、`ci-wait-pr.sh` が CI を待たずに `ci: skipped`（`none` とは別の値）を返し、`skipped: review` で進む。宣言が無い・`per-push`・壊れた宣言では今の動き（#341 の約 2 分の `none` の確定を含む）のまま。宣言の読み手は `plugin/scripts/ci-trigger.sh`（`/pr-merge` は宣言を読まず、宣言に関わらず即時マージ）（[runtime/README.md](../runtime/README.md) の「CI の運用の宣言」。#363）。
+> **PR-4 の実装（`runtime/workflows/ticket.yaml`）で上の書き下ろしから足したもの**（遷移表・決定は変えていない）: ① `ci` は `ci-wait` を直接ではなく、`runtime/workflows/scripts/ci-wait-pr.sh` 経由で呼ぶ（`ci-wait.sh` は位置引数を取り、`command` 種類は `--<名前> <値>` で渡すため。PR が見つからない〔`pr_exists: false`〕ときは `ci: none` と区別できないので失敗にする）。② `resolve-ticket` は `runtime/workflows/scripts/resolve-ticket.sh` に置いた（`command` の `run` は `<workflow-dir>/scripts/` と `plugin/scripts/` のどちらか一方にだけ在る名前を指す。S1 の埋め込み対象〔`runtime/workflows/`〕に含まれる）。③ `human-merge` に観測する PR の番号を `with: { pr: $steps.publish.pr_number }` で渡す。④ `publish` に `implement` の `unverified`（未検証の事項）を渡す。`respond`・`merge` に PR 番号（`merge` には base も）を渡す。⑤ `resolve`・`ci`・各 `llm` ステップに `timeout` を付けた。⑥ `workspace` で払い出した後のステップは作業ツリーの中で動く（§4.1 Workspace。`release` の後は run を開始したディレクトリに戻る）。 ⑦ `implement` の出力に `review_incomplete`（`/self-review` が `self_review: incomplete` で終わった）を足し、`{ fail: self_review_incomplete }` へ送る（#299。§11.6 の E6）。 ⑧ `publish` の `closes`・`refs` を、`resolve` が Issue 本文の `Closes: なし` 行・`Refs: #N` 行から決めた値にする（`pull-request` 種類の `closes` は省略可・0 で closing キーワードを書かない。読めない行は `links_invalid` で止める。#305）。 ⑨ `e2e` の後・`publish` の前に、品質ゲートを機械で回す `quality`（`command`。`runtime/workflows/scripts/quality-gate.sh`）を置き、`e2e-route.no`・`e2e.pass` をそこへ向ける。宣言 `.claude-harness/quality-gate.json` を PR の宛先から読み、結果を回したコミットの SHA と一緒に出力に残す。`fail` は `{ goto: fix, limit: rework, exhausted: { fail: quality_gate_red } }`、宣言が無ければ `{ fail: quality_gate_undeclared }`。あわせて `commit` は `/commit`（I9 の safety net の `/quality-check`）を使わず git で直接コミットする。pre-commit 等で同じゲートが回るリポジトリは上書きで `quality` を省ける（`overridable.skips: [quality]`。[harness-runtime-overrides.md](harness-runtime-overrides.md) §5.2。#326）。 ⑩ `respond.pushed` を `ci` から `quality` へ向け、レビュー対応の push の後も `quality → publish → ci` を通す（上の書き下ろしの `pushed: ci` を置き換える。PR が既にあるので `publish` は `updated` で本文を書かない。run の記録の SHA を PR の head とそろえるため。#339）。 ⑪ `ci` に `base: $steps.resolve.base` を渡し、PR の宛先の CI の運用の宣言 `.claude-harness/ci.json` が `{"trigger": "after-merge"}`（PR では CI が走らず、既定ブランチへのマージの後だけ走る）なら、`ci-wait-pr.sh` が CI を待たずに `ci: skipped`（`none` とは別の値）を返し、`skipped: review` で進む。宣言が無い・`per-push`・壊れた宣言では今の動き（#341 の約 2 分の `none` の確定を含む）のまま。宣言の読み手は `plugin/scripts/ci-trigger.sh`（`/pr-merge` は宣言を読まず、宣言に関わらず即時マージ）（[runtime/README.md](../runtime/README.md) の「CI の運用の宣言」。#363）。 ⑫ `review`・`review-human` の `respond` を `{ goto: respond, with: { note: $gate.note }, note: optional }` にし、`respond` の `with` に `note: $edge.note` を足す。呼び出し元が差し戻しの理由を `--note` で添えると `respond` の段へ届き、PR にレビューコメントが無くても添え書きに対応する（`no_change` で `review` へ戻らない）。対応したら要旨と対応を自分の PR に 1 件コメントする（`runtime/workflows/prompts/ticket-respond.md`）。添え書きが無ければ空文字で、今までどおり PR のコメントだけを読む（§3.3。#377）。
 >
 > `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す（§3.3。Q12 で決定）。
 >
