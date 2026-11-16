@@ -151,7 +151,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 9. **`--worktree` がある場合**: 「CI の red の差し戻しは runtime の中で最大3回まで済ませた（使った回数 `limits_used.rework`）。`ci_red` で失敗した場合は、同じ修正を差し戻しても直らない」と明記する。run は `review` ゲートで待たせたまま残す（取り消さない）
 10. **run の外で終わった作業の明記**（run が取り消された・合流できなかった・runtime の外で手で仕上げた場合。起動し直した run が後で通っても、取り消された run があれば書く）: その事実と run ID（複数あれば全件）を書き、**「セルフレビュー・独立レビュー・E2E を経ていない」ことを未検証の事項として必ず書く**。手で仕上げた変更や PR は、runtime のゲートを通ったものとして報告しない（手で仕上げること自体は禁止事項の「`harness` を使わずに実装フローを自分で進めること」に当たる。呼び出し元の指示で仕上げた場合も、この明記は省かない）
 11. **次のアクションの案内**（`--worktree` が無い場合）:
-   - レビュー対応: `harness resume --detach {run-id} --input respond`
+   - レビュー対応: `harness resume --detach {run-id} --input respond`（差し戻しの理由があれば `--note <差し戻しの理由>` を足す。`--note` で渡した差し戻しの理由はレビュー対応の段 `respond` に届き、PR にレビューコメントが無くても対応される。`review-human` の `approve` の `--note` も同じく届く。#377。注: プラグイン 5.1.0（harness CLI `runtime/v5.1.0`）より前の harness CLI では `--note` が `respond` に届かないので、PR にコメントしてから `respond` で再開する）
    - マージへ進める: `harness resume --detach {run-id} --input ready`（統合ブランチ宛は runtime がマージする。既定ブランチ宛は人がマージした後に `harness resume --detach {run-id}`）
    - 再開の後の合流（下記「再開と合流」）
    - 人の判断が要るゲート: 端末から `harness approve {run-id} --input <値> [--note <指示>]`

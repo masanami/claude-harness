@@ -47,12 +47,13 @@ harness run --workflow-dir "$HW" --scripts-dir "$HS" --input issue=<番号> tick
 | 止まる場所（ゲート） | 何を待っているか | 解決のしかた |
 | --- | --- | --- |
 | `ci-pending` | CI が時間内（`ci-wait` の 900 秒×2 回）に終わらなかった。または CI が失敗ログの無い失敗で終わった（`ci: red_no_log`。CI が実行されなかった等。#278） | CI が終わってから（`red_no_log` なら原因を解消して CI を再実行してから）`harness resume <run> --input recheck`（やめるなら `abort`。`red_no_log` で止まった場合も失敗の理由は `ci_timeout` になる。呼び出し側から見える値なので #278 で据え置いた） |
-| `review` | PR のレビュー（R1） | 対応が要れば `harness resume <run> --input respond`、マージしてよければ `--input ready` |
+| `review` | PR のレビュー（R1） | 対応が要れば `harness resume <run> --input respond --note <差し戻しの理由>`（`--note` は任意。渡した理由はレビュー対応の段 `respond` に届く。#377）、マージしてよければ `--input ready` |
 | `human-merge` | 既定ブランチ宛 PR の人によるマージ（R5。runtime はマージしない） | 人が GitHub でマージしてから `harness resume <run>`（observe 型: runtime が `gh pr view` で実状態を確かめる。open のままならまた待つ） |
-| `review-human` | レビュー対応で人の判断が要る（R2・R3。N2） | **端末から** `harness approve <run> --input respond --note <指示>`（やめるなら `abort`） |
+| `review-human` | レビュー対応で人の判断が要る（R2・R3。N2） | **端末から** `harness approve <run> --input respond --note <指示>`（`--note` の指示はレビュー対応の段 `respond` に届く。#377。やめるなら `abort`） |
 | `design-deviation` | クリティカル設計の逸脱（I8） | **端末から** `harness approve <run> --input follow-decision --note <指示>`（`abort` も可） |
 | `interrupted` | runner が落ちて止まったステップ（§4.5） | 作業ツリーを確かめてから `harness resume <run> --input rerun`（`abort` も可） |
 
+- `review`・`review-human` を `respond` で再開するときの `--note`（差し戻しの理由・人の指示）は、レビュー対応の段 `respond` の入力 `note` に届く。段は PR のレビューコメントと同じく対応すべき指摘として扱い、対応したら要旨と対応を PR に 1 件コメントする。`--note` を付けない再開も拒否されず、そのときは PR のコメントだけを読む（#377）。注: プラグイン 5.1.0（harness CLI `runtime/v5.1.0`）より前の harness CLI では `--note` が `respond` に届かないので、PR にコメントしてから `respond` で再開する。
 - 上の表の `harness resume` は**同期の形（`--detach` なし）のまま**にしてある。この節は人が端末から前景で回す手順で、呼び出し元に時間の上限が無く、次のゲートか終端までの進みと終了コードをその場で見られるため（`approve` を同期のまま案内する [`harness-runtime-design.md`](harness-runtime-design.md) §5.2 と同じ理由）。`status` が出す `resume_command` は `harness resume --detach <run> --unit <key> …` の形だが、端末から打つなら `--detach` を外してよい。Claude Code の Bash ツールなど時間の上限がある呼び出し元から再開するときは、§8.6 の形（`--detach` を付けて `harness status` で合流）にする。
 - `design-deviation`・`review-human` は `decider: human` の input 型ゲートなので、**端末（TTY）からの `approve` でしか解決できない**（Q9）。Claude に解決させない。
 - 途中の様子は `harness status <run> --json`（run ディレクトリ・ラウンド・残予算・作業ツリー・PR 番号）と `harness runs --json`。ログ（プロンプト・claude の出力・git/gh の実行記録・PR 本文）は run ディレクトリの `logs/` にある。
@@ -246,7 +247,7 @@ claude -p --output-format json --max-budget-usd 1 \
 
 | ゲート | 親がすること |
 | --- | --- |
-| `review` | 親が自分の検証（ローカルの品質ゲート）をしてから、オーナーの完了確認（FR-32）へ出す。オーナーが直しを求めたら PR にその内容を残してから `harness resume --detach <run> --input respond`。承認されたら `--input ready` |
+| `review` | 親が自分の検証（ローカルの品質ゲート）をしてから、オーナーの完了確認（FR-32）へ出す。オーナーが直しを求めたら、その内容を差し戻しの理由として `harness resume --detach <run> --input respond --note <差し戻しの理由>` で渡す（理由はレビュー対応の段 `respond` に届き、PR にレビューコメントが無くても対応される。#377）。承認されたら `--input ready`。注: プラグイン 5.1.0（harness CLI `runtime/v5.1.0`）より前の harness CLI では `--note` が `respond` に届かないので、PR にコメントしてから `respond` で再開する |
 | `human-merge` | オーナーの昇格承認（FR-22）を受けて親が既定ブランチへマージし、その後 `harness resume --detach <run>`（runtime が実状態を確かめる） |
 | `design-deviation`・`review-human` | **オーナーが端末から `approve` する**（TTY 必須。親は代行しない）。Claude Code の対話セッションなら `! harness approve ...` で打てる。人が端末で打つので同期のまま（§5.2 と同じ理由） |
 | `ci-pending` | CI の完了後（失敗ログが空の `red_no_log` なら、原因を解消して CI を再実行した後）に親が `harness resume --detach <run> --input recheck`。`abort` の理由はどちらの場合も `ci_timeout` |
