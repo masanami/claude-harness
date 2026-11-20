@@ -8,7 +8,7 @@
 
 ---
 
-## 未リリース
+## 5.3.0（harness CLI: `runtime/v5.3.0`）
 
 ### 追加
 
@@ -22,6 +22,8 @@
 
 ### 変更
 
+- **`land` が squash で入れるとき、出来るコミットの題名を「PR の題名 (#番号)」にするようになった（Issue #417）。** `gh pr merge` に `--subject "<PR の題名> (#<番号>)"` を付ける。今までは、コミットが 1 つだけの PR では GitHub の既定でそのコミットの文面が題名になっていた（複数なら PR の題名）。統合ブランチ宛て（`ticket`）・既定ブランチ宛て（`ticket`・`reflect`）のどちらにも効く。`--match-head-commit` と、通した中身（`approved_ref`）の確かめ・squash で入れること・`--auto`・`--admin`・`--delete-branch` を付けないことは変えない。接続契約の版（1）・スキーマ版（`harness.workflow/v1`）・flywheel との契約の形は変えない。**利用者が取る操作**: 何もしなくてよい。
+- **5.2.0 の CLI で始めてレビュー待ちのまま残っている `reflect` の実行は、新しい CLI では再開できない。** 組み込みの `adopt` の出力に足した結果（`no_pr`・`branch_missing`・`empty`）を、開始時の定義が扱わないため、版の不一致として止まる。**利用者が取る操作**: 5.2.0 の CLI で終えるか、`harness cancel` して新しい CLI で依頼し直す。
 - **`reflect` の失敗の理由 `integration_reflect_unsupported` を外し、`artifact_ref_invalid`（PR の URL でも受けられるブランチの名前でもない・既定ブランチの名前）に置き換えた。** 足した理由: `integration_missing`（受けた名前のブランチが origin に無い）・`integration_empty`（既定ブランチに無いコミットが 1 つも無い）・`describe_failed`（題名と概要を書けなかった）・`pr_not_found`（PR を作ったのに見つからない）。終わりの理由（成功）に `landed_integration_kept`（既定ブランチへ入れたが、統合ブランチを残した）を足した。flywheel は失敗の理由の語で分岐しない。ブランチの名前の形の `artifact_ref`（例: `7`）は、これまで `unsupported_ref` で止まっていたが、ブランチの名前として扱われ、origin に無ければ `integration_missing` で止まる。
 - **失敗の理由 `integration_unsupported` を外し、`integration_create_failed`（origin が統合ブランチを作ることを拒んだ）を足した。** `uses_integration=true` が `integration_unsupported` で止まることはなくなった。`uses_integration=true` で `challenge_id` が無い・形が違う・`base` も渡された場合は `input_invalid` で止まる。ワークフローの定義の文法では、`action` の値にハイフン（`ensure-base`）を書けるようにした。接続契約の版（1）・ワークフローのスキーマ版（`harness.workflow/v1`）は変えない。
 

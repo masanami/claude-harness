@@ -472,6 +472,7 @@ type landOutput struct {
 }
 
 type prView struct {
+	Title       string `json:"title"`
 	State       string `json:"state"`
 	HeadRefOid  string `json:"headRefOid"`
 	BaseRefName string `json:"baseRefName"`
@@ -548,8 +549,13 @@ func (c *prCtx) land() result {
 	}
 
 	// 9: 入れる。squash に固定し、先頭が通した中身と一致するときだけ GitHub が受ける（--match-head-commit）。
-	// --auto・--admin・--delete-branch は付けない。
-	argv, r := c.gh("pr", "merge", fmt.Sprint(pr), "--squash", "--match-head-commit", approved)
+	// 出来るコミットの題名は、PR のコミットの数に関わらず「PR の題名 (#番号)」にする（GitHub の既定は、コミットが 1 つだけの PR ではそのコミットの
+	// 文面）。--auto・--admin・--delete-branch は付けない。
+	mergeArgs := []string{"pr", "merge", fmt.Sprint(pr), "--squash", "--match-head-commit", approved}
+	if t := strings.TrimSpace(view.Title); t != "" {
+		mergeArgs = append(mergeArgs, "--subject", fmt.Sprintf("%s (#%d)", t, pr))
+	}
+	argv, r := c.gh(mergeArgs...)
 	if cancelled(r) {
 		return result{cancelled: true}
 	}
@@ -596,7 +602,7 @@ func (c *prCtx) readPR(pr int, v *prView, tries int) ([]string, toolResult) {
 		if i > 0 && !c.pause() {
 			return argv, toolResult{how: cancelledByRequest, code: -1}
 		}
-		argv, r = c.gh("pr", "view", fmt.Sprint(pr), "--json", "state,headRefOid,baseRefName,mergeCommit,isDraft")
+		argv, r = c.gh("pr", "view", fmt.Sprint(pr), "--json", "title,state,headRefOid,baseRefName,mergeCommit,isDraft")
 		if cancelled(r) {
 			return argv, r
 		}
