@@ -613,10 +613,13 @@ func checkPayload(ev *Event) error {
 }
 
 // applyWorkspace は workspace イベントを unit へ適用する。作業ツリーの記録はステップ実行の中で起きる（running のステップがある）。
-// 例外は head だけ（実行中の段の外で書く。§5.6.2）。
+// 例外は head（§5.6.2）と、統合ブランチの先頭の取り直しの integration（§5.6.3）。どちらも実行中の段の外で書く。
 func applyWorkspace(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
 	if p.Action == WorkspaceHead {
 		return applyHead(s, u, p, seq)
+	}
+	if p.Action == WorkspaceIntegration && u.Running() == nil {
+		return applyIntegrationOutside(s, u, p, seq)
 	}
 	if u.Running() == nil {
 		if p.Action == WorkspaceReleased {
@@ -736,6 +739,28 @@ func applyHead(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
 		return fmt.Errorf("workspace head (seq %d) needs head_sha", seq)
 	}
 	u.Workspace.HeadSHA = p.HeadSHA
+	return nil
+}
+
+// applyIntegrationOutside は、実行中の段の外で書く integration（待っている間の統合ブランチの先頭の取り直し。§5.6.3）を適用する。
+// 許すのは head と同じ状態（run が終わっていない・unit に実行中の段が無く、refresh の印のあるゲートで待っている）に、
+// 「unit に統合ブランチの記録があり、イベントの branch がそれと同じ」を足した場合だけ。
+func applyIntegrationOutside(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
+	switch {
+	case Terminal(s.Status):
+		return fmt.Errorf("workspace integration (seq %d) after the run ended as %s", seq, s.Status)
+	case u.Gate == nil:
+		return fmt.Errorf("workspace integration (seq %d) outside a running step while unit %q is not waiting at a gate", seq, u.Key)
+	case u.Gate.Refresh == "":
+		return fmt.Errorf("workspace integration (seq %d): gate %q has no refresh mark", seq, u.Gate.Gate)
+	case u.Workspace == nil || u.Workspace.IntegrationBranch == "":
+		return fmt.Errorf("workspace integration (seq %d) outside a running step but unit %q has no integration branch record", seq, u.Key)
+	case p.Branch != u.Workspace.IntegrationBranch:
+		return fmt.Errorf("workspace integration (seq %d): branch %q differs from the recorded integration branch %q", seq, p.Branch, u.Workspace.IntegrationBranch)
+	case p.HeadSHA == "":
+		return fmt.Errorf("workspace integration (seq %d) needs head_sha", seq)
+	}
+	u.Workspace.IntegrationHead = p.HeadSHA
 	return nil
 }
 

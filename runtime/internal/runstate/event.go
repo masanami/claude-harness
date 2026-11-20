@@ -279,7 +279,7 @@ const (
 	WorkspaceReleased = "released" // workspace 種類の release が終わった（削除した・残した）
 	WorkspacePR       = "pr"       // pull-request 種類が PR を作成・更新した
 	WorkspaceHead     = "head"     // 待っている間に外から push された PR の先頭を status が取り直した（実行中の段の外で書く）
-	// WorkspaceIntegration は統合ブランチの名前と先頭を記録する（pull-request 種類の action: ensure-base が書く。§5.6.3）。
+	// WorkspaceIntegration は統合ブランチの名前と先頭を記録する（pull-request 種類の ensure-base・sync・land が段の中で、待っている間の取り直し〔RefreshHeads〕が段の外で書く。§5.6.3）。
 	WorkspaceIntegration = "integration"
 )
 

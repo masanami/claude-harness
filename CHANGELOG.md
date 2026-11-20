@@ -12,6 +12,8 @@
 
 ### 追加
 
+- **統合ブランチ宛ての `land`・取り込みが、入れた後の統合ブランチの先頭を記録するようになった（Issue #412。#409 の S3b-2）。** 宛先が `Workspace.integration_branch` と同じ `sync`・`land-sync`・`land` は、`workspace` イベント（`action: integration`）で統合ブランチの先頭を書く。取り込みで fetch した宛先は fetch した `origin/<統合ブランチ>` の先頭、`land` が入れたとき（`landed`）は入れた後のコミット（`merge_commit` と同じ値）。入れて終えた実行では、`harness contract` の `role: integration` の `commit` が入れた後のコミットになる（`role` の無い `commit` と同じ値で、いつもちょうど 1 つの決まりは変わらない）。`ready` の後の道（`merge`・`human-merge`）で終えた実行は変わらない。
+- **`harness status`・`harness contract status` が、`refresh: pr-head` のゲートで待っている間に、統合ブランチの先頭も読み直すようになった。** 統合先の記録のある実行だけ、PR の先頭の前に `git ls-remote origin refs/heads/<統合ブランチ>` を呼び、記録と違えば `integration` を書く（読めなければ書かず、標準エラーに理由を出して記録のまま出す）。統合先の記録の無い実行は `ls-remote` を呼ばない。文法・接続契約の版（1）・スキーマ版（`harness.workflow/v1`）は変わらない。**利用者が取る操作**: 何もしなくてよい。
 - **`harness run ticket` が、統合先（統合ブランチ）を決めて作れるようになった（Issue #411。#409 の S3b-1）。** `uses_integration=true` と `challenge_id` を渡すと、PR の宛先は統合ブランチ `integration/<challenge_id を小文字にしたもの>`（例: `C-12` → `integration/c-12`）になり、origin に無ければ既定ブランチの先頭から作る（在れば動かさない）。`resolve` の後に、段 `integration-route`（`select`）と `integration`（`pull-request` の新しい `action: ensure-base`）を足した（段は 27 → 29）。`uses_integration` を渡さない実行は、段が 1 つ（`integration-route`。外部を呼ばない）増えるだけで、動き・出力・失敗の理由は変わらない。`Base:` 行・`base` の入力で人が作った統合ブランチを渡す今までの道も変わらない（無ければ `base_missing`）。
 - **`harness contract` の `artifacts` の要素に、任意のキー `role` を足した。** 統合先を使う実行だけが、統合ブランチ（`kind: branch`）とその先頭（`kind: commit`）を `role: integration` の要素で 1 つずつ出す。`role` の無い要素（PR・作業ブランチ・`commit`）の意味と数は変えない（`role` の無い `commit` はいつもちょうど 1 つ。PR を出す前は 0）。
 - `Workspace` に `integration_branch`・`integration_head` を、`workspace` イベントに `action: integration` を足した（任意の欄。古い記録には無い）。

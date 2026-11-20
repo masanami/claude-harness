@@ -546,7 +546,7 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 
 **#388 の設計で足す記録（§5.6.2。`head_sha`・`merge_commit` は S3-3〔#393〕、`approved_ref`・`detail` は S3-2〔#392〕、Run の `facts` は S3-4〔#394〕、開いたゲートの `refresh` と `workspace` の `head` は S3-5〔#395〕、Run の `release_on` の写しは S3-6〔#396〕で実装済み）**: Workspace に `head_sha`（PR のいまの先頭。取り込みの後・外からの push の後も追従する）と `merge_commit`（宛先へ入れた後のコミット）。Gate の解決に `approved_ref`、開いたゲートに `detail`・`refresh`。Run に、定義の `facts`・`release_on` の写しと、unit ごとの `facts` の値。Round の契機に、`interrupted` の印（失敗の理由の語）。
 
-**#409 の設計で足す記録（§5.6.3。段の中の `integration` と `Workspace` の欄は S3b-1〔#411〕で実装済み。段の外の取り直しは S3b-2 で未実装）**: `Workspace` に `integration_branch`・`integration_head`（統合ブランチの名前と先頭）。`workspace` イベントに `action: integration`（段の中では `pull-request` の種類の段が書き、段の外では、`refresh` の印のあるゲートで待っている間の取り直しだけが書く）。
+**#409 の設計で足す記録（§5.6.3。段の中の `integration` と `Workspace` の欄は S3b-1〔#411〕で実装済み。段の外の取り直しは S3b-2〔#412〕で実装済み）**: `Workspace` に `integration_branch`・`integration_head`（統合ブランチの名前と先頭）。`workspace` イベントに `action: integration`（段の中では `pull-request` の種類の段が書き、段の外では、`refresh` の印のあるゲートで待っている間の取り直しだけが書く）。
 
 ### 4.2 ラウンドの定義
 
@@ -1328,7 +1328,7 @@ A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a
 | 7 | `T-<番号>` が、同じリポジトリへ出す 2 つの flywheel のワークスペースで重なること | (a) 受ける（`worktree_conflict` で止まる）。(b) 鍵に `challenge_id` も入れる | (a)。`challenge_id` もストアごとの番号で、入れても解けない |
 | 8 | 文面のファイルと Issue の両方があるとき、Issue の本文の `Base:` 行を読まないこと | (a) 読まない（宛先は `base` の入力か既定ブランチ）。(b) 読む（いまと同じ） | (a)。flywheel の S3a は、宛先を反映先（既定ブランチ）と決めて PR の宛先を確かめる（`base_changed`）。Issue の本文で宛先が変わると食い違う |
 
-### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。S3b-1〔#411〕は実装済み。残りは S3b-2 以降）
+### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。S3b-1〔#411〕・S3b-2〔#412〕は実装済み。残りは S3b-3 以降）
 
 §5.6.2 の「B の粗い設計」を、実装できる細かさに起こしたものである。flywheel が、課題ごとの統合先（統合ブランチ）を使い始める（flywheel `docs/features/core-redesign.md` の節「委譲先との契約（S3 で使う受け口）」の「足すもの 2・3・4」と「claude-harness の側で要るもの（S3b）」。食い違えば flywheel 側が正）。**契約の形（flywheel が渡すもの・受け取るもの）は変えない**。この節に書いた入力・段・キー・理由の語は、下の「実装の分け方」の PR で実物になる（設計を書いた時点の実物は main `9911091`＝5.2.0。「いまの動き」の行の番号は、この版のもの）。§5.6.2 の記録は書き換えていない。
 
@@ -1536,7 +1536,7 @@ steps:
   - 入れて終えた実行（`succeeded`）では、`role` の無い `commit`（`merge_commit`）と、`role` が `integration` の `commit` が、同じ値になる。前者は「このタスクの成果の、入れた後の中身」、後者は「入れた後の統合ブランチの中身」で、意味は別である。
   - **`landed` の値を、入れた後に読み直した origin の先頭にしない**。同じ課題の別のタスクが、直後に入れていることがあり、読み直すと「この実行が入れた後」ではなく「いま」になる。`mergeCommit.oid` は、この実行が入れたコミットそのものである。
   - `ready` の後の道（`merge`・`human-merge`）で終えた実行は、入れた後の先頭を記録する段を通らない。`role` が `integration` の `commit` は、最後に確かめた先頭のままになる（flywheel は `ready` を返さないので、契約の「入れて終えた実行では、入れた後の中身」が当たるのは `land` の道だけ）。
-- **待っている間の取り直し**: `refresh: pr-head` のゲートで待っている unit に `integration_branch` があれば、`status`（`RefreshHeads`）は、PR の先頭に続けて、`git ls-remote origin refs/heads/<統合ブランチ>` で統合ブランチの先頭も読み、記録と違えば `workspace` イベント（`action: integration`）を足す。文法は足さない（`refresh` の値は `pr-head` のまま。統合ブランチの記録がある unit でだけ、読むものが 1 つ増える）。
+- **待っている間の取り直し**: `refresh: pr-head` のゲートで待っている unit に `integration_branch` があれば、`status`（`RefreshHeads`）は、PR の先頭の前に（PR の先頭が読めなくても）、`git ls-remote origin refs/heads/<統合ブランチ>` で統合ブランチの先頭も読み、記録と違えば `workspace` イベント（`action: integration`）を足す。文法は足さない（`refresh` の値は `pr-head` のまま。統合ブランチの記録がある unit でだけ、読むものが 1 つ増える）。
   - 決まりは、PR の先頭の取り直し（§5.6.2）と同じ: ロックの外で読む・書くのは、同じ unit が、同じゲートで、同じ `opened_at` のまま待っていると確かめ直したときだけ・読めなければ書かず、記録のまま出す（標準エラーに理由）・origin に無くなっていたら書かない。
   - **実行中の段の外で書く `integration`** を許すのは、`head` と同じ状態（run が終わっていない・unit に実行中の段が無く、`refresh` の印のあるゲートで待っている）に、「unit に `integration_branch` があり、イベントの `branch` がそれと同じ」を足した場合だけ。ほかは誤りにする（往復テストの対象に入れる）。段の中の `integration` は、`pull-request` の種類の段だけが書く。
   - 取り直す理由: 契約は「その時点の中身の識別」を求める。同じ課題のタスクが並んで走ると、待っている間に統合ブランチが進むのは普通で、取り直さないと、最初の `sync` のときの先頭が、長いレビュー待ちの間ずっと出続ける。
@@ -1548,7 +1548,7 @@ steps:
 | 点 | いま | 足すこと |
 | --- | --- | --- |
 | 入れた後の統合ブランチの先頭の記録 | 無い（`merge_commit` は unit の成果の記録） | `land`・`sync` が、宛先が記録した統合ブランチのとき、`action: integration` のイベントを書く（上の表） |
-| 統合ブランチ宛てで通した試験 | 無い（`ticket_land_test.go` は既定ブランチ宛て） | 下の「実装の分け方」の S3b-2 |
+| 統合ブランチ宛てで通した試験 | 無かった（`ticket_land_test.go` は既定ブランチ宛て）→ S3b-2〔#412〕で `ticket_integration_land_test.go` を足した | 下の「実装の分け方」の S3b-2 |
 
 変えないこと（コードで確かめた）:
 
@@ -1717,12 +1717,22 @@ S3b-1 → S3b-2 → S3b-3 の順に進める（S3b-2 と S3b-3 は、機能の�
 - **`action` の値の文法**: 定義の文法は `action` の値を `^[a-z][a-z0-9_]*$` に限っていたので、`ensure-base` を書けなかった。`pull-request`・`workspace` の `action` の値は、outcome の値と同じ `^[a-z][a-z0-9_-]*$` に広げた（文法の追加はこれだけ。スキーマ版は `harness.workflow/v1` のまま）。
 - **`resolve` の検査の順**: 入力どうしの条件の後ろ（`uses_integration` の形の検査の後）に、`challenge_id` が無い → 形が不正 → `base` も渡された、の順で `input_invalid` を返す。いずれも `gh`・`git` を呼ぶ前で、`integration` は `none`・`key` は空文字（`input_invalid` の出力の決まり）。`challenge_id` は小文字にして名前にし、`uses_integration` が `true` のときは Issue 本文の `Base:` 行を読まず、origin に在るかを確かめない。
 - **`ensure-base`**（`runtime/internal/engine/pullrequest_ensurebase.go`）: 設計の 1〜5 のとおり。`ls-remote` は終了コード 2（無い）を確定した答えとして試し直さず、ほかの失敗だけ 3 回試す。push の状態の行は、右辺が `refs/heads/<branch>` の行の印（`*`・`=`・`!`）で読む。届かなかったとき（行が無い）は 4 から 3 回までやり直し、尽きたら最後に 1 度 `ls-remote` を読んで、別の実行が先に作っていれば `existing`、無ければ `unavailable`。`created`・`existing` のとき `workspace` イベント（`action: integration`）を書く。
-- **畳み込み**: `integration` は実行中の段の中だけで書ける（段の外の取り直しは S3b-2）。名前か先頭が空・記録済みの名前と違う `branch` は誤り。`acquired` は、作業ツリーの場所が変わっても統合ブランチの 2 欄を持ち越す（PR の欄の持ち越しの条件は変えない）。
+- **畳み込み**: `integration` は実行中の段の中だけで書ける（段の外の取り直しは S3b-2 で足した）。名前か先頭が空・記録済みの名前と違う `branch` は誤り。`acquired` は、作業ツリーの場所が変わっても統合ブランチの 2 欄を持ち越す（PR の欄の持ち越しの条件は変えない）。
 - **契約の出力**: `artifact` に `role`（`omitempty`）を足し、`integration_branch`・`integration_head` が揃っているときだけ、いまの要素の後ろに `role: integration` の `branch`・`commit` を出す。`commitRef` は変えていない（`role` の付いた要素を数えない）。
 - **段の数・終端**: 27 → 29 段、辺は 100 → 105 本（`integration_unsupported` の辺が 1 本減り、`integration-route` の 2 本と `integration` の 4 本が増える）。終端は `integration_unsupported` が減り `integration_create_failed` が増え、`remote_unavailable` が `integration` 段で初めて現れるので、終端の並びでは `worktree_conflict` の前に来る。段の数・終端・Mermaid の節の番号を固定で持つ試験を直した。
 - **上書き**: `integration` 段のキーと、そこから出る遷移は上書きできない（`overridable.skips`・`overridable.routes` に挙げていない）。規則の文書化は S3b-3。
 - **試験**: `resolve-ticket.sh` の表（入力の表の全行・名前の規則）、`ensure-base` を実の `git` と bare の origin で（作る・在れば動かさない〔既定ブランチが進んでいても〕・別の先頭で先に作られていた・2 つの実行を並べる・届かない・作れない・誤った入力）、通しの試験（PR の宛先が統合ブランチ・`role: integration` の `branch`・`commit` が 1 つずつ・`role` の無い `commit` が 1 つ・同じ `challenge_id` の 2 本が同じ名前・`uses_integration` を渡さない実行〔`base` に人が作った統合ブランチを渡した実行も〕に `role` が出ない・作れないとき `integration_create_failed`）、畳み込みの往復の試験。
 - **確かめていないこと**: GitHub の origin での `--force-with-lease` の空の期待値の結果、保護されたブランチ・権限での `refused` は、GitHub に対しては確かめていない（S3b-4 の実物での通しで確かめる）。
+
+**S3b-2 の実装の記録（#412）**: この PR で、S3b-2 の行の中身が実物になった。設計の決定は変えていない。`land`・取り込みの作りは宛先を問わないので、足したのは「入れた後の統合ブランチの先頭の記録」と「統合ブランチ宛てで通した試験」だけ。
+
+- **書く場所**: `sync`（`land-sync` を含む）は、宛先を fetch できた後に読んだ `origin/<統合ブランチ>` の先頭を、どの結果（`current`・`synced`・`conflict` など）でも `workspace` イベント（`action: integration`）で書く。`land` は、宛先を fetch した後の結果（`behind`・`blocked` など）ではその先頭を、`landed` では `gh pr view` の `mergeCommit.oid`（`merge_commit` の記録と同じ値）を書く。入れた後に origin を読み直した値は使わない。宛先を fetch する前に返る結果（`mismatch`・`base_changed`・`closed` など）は書かない。どれも、`with.base` が `Workspace.integration_branch` と同じときだけ（`prCtx.integrationEvent`）。既定ブランチ宛て・統合先を使わない実行は何も書かない。
+- **`ready` の後の道**: `merge`・`human-merge` で終えた実行は、入れた後の先頭を記録する段を通らない（最後に確かめた先頭のまま）。
+- **取り直し**（`engine/refresh.go`）: `refresh: pr-head` のゲートで待っている unit に `integration_branch` があれば、PR の先頭の前に `git ls-remote origin refs/heads/<統合ブランチ>` で先頭を読み、記録と違えば `integration` を足す。`RefreshHeads` は git の実行ファイルを引数（`gitBin`。cli は `HARNESS_GIT_BIN`）で受ける。書く条件・読めなかったときの扱いは PR の先頭の取り直し（§5.6.2）と同じ（ロックの外で読む・`AppendIf` の中で同じ unit・ゲート・`opened_at` のときだけ書く・読めなければ標準エラーに理由・origin に無ければ書かない）。統合先の記録の無い unit では `ls-remote` を呼ばない。
+- **畳み込み**: 段の外の `integration` は、`head` と同じ状態（run が終わっていない・unit に実行中の段が無く、`refresh` の印のあるゲートで待っている）に、「unit に `integration_branch` があり、イベントの `branch` がそれと同じ」を足した場合だけ許す。ほかは誤り（`applyIntegrationOutside`）。段の中の `integration` は S3b-1 のまま。
+- **変えていないこと**: チェックの見方（`land` の 8・`ci` の段は CI の運用の宣言を宛先から読む）・入れ方（squash・`--match-head-commit`）・`behind` → `land-sync` のマージのコミット・`ready` の道・接続契約の版・スキーマ版・`plugin/` のスクリプト。
+- **試験**: 通しの試験（`runtime/internal/cli/ticket_integration_land_test.go`。偽の `gh`・bare の origin）: 一致して入る・先頭が違う・統合ブランチが進んでいる（既定ブランチは取り込まない）・最初のレビュー待ちの前の取り込み・CI の運用の宣言を統合ブランチから読む・取り直し（新しい先頭・読めない・`ls-remote` を呼ばない／呼ぶ・ゲートが解かれた後は書かない）。`engine/refresh_integration_test.go`（取り直しの書く・書かない条件）と `runstate/workspace_head_test.go`（段の外の `integration` を許す状態と許さない例）。`land` の `landed` の記録を、入れた後に読み直した先頭へ変えると、通しの試験が落ちることを確かめた。
+- **確かめていないこと**: GitHub に対する `gh pr view` の `mergeCommit` の形と、統合ブランチ宛ての squash の入れ方は、偽の `gh` の上でだけ確かめた（S3b-4 の実物での通しで確かめる）。
 
 #### 実物で確かめたこと・【要確認】
 
