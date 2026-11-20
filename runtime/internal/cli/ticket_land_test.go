@@ -18,6 +18,14 @@ type landFixture struct {
 	f    *ticketFixture
 	id   string
 	head string
+	base string // PR の宛先（空なら main）
+}
+
+func (l *landFixture) baseName() string {
+	if l.base == "" {
+		return "main"
+	}
+	return l.base
 }
 
 func viewJSON(state, head, base, merge string) string {
@@ -45,7 +53,7 @@ func newLandFixture(t *testing.T, setup func(f *ticketFixture), extraEnv ...stri
 // setPRHead は、PR の先頭（偽の gh の読み取りと、origin の refs/pull/7/head）を sha にする。
 func (l *landFixture) setPRHead(sha string) {
 	git(l.f.t(), l.f.origin, "update-ref", "refs/pull/7/head", sha)
-	l.f.write("pr-view.json", viewJSON("OPEN", sha, "main", ""))
+	l.f.write("pr-view.json", viewJSON("OPEN", sha, l.baseName(), ""))
 }
 
 // followOrigin は、PR の先頭を origin の作業ブランチの先頭に追従させる（harness が push した後の、実物の PR と同じ。取り直しが、
@@ -55,7 +63,7 @@ func (l *landFixture) followOrigin() {
 }
 
 func (l *landFixture) merged(head, merge string) {
-	l.f.write("merge.then", viewJSON("MERGED", head, "main", merge))
+	l.f.write("merge.then", viewJSON("MERGED", head, l.baseName(), merge))
 }
 
 // land は land を --approved-ref 付きで返す。落ち着くまで待った契約の出力を返す。
