@@ -82,7 +82,12 @@ const resolvableTerminal = "terminal"
 type artifact struct {
 	Kind string `json:"kind"`
 	Ref  string `json:"ref"`
+	// Role は、PR・作業ブランチ・commit 以外の役目を持つ要素の印（omitempty）。integration は、統合先を使う run（uses_integration）の
+	// 統合ブランチとその先頭（docs/harness-runtime-design.md §5.6.3）。印の無い要素の意味と数は変えない。
+	Role string `json:"role,omitempty"`
 }
+
+const roleIntegration = "integration"
 
 const contractUsage = `usage: harness contract <start|status|resume|cancel> [options]
 
@@ -446,13 +451,18 @@ func artifacts(st *runstate.State) []artifact {
 		if sha := commitRef(ws); sha != "" {
 			out = append(out, artifact{Kind: artifactCommit, Ref: sha})
 		}
+		// 統合ブランチ（名前と先頭は一緒に書かれるので、いつも 1 つずつ出る）。role の無い commit の数には数えない。
+		if ws.IntegrationBranch != "" && ws.IntegrationHead != "" {
+			out = append(out, artifact{Kind: artifactBranch, Ref: ws.IntegrationBranch, Role: roleIntegration},
+				artifact{Kind: artifactCommit, Ref: ws.IntegrationHead, Role: roleIntegration})
+		}
 	}
 	return out
 }
 
 // commitRef は成果物の commit の識別: 宛先へ入れて終わった run は入れた後のコミット、そうでなければ PR のいまの先頭。
 // この版より前に始めた run の記録には先頭の記録（head_sha）が無いので、ラウンドごとの記録の最新を使う。
-// kind が commit の要素は、PR を出した後はいつもちょうど 1 つ（PR を出す前は 0）。
+// role の無い kind が commit の要素は、PR を出した後はいつもちょうど 1 つ（PR を出す前は 0。role の付いた要素は数えない）。
 func commitRef(ws *runstate.Workspace) string {
 	switch {
 	case ws.MergeCommit != "":

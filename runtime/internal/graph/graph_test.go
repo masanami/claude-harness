@@ -57,7 +57,7 @@ func edgesFrom(g *Graph, from, outcome string) []Edge {
 // ticket.yaml の 21 ステップが定義の順に並び、終端はその後に初出の順で、同じ理由の終端は 1 つにまとまる（§3.2）。
 func TestTicketNodes(t *testing.T) {
 	g := Build(load(t, repoWorkflows, repoScripts, "ticket"), SourceWorkflowDir, "1.2.3")
-	wantSteps := []string{"resolve", "analyze", "workspace", "implement", "self-review-route", "fix", "commit", "sync", "sync-resolve", "e2e-route", "e2e", "quality", "publish", "ci",
+	wantSteps := []string{"resolve", "integration-route", "integration", "analyze", "workspace", "implement", "self-review-route", "fix", "commit", "sync", "sync-resolve", "e2e-route", "e2e", "quality", "publish", "ci",
 		"ci-pending", "review", "land", "land-sync", "land-sync-resolve", "land-push", "respond", "review-human", "merge-route", "merge", "human-merge", "design-deviation", "cleanup"}
 	var steps, terms []string
 	for _, n := range g.Nodes {
@@ -76,8 +76,8 @@ func TestTicketNodes(t *testing.T) {
 	if g.Entry != "resolve" {
 		t.Fatalf("entry = %q", g.Entry)
 	}
-	wantTerms := []string{"fail:base_missing", "fail:links_invalid", "fail:input_invalid", "fail:integration_unsupported", "fail:worktree_conflict", "fail:quality_gate",
-		"fail:self_review_incomplete", "fail:commit", "fail:sync_conflict", "fail:sync_not_merge_only", "fail:branch_diverged", "fail:local_head_mismatch", "fail:remote_unavailable",
+	wantTerms := []string{"fail:base_missing", "fail:links_invalid", "fail:input_invalid", "fail:integration_create_failed", "fail:remote_unavailable", "fail:worktree_conflict", "fail:quality_gate",
+		"fail:self_review_incomplete", "fail:commit", "fail:sync_conflict", "fail:sync_not_merge_only", "fail:branch_diverged", "fail:local_head_mismatch",
 		"fail:e2e", "fail:quality_gate_red", "fail:quality_gate_undeclared", "fail:ci_red", "fail:ci_timeout", "fail:pr_closed", "fail:merged_unapproved", "fail:pr_base_changed",
 		"fail:merge_not_confirmed", "fail:push_rejected", "fail:push_failed", "fail:aborted_by_human", "done:merged", "done:merged_worktree_dirty"}
 	if !reflect.DeepEqual(terms, wantTerms) {
@@ -96,8 +96,9 @@ func TestTicketNodes(t *testing.T) {
 	// ci の skipped（#363。CI の運用の宣言が after-merge で CI を待たなかった）の 1 本と、self-review-route（#381）の 5 本
 	// （complete・incomplete と not_run の implement へ戻る辺 2 本と、それぞれが尽きたときの辺 2 本）と、resolve の input_invalid・integration_unsupported（#391）の 2 本を足した 65 本に、
 	// 取り込みと land（#388 の S3-3）の 35 本（sync 9・sync-resolve 2・review.land 1・land 8・land-sync 9・land-sync-resolve 2・land-push 4。commit の遷移先の付け替えは数えない）を足した 100 本。
-	if len(g.Edges) != 100 {
-		t.Fatalf("edges = %d, want 100", len(g.Edges))
+	// さらに統合先の受け口（§5.6.3）: resolve の integration_unsupported の辺 1 本が減り、integration-route の 2 本と integration（ensure-base）の 4 本が増えて 105 本。
+	if len(g.Edges) != 105 {
+		t.Fatalf("edges = %d, want 105", len(g.Edges))
 	}
 	if n := node(t, g, "implement"); n.Kind != "llm" || n.Agent != "claude-harness:feature-implementer" || n.BudgetUSD != 15 ||
 		FormatDuration(n.Timeout) != "90m" {

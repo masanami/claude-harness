@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "scripts/resolve-ticket.sh の出力（ticket ワークフローの resolve。I2・I3）",
   "type": "object",
-  "required": ["outcome", "issue", "key", "task_file", "task_dir", "scope", "title", "state", "base", "base_kind", "base_source", "default_branch", "closes", "refs", "message"],
+  "required": ["outcome", "issue", "key", "task_file", "task_dir", "scope", "title", "state", "base", "base_kind", "base_source", "default_branch", "closes", "refs", "integration", "message"],
   "properties": {
-    "outcome": { "type": "string", "enum": ["ok", "base_missing", "links_invalid", "input_invalid", "integration_unsupported"] },
+    "outcome": { "type": "string", "enum": ["ok", "base_missing", "links_invalid", "input_invalid"] },
     "issue": { "type": "integer", "minimum": 0, "description": "取り込み元の Issue。入力が無ければ 0" },
-    "key": { "type": "string", "description": "名前の鍵（task-<n> か issue-<n>）。作業ツリーの場所とブランチの名前に使う。入力が誤り（input_invalid）のときは空文字（integration_unsupported では入力が読めているので入る）" },
+    "key": { "type": "string", "description": "名前の鍵（task-<n> か issue-<n>）。作業ツリーの場所とブランチの名前に使う。入力が誤り（input_invalid）のときは空文字" },
     "task_file": { "type": "string", "description": "段が読む、タスクの文面のファイルの絶対パス（入力のファイルを run ディレクトリの下へ写したもの）。無ければ空文字" },
     "task_dir": { "type": "string", "description": "task_file（文面の写し）だけが在るフォルダ（絶対パス。run ディレクトリの下の task/）。無ければ空文字。LLM の段の add_dirs が --add-dir として claude へ渡す（作業ツリーの外の文面のファイルを読めるように）" },
     "scope": { "type": "string", "enum": ["issue", "task_file"], "description": "作業の範囲の正本。task_file があれば task_file、無ければ issue" },
@@ -14,10 +14,11 @@
     "state": { "type": "string" },
     "base": { "type": "string" },
     "base_kind": { "type": "string", "enum": ["integration", "default"] },
-    "base_source": { "type": "string", "enum": ["input", "issue", "default"] },
+    "base_source": { "type": "string", "enum": ["input", "issue", "default", "challenge"] },
     "default_branch": { "type": "string" },
     "closes": { "type": "integer", "minimum": 0, "description": "PR 本文に Closes #N を書く Issue。0 は closing キーワードを書かない（Issue 本文の Closes: なし 行）" },
     "refs": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "description": "PR 本文に Refs #N を書く Issue（Issue 本文の Refs: 行）" },
+    "integration": { "type": "string", "enum": ["create", "none"], "description": "統合ブランチを確かめて作る段（ensure-base）を通るか。uses_integration が true で ok のときだけ create" },
     "message": { "type": "string" }
   },
   "additionalProperties": false

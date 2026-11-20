@@ -28,7 +28,7 @@ func TestTicketStopsWhenSelfReviewIsIncomplete(t *testing.T) {
 	for _, x := range v.Unit("main").Rounds[0].Steps {
 		seq = append(seq, x.Step+":"+x.Outcome)
 	}
-	if want := "resolve:ok analyze:ok workspace:created implement:review_incomplete"; strings.Join(seq, " ") != want {
+	if want := "resolve:ok integration-route:none analyze:ok workspace:created implement:review_incomplete"; strings.Join(seq, " ") != want {
 		t.Fatalf("steps:\n got %s\nwant %s", strings.Join(seq, " "), want)
 	}
 	// commit（偽の claude の 3 回目）は起動されず、PR も作られていない。

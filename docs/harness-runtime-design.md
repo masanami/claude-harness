@@ -444,7 +444,7 @@ steps:
 >
 > **#388 の設計で足すもの（⑬ は S3-1〔#391〕、⑭・⑮ は S3-3〔#393〕、⑯ は S3-4〔#394〕、⑰ は S3-5〔#395〕で実装済み。定義の全体は §5.6.2 の「`ticket` の遷移」）**: ⑬ 入力に `task_file`・`task_id`・`uses_integration`・`challenge_id` を足し、`issue` を任意にする。`resolve` が入力の組み合わせを確かめ（`input_invalid`・`integration_unsupported`）、名前の鍵（`key`）を出す。`analyze`・`workspace`・`implement` は `$inputs.issue` ではなく `resolve` の出力を読む。 ⑭ `commit` の後・`e2e-route` の前に、宛先の最新をマージのコミットで取り込む `sync`（`pull-request` の `action: sync`）と、衝突を直す `sync-resolve`（`llm`）を置く（`commit.committed` を `sync` へ向ける）。 ⑮ `review` の `inputs` に `land` を足し（`[respond, ready, land]`）、`land: { goto: land, with: { approved_ref: $gate.approved_ref } }` で `land`（`pull-request` の `action: land`）へ送る。`land` は、一致して宛先の最新を含めば入れて `cleanup` へ、宛先が動いていれば `land-sync` → `land-push` で取り込んで `review` へ、一致しない・入れられないなら理由（`detail`）を添えて `review` へ戻る。`ready` の後の `merge-route`・`merge`・`human-merge` は変えない。 ⑯ 最上位に `facts: { self_review: [...] }` を書き、`fix`・`respond` の出力にも必須の欄 `self_review`（`complete`・`incomplete`・`not_run`）を足す（必須にしたのは #403）。 ⑰ `review` に `refresh: pr-head` を書く。
 >
-> **#409 の設計で足すもの（§5.6.3。未実装）**: ⑱ `resolve` の後に、統合先を使う実行だけが通る `integration-route`（`select`）と `integration`（`pull-request` の `action: ensure-base`）を足す。`resolve` の `integration_unsupported` は外す。定義の差分は §5.6.3 の「`ticket` の遷移」。
+> **#409 の設計で足すもの（§5.6.3。S3b-1〔#411〕で実装済み）**: ⑱ `resolve` の後に、統合先を使う実行だけが通る `integration-route`（`select`）と `integration`（`pull-request` の `action: ensure-base`）を足す。`resolve` の `integration_unsupported` は外す。定義の差分は §5.6.3 の「`ticket` の遷移」。
 >
 > `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す（§3.3。Q12 で決定）。
 >
@@ -546,7 +546,7 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 
 **#388 の設計で足す記録（§5.6.2。`head_sha`・`merge_commit` は S3-3〔#393〕、`approved_ref`・`detail` は S3-2〔#392〕、Run の `facts` は S3-4〔#394〕、開いたゲートの `refresh` と `workspace` の `head` は S3-5〔#395〕、Run の `release_on` の写しは S3-6〔#396〕で実装済み）**: Workspace に `head_sha`（PR のいまの先頭。取り込みの後・外からの push の後も追従する）と `merge_commit`（宛先へ入れた後のコミット）。Gate の解決に `approved_ref`、開いたゲートに `detail`・`refresh`。Run に、定義の `facts`・`release_on` の写しと、unit ごとの `facts` の値。Round の契機に、`interrupted` の印（失敗の理由の語）。
 
-**#409 の設計で足す記録（§5.6.3。未実装）**: `Workspace` に `integration_branch`・`integration_head`（統合ブランチの名前と先頭）。`workspace` イベントに `action: integration`（段の中では `pull-request` の種類の段が書き、段の外では、`refresh` の印のあるゲートで待っている間の取り直しだけが書く）。
+**#409 の設計で足す記録（§5.6.3。段の中の `integration` と `Workspace` の欄は S3b-1〔#411〕で実装済み。段の外の取り直しは S3b-2 で未実装）**: `Workspace` に `integration_branch`・`integration_head`（統合ブランチの名前と先頭）。`workspace` イベントに `action: integration`（段の中では `pull-request` の種類の段が書き、段の外では、`refresh` の印のあるゲートで待っている間の取り直しだけが書く）。
 
 ### 4.2 ラウンドの定義
 
@@ -710,7 +710,7 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 
 **出力**: `{"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}` を 1 つ出す（宣言と値があるときだけ、任意のキー `facts`〔名前 → 値の文字列〕が付く。§5.6.2「`facts`」）。
 
-**#409 の設計で足すもの（§5.6.3。未実装）**: `artifacts` の要素に、任意のキー `role` を足す。`uses_integration` に `true` を受けた `ticket` の実行だけが、統合ブランチ（`kind: branch`）とその先頭（`kind: commit`）を、`role: integration` の要素で 1 つずつ出す。`role` の無い要素の意味と数は変えない。
+**#409 の設計で足すもの（§5.6.3。S3b-1〔#411〕で実装済み）**: `artifacts` の要素に、任意のキー `role` を足す。`uses_integration` に `true` を受けた `ticket` の実行だけが、統合ブランチ（`kind: branch`）とその先頭（`kind: commit`）を、`role: integration` の要素で 1 つずつ出す。`role` の無い要素の意味と数は変えない。
 
 | フィールド | 写し方 |
 | --- | --- |
@@ -1328,7 +1328,7 @@ A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a
 | 7 | `T-<番号>` が、同じリポジトリへ出す 2 つの flywheel のワークスペースで重なること | (a) 受ける（`worktree_conflict` で止まる）。(b) 鍵に `challenge_id` も入れる | (a)。`challenge_id` もストアごとの番号で、入れても解けない |
 | 8 | 文面のファイルと Issue の両方があるとき、Issue の本文の `Base:` 行を読まないこと | (a) 読まない（宛先は `base` の入力か既定ブランチ）。(b) 読む（いまと同じ） | (a)。flywheel の S3a は、宛先を反映先（既定ブランチ）と決めて PR の宛先を確かめる（`base_changed`）。Issue の本文で宛先が変わると食い違う |
 
-### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。実装はまだ無い）
+### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。S3b-1〔#411〕は実装済み。残りは S3b-2 以降）
 
 §5.6.2 の「B の粗い設計」を、実装できる細かさに起こしたものである。flywheel が、課題ごとの統合先（統合ブランチ）を使い始める（flywheel `docs/features/core-redesign.md` の節「委譲先との契約（S3 で使う受け口）」の「足すもの 2・3・4」と「claude-harness の側で要るもの（S3b）」。食い違えば flywheel 側が正）。**契約の形（flywheel が渡すもの・受け取るもの）は変えない**。この節に書いた入力・段・キー・理由の語は、下の「実装の分け方」の PR で実物になる（設計を書いた時点の実物は main `9911091`＝5.2.0。「いまの動き」の行の番号は、この版のもの）。§5.6.2 の記録は書き換えていない。
 
@@ -1711,6 +1711,18 @@ steps:
 | S3b-5 | リリース（`chore(release)`）: `CHANGELOG.md`・`plugin/.claude-plugin/plugin.json`。CLI のタグは人が打つ | 全部 | — | — |
 
 S3b-1 → S3b-2 → S3b-3 の順に進める（S3b-2 と S3b-3 は、機能の依存は無いが、`pull-request` の種類のファイルと偽の `gh` を両方が触る）。flywheel の S3b は、S3b-5 の後に main へ入る。
+
+**S3b-1 の実装の記録（#411）**: この PR で、S3b-1 の行の中身が実物になった。設計の決定は変えていない。実装で、設計の文面から合わせた点・決めたこと・確かめたこと:
+
+- **`action` の値の文法**: 定義の文法は `action` の値を `^[a-z][a-z0-9_]*$` に限っていたので、`ensure-base` を書けなかった。`pull-request`・`workspace` の `action` の値は、outcome の値と同じ `^[a-z][a-z0-9_-]*$` に広げた（文法の追加はこれだけ。スキーマ版は `harness.workflow/v1` のまま）。
+- **`resolve` の検査の順**: 入力どうしの条件の後ろ（`uses_integration` の形の検査の後）に、`challenge_id` が無い → 形が不正 → `base` も渡された、の順で `input_invalid` を返す。いずれも `gh`・`git` を呼ぶ前で、`integration` は `none`・`key` は空文字（`input_invalid` の出力の決まり）。`challenge_id` は小文字にして名前にし、`uses_integration` が `true` のときは Issue 本文の `Base:` 行を読まず、origin に在るかを確かめない。
+- **`ensure-base`**（`runtime/internal/engine/pullrequest_ensurebase.go`）: 設計の 1〜5 のとおり。`ls-remote` は終了コード 2（無い）を確定した答えとして試し直さず、ほかの失敗だけ 3 回試す。push の状態の行は、右辺が `refs/heads/<branch>` の行の印（`*`・`=`・`!`）で読む。届かなかったとき（行が無い）は 4 から 3 回までやり直し、尽きたら最後に 1 度 `ls-remote` を読んで、別の実行が先に作っていれば `existing`、無ければ `unavailable`。`created`・`existing` のとき `workspace` イベント（`action: integration`）を書く。
+- **畳み込み**: `integration` は実行中の段の中だけで書ける（段の外の取り直しは S3b-2）。名前か先頭が空・記録済みの名前と違う `branch` は誤り。`acquired` は、作業ツリーの場所が変わっても統合ブランチの 2 欄を持ち越す（PR の欄の持ち越しの条件は変えない）。
+- **契約の出力**: `artifact` に `role`（`omitempty`）を足し、`integration_branch`・`integration_head` が揃っているときだけ、いまの要素の後ろに `role: integration` の `branch`・`commit` を出す。`commitRef` は変えていない（`role` の付いた要素を数えない）。
+- **段の数・終端**: 27 → 29 段、辺は 100 → 105 本（`integration_unsupported` の辺が 1 本減り、`integration-route` の 2 本と `integration` の 4 本が増える）。終端は `integration_unsupported` が減り `integration_create_failed` が増え、`remote_unavailable` が `integration` 段で初めて現れるので、終端の並びでは `worktree_conflict` の前に来る。段の数・終端・Mermaid の節の番号を固定で持つ試験を直した。
+- **上書き**: `integration` 段のキーと、そこから出る遷移は上書きできない（`overridable.skips`・`overridable.routes` に挙げていない）。規則の文書化は S3b-3。
+- **試験**: `resolve-ticket.sh` の表（入力の表の全行・名前の規則）、`ensure-base` を実の `git` と bare の origin で（作る・在れば動かさない〔既定ブランチが進んでいても〕・別の先頭で先に作られていた・2 つの実行を並べる・届かない・作れない・誤った入力）、通しの試験（PR の宛先が統合ブランチ・`role: integration` の `branch`・`commit` が 1 つずつ・`role` の無い `commit` が 1 つ・同じ `challenge_id` の 2 本が同じ名前・`uses_integration` を渡さない実行〔`base` に人が作った統合ブランチを渡した実行も〕に `role` が出ない・作れないとき `integration_create_failed`）、畳み込みの往復の試験。
+- **確かめていないこと**: GitHub の origin での `--force-with-lease` の空の期待値の結果、保護されたブランチ・権限での `refused` は、GitHub に対しては確かめていない（S3b-4 の実物での通しで確かめる）。
 
 #### 実物で確かめたこと・【要確認】
 

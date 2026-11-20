@@ -8,6 +8,20 @@
 
 ---
 
+## 未リリース
+
+### 追加
+
+- **`harness run ticket` が、統合先（統合ブランチ）を決めて作れるようになった（Issue #411。#409 の S3b-1）。** `uses_integration=true` と `challenge_id` を渡すと、PR の宛先は統合ブランチ `integration/<challenge_id を小文字にしたもの>`（例: `C-12` → `integration/c-12`）になり、origin に無ければ既定ブランチの先頭から作る（在れば動かさない）。`resolve` の後に、段 `integration-route`（`select`）と `integration`（`pull-request` の新しい `action: ensure-base`）を足した（段は 27 → 29）。`uses_integration` を渡さない実行は、段が 1 つ（`integration-route`。外部を呼ばない）増えるだけで、動き・出力・失敗の理由は変わらない。`Base:` 行・`base` の入力で人が作った統合ブランチを渡す今までの道も変わらない（無ければ `base_missing`）。
+- **`harness contract` の `artifacts` の要素に、任意のキー `role` を足した。** 統合先を使う実行だけが、統合ブランチ（`kind: branch`）とその先頭（`kind: commit`）を `role: integration` の要素で 1 つずつ出す。`role` の無い要素（PR・作業ブランチ・`commit`）の意味と数は変えない（`role` の無い `commit` はいつもちょうど 1 つ。PR を出す前は 0）。
+- `Workspace` に `integration_branch`・`integration_head` を、`workspace` イベントに `action: integration` を足した（任意の欄。古い記録には無い）。
+
+### 変更
+
+- **失敗の理由 `integration_unsupported` を外し、`integration_create_failed`（origin が統合ブランチを作ることを拒んだ）を足した。** `uses_integration=true` が `integration_unsupported` で止まることはなくなった。`uses_integration=true` で `challenge_id` が無い・形が違う・`base` も渡された場合は `input_invalid` で止まる。ワークフローの定義の文法では、`action` の値にハイフン（`ensure-base`）を書けるようにした。接続契約の版（1）・ワークフローのスキーマ版（`harness.workflow/v1`）は変えない。
+
+---
+
 ## 5.2.0（harness CLI: `runtime/v5.2.0`）
 
 ### 追加

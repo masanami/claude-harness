@@ -75,7 +75,7 @@ func TestPullRequestActionsAreAccepted(t *testing.T) {
 
 func TestPullRequestActionRejects(t *testing.T) {
 	for _, c := range []struct{ name, old, new, want string }{
-		{"unknown action", "    action: push\n", "    action: rebase\n", `action "rebase" must be publish, sync, push, land or adopt`},
+		{"unknown action", "    action: push\n", "    action: rebase\n", `action "rebase" must be publish, sync, push, land, adopt or ensure-base`},
 		{"land without pr", "with: { pr: 7, base: main, approved_ref: $edge.approved_ref }", "with: { base: main, approved_ref: $edge.approved_ref }", "pr is required for kind pull-request:land"},
 		{"land without approved_ref", "with: { pr: 7, base: main, approved_ref: $edge.approved_ref }", "with: { pr: 7, base: main }", "approved_ref is required for kind pull-request:land"},
 		{"land takes no title", "with: { pr: 7, base: main, approved_ref: $edge.approved_ref }", "with: { pr: 7, base: main, approved_ref: $edge.approved_ref, title: x }", `"title" is not an input of kind pull-request:land`},
