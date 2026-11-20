@@ -273,6 +273,7 @@ func TestParseRef(t *testing.T) {
 		"$steps.ci-wait.a.b_c": RefSteps,
 		"$edge.failure":        RefEdge,
 		"$gate.note":           RefGate,
+		"$gate.approved_ref":   RefGate,
 	}
 	for s, k := range good {
 		r, err := ParseRef(s)
@@ -412,6 +413,18 @@ func TestRejectsLLMAndGate(t *testing.T) {
 		{"contract_kind review on a human gate", "    inputs: [follow, abort]\n", "    inputs: [follow, abort]\n    contract_kind: review\n", "contract_kind review is only valid for type input with decider parent or any"},
 		{"contract_kind review on an observe gate", "    observe: pr\n", "    observe: pr\n    contract_kind: review\n", "contract_kind review is only valid for type input with decider parent or any"},
 		{"contract_kind on an llm step", "    budget_usd: 2\n", "    budget_usd: 2\n    contract_kind: review\n", `unknown key "contract_kind"`},
+		// $gate.approved_ref・detail・interrupted（#392）。
+		{"approved_ref in a step", "with: { n: $inputs.n }", "with: { n: $gate.approved_ref }", "$gate.approved_ref is only valid in the with of a transition leaving an input gate"},
+		{"approved_ref from an llm step", "      bad: { fail: bad }\n", "      bad: { goto: review, with: { x: $gate.approved_ref }, interrupted: { fail: x } }\n", "step \"fix\" is not an input gate"},
+		{"approved_ref without interrupted", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.approved_ref } }", "must write interrupted: { fail: <reason> }"},
+		{"interrupted on a step transition", "      bad: { fail: bad }\n", "      bad: { goto: review, interrupted: { fail: x } }\n", "interrupted is only valid on a goto leaving an input gate"},
+		{"interrupted without fail", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, interrupted: {} }", "interrupted needs fail"},
+		{"interrupted with another key", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, interrupted: { done: x } }", `unknown key "done"`},
+		{"detail on a goto", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, detail: $inputs.s }", `unknown key "detail"`},
+		{"detail from a gate reference", "      ready: { gate: merged }\n", "      ready: { gate: merged, detail: $gate.note }\n", "detail is one reference to $steps"},
+		{"detail from an edge", "      ready: { gate: merged }\n", "      ready: { gate: merged, detail: $edge.x }\n", "detail is one reference to $steps"},
+		{"detail not a string", "      ready: { gate: merged }\n", "      ready: { gate: merged, detail: $inputs.n }\n", "detail is a sentence (string)"},
+		{"detail as a literal", "      ready: { gate: merged }\n", "      ready: { gate: merged, detail: because }\n", "must be exactly one reference"},
 		{"interrupted is reserved", "  merged:\n", "  interrupted:\n    kind: gate\n    type: input\n    decider: any\n    requested_action: x\n    inputs: [go]\n    on: { go: { done: x } }\n  merged:\n", `step id "interrupted" is reserved`},
 	}
 	for _, c := range cases {

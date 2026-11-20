@@ -326,7 +326,7 @@ func (e *Engine) transitionEvents(st *runstate.State, u *runstate.Unit, step *wo
 		if target == nil || target.Kind != "gate" {
 			return nil, fmt.Errorf("gate %q is not a gate step of workflow %s", tr.To, e.WF.ID)
 		}
-		evs = append(evs, gateOpenedEvent(u.Key, target))
+		evs = append(evs, gateOpenedEvent(u.Key, target, tr.Detail))
 	case "fail":
 		evs = append(evs, runstate.Event{Type: runstate.EvRunFinished, RunFinished: &runstate.RunFinished{Status: runstate.StatusFailed, Reason: tr.Reason}})
 	case "done":
@@ -341,6 +341,8 @@ type done struct {
 	outputs  map[string]json.RawMessage
 	outcomes map[string]string
 	note     *string
+	// approvedRef は resume の --approved-ref（空は「無い」）。$gate.approved_ref は、添えられていなければ空の文字列に解決する。
+	approvedRef string
 }
 
 func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.Step, t *workflow.Transition, cur done, tr *runstate.Transition) error {
@@ -371,6 +373,7 @@ func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.St
 			tr.Limit = t.Limit
 		}
 		tr.Action, tr.To = "step", t.Target
+		tr.Interrupted = t.Interrupted
 		if len(t.With) > 0 {
 			if t.NoteOptional && cur.note == nil {
 				// note: optional（#377）: --note の無い resume では $gate.note を空文字にする（前の resume の添え書きは持ち越さない）。
@@ -382,7 +385,7 @@ func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.St
 				v, err := value(st, cur, nil, b.Value)
 				if err != nil {
 					// 検証済みの参照が解決できないのは出力の中身の問題（null 等）。run を失敗で止める。
-					tr.Action, tr.To, tr.Limit, tr.Edge = "fail", "", "", nil
+					tr.Action, tr.To, tr.Limit, tr.Edge, tr.Interrupted = "fail", "", "", nil, ""
 					tr.Reason = "reference_unresolved"
 					return nil
 				}
@@ -391,6 +394,19 @@ func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.St
 		}
 	case workflow.TGate:
 		tr.Action, tr.To = "gate", t.Target
+		if t.Detail != nil {
+			v, err := value(st, cur, nil, workflow.Value{Ref: t.Detail})
+			var s string
+			if err == nil {
+				err = json.Unmarshal(v, &s)
+			}
+			if err != nil {
+				tr.Action, tr.To = "fail", ""
+				tr.Reason = "reference_unresolved"
+				return nil
+			}
+			tr.Detail = s
+		}
 	}
 	return nil
 }
@@ -446,6 +462,9 @@ func value(st *runstate.State, cur done, edge map[string]json.RawMessage, v work
 		}
 		return json.Marshal(cur)
 	case workflow.RefGate:
+		if r.Name == workflow.GateApprovedRef {
+			return json.Marshal(cur.approvedRef)
+		}
 		if cur.note == nil {
 			return nil, fmt.Errorf("%s: no note was given when the gate was resolved", r.Raw)
 		}
