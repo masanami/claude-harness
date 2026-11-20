@@ -29,6 +29,8 @@
 #   - review の入力に land を足す。land は pull-request の action: land で、通した中身（--approved-ref）と PR の先頭が一致し、宛先の最新を
 #     含むときだけ PR を宛先へ入れる。宛先が動いていれば取り込み・push して review へ戻る（land-sync・land-sync-resolve・land-push）。
 #     land の後は、入れ終えるか review へ戻るまで、ほかの待ちへ移らない（docs/harness-runtime-design.md §5.6.2・overrides §6.2 の規則 7）
+#   - 最上位に facts を書く（#388 の S3-4）。self_review は implement・fix・respond のうち、最後に成功して終わり self_review を返した段の値で、
+#     接続契約の facts.self_review に出る（fix・respond の self_review は任意の欄。docs/harness-runtime-design.md §5.6.2）
 #   - review・review-human の respond を、resume の添え書き（$gate.note）を respond へ渡す goto にし、note: optional を付ける
 #     （#377。添え書きが無ければ空文字を渡し、今と同じく PR のコメントだけを読む。差し戻しの理由を PR へ手で書かずに済む）
 schema: harness.workflow/v1
@@ -47,6 +49,8 @@ limits:
   rework: 3                         # Phase 4→8 の差し戻し上限（W2・Q8）
   self_review: 1                    # /self-review を実行しなかった implement を戻す上限（#381）
   sync_resolve: 3                   # 取り込みの衝突を LLM に直させる回数（この unit の累計。sync と land-sync の両方で数える）
+facts:                              # 接続契約の facts に出す値（名前 → $steps.<段>.<欄>）。最後に成功して終わり、その欄を返した段の値になる（#388 の S3-4）
+  self_review: [$steps.implement.self_review, $steps.fix.self_review, $steps.respond.self_review]
 overridable:                        # 上書きで付け替えてよい遷移と候補（docs/harness-runtime-overrides.md §5.2。保守側だけ＝O2 と、quality の省略＝#326）
   routes:
     merge-route.integration: [merge, human-merge]   # 統合ブランチ宛も人のマージにできる

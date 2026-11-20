@@ -15,6 +15,13 @@
   - **投稿の前に、同じ添え書きへのコメントが既に PR にあるかを確かめる**（`gh pr view <inputs.pr> --json comments`）。前の実行が打ち切られて同じ添え書きでやり直している場合、既にあればもう 1 件は付けない。見分けられるように、本文の先頭行を `harness respond: 添え書きへの対応（run <harness.run_id>）` にし、本文に添え書きの要旨を含める。同じ先頭行で同じ要旨のコメントがあれば、投稿済みとして扱う。
 - `inputs.note` が空文字なら、今までどおり PR のレビューコメントだけを読む。
 
+## 自己レビュー（`/self-review`）
+
+- `/pr-review-respond` を終えた後、**この段で変えた分**（この段で足したコミットと、未コミットの変更）に `/self-review` を実行する。指摘を直したら、直した分をコミットする（push はしない。push は後ろの publish が行う）。作業ツリーはコミット済みの状態にして返す。
+- **`/self-review` を実行したら、push の有無に関わらず `self_review` を返す**（`no_change`・`needs_human` でも返す）。`complete`（報告が `self_review: complete`）/ `incomplete`（報告が `self_review: incomplete`、または `self_review:` 行が無い）。実行していなければ `self_review` を返さない。
+- **この段で変えた分が無く、`inputs.note` も自己レビューの実行を求めていなければ、`/self-review` を実行しない**（`self_review` は返さない）。
+- **`inputs.note` が「自己レビューの実行」だけを求めていて、実行した結果、直すものが無かったときは、`no_change` を返してよい**（`self_review` を添える。上の「`inputs.note` が空でなければ `no_change` にしない」の例外）。直すものがあれば、直して `pushed`。
+
 ## 返す値
 
 - 修正を push した場合は `pushed` を返す（runtime が品質ゲートと CI の確認からやり直す）。push は作業ブランチへの通常の push だけ（force-push しない）。品質ゲートは未コミットの変更が残っていると止まるので、作業ツリーをコミット済みの状態にして返す。
@@ -22,4 +29,4 @@
 - スキルの手順が人の判断を求める場合（修正後の `/quality-check` が通らない〔qcFailed〕・`design_change` / `critical` に分類された指摘）は、その判断をせず `needs_human` を返し、`human_question` に判断してほしい内容・選択肢・推奨を書く。
 - **PR のマージ・クローズはしない**。
 
-返す値: `outcome`（`pushed` / `no_change` / `needs_human`）・`summary`（何をしたか。添え書きがあれば、それにどう対応したかを含める）・`human_question`（needs_human のとき。それ以外は空文字）。
+返す値: `outcome`（`pushed` / `no_change` / `needs_human`）・`summary`（何をしたか。添え書きがあれば、それにどう対応したかを含める）・`human_question`（needs_human のとき。それ以外は空文字）・`self_review`（`/self-review` を実行したときだけ。上の「自己レビュー」）。

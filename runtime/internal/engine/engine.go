@@ -79,6 +79,15 @@ func Start(p StartParams) (*Engine, error) {
 	if len(limits) == 0 {
 		limits = nil
 	}
+	var facts map[string][]runstate.FactSource
+	for _, d := range p.WF.Facts {
+		if facts == nil {
+			facts = map[string][]runstate.FactSource{}
+		}
+		for _, r := range d.Refs {
+			facts[d.Name] = append(facts[d.Name], runstate.FactSource{Step: r.Step, Field: r.Path})
+		}
+	}
 	overrides, err := copyOverrides(run, p.WF)
 	if err != nil {
 		return nil, err
@@ -92,6 +101,7 @@ func Start(p StartParams) (*Engine, error) {
 			},
 			Inputs:      p.Inputs,
 			Limits:      limits,
+			Facts:       facts,
 			Origin:      p.Origin,
 			Cwd:         p.Cwd,
 			PID:         os.Getpid(),

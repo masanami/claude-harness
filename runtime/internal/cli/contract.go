@@ -56,6 +56,9 @@ type contractDoc struct {
 	RequestedAction *requestedAction `json:"requested_action"`
 	Artifacts       []artifact       `json:"artifacts"`
 	CostUSD         *float64         `json:"cost_usd"`
+	// Facts は任意のキー（名前 → 値。どちらも文字列）。ワークフローの定義が facts を宣言し、値が 1 つでもあるときだけ出す。
+	// 値は run が記録した facts から写す（定義も段の名前も読まない）。
+	Facts map[string]string `json:"facts,omitempty"`
 }
 
 // requestedAction は契約 v1 の requested_action。ResolvableBy は後方互換の任意項目（#378・masanami/flywheel#631）で、
@@ -96,7 +99,7 @@ then ("running", or "waiting" / an end when the run got there already); read the
 
 the connection contract v1 for flywheel: each command prints one JSON document
 {"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}
-and exits 0 whenever it printed it; waiting, success and failure are in "state", not in the exit code.
+(plus "facts", name -> string, when the workflow declares facts and has a value) and exits 0 whenever it printed it; waiting, success and failure are in "state", not in the exit code.
 the options and the arguments are the same as those of run / status / resume / cancel, except --accept-kind.
 
 --accept-kind KIND (status and resume; repeatable) declares a requested_action.kind the caller accepts beyond
@@ -365,6 +368,14 @@ func contractFromView(v statusView, note string, acc accepted) contractDoc {
 	d := contractDoc{ContractVersion: ContractVersion, RunID: &id, State: st.Status, Artifacts: artifacts(st)}
 	cost, unknown := runCost(st)
 	d.CostUSD = &cost
+	for _, u := range st.Units {
+		for k, val := range u.Facts {
+			if d.Facts == nil {
+				d.Facts = map[string]string{}
+			}
+			d.Facts[k] = val
+		}
+	}
 	if !runstate.Terminal(st.Status) {
 		d.RequestedAction = pickAction(st.RunID, v.Waiting, acc)
 	}

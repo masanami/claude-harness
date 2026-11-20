@@ -84,7 +84,9 @@ type Workflow struct {
 	Description string
 	Inputs      []*Input
 	Limits      []*Limit
-	Steps       []*Step
+	// Facts は最上位の facts（名前 → 参照の並び）。接続契約の facts に出す値の宣言（docs/harness-runtime-design.md §5.6.2）。
+	Facts []*FactDecl
+	Steps []*Step
 	// Routes は overridable.routes（docs/harness-runtime-overrides.md §5.2）。上書きで付け替えてよい遷移と候補。
 	Routes []*RouteDecl
 	// Skips は overridable.skips（§5.2・§6.2 の規則 6）。付け替えで省いてよいと定義が明示した、fail へ落ちうるステップ。
@@ -123,6 +125,13 @@ func (w *Workflow) Input(name string) *Input {
 		}
 	}
 	return nil
+}
+
+// FactDecl は facts の 1 行。Refs は $steps.<段>.<欄> だけ（読み込みで、段が在り、欄が出力スキーマの文字列であることを検査する）。
+type FactDecl struct {
+	Name string
+	Refs []*Ref
+	Line int
 }
 
 // Limit は名前で上限値を引く。無ければ nil。

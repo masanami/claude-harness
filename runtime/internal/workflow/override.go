@@ -75,7 +75,7 @@ type Change struct {
 }
 
 // closedTopKeys は元の定義のトップレベルにあり、上書きできないキー（§5.3）。
-var closedTopKeys = map[string]bool{"id": true, "description": true, "inputs": true, "overridable": true}
+var closedTopKeys = map[string]bool{"id": true, "description": true, "inputs": true, "overridable": true, "facts": true}
 
 // openStepKeys はステップで上書きできるキーと、それを持てるステップの種類（§5.1）。
 var openStepKeys = map[string][]string{

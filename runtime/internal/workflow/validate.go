@@ -81,6 +81,7 @@ func validate(wf *Workflow, opts Options, overridden bool, skipped []string) Pro
 		v.errf(wf.Steps[0].Line, "steps.%s: the first step must not be a gate (a gate is opened by a transition into it)", wf.Steps[0].ID)
 	}
 	v.budget()
+	v.factDecls()
 	for _, s := range wf.Steps {
 		v.onTable(s)
 	}
@@ -114,6 +115,33 @@ func (v *validator) stepKind(s *Step) {
 		v.gate(s)
 	case "workspace", "pull-request":
 		v.builtinKind(s)
+	}
+}
+
+// factDecls は最上位の facts の参照を検査する: 段が在ること、その欄が段の出力スキーマにある文字列であること。
+// 値は「並べた段のうち最後に成功し、その欄を返した段」なので、段が必ず通る経路上に在る必要は無い（検査しない）。
+func (v *validator) factDecls() {
+	for _, d := range v.wf.Facts {
+		for _, r := range d.Refs {
+			what := fmt.Sprintf("facts.%s: %s", d.Name, r.Raw)
+			src := v.wf.Step(r.Step)
+			if src == nil {
+				v.errf(d.Line, "%s refers to a step that does not exist", what)
+				continue
+			}
+			if src.OutputSchema == nil {
+				v.errf(d.Line, "%s: step %q has no output schema", what, src.ID)
+				continue
+			}
+			t, err := src.OutputSchema.FieldType(r.Path)
+			if err != nil {
+				v.errf(d.Line, "%s: %v", what, err)
+				continue
+			}
+			if t == nil || t.Name != "string" {
+				v.errf(d.Line, "%s is %s; a fact value must be a string field", what, t)
+			}
+		}
 	}
 }
 

@@ -6,7 +6,8 @@
   "properties": {
     "outcome": { "type": "string", "enum": ["pushed", "no_change", "needs_human"] },
     "summary": { "type": "string" },
-    "human_question": { "type": "string" }
+    "human_question": { "type": "string" },
+    "self_review": { "type": "string", "enum": ["complete", "incomplete", "not_run"] }
   },
   "additionalProperties": false
 }
