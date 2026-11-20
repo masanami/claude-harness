@@ -1053,13 +1053,16 @@ steps:
   | 段 | 変えること |
   | --- | --- |
   | `implement` | 変えない（欄は必須。#381 の `self-review-route` もそのまま） |
-  | `fix` | `schemas/fix-result.json` に `self_review` を任意の欄として足す。指示文に「直して `/quality-check` を通した後、直した差分に `/self-review` を実行し、実行したら `self_review` を返す。`outcome: pass` で返すときは、必ず実行して返す」を足す |
+  | `fix` | `schemas/fix-result.json` に `self_review` を任意の欄として足す。指示文に「直して `/quality-check` を通した後、直した差分に `/self-review` を実行し、実行したら `self_review` を返す。`outcome: pass` で返すときは、必ず実行して返す」と、「`outcome: pass` 以外（`failure`・`deviation`）で、中身を変えたのに実行していない（できなかった）なら `self_review: not_run` を返す（前の値が残って見えるのを防ぐ）」を足す |
   | `respond` | `schemas/respond-result.json` に `self_review` を任意の欄として足す。指示文に下の決まりを足す |
 
 - **スキーマでは、どちらも任意の欄にする**（`outcome` による条件つきの必須を使わない。`fix` も同じ形に合わせる）。「返さなければ前の値のまま」は、上の畳み込み（欄を返した段だけが値を置き換える）で扱う。実行したのに返さない、を防ぐのは指示文で、返さなければ前の値が残り、flywheel の `required_facts` が拾う。
 - **`respond` の指示文に足す決まり**:
-  - `/pr-review-respond` を終えた後、この段で変えた分（この段で足したコミットと、未コミットの変更）に `/self-review` を実行し、指摘を直したらコミットする（push は後ろの `publish`）。
-  - **`/self-review` を実行したら、push の有無に関わらず `self_review` を返す**（`no_change`・`needs_human` でも返す）。実行していなければ返さない。
+  - `/pr-review-respond` を終えた後、この段で変えた分（この段で足したコミットと、未コミットの変更）に `/self-review` を実行し、指摘を直したらコミットする。**この段は push しない**。push するのは、`pushed` の後に runtime が進める `quality` → `publish` の `publish` である（`pushed` は「PR に載せるコミットを足した」の意味）。
+  - **この段でコミットを 1 つでも足したら（`/pr-review-respond` の修正でも、`/self-review` の指摘の修正でも）、`outcome` は必ず `pushed`**。`no_change` は、この段でコミットを 1 つも足していないときだけ。手元にだけ在る（PR に無い）コミットを、`no_change`・`needs_human` の道に残さない（次の `land-sync` が `local_head_mismatch` で失敗するのと、`facts.self_review` が PR に無い中身についての値になるのを防ぐ）。
+  - **`needs_human`（人の判断待ち）を返すときは、`/self-review` の指摘を直すコミットを足さない**。
+  - **`/self-review` を実行したら、`outcome` に関わらず `self_review` を返す**（`no_change`・`needs_human` でも返す）。`pushed` で返すときは、この段で変えた分に実行して必ず返す（実行できなかったら `not_run`）。
+  - **この段で中身を変えたのに、`/self-review` を実行しなかった・終えられなかったときは、`self_review: not_run` を返す**（前の段の `complete` が残り、変えた後の中身についての値に見えるのを防ぐ）。中身を変えず、添え書きも自己レビューを求めていなければ、実行せず返さない。
   - **添え書き（`inputs.note`）が「自己レビューの実行」だけを求めていて、実行した結果、直すものが無かったときは、`no_change` を返してよい**（`self_review` を添える）。いまの決まり「添え書きが空でなければ `no_change` にしない」の例外にする。flywheel が `required_facts` を満たさないレビュー待ちを差し戻す添え書きは、この形（満たしていない名前と値の一覧）で、直すものが無いときに `needs_human`（端末が要る待ち）へ落とさないためである。直すものがあれば、直して `pushed`。
   - この段で変えた分が無く、添え書きも自己レビューを求めていなければ、`/self-review` を実行しない（値は前のまま）。
 - `/pr-review-respond` のスキルは変えない。スキルの「`/self-review` を実行しない」は、スキルの中から 1 件ずつ呼ぶ修正の委譲（再入の回避）の決まりで、スキルを終えた後に段が `/self-review` を呼ぶことは妨げない（`plugin/skills/pr-review-respond/SKILL.md`。実コード確証・high）。
@@ -1231,7 +1234,8 @@ A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a
 - **契約**（`cli/contract.go`）: `contractDoc` の任意のキー `facts`（空なら省く）。`status --json` の状態の unit の `facts` を unit の順に重ねて写す（段の名前を Go に書かない）。`ticket` は unit が 1 つ。
 - **`fix`・`respond` の `self_review`** は、スキーマでは任意の欄（`complete`・`incomplete`・`not_run`。`""` は誤り）。指示文に、実行したら返す決まりを足した（`respond` は、添え書きが「自己レビューの実行」だけを求めて直すものが無いときの `no_change`〔`self_review` を添える〕を含む）。`/pr-review-respond` のスキルは変えていない。
 - 【要確認】の確かめ: **確かめた** ― `plugin/skills/pr-review-respond/SKILL.md` の「`/self-review` を実行しない」（100・153 行目）は、スキルの中から 1 件ずつ呼ぶ修正の委譲（`feature-implementer` への委譲）の決まりで、スキルを終えた後に段が `/self-review` を呼ぶことは妨げない（読んで確かめた。設計の記述どおり）。ほかに、この PR の範囲で実物（`gh`・`git`）に頼る点は無い（`facts` の畳み込みと契約の出力は、`gh`・`git` を呼ばない）。
-- 試験: `runstate/facts_test.go`（最後にその欄を返した段の値になる・`respond` の `pushed`/`no_change`/`needs_human`・返さなければ前のまま・`fix` も同じ・宣言に無い段〔取り込み〕・予約値・取り消し・宣言の写しが無い run・状態の往復）、`workflow/facts_test.go`（宣言の検査・上書きの拒否・`ticket` の宣言・`fix`/`respond` の出力が `self_review` 無しでも通る）、`cli/ticket_facts_test.go`（レビュー待ちの出力に毎回出る・`respond` の通しの値の変化）、`cli/contract_test.go`（`contractKeys` に `facts` が任意のキーとして入る。宣言の無いワークフローではキーが無い）。
+- **指示文の決まりの追加（#394 の同じ PR での直し）**: `respond` は「コミットを足したら必ず `pushed`」「`needs_human` では `/self-review` の指摘を直すコミットを足さない」「変えたのに実行しなかったら `not_run`」、`fix` は「`pass` 以外でも、変えたのに実行しなかったら `not_run`」を指示文に足した。**これらは LLM への指示で、機械では固定できない**（指示文が守られたかは、段の出力を見ないと分からない）。機械で固定できるのは、後の段が `not_run` を返せば値が `not_run` に置き換わること（畳み込み。`runstate/facts_test.go`）だけである。「push は後ろの `publish`」の言い方は、`ticket.yaml` の `respond.pushed: quality`（→ `publish` → `ci`）の実際の動きにそろえた（動きは変えていない）。
+- 試験: `runstate/facts_test.go`（最後にその欄を返した段の値になる・`respond` の `pushed`/`no_change`/`needs_human`・後の段が `not_run` を返せば `not_run` に置き換わる・返さなければ前のまま・`fix` も同じ・宣言に無い段〔取り込み〕・予約値・取り消し・宣言の写しが無い run・状態の往復）、`workflow/facts_test.go`（宣言の検査・上書きの拒否・`ticket` の宣言・`fix`/`respond` の出力が `self_review` 無しでも通る）、`cli/ticket_facts_test.go`（レビュー待ちの出力に毎回出る・`respond` の通しの値の変化）、`cli/contract_test.go`（`contractKeys` に `facts` が任意のキーとして入る。宣言の無いワークフローではキーが無い）。
 
 **S3-3 の実装の記録（#393）**: この PR で、S3-3 の行の中身が実物になった。実装で、設計の文面から合わせた点・決めたこと（設計の決定は変えていない）:
 
