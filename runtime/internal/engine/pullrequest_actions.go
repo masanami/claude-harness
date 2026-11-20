@@ -242,7 +242,7 @@ func (c *prCtx) sync() result {
 
 	// 7: マージのコミットで取り込む。衝突したら、マージの途中のまま返す。
 	out.HeadBefore, out.BaseSHA = head, baseSHA
-	argv, r = c.git("merge", "--no-ff", "--no-edit", "origin/"+base)
+	argv, r = c.git("merge", "--no-ff", "--no-edit", "-m", "Merge remote-tracking branch 'origin/"+base+"'", baseSHA) // 確かめた SHA を渡す（短い名前 origin/<base> は、同名のタグ・ブランチに解決されうる）
 	if cancelled(r) {
 		return result{cancelled: true}
 	}

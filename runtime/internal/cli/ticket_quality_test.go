@@ -262,7 +262,7 @@ func TestTicketQualityStopsWhenReworkIsExhausted(t *testing.T) {
 	f := newTicketFixture(t)
 	declareQualityGate(t, f.repo, `{"test": "false"}`)
 	for n := 6; n <= 9; n += 2 { // fix と commit の 2 回目・3 回目（1 回目は newTicketFixture の 4・5）
-		respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": ""}, 5.5+float64(n)))
+		respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": "", "self_review": "complete"}, 5.5+float64(n)))
 		respond(t, f.fdir, n+1, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "x", "summary": "committed"}, 6+float64(n)))
 	}
 	out, errOut, code := f.h.run("run", "--input", "issue=42", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "ticket")

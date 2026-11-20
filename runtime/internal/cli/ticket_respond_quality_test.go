@@ -31,7 +31,7 @@ func pushFile(f *ticketFixture, name string) string {
 func respondPushes(t *testing.T, f *ticketFixture, n int, name string) {
 	t.Helper()
 	runStep(t, f, n, pushFile(f, name))
-	respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pushed", "summary": "addressed the review", "human_question": ""}, 9))
+	respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pushed", "summary": "addressed the review", "human_question": "", "self_review": "not_run"}, 9))
 }
 
 // runToReview は CI が 1 回で green になる run をレビュー待ちまで進め、run id を返す。
@@ -116,7 +116,7 @@ func TestTicketRespondQualityFailGoesToFixAndSharesRework(t *testing.T) {
 	declareQualityGate(t, f.repo, `{"test": "make gate"}`)
 	respondPushes(t, f, 6, "broken.txt")
 	runStep(t, f, 7, "git rm -q broken.txt\ngit commit -q -m 'fix: remove'")
-	respond(t, f.fdir, 7, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": ""}, 10))
+	respond(t, f.fdir, 7, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": "", "self_review": "complete"}, 10))
 	respond(t, f.fdir, 8, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "ghi", "summary": "committed"}, 11))
 	id := runToReview(t, f)
 

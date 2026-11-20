@@ -314,8 +314,23 @@ func TestSyncCurrentAndSynced(t *testing.T) {
 			t.Errorf("sync ran git with %q:\n%s", banned, calls)
 		}
 	}
-	if !strings.Contains(calls, "merge --no-ff --no-edit origin/main") {
-		t.Errorf("git calls lack the merge:\n%s", calls)
+	if !strings.Contains(calls, "merge --no-ff --no-edit -m Merge remote-tracking branch 'origin/main' "+base) {
+		t.Errorf("git calls lack the merge of the verified SHA:\n%s", calls)
+	}
+}
+
+// 取り込むのは確かめた refs/remotes/origin/<base> のコミット。同じ短い名前（origin/<base>）のタグが別のコミットを指していても、そちらを取り込まない。
+func TestSyncMergesTheVerifiedRemoteRefEvenIfATagHasTheShortName(t *testing.T) {
+	p := newPREnv(t)
+	base := p.advanceBase("other.txt", "x\n")
+	rgit(t, p.repo, "tag", "origin/main", p.head) // 短い名前 origin/main は、タグを先に見る
+	st, _ := p.sync(map[string]any{})
+	if st.Reason != "synced" {
+		t.Fatalf("reason %s", st.Reason)
+	}
+	parents := strings.Fields(rgit(t, p.repo, "rev-list", "--parents", "-n", "1", "HEAD"))
+	if len(parents) != 3 || parents[2] != base {
+		t.Fatalf("parents %v, want the second parent to be the remote-tracking commit %s", parents, base)
 	}
 }
 

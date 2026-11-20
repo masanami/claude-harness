@@ -514,8 +514,19 @@ func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 		kind = actionReview
 	}
 	return &requestedAction{Kind: kind, Decider: decider, Options: options(w.Inputs), Text: fmt.Sprintf(
-		"%s [%s; choices: %s]. Answer with: harness contract resume %s --unit %s --input <%s> [--note <text>]",
-		lead, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
+		"%s [%s; choices: %s]. Answer with: harness contract resume %s --unit %s --input <%s> [--note <text>]%s",
+		lead, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"), landNote(w.Inputs))}
+}
+
+// landNote は、選択肢に land があるときの添え書き。land は人のマージを通らずに宛先へ入れる道で、承認を持つ呼び出し元だけが、承認した
+// 先頭のコミットを --approved-ref に付けて使う（付けなければ engine が断る）。承認を持たない呼び出し元は渡さない。
+func landNote(inputs []string) string {
+	for _, in := range inputs {
+		if in == "land" {
+			return ". land enters the destination without a person's merge: only a caller that holds the approval passes it, with --approved-ref <the approved leading commit of the PR>"
+		}
+	}
+	return ""
 }
 
 // options は requested_action.options の値: ゲートの inputs（text の choices と --input の照合に使う一覧）の写し。

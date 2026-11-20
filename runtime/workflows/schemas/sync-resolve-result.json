@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "ticket ワークフローの sync-resolve・land-sync-resolve（取り込みの衝突の解消）の型付き出力",
+  "description": "ticket・reflect ワークフローの sync-resolve・land-sync-resolve（取り込みの衝突の解消）の型付き出力",
   "type": "object",
   "required": ["outcome", "summary"],
   "properties": {

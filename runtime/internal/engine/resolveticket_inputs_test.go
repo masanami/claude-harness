@@ -30,7 +30,7 @@ func resolveWith(t *testing.T, tl *tools, issueBody string, args ...string) (res
 	issue, _ := json.Marshal(map[string]any{"number": 42, "title": "Add the widget", "body": issueBody, "state": "OPEN"})
 	tl.write(tl.gh, "issue.json", string(issue))
 	cmd := exec.Command("bash", append([]string{filepath.Join("..", "..", "workflows", "scripts", "resolve-ticket.sh")}, args...)...)
-	cmd.Env = append(os.Environ(), "PATH="+fakeBin(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(os.Environ(), "TMPDIR="+t.TempDir(), "PATH="+fakeBin(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -126,9 +126,19 @@ func TestResolveTicketTaskFileOnly(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if r.Outcome != "ok" || r.Issue != 0 || r.Key != "task-5" || r.TaskFile != taskFile || r.TaskDir != dir || r.Base != "main" || r.BaseKind != "default" ||
+	if r.Outcome != "ok" || r.Issue != 0 || r.Key != "task-5" || r.Base != "main" || r.BaseKind != "default" ||
 		r.Closes == nil || *r.Closes != 0 || len(r.Refs) != 0 {
 		t.Fatalf("got %+v", r)
+	}
+	// 文面のファイルは、そのファイルだけが在る新しい置き場へ写される。task_file は写しのパス、task_dir は置き場（元の親ディレクトリではない）
+	if r.TaskDir == dir || filepath.Dir(r.TaskFile) != r.TaskDir || r.TaskFile == taskFile {
+		t.Errorf("task_file %q task_dir %q: want a copy in a dedicated directory, not the parent %q of the original", r.TaskFile, r.TaskDir, dir)
+	}
+	if b, err := os.ReadFile(r.TaskFile); err != nil || string(b) != "Base: feat/ignored\n" {
+		t.Errorf("the copy = %q (%v)", b, err)
+	}
+	if entries, err := os.ReadDir(r.TaskDir); err != nil || len(entries) != 1 {
+		t.Errorf("the dedicated directory holds %v (%v), want only the copy", entries, err)
 	}
 	if strings.Contains(tl.read(tl.gh, "calls"), "issue\tview") {
 		t.Errorf("read an issue that was not given: %s", tl.read(tl.gh, "calls"))

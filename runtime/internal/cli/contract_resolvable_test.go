@@ -139,3 +139,20 @@ func TestPickActionKeepsResolvableBy(t *testing.T) {
 		}
 	}
 }
+
+// 選択肢に land があるゲートの requested_action.text は、land には承認した先頭のコミット（--approved-ref）が要ること、承認を持つ呼び出し元
+// だけが使うことを機械で出す。land を持たないゲートの text には添えない。
+func TestContractRequestedActionTextExplainsLandNeedsAnApprovedRef(t *testing.T) {
+	st := &runstate.State{RunID: "R-1", Workflow: runstate.WorkflowRef{ID: "ticket"}, Status: runstate.StatusWaiting}
+	text := func(inputs ...string) string {
+		w := waitingView{Unit: "main", Gate: "review", Type: "input", Decider: "any", RequestedAction: "wait", Inputs: inputs, ContractKind: "review"}
+		d := contractFromView(statusView{State: st, Waiting: []waitingView{w}}, "", accepted{review: true})
+		return d.RequestedAction.Text
+	}
+	if got := text("respond", "ready", "land"); !strings.Contains(got, "--approved-ref <the approved leading commit of the PR>") || !strings.Contains(got, "only a caller that holds the approval") {
+		t.Errorf("text with land = %q", got)
+	}
+	if got := text("respond", "ready"); strings.Contains(got, "approved-ref") {
+		t.Errorf("text without land mentions --approved-ref: %q", got)
+	}
+}

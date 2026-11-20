@@ -3,7 +3,7 @@
 #   calls: 受け取った argv（1 呼び出し 1 行。引数は TAB 区切り）
 #   issue view            → issue.json（無ければ exit 1）
 #   repo view             → default-branch（無ければ main）。--json に nameWithOwner があれば（reflect の adopt）、repo-view.json の中身
-#                           （無ければ o/r と default-branch から作る）
+#                           （無ければ o/r・https://github.com/o/r・default-branch から作る）
 #   pr view <url> --json ...isCrossRepository...（reflect の adopt） → adopt.json の中身（無ければ exit 1）
 #   pr list               → pr-list（無ければ []）
 #   pr create             → create.code があればその終了コードで失敗。--body-file の中身を body.<n>.md に写し、PR の URL を出す。
@@ -28,7 +28,7 @@ case "$1 ${2:-}" in
     case "$*" in
       *nameWithOwner*)
         if [ -f "$dir/repo-view.json" ]; then cat "$dir/repo-view.json"; else
-          printf '{"nameWithOwner":"o/r","defaultBranchRef":{"name":"%s"}}\n' "$(cat "$dir/default-branch" 2>/dev/null || echo main)"
+          printf '{"nameWithOwner":"o/r","url":"https://github.com/o/r","defaultBranchRef":{"name":"%s"}}\n' "$(cat "$dir/default-branch" 2>/dev/null || echo main)"
         fi ;;
       *) cat "$dir/default-branch" 2>/dev/null || echo main ;;
     esac ;;

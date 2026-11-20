@@ -120,7 +120,7 @@ func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
 	respond(t, fdir, 2, 0, claudeStructured(map[string]any{"outcome": "pass", "self_review": "complete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
 		"behaviors": behaviors, "residual_findings": findings, "unverified": []string{}, "cross_repo_attestation": "", "deviation_report": ""}, 4.0))
 	respond(t, fdir, 3, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "abc", "summary": "committed"}, 4.5))
-	respond(t, fdir, 4, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed the failing test", "deviation_report": ""}, 5.25))
+	respond(t, fdir, 4, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed the failing test", "deviation_report": "", "self_review": "complete"}, 5.25))
 	respond(t, fdir, 5, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "def", "summary": "committed"}, 5.5))
 
 	state, data := t.TempDir(), t.TempDir()
@@ -146,7 +146,7 @@ func (f *ticketFixture) respondRest(n int) {
 	respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pass", "self_review": "complete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
 		"behaviors": []map[string]string{}, "residual_findings": []map[string]string{}, "unverified": []string{}, "cross_repo_attestation": "", "deviation_report": ""}, 4.0))
 	respond(t, f.fdir, n+1, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "abc", "summary": "committed"}, 4.5))
-	respond(t, f.fdir, n+2, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": ""}, 5.25))
+	respond(t, f.fdir, n+2, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": "", "self_review": "complete"}, 5.25))
 	respond(t, f.fdir, n+3, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "def", "summary": "committed"}, 5.5))
 }
 

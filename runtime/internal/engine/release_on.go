@@ -67,7 +67,7 @@ func AppendEnding(run *runstate.Run, build func(*runstate.State) ([]runstate.Eve
 		if err != nil || len(evs) == 0 {
 			return nil, err
 		}
-		if k := endKind(evs[len(evs)-1]); k != "" && wantsRelease(cur, k) {
+		if k := endKind(evs[len(evs)-1]); k != "" && wantsRelease(stateBeforeEnd(run, cur, evs[:len(evs)-1]), k) {
 			last := evs[len(evs)-1]
 			end, evs = &last, evs[:len(evs)-1]
 		}
@@ -83,6 +83,30 @@ func AppendEnding(run *runstate.Run, build func(*runstate.State) ([]runstate.Eve
 		}
 		return []runstate.Event{*end}, nil
 	})
+}
+
+// stateBeforeEnd は、終わりの手前までのイベント（before）を cur に当てた後の状態を返す（cur は変えない）。片付けるものがあるかは、
+// この状態で判定する（interrupted のゲートの abort のように、unit を失敗にするイベントと終わりが一緒に返る道があるため）。
+// 当てられなければ cur を返す。
+func stateBeforeEnd(run *runstate.Run, cur *runstate.State, before []runstate.Event) *runstate.State {
+	if len(before) == 0 {
+		return cur
+	}
+	st, _, err := run.Load() // AppendIf のロックの中。cur と同じ内容の、当てても構わない写し
+	if err != nil {
+		return cur
+	}
+	for i := range before {
+		ev := before[i]
+		ev.Seq = st.LastSeq + 1
+		ev.TS = st.UpdatedAt
+		next, err := runstate.Apply(st, &ev)
+		if err != nil {
+			return cur
+		}
+		st = next
+	}
+	return st
 }
 
 // releaseAtEnd は、st の unit が持つ、この run が作った作業ツリーを worktree-cleanup.sh --force で消し、released を記録する。

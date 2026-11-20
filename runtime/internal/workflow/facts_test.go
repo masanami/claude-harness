@@ -76,8 +76,8 @@ func TestTicketDeclaresSelfReviewFact(t *testing.T) {
 	}
 }
 
-// self_review の無い fix・respond の出力もスキーマを通る（欄は任意）。ある出力は enum の値だけを通す。
-func TestFixAndRespondOutputsAcceptOptionalSelfReview(t *testing.T) {
+// self_review は fix・respond の出力の必須の欄（#403）。無い出力はスキーマが拒み、ある出力は enum の値だけを通す。
+func TestFixAndRespondOutputsRequireSelfReview(t *testing.T) {
 	wf, err := loadTicket(t)
 	if err != nil {
 		t.Fatal(err)
@@ -85,18 +85,23 @@ func TestFixAndRespondOutputsAcceptOptionalSelfReview(t *testing.T) {
 	for _, c := range []struct {
 		step string
 		ok   []map[string]any
-		bad  map[string]any
+		bad  []map[string]any
 	}{
 		{"fix", []map[string]any{
-			{"outcome": "pass", "summary": "s", "deviation_report": ""},
 			{"outcome": "pass", "summary": "s", "deviation_report": "", "self_review": "complete"},
 			{"outcome": "failure", "summary": "s", "deviation_report": "", "self_review": "not_run"},
-		}, map[string]any{"outcome": "pass", "summary": "s", "deviation_report": "", "self_review": "done"}},
+		}, []map[string]any{
+			{"outcome": "pass", "summary": "s", "deviation_report": ""},
+			{"outcome": "pass", "summary": "s", "deviation_report": "", "self_review": "done"},
+		}},
 		{"respond", []map[string]any{
-			{"outcome": "pushed", "summary": "s", "human_question": ""},
+			{"outcome": "pushed", "summary": "s", "human_question": "", "self_review": "not_run"},
 			{"outcome": "no_change", "summary": "s", "human_question": "", "self_review": "incomplete"},
 			{"outcome": "needs_human", "summary": "s", "human_question": "q", "self_review": "complete"},
-		}, map[string]any{"outcome": "pushed", "summary": "s", "human_question": "", "self_review": ""}},
+		}, []map[string]any{
+			{"outcome": "pushed", "summary": "s", "human_question": ""},
+			{"outcome": "pushed", "summary": "s", "human_question": "", "self_review": ""},
+		}},
 	} {
 		sch := wf.Step(c.step).OutputSchema
 		for _, v := range c.ok {
@@ -104,8 +109,10 @@ func TestFixAndRespondOutputsAcceptOptionalSelfReview(t *testing.T) {
 				t.Errorf("%s %v: %v", c.step, v, err)
 			}
 		}
-		if err := sch.Validate(c.bad); err == nil {
-			t.Errorf("%s %v: accepted", c.step, c.bad)
+		for _, v := range c.bad {
+			if err := sch.Validate(v); err == nil {
+				t.Errorf("%s %v: accepted", c.step, v)
+			}
 		}
 	}
 }
