@@ -156,6 +156,7 @@ func resolve(t *testing.T, e *Engine, req Resolution) (*runstate.State, error) {
 		t.Fatal(err)
 	}
 	e2.ClaudeBin, e2.KillGrace, e2.PollInterval = e.ClaudeBin, e.KillGrace, e.PollInterval
+	e2.GitBin, e2.GhBin, e2.ScriptsDir = e.GitBin, e.GhBin, e.ScriptsDir
 	if req.Actor == "" {
 		req.Actor = "resume"
 	}

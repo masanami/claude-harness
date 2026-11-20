@@ -78,7 +78,7 @@ var kinds = map[string]kindSpec{
 	"select": {keys: []string{"kind", "description", "value", "on"}},
 	// workspace と pull-request は出力の形を Go が決める（output を書かせない。builtin.go）。
 	"workspace":    {keys: []string{"kind", "description", "action", "with", "on"}},
-	"pull-request": {keys: []string{"kind", "description", "with", "on"}},
+	"pull-request": {keys: []string{"kind", "description", "action", "with", "on"}},
 }
 
 // Kinds は登録済みの種類名を返す。

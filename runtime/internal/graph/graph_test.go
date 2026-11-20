@@ -57,8 +57,8 @@ func edgesFrom(g *Graph, from, outcome string) []Edge {
 // ticket.yaml の 21 ステップが定義の順に並び、終端はその後に初出の順で、同じ理由の終端は 1 つにまとまる（§3.2）。
 func TestTicketNodes(t *testing.T) {
 	g := Build(load(t, repoWorkflows, repoScripts, "ticket"), SourceWorkflowDir, "1.2.3")
-	wantSteps := []string{"resolve", "analyze", "workspace", "implement", "self-review-route", "fix", "commit", "e2e-route", "e2e", "quality", "publish", "ci",
-		"ci-pending", "review", "respond", "review-human", "merge-route", "merge", "human-merge", "design-deviation", "cleanup"}
+	wantSteps := []string{"resolve", "analyze", "workspace", "implement", "self-review-route", "fix", "commit", "sync", "sync-resolve", "e2e-route", "e2e", "quality", "publish", "ci",
+		"ci-pending", "review", "land", "land-sync", "land-sync-resolve", "land-push", "respond", "review-human", "merge-route", "merge", "human-merge", "design-deviation", "cleanup"}
 	var steps, terms []string
 	for _, n := range g.Nodes {
 		if n.Terminal() {
@@ -77,8 +77,9 @@ func TestTicketNodes(t *testing.T) {
 		t.Fatalf("entry = %q", g.Entry)
 	}
 	wantTerms := []string{"fail:base_missing", "fail:links_invalid", "fail:input_invalid", "fail:integration_unsupported", "fail:worktree_conflict", "fail:quality_gate",
-		"fail:self_review_incomplete", "fail:commit", "fail:e2e", "fail:quality_gate_red", "fail:quality_gate_undeclared", "fail:ci_red", "fail:ci_timeout", "fail:aborted_by_human",
-		"fail:pr_closed", "done:merged", "done:merged_worktree_dirty"}
+		"fail:self_review_incomplete", "fail:commit", "fail:sync_conflict", "fail:sync_not_merge_only", "fail:branch_diverged", "fail:local_head_mismatch", "fail:remote_unavailable",
+		"fail:e2e", "fail:quality_gate_red", "fail:quality_gate_undeclared", "fail:ci_red", "fail:ci_timeout", "fail:pr_closed", "fail:merged_unapproved", "fail:pr_base_changed",
+		"fail:merge_not_confirmed", "fail:push_rejected", "fail:push_failed", "fail:aborted_by_human", "done:merged", "done:merged_worktree_dirty"}
 	if !reflect.DeepEqual(terms, wantTerms) {
 		t.Fatalf("terminals = %v", terms)
 	}
@@ -93,9 +94,10 @@ func TestTicketNodes(t *testing.T) {
 	}
 	// 設計文書 §12 の数: 53 本（尽きたときの辺 3 本を含む）に、quality（#326）の 4 本（pass・fail・fail が尽きたとき・undeclared）と、
 	// ci の skipped（#363。CI の運用の宣言が after-merge で CI を待たなかった）の 1 本と、self-review-route（#381）の 5 本
-	// （complete・incomplete と not_run の implement へ戻る辺 2 本と、それぞれが尽きたときの辺 2 本）と、resolve の input_invalid・integration_unsupported（#391）の 2 本を足した 65 本。
-	if len(g.Edges) != 65 {
-		t.Fatalf("edges = %d, want 65", len(g.Edges))
+	// （complete・incomplete と not_run の implement へ戻る辺 2 本と、それぞれが尽きたときの辺 2 本）と、resolve の input_invalid・integration_unsupported（#391）の 2 本を足した 65 本に、
+	// 取り込みと land（#388 の S3-3）の 35 本（sync 9・sync-resolve 2・review.land 1・land 8・land-sync 9・land-sync-resolve 2・land-push 4。commit の遷移先の付け替えは数えない）を足した 100 本。
+	if len(g.Edges) != 100 {
+		t.Fatalf("edges = %d, want 100", len(g.Edges))
 	}
 	if n := node(t, g, "implement"); n.Kind != "llm" || n.Agent != "claude-harness:feature-implementer" || n.BudgetUSD != 15 ||
 		FormatDuration(n.Timeout) != "90m" {
@@ -232,7 +234,7 @@ func TestJSONShape(t *testing.T) {
 			t.Fatalf("workflow.%s = %#v, want []", k, w[k])
 		}
 	}
-	if !reflect.DeepEqual(doc["limits"], []any{map[string]any{"name": "budget_usd", "value": 40.0}, map[string]any{"name": "rework", "value": 3.0}, map[string]any{"name": "self_review", "value": 1.0}}) {
+	if !reflect.DeepEqual(doc["limits"], []any{map[string]any{"name": "budget_usd", "value": 40.0}, map[string]any{"name": "rework", "value": 3.0}, map[string]any{"name": "self_review", "value": 1.0}, map[string]any{"name": "sync_resolve", "value": 3.0}}) {
 		t.Fatalf("limits = %v", doc["limits"])
 	}
 	if !reflect.DeepEqual(doc["builtin_gates"], []any{map[string]any{"id": "interrupted", "type": "input", "decider": "any",
@@ -262,7 +264,7 @@ func TestJSONShape(t *testing.T) {
 		}
 		if m["id"] == "review" {
 			gt := m["gate"].(map[string]any)
-			if gt["observe"] != nil || gt["requires_tty"] != false || !reflect.DeepEqual(gt["inputs"], []any{"respond", "ready"}) {
+			if gt["observe"] != nil || gt["requires_tty"] != false || !reflect.DeepEqual(gt["inputs"], []any{"respond", "ready", "land"}) {
 				t.Errorf("review gate = %v", gt)
 			}
 		}
@@ -296,5 +298,48 @@ func TestFormatDuration(t *testing.T) {
 		if got := FormatDuration(d); got != want {
 			t.Errorf("FormatDuration(%s) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// land（宛先へ入れる段）の後は、入れ終えるか、レビュー待ち（review）へ戻るまで、ほかの待ちへ移らない（#388 の契約）。
+// land から出る道を、review に着いたところで止めて辿り、着ける待ち（ゲート）が review だけであること。ほかの待ち（人のゲート・
+// ci-pending・human-merge など）へ着く道があれば、入れた後の run が flywheel の見えない所で止まる。
+func TestNothingWaitsAfterLandExceptTheReviewGate(t *testing.T) {
+	g := Build(load(t, repoWorkflows, repoScripts, "ticket"), SourceWorkflowDir, "1.2.3")
+	gates := map[string]bool{}
+	for _, n := range g.Nodes {
+		if n.Gate != nil {
+			gates[n.ID] = true
+		}
+	}
+	seen := map[string]bool{"land": true}
+	reachedGates := map[string]bool{}
+	queue := []string{"land"}
+	for len(queue) > 0 {
+		from := queue[0]
+		queue = queue[1:]
+		for _, e := range g.Edges {
+			if e.From != from || seen[e.To] {
+				continue
+			}
+			seen[e.To] = true
+			if gates[e.To] {
+				reachedGates[e.To] = true
+				continue // 待ちに着いたところで止める（その先は、待ちの解決で別のラウンドが始まる）
+			}
+			queue = append(queue, e.To)
+		}
+	}
+	if len(reachedGates) != 1 || !reachedGates["review"] {
+		t.Fatalf("the waits reachable from land = %v, want only review", reachedGates)
+	}
+	// 入れた後の道: land が入れ終えれば片付け（cleanup）へ。取り込む道（land-sync・land-push）はレビュー待ちへ戻る。
+	for _, id := range []string{"cleanup", "land-sync", "land-sync-resolve", "land-push"} {
+		if !seen[id] {
+			t.Errorf("step %s is not reachable from land", id)
+		}
+	}
+	if seen["merge"] || seen["human-merge"] || seen["respond"] {
+		t.Errorf("land must not lead to the ready path or to a respond round: %v", seen)
 	}
 }

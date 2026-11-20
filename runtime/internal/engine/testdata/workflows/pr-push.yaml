@@ -1,0 +1,16 @@
+# pull-request 種類の action: push（§5.6.2）。結果の outcome ごとに別の理由で終える。
+schema: harness.workflow/v1
+id: pr-push
+inputs:
+  pr:   { type: integer, required: true }
+  base: { type: string, required: true }
+steps:
+  push:
+    kind: pull-request
+    action: push
+    with: { pr: $inputs.pr, base: $inputs.base }
+    on:
+      pushed: { done: pushed }
+      unchanged: { done: unchanged }
+      rejected: { fail: rejected }
+      unavailable: { fail: unavailable }

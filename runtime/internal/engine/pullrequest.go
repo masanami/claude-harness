@@ -40,12 +40,24 @@ func (e *Engine) executePullRequest(ctx context.Context, st *runstate.State, u *
 	if err != nil {
 		return stepError("cannot resolve with: %v", err)
 	}
+	dir := e.dirFor(u)
+	if action := workflow.PRAction(step); action != workflow.PRActionPublish {
+		c := &prCtx{e: e, ctx: ctx, u: u, step: step, tools: tools, with: with, dir: dir}
+		switch action {
+		case workflow.PRActionSync:
+			return c.sync()
+		case workflow.PRActionPush:
+			return c.push()
+		case workflow.PRActionLand:
+			return c.land()
+		}
+		return stepError("pull-request action %q is not supported", action)
+	}
 	in, err := prInputFrom(with)
 	if err != nil {
 		return stepError("%v", err)
 	}
 	in.RunID = st.RunID
-	dir := e.dirFor(u)
 	git := func(args ...string) ([]string, toolResult) {
 		argv := append([]string{e.gitBin()}, args...)
 		return argv, tools.run(dir, argv...)

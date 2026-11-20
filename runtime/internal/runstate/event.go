@@ -286,4 +286,9 @@ type WorkspaceEvent struct {
 	PRNumber int    `json:"pr_number,omitempty"`
 	PRURL    string `json:"pr_url,omitempty"`
 	HeadSHA  string `json:"head_sha,omitempty"`
+	// HeadOnly は pr の HeadSHA を PR のいまの先頭（Workspace.HeadSHA）にだけ記録し、ラウンドごとの記録（head_sha_by_round）へ
+	// 書かない（push・land が書くとき。ラウンドごとの記録は publish だけが書く。§5.6.2）。
+	HeadOnly bool `json:"head_only,omitempty"`
+	// MergeCommit は land が PR を宛先へ入れた後のコミット（mergeCommit.oid）。
+	MergeCommit string `json:"merge_commit,omitempty"`
 }

@@ -1,6 +1,7 @@
 # $gate.approved_ref・gate への遷移の detail・goto の interrupted を確かめる。
 # review の land は通した中身（--approved-ref）を land へ渡し、interrupted の印を付ける。respond は印の無い遷移で、何も渡さない。
-# back は detail（$steps.back.detail）を添えて review へ戻る。
+# 通した中身を受けられるのは pull-request の action: land の段だけ（規則 7）。偽の gh（FAKE_GH_DIR）では先頭が一致せず、land はどの結果でも
+# back へ進む（detail に、受け取った通した中身が入る）。back は detail（$steps.back.detail）を添えて review へ戻る。
 schema: harness.workflow/v1
 id: gate-ref
 inputs:
@@ -21,16 +22,22 @@ steps:
     requested_action: land (with the approved ref), respond or stop
     inputs: [land, respond, stop]
     on:
-      land: { goto: land, with: { ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }
+      land: { goto: land, with: { approved_ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }
       respond: { goto: back-plain }
       stop: { done: stopped }
   land:
-    kind: command
-    run: recorder
-    with: { log: $inputs.log, ref: $edge.ref }
-    output: schemas/pass.json
+    kind: pull-request
+    action: land
+    with: { pr: 7, base: main, approved_ref: $edge.approved_ref }
     on:
-      pass: back
+      landed: back
+      behind: back
+      mismatch: back
+      blocked: back
+      closed: back
+      merged_other: back
+      base_changed: back
+      not_confirmed: back
   back:
     kind: command
     run: emit

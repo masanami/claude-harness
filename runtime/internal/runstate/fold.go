@@ -85,6 +85,10 @@ type Workspace struct {
 	PRNumber     int               `json:"pr_number,omitempty"`
 	PRURL        string            `json:"pr_url,omitempty"`
 	HeadSHAs     map[string]string `json:"head_sha_by_round,omitempty"`
+	// HeadSHA は PR のいまの先頭（publish・push・land が書く）。MergeCommit は宛先へ入れた後のコミット（land が書く）。
+	// どちらも、この版より前に始めた run の記録には無い（その場合、読む側は head_sha_by_round の最新を使う）。
+	HeadSHA     string `json:"head_sha,omitempty"`
+	MergeCommit string `json:"merge_commit,omitempty"`
 }
 
 // ActiveWorkspace は、acquire 済みでまだ release していない作業ツリーのパス（無ければ空）。
@@ -614,6 +618,7 @@ func applyWorkspace(u *Unit, p *WorkspaceEvent, seq int) error {
 		if prev != nil && prev.WorktreePath == p.WorktreePath {
 			// 同じ作業ツリーを取り直した（interrupted からのやり直し等）: PR の記録は持ち越す。
 			u.Workspace.PRNumber, u.Workspace.PRURL, u.Workspace.HeadSHAs = prev.PRNumber, prev.PRURL, prev.HeadSHAs
+			u.Workspace.HeadSHA, u.Workspace.MergeCommit = prev.HeadSHA, prev.MergeCommit
 		}
 	case WorkspaceReleased:
 		if u.Workspace == nil {
@@ -631,15 +636,24 @@ func applyWorkspace(u *Unit, p *WorkspaceEvent, seq int) error {
 			// 作業ツリーを払い出さないワークフロー（呼び出し元の作業ツリーで動く）でも PR は記録する。
 			u.Workspace = &Workspace{}
 		}
-		u.Workspace.PRNumber, u.Workspace.PRURL = p.PRNumber, p.PRURL
+		u.Workspace.PRNumber = p.PRNumber
+		if p.PRURL != "" {
+			u.Workspace.PRURL = p.PRURL
+		}
 		if p.Branch != "" {
 			u.Workspace.Branch = p.Branch
 		}
 		if p.HeadSHA != "" {
-			if u.Workspace.HeadSHAs == nil {
-				u.Workspace.HeadSHAs = map[string]string{}
+			u.Workspace.HeadSHA = p.HeadSHA
+			if !p.HeadOnly {
+				if u.Workspace.HeadSHAs == nil {
+					u.Workspace.HeadSHAs = map[string]string{}
+				}
+				u.Workspace.HeadSHAs[fmt.Sprint(u.CurrentRound().No)] = p.HeadSHA
 			}
-			u.Workspace.HeadSHAs[fmt.Sprint(u.CurrentRound().No)] = p.HeadSHA
+		}
+		if p.MergeCommit != "" {
+			u.Workspace.MergeCommit = p.MergeCommit
 		}
 	default:
 		return fmt.Errorf("workspace action %q (seq %d) is unknown", p.Action, seq)

@@ -24,6 +24,11 @@
 #   - implement の self_review（/self-review を実行したか）が complete でなければ、outcome が pass・skip でも PR へ進めない（#381）。
 #     self-review-route（select）で 1 回だけ implement へ戻して /self-review を実行させ、2 回目も complete でなければ
 #     review_incomplete と同じ self_review_incomplete で止める。回数は goto の limit（limits.self_review）で数える
+#   - commit の後・e2e-route の前に sync（宛先の最新をマージのコミットで取り込む。pull-request の action: sync）を置き、衝突は
+#     sync-resolve（llm）に直させる（#388 の S3-3。最初のレビュー待ちの前に宛先とのずれを解く。rebase・強制 push はしない）
+#   - review の入力に land を足す。land は pull-request の action: land で、通した中身（--approved-ref）と PR の先頭が一致し、宛先の最新を
+#     含むときだけ PR を宛先へ入れる。宛先が動いていれば取り込み・push して review へ戻る（land-sync・land-sync-resolve・land-push）。
+#     land の後は、入れ終えるか review へ戻るまで、ほかの待ちへ移らない（docs/harness-runtime-design.md §5.6.2・overrides §6.2 の規則 7）
 #   - review・review-human の respond を、resume の添え書き（$gate.note）を respond へ渡す goto にし、note: optional を付ける
 #     （#377。添え書きが無ければ空文字を渡し、今と同じく PR のコメントだけを読む。差し戻しの理由を PR へ手で書かずに済む）
 schema: harness.workflow/v1
@@ -41,6 +46,7 @@ limits:
   budget_usd: 40                    # この unit 全ラウンドの累計上限（仮の値。shadow run で較正する。§12）
   rework: 3                         # Phase 4→8 の差し戻し上限（W2・Q8）
   self_review: 1                    # /self-review を実行しなかった implement を戻す上限（#381）
+  sync_resolve: 3                   # 取り込みの衝突を LLM に直させる回数（この unit の累計。sync と land-sync の両方で数える）
 overridable:                        # 上書きで付け替えてよい遷移と候補（docs/harness-runtime-overrides.md §5.2。保守側だけ＝O2 と、quality の省略＝#326）
   routes:
     merge-route.integration: [merge, human-merge]   # 統合ブランチ宛も人のマージにできる
@@ -131,7 +137,31 @@ steps:
     output: schemas/commit-result.json
     budget_usd: 2
     timeout: 30m
-    on: { committed: e2e-route, failure: { fail: commit } }
+    on: { committed: sync, failure: { fail: commit } }
+
+  sync:                                             # #388: 最初のレビュー待ちの前に、宛先の最新をマージのコミットで取り込む（push はしない）
+    kind: pull-request
+    action: sync
+    with: { base: $steps.resolve.base }             # expect_head は渡さない（まだ PR が無く、手元の作業ブランチが正本）
+    on:
+      current: e2e-route
+      synced:  e2e-route
+      conflict: { goto: sync-resolve, limit: sync_resolve, exhausted: { fail: sync_conflict } }
+      unresolved:     { fail: sync_conflict }
+      not_merge_only: { fail: sync_not_merge_only }
+      diverged:       { fail: branch_diverged }
+      head_moved:     { fail: local_head_mismatch } # expect_head を渡さないので、ここでは出ない
+      unavailable:    { fail: remote_unavailable }  # 戻るレビュー待ちがまだ無い
+
+  sync-resolve:
+    kind: llm
+    prompt: prompts/sync-resolve.md
+    session: continue:implement
+    with: { base: $steps.resolve.base }
+    output: schemas/sync-resolve-result.json
+    budget_usd: 4
+    timeout: 30m
+    on: { resolved: sync, failure: { fail: sync_conflict } }
 
   e2e-route:
     kind: select
@@ -208,12 +238,61 @@ steps:
     kind: gate
     type: input
     decider: any
-    requested_action: PR のレビューを待つ。対応が要れば respond、マージしてよければ ready を渡して resume
-    inputs: [respond, ready]
+    requested_action: PR のレビューを待つ。対応が要れば respond。この中身を宛先へ入れてよければ land（--approved-ref に通した先頭のコミット）。呼び出し元の側で反映まで済ませたなら ready を渡して resume
+    inputs: [respond, ready, land]
     contract_kind: review                           # 接続契約で review（レビュー待ち）として見せる（受け付けを宣言した呼び出し元だけ。§5.6.1・#372）
     on:
       respond: { goto: respond, with: { note: $gate.note }, note: optional }   # #377: 添え書き（差し戻しの理由）を respond へ。無ければ空文字
-      ready: merge-route
+      ready: merge-route                            # 変えない（land とは別の道）
+      land: { goto: land, with: { approved_ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }   # 入れ終えるかレビュー待ちへ戻るまで、runner が落ちても別の待ちへ移らない（失敗で終える）
+
+  land:                                             # 先頭の一致と宛先の最新を含むことを確かめ、満たすときだけ入れる（squash。確かめと入れる操作は 1 つの段の中）
+    kind: pull-request
+    action: land
+    with: { pr: $steps.publish.pr_number, base: $steps.resolve.base, approved_ref: $edge.approved_ref }
+    on:
+      landed:   cleanup
+      behind:   land-sync
+      mismatch: { gate: review, detail: $steps.land.detail }
+      blocked:  { gate: review, detail: $steps.land.detail }
+      closed:       { fail: pr_closed }
+      merged_other: { fail: merged_unapproved }
+      base_changed: { fail: pr_base_changed }
+      not_confirmed: { fail: merge_not_confirmed }
+
+  land-sync:                                        # sync と同じ action。land が一致を確かめた PR の先頭（expect_head）から取り込む
+    kind: pull-request
+    action: sync
+    with: { base: $steps.resolve.base, expect_head: $steps.land.head_sha }
+    on:
+      current: land-push
+      synced:  land-push
+      conflict: { goto: land-sync-resolve, limit: sync_resolve, exhausted: { fail: sync_conflict } }
+      unresolved:     { fail: sync_conflict }
+      not_merge_only: { fail: sync_not_merge_only }
+      diverged:       { fail: branch_diverged }
+      head_moved:     { fail: local_head_mismatch }
+      unavailable:    { gate: review, detail: $steps.land-sync.detail }   # 何も変えていないのでレビュー待ちへ戻す
+
+  land-sync-resolve:                                # sync-resolve と同じ指示文。レビュー待ちは長いので session は new
+    kind: llm
+    prompt: prompts/sync-resolve.md
+    session: new
+    with: { base: $steps.resolve.base }
+    output: schemas/sync-resolve-result.json
+    budget_usd: 4
+    timeout: 30m
+    on: { resolved: land-sync, failure: { fail: sync_conflict } }
+
+  land-push:                                        # 取り込んだコミットを push する（強制しない）。宛先へは入れず、新しい先頭を出してレビュー待ちへ戻る
+    kind: pull-request
+    action: push
+    with: { pr: $steps.publish.pr_number, base: $steps.resolve.base }
+    on:
+      pushed:    { gate: review, detail: $steps.land-push.detail }
+      unchanged: { gate: review, detail: $steps.land-push.detail }
+      rejected:    { fail: push_rejected }
+      unavailable: { fail: push_failed }
 
   respond:
     kind: llm

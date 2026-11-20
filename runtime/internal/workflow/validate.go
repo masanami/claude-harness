@@ -97,6 +97,7 @@ func validate(wf *Workflow, opts Options, overridden bool, skipped []string) Pro
 	}
 	g := buildGraph(wf)
 	v.references(g)
+	v.landRules(g)
 	v.sessions(g)
 	v.reachability(g)
 	v.uncountedCycles()
