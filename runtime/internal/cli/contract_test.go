@@ -16,6 +16,9 @@ import (
 // contractKeys は契約 v1 の JSON が持つキー（過不足なし）。
 var contractKeys = "artifacts,contract_version,cost_usd,requested_action,run_id,state,summary"
 
+// contractKeysWithFacts は facts を宣言したワークフローの run が、値を持つときのキー（facts は任意のキー。値が無ければキーごと省く）。
+var contractKeysWithFacts = "artifacts,contract_version,cost_usd,facts,requested_action,run_id,state,summary"
+
 // contract は harness contract <args> を実行し、終了コード 0 と契約 v1 の形を確かめて返す。start は run を切り離して
 // すぐ戻る（#347）ので、run を始めた start は、返った JSON が start の直後の状態であることを確かめてから、contract
 // status で run が running でなくなるまで待ち、その status の JSON を返す（start の直後の JSON そのものは contractNow
@@ -81,7 +84,14 @@ func (h *harness) contractNow(args ...string) (contractDoc, string) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	if strings.Join(keys, ",") != contractKeys {
+	want := contractKeys
+	if _, ok := raw["facts"]; ok {
+		want = contractKeysWithFacts
+		if string(raw["facts"]) == "null" || string(raw["facts"]) == "{}" {
+			h.t.Fatalf("contract %v: facts must be omitted when it has no value\n%s", args, out)
+		}
+	}
+	if strings.Join(keys, ",") != want {
 		h.t.Fatalf("contract %v: keys = %v\n%s", args, keys, out)
 	}
 	if string(raw["artifacts"]) == "null" {

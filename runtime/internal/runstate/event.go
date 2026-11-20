@@ -90,15 +90,24 @@ type WorkflowRecord struct {
 	OverrideRecord
 }
 
+// FactSource は facts の値の出どころ: 段 Step の出力の欄 Field（入れ子のパス）。
+type FactSource struct {
+	Step  string   `json:"step"`
+	Field []string `json:"field"`
+}
+
 // RunStarted は run の開始。
 type RunStarted struct {
 	RunID    string                     `json:"run_id"`
 	Workflow WorkflowRecord             `json:"workflow"`
 	Inputs   map[string]json.RawMessage `json:"inputs"`
 	Limits   map[string]float64         `json:"limits,omitempty"`
-	Origin   string                     `json:"origin"`
-	Cwd      string                     `json:"cwd"`
-	PID      int                        `json:"pid"`
+	// Facts は定義の最上位の facts の写し（名前 → 段と欄の並び）。畳み込みが step_finished のたびに unit の facts を
+	// 更新する材料。この版より前に始めた run には無い（その run は facts を出さない）。
+	Facts  map[string][]FactSource `json:"facts,omitempty"`
+	Origin string                  `json:"origin"`
+	Cwd    string                  `json:"cwd"`
+	PID    int                     `json:"pid"`
 	// PIDStart は PID のプロセスの開始時刻（ProcStart。PID の再利用を見分ける。#347）。この版より前の run には無い。
 	PIDStart    string `json:"pid_start,omitempty"`
 	ScriptsDir  string `json:"scripts_dir"`

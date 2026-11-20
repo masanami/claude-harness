@@ -6,7 +6,8 @@
   "properties": {
     "outcome": { "type": "string", "enum": ["pass", "failure", "deviation"] },
     "summary": { "type": "string" },
-    "deviation_report": { "type": "string" }
+    "deviation_report": { "type": "string" },
+    "self_review": { "type": "string", "enum": ["complete", "incomplete", "not_run"] }
   },
   "additionalProperties": false
 }
