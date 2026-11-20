@@ -114,13 +114,15 @@ type Gate struct {
 
 // GateResolution はゲートの解決の記録（§5.3: actor・channel を必ず残す）。
 type GateResolution struct {
-	Outcome  string          `json:"outcome"`
-	Note     string          `json:"note,omitempty"`
-	Observed json.RawMessage `json:"observed,omitempty"`
-	Actor    string          `json:"actor"`
-	User     string          `json:"user,omitempty"`
-	Channel  string          `json:"channel"`
-	At       string          `json:"at"`
+	Outcome string `json:"outcome"`
+	Note    string `json:"note,omitempty"`
+	// ApprovedRef は resume に添えられた、通した中身の識別（空なら省く）。
+	ApprovedRef string          `json:"approved_ref,omitempty"`
+	Observed    json.RawMessage `json:"observed,omitempty"`
+	Actor       string          `json:"actor"`
+	User        string          `json:"user,omitempty"`
+	Channel     string          `json:"channel"`
+	At          string          `json:"at"`
 }
 
 // Round はゲートとゲートの間（§4.2）。
@@ -502,7 +504,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		if u.Gate.RequiresTTY && p.Channel != "tty" {
 			return nil, fmt.Errorf("gate_resolved (seq %d): gate %q requires a terminal but was resolved over %s", ev.Seq, p.Gate, p.Channel)
 		}
-		u.Gate.Resolution = &GateResolution{Outcome: p.Outcome, Note: p.Note, Observed: p.Observed, Actor: p.Actor, User: p.User, Channel: p.Channel, At: ev.TS}
+		u.Gate.Resolution = &GateResolution{Outcome: p.Outcome, Note: p.Note, ApprovedRef: p.ApprovedRef, Observed: p.Observed, Actor: p.Actor, User: p.User, Channel: p.Channel, At: ev.TS}
 		if !u.Gate.Builtin {
 			if u.Outcomes == nil {
 				u.Outcomes = map[string]string{}

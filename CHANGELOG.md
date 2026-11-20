@@ -10,6 +10,10 @@
 
 ## [Unreleased]
 
+### 追加
+
+- **ゲートの解決に、通した中身の識別を添えられるようになった（Issue #392。#388 の S3-2）。** `harness resume`・`harness contract resume` に任意のフラグ `--approved-ref SHA` を足した（`approve` には無く、渡すと使い方の誤り）。値は `gate_resolved` の `approved_ref`（空なら出さない。`status --json` のゲートの履歴に出る）に残り、ワークフローの input 型のゲートから出る `goto` の `with` で `$gate.approved_ref` として次の段へ渡せる（添えなければ空の文字列。`--note` は求めない）。あわせて、ゲートへの遷移（`{ gate: <id> }`）に任意の `detail`（参照 1 つ）を足した。開いたゲートの `status --json` の `waiting[].detail`・契約の `requested_action.text`（先頭の文の後ろ）・`summary`（末尾）に戻った理由が出る。`goto` には任意の `interrupted: { fail: <理由> }` を足した。この遷移で始まるラウンドは、runner が居なくなったときに `interrupted` ゲートで待たず、その理由で失敗で終わる（`$gate.approved_ref` を渡す遷移は書かなければ読み込みで拒否する）。契約の版（1）とワークフローのスキーマ版（`harness.workflow/v1`）は変わらず、これらを使わない run の動きも変わらない。**利用者が取る操作**: 何もしなくてよい。同梱の `ticket` はまだこれらを使わない（使う定義は次の変更で入る）。
+
 ---
 
 ## 5.1.0（harness CLI: `runtime/v5.1.0`）

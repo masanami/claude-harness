@@ -1,0 +1,49 @@
+# $gate.approved_ref・gate への遷移の detail・goto の interrupted を確かめる。
+# review の land は通した中身（--approved-ref）を land へ渡し、interrupted の印を付ける。respond は印の無い遷移で、何も渡さない。
+# back は detail（$steps.back.detail）を添えて review へ戻る。
+schema: harness.workflow/v1
+id: gate-ref
+inputs:
+  log: { type: string, required: true }
+  json: { type: string, required: true }
+steps:
+  record:
+    kind: command
+    run: recorder
+    with: { log: $inputs.log }
+    output: schemas/pass.json
+    on:
+      pass: { gate: review }
+  review:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: land (with the approved ref), respond or stop
+    inputs: [land, respond, stop]
+    on:
+      land: { goto: land, with: { ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }
+      respond: { goto: back-plain }
+      stop: { done: stopped }
+  land:
+    kind: command
+    run: recorder
+    with: { log: $inputs.log, ref: $edge.ref }
+    output: schemas/pass.json
+    on:
+      pass: back
+  back:
+    kind: command
+    run: emit
+    with: { json: $inputs.json, code: 0 }
+    output: schemas/detail.json
+    on:
+      back: { gate: review, detail: $steps.back.detail }
+      end: { done: ended }
+  back-plain:
+    kind: command
+    run: emit
+    with: { json: $inputs.json, code: 0 }
+    output: schemas/detail.json
+    on:
+      back: { gate: review }
+      end: { done: ended }

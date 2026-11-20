@@ -334,8 +334,19 @@ type Transition struct {
 	Retry        int
 	Exhausted    *Transition
 	NoteOptional bool
-	Line         int
+	// Detail は gate の遷移の detail（参照 1 つ）。開くゲートに添える、戻った理由などの文（gate_opened.detail）。
+	Detail *Ref
+	// Interrupted は goto の interrupted: { fail: <理由> }。input 型のゲートから出る goto だけが書ける。この遷移で始まる
+	// ラウンドの間に runner が居なくなったら、interrupted ゲートを開かず、この理由で run を失敗で終える。
+	Interrupted string
+	Line        int
 }
+
+// $gate の参照の名前（resume で添えられた値）。
+const (
+	GateNote        = "note"
+	GateApprovedRef = "approved_ref"
+)
 
 // NoteOptionalValue は遷移の note に書ける唯一の値。
 const NoteOptionalValue = "optional"

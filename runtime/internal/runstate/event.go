@@ -116,6 +116,10 @@ type Trigger struct {
 	Kind  string `json:"kind"`           // start | gate
 	Gate  string `json:"gate,omitempty"` // どのゲートを抜けたか
 	Input string `json:"input,omitempty"`
+	// Interrupted は、このラウンドの間に runner が居なくなったら interrupted ゲートを開かず失敗で終える印（遷移の
+	// interrupted: { fail: <理由> } の理由の語。書かない遷移で始まるラウンドには無い）。status は定義を読み込まないので、
+	// 状態から読めるようここに残す。
+	Interrupted string `json:"interrupted,omitempty"`
 }
 
 // RoundStarted はラウンドの開始。
@@ -187,19 +191,23 @@ type GateOpened struct {
 	// ContractKind はゲートの定義の contract_kind（§5.6.1・#372。書かれていなければ空）。contract の出力が定義を
 	// 読み直さずに kind を決められるよう、開いたときに写しておく。
 	ContractKind string `json:"contract_kind,omitempty"`
+	// Detail はゲートへの遷移の detail（参照 1 つ）を解決した文（戻った理由など）。開き直すたびに置き換わる。
+	Detail string `json:"detail,omitempty"`
 }
 
 // GateResolved はゲートの解決。Outcome は input 型なら渡された値、observe 型なら観測の結果。
 // Actor は解決したコマンド（resume / approve）、User はそのプロセスの利用者名、Channel は tty / non-tty。
 type GateResolved struct {
-	Unit     string          `json:"unit"`
-	Gate     string          `json:"gate"`
-	Outcome  string          `json:"outcome"`
-	Note     string          `json:"note,omitempty"`
-	Observed json.RawMessage `json:"observed,omitempty"`
-	Actor    string          `json:"actor"`
-	User     string          `json:"user,omitempty"`
-	Channel  string          `json:"channel"`
+	Unit    string `json:"unit"`
+	Gate    string `json:"gate"`
+	Outcome string `json:"outcome"`
+	Note    string `json:"note,omitempty"`
+	// ApprovedRef は resume に --approved-ref で添えられた、通した中身の識別（先頭のコミット）。空なら省く。
+	ApprovedRef string          `json:"approved_ref,omitempty"`
+	Observed    json.RawMessage `json:"observed,omitempty"`
+	Actor       string          `json:"actor"`
+	User        string          `json:"user,omitempty"`
+	Channel     string          `json:"channel"`
 }
 
 // RunnerStarted は run を進めるプロセスが替わったこと（resume / approve・切り離して起動した runner〔detached〕）。
@@ -223,8 +231,12 @@ type Transition struct {
 	// Exhausted は上限に達して exhausted の遷移を採ったとき、その上限の種類（limit / retry）。
 	Exhausted string `json:"exhausted,omitempty"`
 	// Default は予約値が on に無く、既定の fail-closed で run を失敗させたとき真。
-	Default bool                       `json:"default,omitempty"`
-	Edge    map[string]json.RawMessage `json:"edge,omitempty"`
+	Default bool `json:"default,omitempty"`
+	// Interrupted は採った goto の interrupted: { fail: <理由> } の理由。次のラウンドの契機（Trigger）へ写す。
+	Interrupted string `json:"interrupted,omitempty"`
+	// Detail は gate への遷移の detail を解決した文（開くゲートの gate_opened.detail へ写す）。
+	Detail string                     `json:"detail,omitempty"`
+	Edge   map[string]json.RawMessage `json:"edge,omitempty"`
 }
 
 // RunFinished は run の終端（succeeded / failed）。
