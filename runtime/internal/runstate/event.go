@@ -279,10 +279,12 @@ const (
 	WorkspaceReleased = "released" // workspace 種類の release が終わった（削除した・残した）
 	WorkspacePR       = "pr"       // pull-request 種類が PR を作成・更新した
 	WorkspaceHead     = "head"     // 待っている間に外から push された PR の先頭を status が取り直した（実行中の段の外で書く）
+	// WorkspaceIntegration は統合ブランチの名前と先頭を記録する（pull-request 種類の action: ensure-base が書く。§5.6.3）。
+	WorkspaceIntegration = "integration"
 )
 
 // WorkspaceEvent は unit の作業ツリーと PR の記録（§4.1 Workspace）。Action ごとに使うフィールドが違う:
-// acquired は RepoRoot〜Created、released は Removed・Detail、pr は PRNumber〜HeadSHA。
+// acquired は RepoRoot〜Created、released は Removed・Detail、pr は PRNumber〜HeadSHA、integration は Branch（統合ブランチの名前）・HeadSHA（その先頭）。
 type WorkspaceEvent struct {
 	Unit   string `json:"unit"`
 	Action string `json:"action"`

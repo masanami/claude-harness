@@ -328,13 +328,14 @@ func TestGraphMermaidTicket(t *testing.T) {
 		t.Fatalf("mermaid:\n%s", out)
 	}
 	for _, want := range []string{
-		`  n0["resolve<br/>command 2m"]`, `  n3("implement<br/>llm $15 90m")`, `  n15{{"review<br/>gate input any"}}`,
-		`  n22{"merge-route<br/>select $steps.resolve.base_kind"}`,
-		`  n2 -->|"provided / created / reused"| n3`,
-		`  n10 -->|"fail (rework#lt;=3)"| n5`, `  n10 -.->|"fail (rework exhausted)"| n40`,
-		`  n11["quality<br/>command 30m"]`, `  n11 -->|"fail (rework#lt;=3)"| n5`, `  n11 -.->|"fail (rework exhausted)"| n41`,
-		`  n13 -->|"timeout (retry#lt;=1)"| n13`, `  n13 -.->|"timeout (retry exhausted)"| n14`,
-		"  class n21,n24,n25 human\n",
+		`  n0["resolve<br/>command 2m"]`, `  n5("implement<br/>llm $15 90m")`, `  n17{{"review<br/>gate input any"}}`,
+		`  n24{"merge-route<br/>select $steps.resolve.base_kind"}`,
+		`  n1{"integration-route<br/>select $steps.resolve.integration"}`, `  n1 -->|"create"| n2`, `  n1 -->|"none"| n3`,
+		`  n4 -->|"provided / created / reused"| n5`,
+		`  n12 -->|"fail (rework#lt;=3)"| n7`, `  n12 -.->|"fail (rework exhausted)"| n42`,
+		`  n13["quality<br/>command 30m"]`, `  n13 -->|"fail (rework#lt;=3)"| n7`, `  n13 -.->|"fail (rework exhausted)"| n43`,
+		`  n15 -->|"timeout (retry#lt;=1)"| n15`, `  n15 -.->|"timeout (retry exhausted)"| n16`,
+		"  class n23,n26,n27 human\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("mermaid does not contain %q", want)

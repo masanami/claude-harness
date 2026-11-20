@@ -40,6 +40,8 @@ const (
 	PRActionPush    = "push"
 	PRActionLand    = "land"
 	PRActionAdopt   = "adopt"
+	// PRActionEnsureBase は宛先（統合ブランチ）が origin に無ければ既定ブランチの先頭から作る（§5.6.3）。
+	PRActionEnsureBase = "ensure-base"
 )
 
 // WorkspaceModeDetached は workspace の acquire の with.mode に書ける唯一の値。作業ツリーを、ブランチを checkout しない形
@@ -94,6 +96,10 @@ var builtinWith = map[string][]withSpec{
 	"pull-request:" + PRActionAdopt: {
 		{name: "ref", typ: "string", required: true}, // PR の URL（https://<host>/<owner>/<repo>/pull/<番号>）
 	},
+	"pull-request:" + PRActionEnsureBase: {
+		{name: "branch", typ: "string", required: true}, // 統合ブランチの名前（resolve が決めた base）
+		{name: "from", typ: "string", required: true},   // 作る先頭の元になるブランチ（既定ブランチ）
+	},
 	"pull-request": {
 		{name: "base", typ: "string", required: true},
 		{name: "closes", typ: "integer"}, // 本文に Closes #N を書く Issue。省略か 0 なら closing キーワードを書かない（#305）
@@ -138,6 +144,8 @@ func builtinSchemaFile(s *Step) string {
 			return "pull-request-land.json"
 		case PRActionAdopt:
 			return "pull-request-adopt.json"
+		case PRActionEnsureBase:
+			return "pull-request-ensure-base.json"
 		}
 		return "pull-request.json"
 	}
@@ -176,9 +184,9 @@ func (v *validator) builtinKind(s *Step) {
 	}
 	if s.Kind == "pull-request" {
 		switch s.Action {
-		case "", PRActionPublish, PRActionSync, PRActionPush, PRActionLand, PRActionAdopt:
+		case "", PRActionPublish, PRActionSync, PRActionPush, PRActionLand, PRActionAdopt, PRActionEnsureBase:
 		default:
-			v.errf(s.Line, "steps.%s: action %q must be publish, sync, push, land or adopt for kind pull-request", s.ID, s.Action)
+			v.errf(s.Line, "steps.%s: action %q must be publish, sync, push, land, adopt or ensure-base for kind pull-request", s.ID, s.Action)
 			return
 		}
 	}

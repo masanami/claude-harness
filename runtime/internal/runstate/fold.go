@@ -97,6 +97,10 @@ type Workspace struct {
 	// どちらも、この版より前に始めた run の記録には無い（その場合、読む側は head_sha_by_round の最新を使う）。
 	HeadSHA     string `json:"head_sha,omitempty"`
 	MergeCommit string `json:"merge_commit,omitempty"`
+	// IntegrationBranch・IntegrationHead は統合ブランチの名前とその先頭（ensure-base が書く。§5.6.3）。unit の持ち物で、作業ツリーの
+	// 持ち物ではない（acquired をまたいで持ち越す）。統合先を使わない run・この版より前の記録には無い。
+	IntegrationBranch string `json:"integration_branch,omitempty"`
+	IntegrationHead   string `json:"integration_head,omitempty"`
 }
 
 // ActiveWorkspace は、acquire 済みでまだ release していない作業ツリーのパス（無ければ空）。
@@ -631,6 +635,10 @@ func applyWorkspace(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
 		prev := u.Workspace
 		u.Workspace = &Workspace{RepoRoot: p.RepoRoot, WorktreePath: p.WorktreePath, Branch: p.Branch, Base: p.Base,
 			ProvidedBy: p.ProvidedBy, Created: p.Created}
+		if prev != nil {
+			// 統合ブランチは unit の持ち物なので、作業ツリーが変わっても持ち越す。
+			u.Workspace.IntegrationBranch, u.Workspace.IntegrationHead = prev.IntegrationBranch, prev.IntegrationHead
+		}
 		if prev != nil && (prev.WorktreePath == p.WorktreePath || prev.WorktreePath == "") {
 			// 同じ作業ツリーを取り直した（interrupted からのやり直し等）か、作業ツリーの前に PR を記録していた（adopt。§5.6.2）:
 			// PR の記録は持ち越す。
@@ -645,6 +653,17 @@ func applyWorkspace(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
 			return fmt.Errorf("workspace released (seq %d): removed a worktree the runtime did not create", seq)
 		}
 		u.Workspace.Released, u.Workspace.Removed, u.Workspace.ReleaseNote = true, p.Removed, p.Detail
+	case WorkspaceIntegration:
+		if p.Branch == "" || p.HeadSHA == "" {
+			return fmt.Errorf("workspace integration (seq %d) needs branch and head_sha", seq)
+		}
+		if u.Workspace == nil {
+			u.Workspace = &Workspace{}
+		}
+		if cur := u.Workspace.IntegrationBranch; cur != "" && cur != p.Branch {
+			return fmt.Errorf("workspace integration (seq %d): branch %q differs from the recorded integration branch %q (a unit has one)", seq, p.Branch, cur)
+		}
+		u.Workspace.IntegrationBranch, u.Workspace.IntegrationHead = p.Branch, p.HeadSHA
 	case WorkspacePR:
 		if p.PRNumber <= 0 {
 			return fmt.Errorf("workspace pr (seq %d) needs pr_number", seq)

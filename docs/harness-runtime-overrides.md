@@ -198,7 +198,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 | `design-deviation` | `input` × `human`（TTY 必須）。`implement.deviation`・`fix.deviation` から入る | クリティカル設計からの逸脱を人が判断する | 外せない |
 | `review-human` | `input` × `human`（TTY 必須）。`respond.needs_human`・`merge.blocked` から入る | レビュー対応で品質ゲートの失敗や設計変更が出たときに人が判断する | 外せない |
 | 品質の失敗での停止 | `implement.failure`・`implement.review_incomplete`・`fix.failure`・`commit.failure` → `fail` | 品質ゲートに通らない変更・セルフレビューと合流できない変更を PR にしない（#262） | 付け替え不可 |
-| 入口の検査での停止 | `resolve.base_missing`・`resolve.links_invalid`・`resolve.input_invalid`・`resolve.integration_unsupported`・`workspace.conflict` → `fail` | 宛先や作業ツリーが不正なまま進まない | 付け替え不可 |
+| 入口の検査での停止 | `resolve.base_missing`・`resolve.links_invalid`・`resolve.input_invalid`・`integration.refused`・`integration.unavailable`・`workspace.conflict` → `fail` | 宛先や作業ツリーが不正なまま進まない | 付け替え不可 |
 | 差し戻しの上限 | `e2e.fail`・`ci.red`・`quality.fail`（#326）の `limit: rework` | 修正の繰り返しを止める | 形は変えない。回数は `limits.rework` で変えられる（§5.1） |
 | `quality`（#326） | `command`。`fail` は `fix` へ差し戻し、尽きたら `quality_gate_red`。宣言が無ければ `quality_gate_undeclared` | PR を作る前に、push するコミットに対して品質ゲートを機械で回す | `quality` 自身の遷移は付け替え不可。前段から省くことは `overridable.skips` で許す（§5.2） |
 | `review`・`ci-pending` | `input` × `any` | レビュー待ち・CI を確かめる外部待ち | ゲート自体のキーは閉じる（§5.3）。前段から飛ばすことは v1 では許さない（§5.2） |

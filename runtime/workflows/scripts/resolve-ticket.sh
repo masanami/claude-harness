@@ -1,22 +1,22 @@
 #!/bin/bash
-# resolve-ticket.sh [--issue <番号>] [--base <ブランチ>] [--task_file <絶対パス>] [--task_id T-<番号>] [--uses_integration true|false]
+# resolve-ticket.sh [--issue <番号>] [--base <ブランチ>] [--task_file <絶対パス>] [--task_id T-<番号>] [--uses_integration true|false] [--challenge_id <ID>]
 #
 # ticket ワークフローの最初のステップ（docs/harness-runtime-design.md §3.3・§3.4・§5.6.2。/impl の「base の決定」I2・I3 を切り出したもの）。
-#   0. 入力どうしの条件を確かめる（YAML の文法は持たない。§3.1）。満たさなければ input_invalid、uses_integration が true なら
-#      integration_unsupported（gh・git は呼ばない）
+#   0. 入力どうしの条件を確かめる（YAML の文法は持たない。§3.1）。満たさなければ input_invalid（gh・git は呼ばない）。
+#      uses_integration が true なら、base は統合ブランチ integration/<challenge_id を小文字にしたもの>に決まる（§5.6.3）
 #   1. gh issue view で Issue を読む（--issue があるときだけ）
-#   2. base を決める: --base ＞ Issue 本文の `Base:` 行（--task_file が無いときだけ） ＞ リポジトリの既定ブランチ
-#   3. base が既定ブランチ以外（統合ブランチ）なら、remote（origin）に在るかを確かめる
+#   2. base を決める: uses_integration が true なら統合ブランチ（Base: 行は読まない） ＞ --base ＞ Issue 本文の `Base:` 行（--task_file が無いときだけ） ＞ リポジトリの既定ブランチ
+#   3. base が既定ブランチ以外（統合ブランチ）で、uses_integration でなく決めた base なら、remote（origin）に在るかを確かめる
+#      （uses_integration の統合ブランチは確かめない。作るのは次の段 ensure-base）
 #   4. PR 本文に書く Issue 参照を決める（#305）: Issue 本文の `Refs: #N[, #M]` 行を refs に、`Closes: なし` 行があれば
 #      closes を 0（closing キーワードを書かない）にする。どちらの行も無ければ closes は Issue 自身、refs は空（従来どおり）
 #
 # stdout に JSON を 1 つ出す（schemas/resolve-ticket.json）。outcome は ok | base_missing | links_invalid | input_invalid |
-# integration_unsupported。key は名前の鍵（task-<n> か issue-<n>。作業ツリーの場所とブランチの名前に使う）、scope は作業の範囲の正本
+# 出力の integration は create（uses_integration が true で ok）| none。key は名前の鍵（task-<n> か issue-<n>。作業ツリーの場所とブランチの名前に使う）、scope は作業の範囲の正本
 # （task_file があれば task_file、無ければ issue）。--task_file があるときは、文面のファイルが範囲の正本で、Issue は PR が閉じる
 # 対象としてだけ読む（Refs:・Closes: 行だけ。Base: 行は読まない）。文面のファイルは解釈せず、在ることだけを確かめ、この run だけの置き場（run ディレクトリ〔HARNESS_RUN_DIR〕の下の task/）へ写して、出力の task_file・task_dir を写しのパス・置き場にする。
 #   input_invalid: 入力の組み合わせ・形が誤り（issue も task_file も無い／task_file が絶対パスでない・読めない／task_id が T-<1 以上の整数>
-#     でない／issue も task_id も無い／uses_integration が true・false 以外）
-#   integration_unsupported: uses_integration が true（統合先を作る道はまだ無い）
+#     でない／issue も task_id も無い／uses_integration が true・false 以外／uses_integration が true で challenge_id が無い・形が不正・base も渡された）
 #   base_missing: 統合ブランチが remote に無い・Base 行の値がブランチ名として不正・Base 行が食い違う。message に作り方を載せる
 #   links_invalid: Refs: 行に #<番号> 以外の値がある・Closes: 行の値が「なし」以外。message に直し方を載せる
 # gh・git の失敗（ネットワーク・認証・Issue が無い）は stderr に理由を出して非 0 で終わる（runtime は step_error にする）。
@@ -31,10 +31,11 @@ base_given=false
 task_file=""
 task_id=""
 uses_integration=""
-usage="usage: resolve-ticket.sh [--issue <number>] [--base <branch>] [--task_file <absolute path>] [--task_id T-<number>] [--uses_integration true|false]"
+challenge_id=""
+usage="usage: resolve-ticket.sh [--issue <number>] [--base <branch>] [--task_file <absolute path>] [--task_id T-<number>] [--uses_integration true|false] [--challenge_id <id>]"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --issue|--base|--task_file|--task_id|--uses_integration)
+    --issue|--base|--task_file|--task_id|--uses_integration|--challenge_id)
       if [ $# -lt 2 ]; then echo "Error: $1 needs a value ($usage)" >&2; exit 2; fi
       case "$1" in
         --issue) issue="$2"; issue_given=true ;;
@@ -42,6 +43,7 @@ while [ $# -gt 0 ]; do
         --task_file) task_file="$2" ;;
         --task_id) task_id="$2" ;;
         --uses_integration) uses_integration="$2" ;;
+        --challenge_id) challenge_id="$2" ;;
       esac
       shift 2 ;;
     *) echo "Error: unknown argument '$1' ($usage)" >&2; exit 2 ;;
@@ -66,7 +68,7 @@ if [ -n "$task_file" ]; then
   scope="task_file"
 fi
 
-# emit_early は gh・git を呼ばずに出す出力（input_invalid・integration_unsupported）。
+# emit_early は gh・git を呼ばずに出す出力（input_invalid。integration は none）。
 emit_early() {
   jq -n \
     --arg outcome "$1" \
@@ -77,7 +79,7 @@ emit_early() {
     --arg scope "$scope" \
     --arg task_dir "$task_dir" \
     '{outcome: $outcome, issue: $issue, key: $key, task_file: $task_file, task_dir: $task_dir, scope: $scope, title: "", state: "", base: "",
-      base_kind: "default", base_source: "default", default_branch: "", closes: 0, refs: [], message: $message}'
+      base_kind: "default", base_source: "default", default_branch: "", closes: 0, refs: [], integration: "none", message: $message}'
   exit 0
 }
 
@@ -103,10 +105,23 @@ case "$uses_integration" in
   ""|true|false) ;;
   *) emit_early input_invalid "uses_integration '${uses_integration}' は true・false のどちらでもない。直してから再実行する" ;;
 esac
-if [ -n "$task_id" ]; then key="task-${task_id#T-}"; else key="issue-${issue}"; fi
+integration="none"
+integration_base=""
 if [ "$uses_integration" = true ]; then
-  emit_early integration_unsupported "uses_integration が true だが、統合先を作る道はまだ無い（この版では扱えない）。uses_integration を外して再実行する"
+  # 統合ブランチの名前（docs/harness-runtime-design.md §5.6.3）: integration/<challenge_id を小文字にしたもの>。名前の規則を知っているのはここだけ。
+  if [ -z "$challenge_id" ]; then
+    emit_early input_invalid "uses_integration が true だが challenge_id が無い。統合ブランチの名前は challenge_id から決めるので、渡してから再実行する"
+  fi
+  if ! [[ "$challenge_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || [[ "$challenge_id" == *..* || "$challenge_id" == *. || "$(printf '%s' "$challenge_id" | tr '[:upper:]' '[:lower:]')" == *.lock ]]; then
+    emit_early input_invalid "challenge_id '${challenge_id}' は統合ブランチの名前にできる形でない（英数字で始まり、英数字・.・_・- だけで 64 字まで。.. を含まず、末尾が . や .lock でない）。直してから再実行する"
+  fi
+  if [ "$base_given" = true ]; then
+    emit_early input_invalid "uses_integration が true のとき、宛先は統合ブランチに決まる。base も渡されているので、どちらかを外してから再実行する（どちらかへ黙って倒さない）"
+  fi
+  integration="create"
+  integration_base="integration/$(printf '%s' "$challenge_id" | tr '[:upper:]' '[:lower:]')"
 fi
+if [ -n "$task_id" ]; then key="task-${task_id#T-}"; else key="issue-${issue}"; fi
 
 # 文面のファイルは、この run だけの置き場（そのファイルだけが在るディレクトリ）へ写し、以後の段が読む正本のパス（task_file）は写しのパスにする。
 # 置き場は run ディレクトリ（run の記録の置き場。engine が HARNESS_RUN_DIR で渡す絶対パス）の下の task/。OS の一時ディレクトリには置かない
@@ -192,7 +207,11 @@ fi
 
 outcome="ok"
 message=""
-if [ "$base_given" = true ]; then
+if [ "$integration" = create ]; then
+  # 統合先を使う実行は Base: 行を読まない（issue だけのときも）
+  base="$integration_base"
+  source="challenge"
+elif [ "$base_given" = true ]; then
   base="$base_in"
   source="input"
 elif [ -n "$task_file" ]; then
@@ -226,7 +245,7 @@ else
   base_kind="integration"
 fi
 
-if [ "$outcome" = "ok" ] && [ "$base_kind" = "integration" ]; then
+if [ "$outcome" = "ok" ] && [ "$base_kind" = "integration" ] && [ "$source" != "challenge" ]; then
   # パターンは refs/heads/<base> で完全に指す（ls-remote は末尾一致なので、素の <base> だと feature/<base> にも一致する）。
   git ls-remote --exit-code --heads origin "refs/heads/${base}" >/dev/null 2>&1
   rc=$?
@@ -276,6 +295,8 @@ if [ -n "$links_msg" ] && [ "$outcome" = "ok" ]; then
   outcome="links_invalid"
   message="$links_msg"
 fi
+# 統合ブランチを作る段（ensure-base）へ進むのは、入力が通って ok のときだけ
+[ "$outcome" = "ok" ] || integration="none"
 refs_json='[]'
 for r in ${refs[@]+"${refs[@]}"}; do
   [ "$r" = "$closes" ] && continue # Closes する Issue を Refs にも重ねて書かない
@@ -297,6 +318,7 @@ jq -n \
   --arg default_branch "$default_branch" \
   --argjson closes "$closes" \
   --argjson refs "$refs_json" \
+  --arg integration "$integration" \
   --arg message "$message" \
   '{outcome: $outcome, issue: $issue, key: $key, task_file: $task_file, task_dir: $task_dir, scope: $scope, title: $title, state: $state, base: $base, base_kind: $base_kind,
-    base_source: $base_source, default_branch: $default_branch, closes: $closes, refs: $refs, message: $message}'
+    base_source: $base_source, default_branch: $default_branch, closes: $closes, refs: $refs, integration: $integration, message: $message}'

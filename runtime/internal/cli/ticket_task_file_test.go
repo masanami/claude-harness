@@ -171,7 +171,9 @@ func TestTicketWorkflowStopsOnInvalidInputs(t *testing.T) {
 		{"bad task_id", "input_invalid", []string{"task_file=" + taskFile, "task_id=1"}},
 		{"no key", "input_invalid", []string{"task_file=" + taskFile}},
 		{"uses_integration is yes", "input_invalid", []string{"task_file=" + taskFile, "task_id=T-1", "uses_integration=yes"}},
-		{"uses_integration is true", "integration_unsupported", []string{"task_file=" + taskFile, "task_id=T-1", "uses_integration=true"}},
+		{"uses_integration is true without challenge_id", "input_invalid", []string{"task_file=" + taskFile, "task_id=T-1", "uses_integration=true"}},
+		{"uses_integration is true with a bad challenge_id", "input_invalid", []string{"task_file=" + taskFile, "task_id=T-1", "uses_integration=true", "challenge_id=C..1"}},
+		{"uses_integration is true with base", "input_invalid", []string{"task_file=" + taskFile, "task_id=T-1", "uses_integration=true", "challenge_id=C-1", "base=feat/x"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newTicketFixture(t)

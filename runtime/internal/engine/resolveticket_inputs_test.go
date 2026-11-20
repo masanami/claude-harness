@@ -11,17 +11,19 @@ import (
 )
 
 type resolvedInputs struct {
-	Outcome  string `json:"outcome"`
-	Issue    int    `json:"issue"`
-	Key      string `json:"key"`
-	TaskFile string `json:"task_file"`
-	TaskDir  string `json:"task_dir"`
-	Scope    string `json:"scope"`
-	Base     string `json:"base"`
-	BaseKind string `json:"base_kind"`
-	Closes   *int   `json:"closes"`
-	Refs     []int  `json:"refs"`
-	Message  string `json:"message"`
+	Outcome     string `json:"outcome"`
+	Issue       int    `json:"issue"`
+	Key         string `json:"key"`
+	TaskFile    string `json:"task_file"`
+	TaskDir     string `json:"task_dir"`
+	Scope       string `json:"scope"`
+	Base        string `json:"base"`
+	BaseKind    string `json:"base_kind"`
+	BaseSource  string `json:"base_source"`
+	Integration string `json:"integration"`
+	Closes      *int   `json:"closes"`
+	Refs        []int  `json:"refs"`
+	Message     string `json:"message"`
 }
 
 // resolveWith は resolve-ticket.sh を、渡した引数そのままで偽の gh・git で動かす（--issue を足さない）。
@@ -84,8 +86,8 @@ func TestResolveTicketInputTable(t *testing.T) {
 		{name: "issue も task_id も無い（鍵が無い）", args: []string{"--task_file", taskFile}, outcome: "input_invalid", scope: "task_file", wantMsg: "鍵を決められない"},
 		{name: "uses_integration が true・false 以外", args: []string{"--task_file", taskFile, "--task_id", "T-1", "--uses_integration", "yes"}, outcome: "input_invalid", key: "", scope: "task_file", wantMsg: "uses_integration"},
 		{name: "uses_integration が大文字", args: []string{"--task_file", taskFile, "--task_id", "T-1", "--uses_integration", "True"}, outcome: "input_invalid", scope: "task_file", wantMsg: "uses_integration"},
-		{name: "uses_integration が true", args: []string{"--task_file", taskFile, "--task_id", "T-1", "--uses_integration", "true"}, outcome: "integration_unsupported", key: "task-1", scope: "task_file", wantMsg: "uses_integration"},
-		{name: "uses_integration が true で issue だけ", args: []string{"--issue", "42", "--uses_integration", "true"}, outcome: "integration_unsupported", key: "issue-42", scope: "issue", wantMsg: "uses_integration"},
+		{name: "uses_integration が true で challenge_id が無い", args: []string{"--task_file", taskFile, "--task_id", "T-1", "--uses_integration", "true"}, outcome: "input_invalid", scope: "task_file", wantMsg: "challenge_id が無い"},
+		{name: "uses_integration が true で challenge_id が無い（issue だけ）", args: []string{"--issue", "42", "--uses_integration", "true"}, outcome: "input_invalid", scope: "issue", wantMsg: "challenge_id が無い"},
 		{name: "uses_integration が false は通る", args: []string{"--task_file", taskFile, "--task_id", "T-1", "--uses_integration", "false"}, outcome: "ok", key: "task-1", scope: "task_file"},
 		{name: "task_file と task_id だけ", args: []string{"--task_file", taskFile, "--task_id", "T-12"}, outcome: "ok", key: "task-12", scope: "task_file"},
 		{name: "issue だけ", args: []string{"--issue", "42"}, outcome: "ok", key: "issue-42", scope: "issue"},

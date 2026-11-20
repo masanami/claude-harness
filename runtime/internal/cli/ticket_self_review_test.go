@@ -48,7 +48,7 @@ func TestTicketSendsImplementBackWhenSelfReviewIsNotComplete(t *testing.T) {
 			if code != ExitWaiting {
 				t.Fatalf("run exit %d, want %d\n%s", code, ExitWaiting, logs)
 			}
-			want := "resolve:ok analyze:ok workspace:created implement:" + c.outcome + " self-review-route:" + c.selfReview +
+			want := "resolve:ok integration-route:none analyze:ok workspace:created implement:" + c.outcome + " self-review-route:" + c.selfReview +
 				" implement:pass self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:green"
 			if got := stepSeq(v); got != want {
 				t.Fatalf("steps:\n got %s\nwant %s", got, want)
@@ -77,7 +77,7 @@ func TestTicketStopsWhenSelfReviewIsStillNotCompleteAfterSendBack(t *testing.T) 
 			if v.Status != "failed" || v.Reason != "self_review_incomplete" {
 				t.Fatalf("status %q reason %q", v.Status, v.Reason)
 			}
-			want := "resolve:ok analyze:ok workspace:created implement:skip self-review-route:not_run implement:pass self-review-route:" + second
+			want := "resolve:ok integration-route:none analyze:ok workspace:created implement:skip self-review-route:not_run implement:pass self-review-route:" + second
 			if got := stepSeq(v); got != want {
 				t.Fatalf("steps:\n got %s\nwant %s", got, want)
 			}
@@ -103,7 +103,7 @@ func TestTicketProceedsWhenSelfReviewIsComplete(t *testing.T) {
 			if code != ExitWaiting {
 				t.Fatalf("run exit %d, want %d\n%s", code, ExitWaiting, logs)
 			}
-			want := "resolve:ok analyze:ok workspace:created implement:" + outcome + " self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:green"
+			want := "resolve:ok integration-route:none analyze:ok workspace:created implement:" + outcome + " self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:green"
 			if got := stepSeq(v); got != want {
 				t.Fatalf("steps:\n got %s\nwant %s", got, want)
 			}

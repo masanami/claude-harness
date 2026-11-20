@@ -33,6 +33,9 @@
 #     接続契約の facts.self_review に出る（fix・respond の self_review は必須の欄で、実行していなければ not_run を返す。欄を返さなかった段は値を変えない、は facts の一般の決まり。docs/harness-runtime-design.md §5.6.2）
 #   - review・review-human の respond を、resume の添え書き（$gate.note）を respond へ渡す goto にし、note: optional を付ける
 #     （#377。添え書きが無ければ空文字を渡し、今と同じく PR のコメントだけを読む。差し戻しの理由を PR へ手で書かずに済む）
+#   - resolve の後に integration-route（select）と integration（pull-request の action: ensure-base）を置く（#409 の S3b-1）。uses_integration が true の
+#     実行だけが、統合ブランチ（integration/<challenge_id を小文字にしたもの>）を origin に確かめ、無ければ既定ブランチの先頭から作る。
+#     resolve の integration_unsupported は外し、作れなかったときの integration_create_failed を足した（docs/harness-runtime-design.md §5.6.3）
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
@@ -42,8 +45,8 @@ inputs:
   worktree: { type: string }        # 呼び出し元がスロットを払い出した場合だけ（§5.4）
   task_file:        { type: string }  # タスクの文面のファイルの絶対パス（UTF-8 の Markdown）。あれば作業の範囲の正本
   task_id:          { type: string }  # T-<番号>。作業ツリーとブランチの名前の鍵（task-<番号>）になる
-  uses_integration: { type: string }  # true | false。true は integration_unsupported で止める（統合先を作る道はまだ無い）
-  challenge_id:     { type: string }  # 受けるだけで使わない
+  uses_integration: { type: string }  # true | false。true なら宛先は統合ブランチ（integration/<challenge_id を小文字にしたもの>）に決まり、integration で確かめて作る（§5.6.3）
+  challenge_id:     { type: string }  # uses_integration が true のとき、統合ブランチの名前の鍵（resolve だけが名前の規則を知る）。false・無しのときは受けるだけ
 limits:
   budget_usd: 40                    # この unit 全ラウンドの累計上限（仮の値。shadow run で較正する。§12）
   rework: 3                         # Phase 4→8 の差し戻し上限（W2・Q8）
@@ -64,15 +67,29 @@ steps:
     kind: command
     run: resolve-ticket             # scripts/resolve-ticket.sh: gh issue view＋Base:・Refs:・Closes: 行の抽出＋統合ブランチの remote 存在確認
     with: { issue: $inputs.issue, base: $inputs.base, task_file: $inputs.task_file, task_id: $inputs.task_id,
-            uses_integration: $inputs.uses_integration }
+            uses_integration: $inputs.uses_integration, challenge_id: $inputs.challenge_id }
     output: schemas/resolve-ticket.json
     timeout: 2m
     on:
-      ok: analyze
+      ok: integration-route
       base_missing: { fail: base_missing }          # I3: 作成を促して止まる（手順は output の message に載る）
       links_invalid: { fail: links_invalid }        # Refs:・Closes: 行が読めない（直し方は output の message に載る。#305）
       input_invalid: { fail: input_invalid }        # 入力どうしの条件・形が誤り（直し方は output の message に載る。§5.6.2）
-      integration_unsupported: { fail: integration_unsupported }   # uses_integration: true はまだ扱えない
+
+  integration-route:                                # 統合先を使う実行（uses_integration: true）だけ、統合ブランチを確かめて作る。外部は呼ばない
+    kind: select
+    value: $steps.resolve.integration
+    on: { create: integration, none: analyze }
+
+  integration:                                      # 統合ブランチが origin に無ければ既定ブランチの先頭から作る（在れば動かさない）。作業ツリーの払い出しより前
+    kind: pull-request
+    action: ensure-base
+    with: { branch: $steps.resolve.base, from: $steps.resolve.default_branch }
+    on:
+      created:     analyze
+      existing:    analyze
+      refused:     { fail: integration_create_failed }   # origin が作ることを拒んだ（保護の決まり・権限・integration という名前のブランチが在る）
+      unavailable: { fail: remote_unavailable }          # origin へ届かない
 
   analyze:
     kind: llm
