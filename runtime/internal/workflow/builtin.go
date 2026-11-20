@@ -43,7 +43,8 @@ type withSpec struct {
 // builtinWith は Go が振る舞いを持つ種類の with の許可リスト。ここに無い名前は拒否する（渡したのに使われない値を作らない）。
 var builtinWith = map[string][]withSpec{
 	"workspace:" + ActionAcquire: {
-		{name: "issue", typ: "integer", required: true},
+		{name: "issue", typ: "integer"}, // 取り込み元の Issue（省略か 0 なら無い）。key か issue のどちらも無ければ step_error（#388 S3-1）
+		{name: "key", typ: "string"},    // 名前の鍵（issue-<n>・task-<n>・pr-<n>）。あれば key を、無ければ issue を worktree-setup に渡す
 		{name: "branch", typ: "string", required: true},
 		{name: "base", typ: "string", required: true},
 		{name: "provided", typ: "string"}, // 呼び出し元が払い出した worktree（省略可。§5.4）

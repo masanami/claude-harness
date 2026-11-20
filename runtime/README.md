@@ -327,7 +327,7 @@ steps:
     on: { released: { done: merged }, kept: { done: merged }, dirty: { done: merged_worktree_dirty } }
 ```
 
-- `acquire`: `provided`（呼び出し元が渡した worktree。在るディレクトリ・作業ツリーの最上位・run を開始したリポジトリと同じリポジトリであることを確かめる）があれば `provided`。無ければ `plugin/scripts/worktree-setup.sh <issue> <branch> <base>` を呼んで `created` / `reused`。払い出し先が別ブランチの worktree・未登録のディレクトリ・別のリポジトリなら `conflict`。払い出しはプロセスの中で直列化する（スクリプトの mkdir ロックは第二層）。
+- `acquire`: `provided`（呼び出し元が渡した worktree。在るディレクトリ・作業ツリーの最上位・run を開始したリポジトリと同じリポジトリであることを確かめる）があれば `provided`。無ければ `plugin/scripts/worktree-setup.sh <key か issue> <branch> <base>` を呼んで `created` / `reused`（`with.key`〔`issue-<n>`・`task-<n>`・`pr-<n>`〕があれば key を、無ければ `with.issue` の数字を渡す。`issue` は任意で、0 は「無い」と読む。どちらも無ければ `step_error`。作業ツリーの場所は `<root>/<鍵>`、ブランチは `{type}/<鍵>-{説明}`）。払い出し先が別ブランチの worktree・未登録のディレクトリ・別のリポジトリなら `conflict`。払い出しはプロセスの中で直列化する（スクリプトの mkdir ロックは第二層）。
 - 払い出した後のステップ（`command`・`llm`・`pull-request`・observe 型ゲートの観測）は作業ツリーの中で動く（`release` の後は run を開始したディレクトリに戻る）。
 - `release`: **この run が作ったものだけ**を `worktree-cleanup.sh <path> --skip-if-dirty` で消す（`released`）。「この run が作った」は、作ったときに作業ツリーの git dir へ書いた印（`claude-harness-owner`: run id と unit）で確かめる（払い出し先のパスは同じ Issue の run どうしで同じなので、パスだけでは判定しない）。呼び出し元の作業ツリーが base そのもの・detached なら `conflict`。呼び出し元が渡したもの・この run が作っていない再利用は消さない（`kept`）。未コミットの変更があれば消さない（`dirty`）。
 - 出力（`$steps.<id>.worktree_path` 等）の形は Go が決める（`output` は書かない）。
@@ -353,5 +353,6 @@ steps:
 
 - 作業ブランチを `git push -u origin refs/heads/<branch>:refs/heads/<branch>` し、そのブランチの open な PR（fork からの同名ブランチの PR は除く）が在れば push だけで `updated`（本文は書き換えない。W4）、無ければ `gh pr create --body-file` で `opened`。作業ブランチが base そのもの・リポジトリの既定ブランチ・open な PR の base が違う・open な PR が複数、なら push せず／作らず `step_error`（fail-closed）。
 - PR 本文（概要・振る舞いの一覧・品質ゲート・未検証・残指摘・クロスリポジトリ確証）は with の値から Go が決定的に作る。Issue 参照は概要の直後に `Closes #N`、続けて `refs` の `Refs #N` を 1 行ずつ置く。
+- 同梱の `ticket` の入力（#388 の S3-1）: `issue`（任意。PR が閉じる対象）・`base`・`worktree`・`task_file`（タスクの文面のファイルの絶対パス。あれば作業の範囲の正本。解釈せず、`resolve` は在ることだけを確かめて `analyze`・`implement` へパスを渡す）・`task_id`（`T-<1 以上の整数>`。作業ツリーとブランチの名前の鍵 `task-<n>` になる）・`uses_integration`（`true`・`false`。`true` は `integration_unsupported` で止まる）・`challenge_id`（受けるだけで使わない）。**値が空の文字列の入力（`--input NAME=`）は、型に関わらず「無い」と読み**、`run_started.inputs` に入れない（同じ名前を 2 度渡す誤りは、空でも数える）。入力どうしの条件は `resolve` が確かめ、満たさなければ `input_invalid`（`issue` も `task_file` も無い／`task_file` が絶対パスでない・読めない／`task_id` の形が違う／`issue` も `task_id` も無い／`uses_integration` が `true`・`false` 以外）で止まる（run は始まり、すぐ `failed` になる）。名前の鍵 `key` は `task_id` があれば `task-<n>`、無ければ `issue-<n>`（いまと同じ場所・名前）。`task_file` があるときは `Base:` 行を読まず（宛先は `base` か既定ブランチ）、Issue 本文からは `Refs:`・`Closes: なし` 行だけを読む。`resolve` の出力に `key`・`task_file`・`scope`（`issue` / `task_file`）を足し、`issue` は無ければ 0。
 - 同梱の `ticket` では、`resolve-ticket` が Issue 本文の `Refs: #N[, #M]` 行と `Closes: なし` 行を `Base:` 行と同じ読み方（HTML コメントとコードブロックの中は読まない）で読み、`closes`・`refs` を決める。どちらの行も無ければ `Closes #<issue>` だけになる。`Refs:` 行に `#<番号>` 以外の値がある・`Closes:` 行の値が「なし」以外なら `links_invalid` で止まる（#305）。作った本文は run の `logs/<step>.<n>.body.md` に残る。
 - observe 型ゲートの観測 `pr-state`（`with: { pr: <PR 番号> }`）は `gh pr view` で PR の実状態を確かめ、`merged` / `open` / `closed` を返す。

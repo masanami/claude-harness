@@ -10,6 +10,14 @@
 
 ## [Unreleased]
 
+### 追加
+
+- **`harness run ticket` が、Issue を持たないタスクも始められるようになった（#388 の S3-1。Issue #391）。** 新しい入力: `task_file`（タスクの文面のファイルの絶対パス。あれば作業の範囲の正本になり、`analyze`・`implement` はそのファイルを読む）・`task_id`（`T-<番号>`）・`uses_integration`（`true` は `integration_unsupported` で止まる。統合先を作る道はまだ無い）・`challenge_id`（受けるだけで使わない）。`issue` は必須でなくなった（`issue` も `task_file` も無い・`issue` も `task_id` も無いなど、入力の組み合わせの誤りは `resolve` が `input_invalid` で止める）。作業ツリーの場所とブランチの名前は名前の鍵で決まる: `task_id` があれば `<root>/task-<n>`・`{type}/task-<n>-{説明}`、無ければ今までどおり `<root>/issue-<n>`・`{type}/issue-<n>-{説明}`（同じ Issue のタスクが `task_id` を変えて同時に走っても重ならない）。`resolve` の出力に `key`・`task_file`・`scope` を足し、`outcome` に `input_invalid`・`integration_unsupported` を足した（`ticket` の失敗の理由も同じ 2 つが増える）。`plugin/scripts/worktree-setup.sh` の第 1 引数は、Issue の番号（数字だけ。出力も動きも今までと同じ）に加えて鍵（`issue-<n>`・`task-<n>`・`pr-<n>`）を受け、出力の JSON に `key` を足した（`issue` は鍵が `issue-<n>` のときだけ数、ほかは `null`）。`workspace` の `acquire` の `with` に `key` を足し、`issue` を任意にした。**利用者が取る操作**: `issue` だけで始める呼び出しは何も変えなくてよい。新しい入力を使うには、harness CLI を更新する（定義と指示文は harness CLI に埋め込まれている）。
+
+### 変更
+
+- **値が空の文字列の入力（`harness run --input NAME=`、`harness contract start --input NAME=`）は、型に関わらず「入力が無い」と読むようになった。** 今までは `issue=` が型の誤りになり、`base=` は「指定あり」として `base_missing` になっていた。空の入力は `run_started.inputs` に記録しない。同じ名前を 2 度渡す誤りは、空でも数える。宣言の無い入力は今までどおり誤り。
+
 ---
 
 ## 5.1.0（harness CLI: `runtime/v5.1.0`）

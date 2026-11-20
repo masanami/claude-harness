@@ -198,7 +198,7 @@ YAML と Go のステップ種類が許す判定は**一致だけ**である。�
 | `fanout`（見送り） | 子ワークフローを項目ごとに起動。`max_parallel`・`serial_groups`・後続の起動条件（`advance_on`）を持つ。各項目は独立に gate で止まってよく、全項目が終端に達したら `all_terminal`、ゲート待ちが残れば run を `waiting` にする | P9・P10・P7 |
 | `plan-parallel`（見送り） | `max_parallel` が入力にあれば**検証して写すだけ**（判断し直さない）。無ければ計画用の `llm` を呼ぶ。Issue 数が `predict_min_issues`（リテラル）以上なら先に予測の fan-out を行う。計画結果は「受け取った直列グループを緩めていない・天井を超えていない」ことを Go が検証し、追加直列化の差分を出力に残す | P3〜P6・P13 |
 
-**#388 の設計で足すもの（§5.6.2。実装はこれから）**: 種類は増やさず、`pull-request` に `action`（`publish`〔既定。上の行の動き〕・`sync`〔宛先の最新をマージのコミットで取り込む〕・`push`・`land`〔先頭の一致を確かめて、満たすときだけ宛先へ入れる〕・`adopt`〔すでにある PR を受ける〕）を足す。`workspace` の `acquire` は、Issue の番号の代わりに名前の鍵（`key`）を受け、ブランチを checkout しない作業ツリー（`mode: detached`）も作れるようにする。
+**#388 の設計で足すもの（§5.6.2。`workspace` の `acquire` の `key` は S3-1〔#391〕で実装済み。ほかはこれから）**: 種類は増やさず、`pull-request` に `action`（`publish`〔既定。上の行の動き〕・`sync`〔宛先の最新をマージのコミットで取り込む〕・`push`・`land`〔先頭の一致を確かめて、満たすときだけ宛先へ入れる〕・`adopt`〔すでにある PR を受ける〕）を足す。`workspace` の `acquire` は、Issue の番号の代わりに名前の鍵（`key`）を受け、ブランチを checkout しない作業ツリー（`mode: detached`）も作れるようにする。
 
 ### 3.3 値の受け渡し: 参照だけを許し、加工を許さない
 
@@ -439,7 +439,7 @@ steps:
 
 > **PR-4 の実装（`runtime/workflows/ticket.yaml`）で上の書き下ろしから足したもの**（遷移表・決定は変えていない）: ① `ci` は `ci-wait` を直接ではなく、`runtime/workflows/scripts/ci-wait-pr.sh` 経由で呼ぶ（`ci-wait.sh` は位置引数を取り、`command` 種類は `--<名前> <値>` で渡すため。PR が見つからない〔`pr_exists: false`〕ときは `ci: none` と区別できないので失敗にする）。② `resolve-ticket` は `runtime/workflows/scripts/resolve-ticket.sh` に置いた（`command` の `run` は `<workflow-dir>/scripts/` と `plugin/scripts/` のどちらか一方にだけ在る名前を指す。S1 の埋め込み対象〔`runtime/workflows/`〕に含まれる）。③ `human-merge` に観測する PR の番号を `with: { pr: $steps.publish.pr_number }` で渡す。④ `publish` に `implement` の `unverified`（未検証の事項）を渡す。`respond`・`merge` に PR 番号（`merge` には base も）を渡す。⑤ `resolve`・`ci`・各 `llm` ステップに `timeout` を付けた。⑥ `workspace` で払い出した後のステップは作業ツリーの中で動く（§4.1 Workspace。`release` の後は run を開始したディレクトリに戻る）。 ⑦ `implement` の出力に `review_incomplete`（`/self-review` が `self_review: incomplete` で終わった）を足し、`{ fail: self_review_incomplete }` へ送る（#299。§11.6 の E6）。 ⑧ `publish` の `closes`・`refs` を、`resolve` が Issue 本文の `Closes: なし` 行・`Refs: #N` 行から決めた値にする（`pull-request` 種類の `closes` は省略可・0 で closing キーワードを書かない。読めない行は `links_invalid` で止める。#305）。 ⑨ `e2e` の後・`publish` の前に、品質ゲートを機械で回す `quality`（`command`。`runtime/workflows/scripts/quality-gate.sh`）を置き、`e2e-route.no`・`e2e.pass` をそこへ向ける。宣言 `.claude-harness/quality-gate.json` を PR の宛先から読み、結果を回したコミットの SHA と一緒に出力に残す。`fail` は `{ goto: fix, limit: rework, exhausted: { fail: quality_gate_red } }`、宣言が無ければ `{ fail: quality_gate_undeclared }`。あわせて `commit` は `/commit`（I9 の safety net の `/quality-check`）を使わず git で直接コミットする。pre-commit 等で同じゲートが回るリポジトリは上書きで `quality` を省ける（`overridable.skips: [quality]`。[harness-runtime-overrides.md](harness-runtime-overrides.md) §5.2。#326）。 ⑩ `respond.pushed` を `ci` から `quality` へ向け、レビュー対応の push の後も `quality → publish → ci` を通す（上の書き下ろしの `pushed: ci` を置き換える。PR が既にあるので `publish` は `updated` で本文を書かない。run の記録の SHA を PR の head とそろえるため。#339）。 ⑪ `ci` に `base: $steps.resolve.base` を渡し、PR の宛先の CI の運用の宣言 `.claude-harness/ci.json` が `{"trigger": "after-merge"}`（PR では CI が走らず、既定ブランチへのマージの後だけ走る）なら、`ci-wait-pr.sh` が CI を待たずに `ci: skipped`（`none` とは別の値）を返し、`skipped: review` で進む。宣言が無い・`per-push`・壊れた宣言では今の動き（#341 の約 2 分の `none` の確定を含む）のまま。宣言の読み手は `plugin/scripts/ci-trigger.sh`（`/pr-merge` は宣言を読まず、宣言に関わらず即時マージ）（[runtime/README.md](../runtime/README.md) の「CI の運用の宣言」。#363）。 ⑫ `review`・`review-human` の `respond` を `{ goto: respond, with: { note: $gate.note }, note: optional }` にし、`respond` の `with` に `note: $edge.note` を足す。呼び出し元が差し戻しの理由を `--note` で添えると `respond` の段へ届き、PR にレビューコメントが無くても添え書きに対応する（`no_change` で `review` へ戻らない）。対応したら要旨と対応を自分の PR に 1 件コメントする（`runtime/workflows/prompts/ticket-respond.md`）。添え書きが無ければ空文字で、今までどおり PR のコメントだけを読む（§3.3。#377）。
 >
-> **#388 の設計で足すもの（実装はこれから。定義の全体は §5.6.2 の「`ticket` の遷移」）**: ⑬ 入力に `task_file`・`task_id`・`uses_integration`・`challenge_id` を足し、`issue` を任意にする。`resolve` が入力の組み合わせを確かめ（`input_invalid`・`integration_unsupported`）、名前の鍵（`key`）を出す。`analyze`・`workspace`・`implement` は `$inputs.issue` ではなく `resolve` の出力を読む。 ⑭ `commit` の後・`e2e-route` の前に、宛先の最新をマージのコミットで取り込む `sync`（`pull-request` の `action: sync`）と、衝突を直す `sync-resolve`（`llm`）を置く（`commit.committed` を `sync` へ向ける）。 ⑮ `review` の `inputs` に `land` を足し（`[respond, ready, land]`）、`land: { goto: land, with: { approved_ref: $gate.approved_ref } }` で `land`（`pull-request` の `action: land`）へ送る。`land` は、一致して宛先の最新を含めば入れて `cleanup` へ、宛先が動いていれば `land-sync` → `land-push` で取り込んで `review` へ、一致しない・入れられないなら理由（`detail`）を添えて `review` へ戻る。`ready` の後の `merge-route`・`merge`・`human-merge` は変えない。 ⑯ 最上位に `facts: { self_review: [...] }` を書き、`fix`・`respond` の出力にも `self_review` を足す。 ⑰ `review` に `refresh: pr-head` を書く。
+> **#388 の設計で足すもの（⑬ は S3-1〔#391〕で実装済み。ほかは実装はこれから。定義の全体は §5.6.2 の「`ticket` の遷移」）**: ⑬ 入力に `task_file`・`task_id`・`uses_integration`・`challenge_id` を足し、`issue` を任意にする。`resolve` が入力の組み合わせを確かめ（`input_invalid`・`integration_unsupported`）、名前の鍵（`key`）を出す。`analyze`・`workspace`・`implement` は `$inputs.issue` ではなく `resolve` の出力を読む。 ⑭ `commit` の後・`e2e-route` の前に、宛先の最新をマージのコミットで取り込む `sync`（`pull-request` の `action: sync`）と、衝突を直す `sync-resolve`（`llm`）を置く（`commit.committed` を `sync` へ向ける）。 ⑮ `review` の `inputs` に `land` を足し（`[respond, ready, land]`）、`land: { goto: land, with: { approved_ref: $gate.approved_ref } }` で `land`（`pull-request` の `action: land`）へ送る。`land` は、一致して宛先の最新を含めば入れて `cleanup` へ、宛先が動いていれば `land-sync` → `land-push` で取り込んで `review` へ、一致しない・入れられないなら理由（`detail`）を添えて `review` へ戻る。`ready` の後の `merge-route`・`merge`・`human-merge` は変えない。 ⑯ 最上位に `facts: { self_review: [...] }` を書き、`fix`・`respond` の出力にも `self_review` を足す。 ⑰ `review` に `refresh: pr-head` を書く。
 >
 > `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す（§3.3。Q12 で決定）。
 >
@@ -1189,6 +1189,25 @@ steps:
 | S3-7 | リリース（`chore(release)`）: `CHANGELOG.md`・`plugin/.claude-plugin/plugin.json`。CLI のタグは人が打つ | 全部 | — | — |
 
 A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a は、S3-7 の後に main へ入る。
+
+**S3-1 の実装の記録（#391）**: この PR で、S3-1 の行の中身が実物になった（それ以外の行は、まだ実物に無い）。実装で、設計の文面から合わせた点と、実物で確かめたこと:
+
+- **スクリプトの引数の名前は `with` の名前のまま（アンダースコア）**: `command` の段は `with` の名前をそのまま `--<名前>` で渡す（`engine.argv`。実コード確証・high）ので、`resolve-ticket.sh` が受けるのは `--task_file`・`--task_id`・`--uses_integration`（`--issue`・`--base` は変わらない）。ハイフンの綴りは受けない。
+- **`input_invalid`・`integration_unsupported` は `fail` の理由として足した**（`resolve` の `on`）。終端が 2 つ増えるので、段の終端の一覧を固定で持つテスト（`internal/graph`）の期待値も直した。両方とも、`gh`・`git` を呼ばずに返す（入力の検査は、取り込み元に触れる前に終える）。
+- **誤りのときの出力**: `input_invalid`・`integration_unsupported` でも `resolve` の出力は、必須の欄をすべて埋めて返す（`base`・`default_branch`・`title`・`state` は空文字、`closes` は 0、`refs` は空）。`key` は、入力が正しく読めたとき（`integration_unsupported`）だけ入り、`input_invalid` では空文字。
+- **`analyze` へ渡す値**: `issue`（無ければ 0）・`task_file`（無ければ空文字）・`key`。`implement` へは `issue`・`task_file`・`critical_design`。指示文は `task_file` が空かどうかで読む先を決める。
+- **`workspace` の `acquire`**: `with.issue`・`with.key` はどちらも任意で、`issue` が 0 のときは「無い」と読む。`key` が空でなければ `key` を、そうでなければ `issue` の数字を `worktree-setup.sh` に渡す（どちらも無ければ `step_error`。スクリプトは呼ばない）。
+- **`e2e` の段**: `with` に `task_file`（`$steps.resolve.task_file`）を足し、`e2e`・`fix`・`commit` の指示文の「この Issue」を「要件の正本」に直した（実装から続くセッションの段が、Issue を範囲と読まないため）。
+- **`worktree-setup.sh`**: 第 1 引数が鍵のとき、出力の `issue` は `issue-<n>` のときだけ数で、ほかは `null`。`issue-<n>` の鍵と数字だけの呼び方は、同じ場所・同じ出力（`key` が増えただけ）で、同じ作業ツリーを再利用する（`test-worktree-setup.sh`）。
+
+実物で確かめたこと（設計の【要確認】のうち、S3-1 の範囲のもの）:
+
+| 確かめたこと | 方法 | 結果 |
+| --- | --- | --- |
+| 実の `gh` で、`resolve-ticket.sh` が読む `gh issue view <n> --json number,title,body,state` と `gh repo view --json defaultBranchRef` が、これまでどおり読めること | この Issue（#391）と、このリポジトリで実行 | 読めた（`number`・`state`・`title` の JSON。既定ブランチ `main`） |
+| 実の `git` で、鍵 `task-<n>` の作業ツリー・ブランチが作られ、同じ Issue 番号でも鍵が違えば別の作業ツリーになること。別のブランチで登録済みの場所は、いまと同じく拒否されること | `test-worktree-setup.sh`（一時リポジトリと bare の origin。偽物を使わない） | 通った（`<root>/task-12`・`feature/task-12-…`。`task-12` と `task-13` は別。`task-12` に `fix/task-12-…` を渡すと「already registered for a different branch」で止まる） |
+| 実の `git ls-remote` で、鍵が変わっても統合ブランチの存在確認がこれまでどおりであること | 実リポジトリで `git ls-remote --exit-code --heads origin refs/heads/main` | 0（在る）。`resolve-ticket.sh` の呼び方は変えていない |
+| 空の入力が、いまはどう読まれるか（設計の「実コード確証」の裏取り） | 変更前の `parseInputs` を読む（`integer` は `strconv.ParseInt("")` が失敗、`string` は空でも `base` を「指定あり」にする）と、変更後の単体テスト | 設計の記述どおり。変更後は、型ごとに空を読み飛ばす（`TestParseInputsReadsAnEmptyValueAsAbsent`） |
 
 #### B の粗い設計（A が邪魔をしないこと）
 

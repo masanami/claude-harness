@@ -2,12 +2,12 @@
 
 あなたは claude-harness の headless workflow runtime（`harness`）から、1 チケット実装フローの**実装ステップの主体**として起動されました。対話相手はいません。カレントディレクトリは、このチケット専用に払い出された作業ツリー（作業ブランチを checkout 済み）です。
 
-添付データの `inputs.issue` が対象の Issue、`inputs.critical_design` が従うべきクリティカル設計決定です。エージェント定義（feature-implementer）の手順どおりに実装し、必須ゲート（`/quality-check`）とセルフレビュー（`/self-review`）まで進めてください。
+添付データの `inputs.task_file` が空でなければ、そのファイルを読んで要件の正本にしてください（`gh issue view` で範囲を決めない。`inputs.issue` があっても、それは PR が閉じる対象にすぎない）。空なら、`inputs.issue` の Issue を読んでください。`inputs.critical_design` が従うべきクリティカル設計決定です。エージェント定義（feature-implementer）の手順どおりに実装し、必須ゲート（`/quality-check`）とセルフレビュー（`/self-review`）まで進めてください。
 
 - **コミット・push・PR 作成はしない**（後続のステップ〔commit・publish〕が行う）。ブランチを切り替えない。作業ツリーの外を変更しない。
 - **`/self-review` は変更の種類に関わらず実行する**（テストだけ・文書だけの変更、変更が小さい場合も省かない）。実行したかどうかと結果を `self_review` で返す。`self_review` が `complete` でない出力は、`outcome` が `pass`・`skip` でも PR へ進まない。
-- **実装の段へ戻されたとき**（添付データの `harness.attempt` が 2 以上で、作業ツリーにこの Issue の変更が既にある）は、前の出力の `self_review` が `complete` でなかったために戻されている。実装をやり直さず、作業ツリーの変更に対して `/self-review` を実行してから、すべての値を出力し直す。2 回目も `complete` でなければ、run は PR へ進まずに止まる。
-- **Issue の本文が求めた確認**（例: 処理を外すとテストが落ちること）は実行し、結果を `summary` に書く。できなかった確認は、理由とともに `unverified` に書く。
+- **実装の段へ戻されたとき**（添付データの `harness.attempt` が 2 以上で、作業ツリーにこの要件の変更が既にある）は、前の出力の `self_review` が `complete` でなかったために戻されている。実装をやり直さず、作業ツリーの変更に対して `/self-review` を実行してから、すべての値を出力し直す。2 回目も `complete` でなければ、run は PR へ進まずに止まる。
+- **要件の正本（文面のファイル・Issue の本文）が求めた確認**（例: 処理を外すとテストが落ちること）は実行し、結果を `summary` に書く。できなかった確認は、理由とともに `unverified` に書く。
 - 上流の要件（Issue の完了条件・クリティカル設計決定）自体を変える判断が要ると分かったら、実装を止めて `outcome: deviation` を返し、`deviation_report` に何がどう食い違うか・選択肢・推奨を書く（人が判断する）。
 
 返す値（型は runtime が強制する）:

@@ -132,6 +132,24 @@ func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
 	return &ticketFixture{h: h, root: root, repo: repo, origin: origin, fdir: fdir, ghDir: ghDir, dataDir: data, branch: branch, write: write}
 }
 
+// setAnalyzeBranch は偽の claude の 1 回目（analyze）の応答の作業ブランチを差し替える。
+func (f *ticketFixture) setAnalyzeBranch(branch string) { f.setAnalyzeBranchAt(1, branch) }
+
+// setAnalyzeBranchAt は偽の claude の n 回目の応答を analyze のものにする。
+func (f *ticketFixture) setAnalyzeBranchAt(n int, branch string) {
+	respond(f.h.t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "ok", "e2e_target": "no", "e2e_reason": "internal only", "branch": branch, "critical_design": ""}, 0.3))
+}
+
+// respondRest は偽の claude の n 回目から 4 回分（implement・commit・fix・commit）の応答を作る（run を 2 本通すとき用）。
+func (f *ticketFixture) respondRest(n int) {
+	t := f.h.t
+	respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pass", "self_review": "complete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
+		"behaviors": []map[string]string{}, "residual_findings": []map[string]string{}, "unverified": []string{}, "cross_repo_attestation": "", "deviation_report": ""}, 4.0))
+	respond(t, f.fdir, n+1, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "abc", "summary": "committed"}, 4.5))
+	respond(t, f.fdir, n+2, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": ""}, 5.25))
+	respond(t, f.fdir, n+3, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "def", "summary": "committed"}, 5.5))
+}
+
 // PR 本文の Issue 参照は Issue 本文の Refs: 行・Closes: なし 行に従う（#305 の完了条件）。同梱の ticket ワークフローを
 // 最初の PR 作成まで通し、作られた PR 本文を見る。どちらの行も無い Issue では従来どおり Closes #<issue> だけを書く。
 func TestTicketWorkflowPRLinks(t *testing.T) {
