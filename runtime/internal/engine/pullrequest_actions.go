@@ -25,13 +25,15 @@ const retryTimes = 3
 
 // prCtx は 1 つの action の実行に要るもの（外部コマンドの起動口と、unit・段・解決した with）。
 type prCtx struct {
-	e     *Engine
-	ctx   context.Context
-	u     *runstate.Unit
-	step  *workflow.Step
-	tools *stepTools
-	with  map[string]json.RawMessage
-	dir   string
+	e       *Engine
+	ctx     context.Context
+	u       *runstate.Unit
+	step    *workflow.Step
+	tools   *stepTools
+	with    map[string]json.RawMessage
+	dir     string
+	runID   string
+	attempt int
 	// fetchedBase は、land が fetch した宛先の先頭（fetch できていなければ空）。統合ブランチ宛ての記録に使う。
 	fetchedBase string
 }

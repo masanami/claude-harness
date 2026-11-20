@@ -1,0 +1,17 @@
+# pull-request 種類の action: open（§5.6.3）。
+schema: harness.workflow/v1
+id: pr-open
+inputs:
+  head: { type: string, required: true }
+  base: { type: string, required: true }
+  title: { type: string, required: true }
+  summary: { type: string, required: true }
+  challenge_id: { type: string }
+steps:
+  open:
+    kind: pull-request
+    action: open
+    with: { head: $inputs.head, base: $inputs.base, title: $inputs.title, summary: $inputs.summary, challenge_id: $inputs.challenge_id }
+    on:
+      opened: { done: opened }
+      existing: { done: existing }

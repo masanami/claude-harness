@@ -138,9 +138,10 @@ func TestReflectAdoptOutcomes(t *testing.T) {
 		adopt, repoView       string // 空なら既定のまま
 		ghCalled              bool
 	}{
-		{name: "a branch name", ref: "feature/issue-42-add-widget", outcome: "unsupported_ref", reason: "integration_reflect_unsupported"},
-		{name: "a pull request number", ref: "7", outcome: "unsupported_ref", reason: "integration_reflect_unsupported"},
-		{name: "a URL with a suffix", ref: reflectURL + "/files", outcome: "unsupported_ref", reason: "integration_reflect_unsupported"},
+		{name: "a form that is neither a URL nor a branch name", ref: reflectURL + "/files", outcome: "unsupported_ref", reason: "artifact_ref_invalid"},
+		{name: "the name of the default branch", ref: "main", outcome: "unsupported_ref", reason: "artifact_ref_invalid"},
+		{name: "a branch that is not on origin", ref: "integration/c-99", outcome: "branch_missing", reason: "integration_missing"},
+		{name: "a number is a usable branch name, but there is no such branch", ref: "7", outcome: "branch_missing", reason: "integration_missing"},
 		{name: "a closed pull request", adopt: "closed", outcome: "not_open", reason: "pr_not_open", ghCalled: true},
 		{name: "a merged pull request", adopt: "merged", outcome: "not_open", reason: "pr_not_open", ghCalled: true},
 		{name: "a pull request to another base", adopt: "develop", outcome: "not_default_base", reason: "pr_not_default_base", ghCalled: true},
@@ -253,7 +254,7 @@ func TestReflectEndToEnd(t *testing.T) {
 		t.Fatalf("commit artifacts after landing = %v", refs)
 	}
 	v = f.h.statusOf(id)
-	if v.Status != runstate.StatusSucceeded || v.Reason != "landed" || !strings.HasSuffix(stepSeq(v), " land:landed cleanup:released") {
+	if v.Status != runstate.StatusSucceeded || v.Reason != "landed" || !strings.HasSuffix(stepSeq(v), " land:landed retire-route:pr cleanup:released") {
 		t.Fatalf("status %s reason %s steps %s", v.Status, v.Reason, stepSeq(v))
 	}
 	f.assertWorktreeGone(id, true)

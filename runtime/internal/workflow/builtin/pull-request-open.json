@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "pull-request 種類の action: open の出力。runtime が生成する（docs/harness-runtime-design.md §5.6.3）。opened は PR を作った、existing は開いている PR が在った（作らない）",
+  "type": "object",
+  "required": ["outcome", "detail", "pr_number", "pr_url"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["opened", "existing"] },
+    "detail": { "type": "string" },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "pr_url": { "type": "string" }
+  },
+  "additionalProperties": false
+}

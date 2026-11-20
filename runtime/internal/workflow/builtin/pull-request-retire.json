@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "pull-request 種類の action: retire の出力。runtime が生成する（docs/harness-runtime-design.md §5.6.3）。deleted は origin のブランチを消した、absent はすでに無かった、kept は消さなかった。detail に、消した・残した理由を 1 文で入れる（kept は必ず）",
+  "type": "object",
+  "required": ["outcome", "detail"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["deleted", "absent", "kept"] },
+    "detail": { "type": "string" }
+  },
+  "additionalProperties": false
+}
