@@ -1328,7 +1328,7 @@ A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a
 | 7 | `T-<番号>` が、同じリポジトリへ出す 2 つの flywheel のワークスペースで重なること | (a) 受ける（`worktree_conflict` で止まる）。(b) 鍵に `challenge_id` も入れる | (a)。`challenge_id` もストアごとの番号で、入れても解けない |
 | 8 | 文面のファイルと Issue の両方があるとき、Issue の本文の `Base:` 行を読まないこと | (a) 読まない（宛先は `base` の入力か既定ブランチ）。(b) 読む（いまと同じ） | (a)。flywheel の S3a は、宛先を反映先（既定ブランチ）と決めて PR の宛先を確かめる（`base_changed`）。Issue の本文で宛先が変わると食い違う |
 
-### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。S3b-1〔#411〕・S3b-2〔#412〕は実装済み。残りは S3b-3 以降）
+### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。S3b-1〔#411〕・S3b-2〔#412〕・S3b-3〔#413〕は実装済み。残りは S3b-4 以降）
 
 §5.6.2 の「B の粗い設計」を、実装できる細かさに起こしたものである。flywheel が、課題ごとの統合先（統合ブランチ）を使い始める（flywheel `docs/features/core-redesign.md` の節「委譲先との契約（S3 で使う受け口）」の「足すもの 2・3・4」と「claude-harness の側で要るもの（S3b）」。食い違えば flywheel 側が正）。**契約の形（flywheel が渡すもの・受け取るもの）は変えない**。この節に書いた入力・段・キー・理由の語は、下の「実装の分け方」の PR で実物になる（設計を書いた時点の実物は main `9911091`＝5.2.0。「いまの動き」の行の番号は、この版のもの）。§5.6.2 の記録は書き換えていない。
 
@@ -1733,6 +1733,17 @@ S3b-1 → S3b-2 → S3b-3 の順に進める（S3b-2 と S3b-3 は、機能の�
 - **変えていないこと**: チェックの見方（`land` の 8・`ci` の段は CI の運用の宣言を宛先から読む）・入れ方（squash・`--match-head-commit`）・`behind` → `land-sync` のマージのコミット・`ready` の道・接続契約の版・スキーマ版・`plugin/` のスクリプト。
 - **試験**: 通しの試験（`runtime/internal/cli/ticket_integration_land_test.go`。偽の `gh`・bare の origin）: 一致して入る・先頭が違う・統合ブランチが進んでいる（既定ブランチは取り込まない）・最初のレビュー待ちの前の取り込み・CI の運用の宣言を統合ブランチから読む・取り直し（新しい先頭・読めない・`ls-remote` を呼ばない／呼ぶ・ゲートが解かれた後は書かない）。`engine/refresh_integration_test.go`（取り直しの書く・書かない条件）と `runstate/workspace_head_test.go`（段の外の `integration` を許す状態と許さない例）。`land` の `landed` の記録を、入れた後に読み直した先頭へ変えると、通しの試験が落ちることを確かめた。
 - **確かめていないこと**: GitHub に対する `gh pr view` の `mergeCommit` の形と、統合ブランチ宛ての squash の入れ方は、偽の `gh` の上でだけ確かめた（S3b-4 の実物での通しで確かめる）。
+
+**S3b-3 の実装の記録（#413）**: この PR で、S3b-3 の行の中身が実物になった。設計の決定は変えていない。実装で、設計の文面から合わせた点・決めたこと:
+
+- **`adopt`**（`engine/pullrequest_adopt.go`）: PR の URL の形（いまの正規表現）以外は、すべてブランチの名前の道へ進む（`resolve-ticket.sh` の `valid_branch` と同じ形は `validBranchName`。`ensure-base` と共通）。`7`（番号だけ）は、ブランチの名前として受けられる形なので、これまでの `unsupported_ref` ではなく `branch_missing`（origin に無ければ）になる。URL の末尾に何か付いた形は `:` を含むので `unsupported_ref`。`ls-remote` は `ensure-base` と同じ `lsRemoteHead`（終了コード 2 だけが「無い」。届かなければ 3 回試して、`gh` の失敗と同じ `step_error` 系の失敗）。fetch は `ref` と既定ブランチを 1 回の `git fetch` に 2 つの refspec で渡す。`gh pr list` は `openPRsFor`（`adopt` の 4 と `open` の 1 が共有）で、フォークからのものを除く。出力の `source` は、URL を受けたとき・受けられなかったときは `pr`、ブランチの名前で `adopted`・`no_pr` になったときは `integration`。
+- **`open`**（`engine/pullrequest_open.go`）: 在る PR を使う場合（`existing`）は、タスクの PR の一覧を読まず、`create` も呼ばない。PR の先頭は、`existing` では `gh pr list` の `headRefOid`、`opened` では fetch 済みの `refs/remotes/origin/<head>`。本文は `renderIntegrationPRBody`（`publish` の `RenderPRBody` とは別。節が違う）。**設計に足した守り**: `summary`（LLM の出力）に `Closes #<番号>`・`Fixes #<番号>`・`Resolved: #<番号>` のような Issue を閉じる記法があっても、既定ブランチへ入ったときに GitHub が Issue を閉じないよう、キーワードをバッククォートで囲んで無効にする（`Closes` の行は、タスクの PR の本文からの写しだけ）。「入っているタスクの PR」の表は番号順。
+- **`retire`**（`engine/pullrequest_retire.go`）: `head` は 40 桁（または 64 桁）の 16 進でなければ `step_error`（空の期待値の `--force-with-lease` は「無いときだけ」の意味になるので、組み立てない）。`branch` が `base` と同じなら、`gh` を呼ぶ前に `step_error`。既定ブランチは `gh repo view --json defaultBranchRef` で読み、読めなければ `kept`（消してよいと確かめられない）、同じなら `step_error`。`!` の後の読み直しで origin に在れば `kept`（`detail` に origin の先頭と入った先頭を書く）。
+- **`reflect.yaml`**: 設計の定義のとおり（段は 12 → 17）。`challenge_id` は省かれうる入力を、任意の `with` として渡す（`ticket` の `workspace` の `provided` と同じ）。`overridable` は変えていない。
+- **上書きの規則 8**（`workflow/landrules.go`・`routes.go`）: `IsBranchGuardStep`（種類と `action` で決める）。元の定義の検査で、3 つの段を `overridable.skips` に挙げる・そこへ入る／そこから出る遷移を `overridable.routes` に宣言する（候補に挙げる場合を含む）ことを拒否する。規則 6 の守るステップに足し、`liftable` ではない。上書きで書くと、宣言が無いので `cannot be overridden`（規則 8 の理由つき）。
+- **試験**: `engine/pullrequest_integration_test.go`（`adopt` のブランチの名前の道を 1 行ずつ・`open`・`retire` を 1 行ずつ。実の `git`・bare の origin・偽の `gh`）、`cli/reflect_integration_test.go`（通しの試験: ブランチの名前 → PR が作られる → 取り込みが統合ブランチへ push される → 検証 → レビュー待ち → `land` の前に既定ブランチへ入らない → `land` → 統合ブランチが消えて `succeeded`／入れた後に先頭が動く・統合ブランチ宛ての PR が在る → `landed_integration_kept`／取り消し・検証失敗で統合ブランチと PR が残り作業ツリーが消える／2 度目の依頼で PR が増えない／`pr_not_found`・`integration_empty`・`describe_failed`／開いている PR が在れば `describe`・`open` を通らない）、`cli/reflect_test.go`（PR の URL の依頼は `retire-route:pr` を通り、統合ブランチを消さない。受けられない形の理由の語）、`workflow/branchguard_test.go`（規則 8 と、同梱の定義の形）。`retire` の確かめ（入った・宛先・head のブランチ・入った先頭・開いている PR・先頭の条件）のどれを外しても試験が落ちることを確かめた（下の「確かめていないこと」を除く）。
+- **設計の文面から外れた点（レビューで見つかった）**: 「5.2.0 で始めて待っている `reflect`（PR の URL）は 5.2.0 の定義のまま終わる」は成り立たない。組み込みの `adopt` の出力スキーマはバイナリに埋め込みで、足した結果（`no_pr`・`branch_missing`・`empty`）を、開始時の定義の `adopt.on` が扱わないため、再開時の検査（outcome の網羅）で版の不一致になる。CHANGELOG に操作（5.2.0 の CLI で終えるか cancel して依頼し直す）を書いた。直す案（古い版の定義の検査では、足した outcome を実行時の `step_error` に倒して通す）は別の PR で決める。また `source: integration` は入力が名前の形だったかだけで決まり、そのブランチが統合ブランチかは見ない（既定ブランチ宛ての PR を持つ作業ブランチを名前で渡すと、入れた後に消しうる。ただし `retire` の確かめを満たすときだけ）。
+- **確かめていないこと**: GitHub に対する `gh pr list --state merged --json number,title,url,body` の出力の形・`gh pr create` が統合ブランチ宛てでない PR（既定ブランチ宛て）で `Closes` の行を持つ本文をどう扱うか・実の `claude` での `describe` は、偽の `gh`・偽の `claude` の上でだけ確かめた（S3b-4 の実物での通しで確かめる）。「マージ後に head のブランチを自動で消す」設定との重なりは、`absent` の分岐を試験で確かめたが、GitHub の設定そのものは確かめていない。
 
 #### 実物で確かめたこと・【要確認】
 

@@ -131,6 +131,10 @@ func (v *validator) routeDecls() {
 			v.errf(d.Line, "%s: the transition %s; it cannot be declared overridable (§6.2 rule 7)", what, reason)
 			continue
 		}
+		if reason := branchGuardLocked(v.wf, s, t); reason != "" {
+			v.errf(d.Line, "%s: the transition %s; it cannot be declared overridable (§6.2 rule 8)", what, reason)
+			continue
+		}
 		if reason := lockedTransition(v.wf, t); reason != "" {
 			v.errf(d.Line, "%s: the transition %s; it cannot be declared overridable (§6.2 rule 2)", what, reason)
 			continue
@@ -145,6 +149,8 @@ func (v *validator) routeDecls() {
 				v.errf(d.Line, "%s: candidate step %q does not exist", what, c)
 			} else if IsLandStep(v.wf.Step(c)) {
 				v.errf(d.Line, "%s: candidate step %q lands the pull request (pull-request action: land); a transition into it cannot be declared overridable (§6.2 rule 7)", what, c)
+			} else if IsBranchGuardStep(v.wf.Step(c)) {
+				v.errf(d.Line, "%s: candidate step %q creates or deletes a branch or opens a pull request (pull-request action: %s); a transition into it cannot be declared overridable (§6.2 rule 8)", what, c, v.wf.Step(c).Action)
 			}
 			hasOrig = hasOrig || c == t.Target
 		}
@@ -181,6 +187,10 @@ func (p *parser) overrideRoutes(ov *Override, s *Step, n *yaml.Node, what string
 			if t := s.OnFor(pr.key); t != nil {
 				if reason := landLocked(s, t); reason != "" {
 					p.errf(pr.knode, "%s cannot be overridden: the transition %s (§6.2 rule 7)", fw, reason)
+					continue
+				}
+				if reason := branchGuardLocked(base, s, t); reason != "" {
+					p.errf(pr.knode, "%s cannot be overridden: the transition %s (§6.2 rule 8)", fw, reason)
 					continue
 				}
 				if reason := lockedTransition(base, t); reason != "" {
@@ -255,6 +265,10 @@ func guardReason(wf *Workflow, s *Step) (reason string, liftable bool) {
 	if IsLandStep(s) {
 		// 一致を確かめて宛先へ入れる段（§6.2 の規則 7）。fail へ入る遷移の有無に依らず守り、overridable.skips でも外せない。
 		return "lands the pull request into its base (pull-request action: land)", false
+	}
+	if IsBranchGuardStep(s) {
+		// origin のブランチを作る・消す・PR を作る段（§6.2 の規則 8）。fail へ入る遷移の有無に依らず守り、overridable.skips でも外せない。
+		return fmt.Sprintf("creates or deletes a branch or opens a pull request (pull-request action: %s)", s.Action), false
 	}
 	human, fail := "", ""
 	for _, e := range s.On {
@@ -431,6 +445,8 @@ func (v *validator) skipDecls() {
 		}
 		reason, liftable := guardReason(v.wf, s)
 		switch {
+		case IsBranchGuardStep(s):
+			v.errf(v.wf.SkipsLine, "%s: step %q creates or deletes a branch or opens a pull request (pull-request action: %s); it can never be skipped by an override (§6.2 rule 8)", what, id, s.Action)
 		case IsLandStep(s):
 			v.errf(v.wf.SkipsLine, "%s: step %q lands the pull request into its base (pull-request action: land); it can never be skipped by an override (§6.2 rule 7)", what, id)
 		case reason == "":

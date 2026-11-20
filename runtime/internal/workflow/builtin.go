@@ -42,6 +42,10 @@ const (
 	PRActionAdopt   = "adopt"
 	// PRActionEnsureBase は宛先（統合ブランチ）が origin に無ければ既定ブランチの先頭から作る（§5.6.3）。
 	PRActionEnsureBase = "ensure-base"
+	// PRActionOpen は、すでに在るブランチから PR を作る（在れば作らない。§5.6.3）。
+	PRActionOpen = "open"
+	// PRActionRetire は、入った後のブランチを、条件を満たすときだけ origin から消す（§5.6.3）。
+	PRActionRetire = "retire"
 )
 
 // WorkspaceModeDetached は workspace の acquire の with.mode に書ける唯一の値。作業ツリーを、ブランチを checkout しない形
@@ -61,6 +65,16 @@ func PRAction(s *Step) string {
 
 // IsLandStep は、宛先へ入れる段（pull-request の action: land）か。§6.2 の規則 7 は段の名前ではなくこの性質で決める。
 func IsLandStep(s *Step) bool { return PRAction(s) == PRActionLand }
+
+// IsBranchGuardStep は、origin のブランチを作る・消す・PR を作る段（pull-request の action: ensure-base・open・retire）か。
+// 段のキーと、そこへ入る・そこから出る遷移は上書きで変えられず、overridable.skips にも挙げられない（§6.2 の規則 8）。
+func IsBranchGuardStep(s *Step) bool {
+	switch PRAction(s) {
+	case PRActionEnsureBase, PRActionOpen, PRActionRetire:
+		return true
+	}
+	return false
+}
 
 // withSpec は種類が受け取る with の 1 項目（名前・型・必須か）。
 type withSpec struct {
@@ -94,7 +108,20 @@ var builtinWith = map[string][]withSpec{
 		{name: "approved_ref", typ: "string", required: true}, // $edge で受ける（ゲートの解決からだけ届く。§6.2 の規則 7）
 	},
 	"pull-request:" + PRActionAdopt: {
-		{name: "ref", typ: "string", required: true}, // PR の URL（https://<host>/<owner>/<repo>/pull/<番号>）
+		{name: "ref", typ: "string", required: true}, // PR の URL（https://<host>/<owner>/<repo>/pull/<番号>）か、統合ブランチの名前（§5.6.3）
+	},
+	"pull-request:" + PRActionOpen: {
+		{name: "head", typ: "string", required: true},  // PR のブランチ（統合ブランチ）
+		{name: "base", typ: "string", required: true},  // PR の宛先（既定ブランチ）
+		{name: "title", typ: "string", required: true}, // 題名（describe が書く）
+		{name: "summary", typ: "string", required: true},
+		{name: "challenge_id", typ: "string"}, // 本文の末尾に書くだけ（省かれうる）
+	},
+	"pull-request:" + PRActionRetire: {
+		{name: "pr", typ: "integer", required: true},
+		{name: "branch", typ: "string", required: true}, // 消すブランチ（PR の head）
+		{name: "base", typ: "string", required: true},   // PR の宛先
+		{name: "head", typ: "string", required: true},   // 入った先頭のコミット（land の head_sha）
 	},
 	"pull-request:" + PRActionEnsureBase: {
 		{name: "branch", typ: "string", required: true}, // 統合ブランチの名前（resolve が決めた base）
@@ -146,6 +173,10 @@ func builtinSchemaFile(s *Step) string {
 			return "pull-request-adopt.json"
 		case PRActionEnsureBase:
 			return "pull-request-ensure-base.json"
+		case PRActionOpen:
+			return "pull-request-open.json"
+		case PRActionRetire:
+			return "pull-request-retire.json"
 		}
 		return "pull-request.json"
 	}
@@ -184,9 +215,9 @@ func (v *validator) builtinKind(s *Step) {
 	}
 	if s.Kind == "pull-request" {
 		switch s.Action {
-		case "", PRActionPublish, PRActionSync, PRActionPush, PRActionLand, PRActionAdopt, PRActionEnsureBase:
+		case "", PRActionPublish, PRActionSync, PRActionPush, PRActionLand, PRActionAdopt, PRActionEnsureBase, PRActionOpen, PRActionRetire:
 		default:
-			v.errf(s.Line, "steps.%s: action %q must be publish, sync, push, land, adopt or ensure-base for kind pull-request", s.ID, s.Action)
+			v.errf(s.Line, "steps.%s: action %q must be publish, sync, push, land, adopt, ensure-base, open or retire for kind pull-request", s.ID, s.Action)
 			return
 		}
 	}

@@ -72,3 +72,18 @@ func landLocked(from *Step, t *Transition) string {
 	}
 	return ""
 }
+
+// branchGuardLocked は、遷移が §6.2 の規則 8 で付け替えられないものなら、その理由を返す（origin のブランチを作る・消す・PR を作る段
+// （ensure-base・open・retire）から出る遷移と、そこへ入る遷移）。
+func branchGuardLocked(wf *Workflow, from *Step, t *Transition) string {
+	if IsBranchGuardStep(from) {
+		return fmt.Sprintf("leaves step %q, which creates or deletes a branch or opens a pull request (pull-request action: %s)", from.ID, from.Action)
+	}
+	switch t.Kind {
+	case TStep, TGate, TGoto:
+		if target := wf.Step(t.Target); IsBranchGuardStep(target) {
+			return fmt.Sprintf("leads to step %q, which creates or deletes a branch or opens a pull request (pull-request action: %s)", target.ID, target.Action)
+		}
+	}
+	return ""
+}
