@@ -533,7 +533,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := applyWorkspace(u, p, ev.Seq); err != nil {
+		if err := applyWorkspace(s, u, p, ev.Seq); err != nil {
 			return nil, err
 		}
 	case EvCancelRequested:
@@ -607,7 +607,11 @@ func checkPayload(ev *Event) error {
 }
 
 // applyWorkspace は workspace イベントを unit へ適用する。作業ツリーの記録はステップ実行の中で起きる（running のステップがある）。
-func applyWorkspace(u *Unit, p *WorkspaceEvent, seq int) error {
+// 例外は head だけ（実行中の段の外で書く。§5.6.2）。
+func applyWorkspace(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
+	if p.Action == WorkspaceHead {
+		return applyHead(s, u, p, seq)
+	}
 	if u.Running() == nil {
 		return fmt.Errorf("workspace (seq %d) outside a running step", seq)
 	}
@@ -665,6 +669,28 @@ func applyWorkspace(u *Unit, p *WorkspaceEvent, seq int) error {
 	default:
 		return fmt.Errorf("workspace action %q (seq %d) is unknown", p.Action, seq)
 	}
+	return nil
+}
+
+// applyHead は、待っている間に外から push された PR の先頭の取り直し（workspace の head。§5.6.2）を適用する。許すのは
+// run が終わっていない・unit に実行中の段が無く、refresh の印のあるゲートで待っている・unit に PR の記録がある、のときだけ。
+// 段の中の先頭の記録は pr のイベントで書くので、段の中の head は誤りにする。ラウンドごとの記録（head_sha_by_round）は書かない。
+func applyHead(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
+	switch {
+	case Terminal(s.Status):
+		return fmt.Errorf("workspace head (seq %d) after the run ended as %s", seq, s.Status)
+	case u.Running() != nil:
+		return fmt.Errorf("workspace head (seq %d) inside a running step; a step records the head with a pr event", seq)
+	case u.Gate == nil:
+		return fmt.Errorf("workspace head (seq %d) while unit %q is not waiting at a gate", seq, u.Key)
+	case u.Gate.Refresh == "":
+		return fmt.Errorf("workspace head (seq %d): gate %q has no refresh mark", seq, u.Gate.Gate)
+	case u.Workspace == nil || u.Workspace.PRNumber <= 0:
+		return fmt.Errorf("workspace head (seq %d) but unit %q has no PR record", seq, u.Key)
+	case p.HeadSHA == "":
+		return fmt.Errorf("workspace head (seq %d) needs head_sha", seq)
+	}
+	u.Workspace.HeadSHA = p.HeadSHA
 	return nil
 }
 

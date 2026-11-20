@@ -692,6 +692,8 @@ func cmdStatus(args []string, env Env) int {
 		} else {
 			st = next
 		}
+		// refresh: pr-head のゲートで待っている unit の PR の先頭を取り直す（§5.6.2。読めなければ記録のまま）。
+		st = engine.RefreshHeads(context.Background(), run, st, env.Getenv("HARNESS_GH_BIN"), st.Cwd, env.Stderr)
 	}
 	if _, ok := flags["json"]; ok {
 		writeJSON(env.Stdout, view(run, st, torn))

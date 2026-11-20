@@ -48,6 +48,12 @@ func (l *landFixture) setPRHead(sha string) {
 	l.f.write("pr-view.json", viewJSON("OPEN", sha, "main", ""))
 }
 
+// followOrigin は、PR の先頭を origin の作業ブランチの先頭に追従させる（harness が push した後の、実物の PR と同じ。取り直しが、
+// push の後の先頭を古い先頭へ戻さないために要る）。
+func (l *landFixture) followOrigin() {
+	l.f.write("pr-head-ref", l.f.origin+"\nrefs/heads/"+l.f.branch+"\n")
+}
+
 func (l *landFixture) merged(head, merge string) {
 	l.f.write("merge.then", viewJSON("MERGED", head, "main", merge))
 }
@@ -153,6 +159,7 @@ func TestTicketLandMergesAndSucceeds(t *testing.T) {
 // 新しい先頭で land を返すと、今度は入る。
 func TestTicketLandWhenTheBaseMovedSyncsAndReturnsToReview(t *testing.T) {
 	l := newLandFixture(t, nil)
+	l.followOrigin()
 	newBase := advanceMain(t, l.f, "other.txt", "x\n")
 	// land を受けてから、レビュー待ちへ戻るまでは running（受け付ける前のレビュー待ちを返さない）。速い runner が、もう戻っていても、
 	// 返すのは新しい先頭のレビュー待ちで、通した中身のままのレビュー待ちではない。
@@ -254,6 +261,7 @@ func TestTicketLandSyncConflictIsResolvedThenReturnsToReview(t *testing.T) {
 		// 実装の段が、作業ブランチに conflict.txt のコミットを足す（偽の claude の 2 回目の応答の間に作る）。
 		runStep(t, f, 2, "echo branch > conflict.txt\ngit add conflict.txt\ngit commit -q -m 'feat: conflict.txt'")
 	})
+	l.followOrigin()
 	mainSide := advanceMain(t, l.f, "conflict.txt", "main\n")
 	// 衝突を直す段（4 回目の claude）が、マージを終える。
 	runStep(t, l.f, 4, "echo resolved > conflict.txt\ngit add conflict.txt\ngit commit -q --no-edit")

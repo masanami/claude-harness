@@ -200,6 +200,9 @@ type GateOpened struct {
 	// ContractKind はゲートの定義の contract_kind（§5.6.1・#372。書かれていなければ空）。contract の出力が定義を
 	// 読み直さずに kind を決められるよう、開いたときに写しておく。
 	ContractKind string `json:"contract_kind,omitempty"`
+	// Refresh はゲートの定義の refresh（pr-head。§5.6.2）。status が待っている間に PR の先頭を取り直してよいゲートの印。
+	// 開いたときに写すので、定義を読み直さずに（畳み込みの中で）許す場面を決められる。
+	Refresh string `json:"refresh,omitempty"`
 	// Detail はゲートへの遷移の detail（参照 1 つ）を解決した文（戻った理由など）。開き直すたびに置き換わる。
 	Detail string `json:"detail,omitempty"`
 }
@@ -272,6 +275,7 @@ const (
 	WorkspaceAcquired = "acquired" // workspace 種類の acquire が作業ツリーを得た（provided / created / reused）
 	WorkspaceReleased = "released" // workspace 種類の release が終わった（削除した・残した）
 	WorkspacePR       = "pr"       // pull-request 種類が PR を作成・更新した
+	WorkspaceHead     = "head"     // 待っている間に外から push された PR の先頭を status が取り直した（実行中の段の外で書く）
 )
 
 // WorkspaceEvent は unit の作業ツリーと PR の記録（§4.1 Workspace）。Action ごとに使うフィールドが違う:

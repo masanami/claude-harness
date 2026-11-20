@@ -8,6 +8,8 @@
 #                           以後の pr list が作った PR を返すよう pr-list を書く
 #   pr view <n>           → pr-missing があれば exit 1。pr-view.<n 回目の呼び出し> か pr-view.json があればその中身（land の試験用に、
 #                           state・headRefOid・baseRefName・mergeCommit・isDraft を持つ JSON）。無ければ state は pr-state（無ければ OPEN）
+#                           pr-head-ref があれば、その pr-view.json の headRefOid を、pr-head-ref の参照（1 行目: git ディレクトリ、
+#                           2 行目: 参照）の先頭に置き換える
 #   pr merge <n> ...      → merge.code があればその終了コードで失敗（標準エラーに merge.err の中身）。通ったら merge.then の中身を
 #                           pr-view.json に写し（入った後の PR を見せる）、merge.kill があれば呼び出し元（harness）を SIGKILL する
 #   pr checks             → checks.<n>（n 回目の呼び出し）、無ければ checks（無ければ []）。checks.none があれば、実物の gh が
@@ -43,7 +45,17 @@ case "$1 ${2:-}" in
     [ -f "$dir/pr-missing" ] && { echo "fake gh: no pull requests found" >&2; exit 1; }
     n=$(( $(cat "$dir/pr-view.count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$dir/pr-view.count"
     if [ -f "$dir/pr-view.$n" ]; then cat "$dir/pr-view.$n"; exit 0; fi
-    if [ -f "$dir/pr-view.json" ]; then cat "$dir/pr-view.json"; exit 0; fi
+    if [ -f "$dir/pr-view.json" ]; then
+      # pr-head-ref（1 行目: git ディレクトリ、2 行目: 参照）があれば、headRefOid をその参照の先頭にする（実物の PR の先頭は、
+      # harness が push した後は新しい先頭を指す）。
+      if [ -f "$dir/pr-head-ref" ]; then
+        h=$(git --git-dir="$(sed -n 1p "$dir/pr-head-ref")" rev-parse "$(sed -n 2p "$dir/pr-head-ref")")
+        sed "s/\"headRefOid\":\"[^\"]*\"/\"headRefOid\":\"$h\"/" "$dir/pr-view.json"
+      else
+        cat "$dir/pr-view.json"
+      fi
+      exit 0
+    fi
     state=$(cat "$dir/pr-state" 2>/dev/null || echo OPEN)
     printf '{"number":%s,"url":"https://github.com/o/r/pull/%s","state":"%s","mergedAt":null,"baseRefName":"main"}\n' "$3" "$3" "$state" ;;
   "pr merge")

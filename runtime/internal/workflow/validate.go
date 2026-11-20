@@ -237,6 +237,13 @@ func (v *validator) gate(s *Step) {
 	case s.GateType != GateInput || RequiresTTY(s.GateType, s.Decider):
 		v.errf(s.Line, "steps.%s: contract_kind %s is only valid for type input with decider parent or any (a gate the caller answers with resume --input)", s.ID, s.ContractKind)
 	}
+	switch {
+	case s.Refresh == "":
+	case s.Refresh != RefreshPRHead:
+		v.errf(s.Line, "steps.%s: refresh %q must be %s (the only value; it re-reads the PR head while the gate waits)", s.ID, s.Refresh, RefreshPRHead)
+	case s.GateType != GateInput:
+		v.errf(s.Line, "steps.%s: refresh is only valid for type input", s.ID)
+	}
 	switch s.GateType {
 	case GateInput:
 		if len(s.GateInputs) == 0 {

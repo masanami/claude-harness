@@ -48,6 +48,9 @@ const (
 // decider が human でない）にだけ書ける。
 const ContractKindReview = "review"
 
+// RefreshPRHead はゲートの refresh に書ける唯一の値（§5.6.2）: 待っている間の PR の先頭を status で取り直す。
+const RefreshPRHead = "pr-head"
+
 // RequiresTTY は、ゲートの解決に端末（TTY）が要るかを返す。要るのは input 型かつ decider: human のゲートだけ
 // （Q9・N1。observe 型は resume が判断を運ばず、runtime が外部の実状態を確かめるだけなので要求しない）。
 func RequiresTTY(gateType, decider string) bool {
@@ -225,6 +228,9 @@ type Step struct {
 	// ContractKind は接続契約で見せる requested_action.kind（§5.6.1・#372）。書けるのは ContractKindReview だけで、
 	// 書かなければ空（ゲートの型 × decider の対応表のまま）。runtime はゲート名でなく、この宣言で kind を決める。
 	ContractKind string
+	// Refresh はゲートで待っている間に取り直すもの（§5.6.2）。書けるのは RefreshPRHead だけで、input 型のゲートにだけ書ける。
+	// 書かなければ空。status は、この印のあるゲートで待っている unit の PR の先頭を gh で読み直す。
+	Refresh string
 
 	// select 種類（§3.2・Q12）: 参照 1 つ。その enum 値がそのまま outcome になる（読み込み時に SelectOutcomes へ解決する）
 	Value          *Ref
