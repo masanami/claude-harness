@@ -1,8 +1,13 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/masanami/claude-harness/runtime/internal/runstate"
 )
 
 // 接続契約の facts（名前 → 値）: ticket のレビュー待ちの出力には毎回 facts.self_review が出る。値は implement・fix・respond のうち、
@@ -95,4 +100,53 @@ func TestTicketRejectsFixAndRespondOutputWithoutSelfReview(t *testing.T) {
 			t.Fatalf("last step %s:%s, want respond:invalid_output (steps %s)", last.Step, last.Outcome, stepSeq(v))
 		}
 	})
+}
+
+// 型付きの出力の検査は、段の出力を受けた時点だけで行う。run の記録の読み込み（status・contract・resume）では検査しないので、
+// self_review を必須にする前に始めた run の記録（respond の出力に self_review が無い）も、読めて、待ちを再開できる。
+// 古い記録は、記録済みの respond の出力から self_review を取り除いて作る。値は「欄を返さなかった段は値を変えない」で、前の段のまま。
+func TestTicketRunRecordedBeforeSelfReviewWasRequiredStillLoadsAndResumes(t *testing.T) {
+	f := newTicketFixture(t)
+	greenCI(f)
+	respondReturning(t, f, 4, "no_change", map[string]any{"self_review": "incomplete"})
+	respondReturning(t, f, 5, "no_change", nil)
+	id := runToReview(t, f)
+	if _, errOut, code := f.h.run("resume", id, "--input", "respond"); code != ExitWaiting {
+		t.Fatalf("resume exit %d\n%s", code, errOut)
+	}
+	if got := factsOfContract(t, f, "status", id)["self_review"]; got != "incomplete" {
+		t.Fatalf("precondition: after respond: %q, want incomplete", got)
+	}
+
+	events := filepath.Join(f.h.statusOf(id).RunDir, runstate.EventsFile)
+	b, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const field = `"self_review":"incomplete",`
+	if strings.Count(string(b), field) != 1 {
+		t.Fatalf("the record holds %d respond outputs with %s, want 1:\n%s", strings.Count(string(b), field), field, b)
+	}
+	if err := os.WriteFile(events, []byte(strings.Replace(string(b), field, "", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 読み込み: 記録は壊れておらず、待ちはレビュー待ちのまま。respond は欄を返していないので、値は implement の complete
+	v := f.h.statusOf(id)
+	if len(v.Waiting) != 1 || v.Waiting[0].Gate != "review" {
+		t.Fatalf("waiting = %+v, want the review gate (steps %s)", v.Waiting, stepSeq(v))
+	}
+	if strings.Contains(string(v.Unit("main").Outputs["respond"]), "self_review") {
+		t.Fatalf("the rewritten record still has self_review: %s", v.Unit("main").Outputs["respond"])
+	}
+	if got := factsOfContract(t, f, "status", id)["self_review"]; got != "complete" {
+		t.Fatalf("facts from the old record: %q, want complete (a step that did not return the field leaves the value)", got)
+	}
+	// 再開: 次の respond は、いまの版の検査（self_review が必須）を受けて通り、値を置き換える
+	if _, errOut, code := f.h.run("resume", id, "--input", "respond"); code != ExitWaiting {
+		t.Fatalf("resume of the old record: exit %d\n%s", code, errOut)
+	}
+	if got := factsOfContract(t, f, "status", id)["self_review"]; got != "not_run" {
+		t.Fatalf("after the next respond: %q, want not_run", got)
+	}
 }

@@ -12,7 +12,6 @@ import (
 // 文面のファイルと task_id だけ（Issue 無し）の run が、PR を作るところまで進む（#388 S3-1）。作業ツリーとブランチの名前は
 // 鍵 task-<番号> で決まり、analyze・implement は文面のファイルのパスを受け取り、PR は何も閉じない。空の入力は「無い」と読む。
 func TestTicketWorkflowFromATaskFileAndTaskID(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir()) // resolve が文面の写しの置き場を作る場所。共有の一時ディレクトリに残さない
 	f := newTicketFixture(t)
 	taskFile := filepath.Join(t.TempDir(), "task.md")
 	if err := os.WriteFile(taskFile, []byte("# T-12 widget を足す\n"), 0o644); err != nil {
@@ -44,8 +43,22 @@ func TestTicketWorkflowFromATaskFileAndTaskID(t *testing.T) {
 	}
 	// 段が読む正本のパスは、文面の写し（そのファイルだけが在る置き場）。元の親ディレクトリは渡らない
 	copyDir = filepath.Dir(resolved.TaskFile)
-	if copyDir == filepath.Dir(taskFile) || readFile(t, resolved.TaskFile) != readFile(t, taskFile) {
+	if copyDir == filepath.Dir(taskFile) || readFile(t, resolved.TaskFile) != "# T-12 widget を足す\n" {
 		t.Errorf("task_file %q is not a copy of %q in a dedicated directory", resolved.TaskFile, taskFile)
+	}
+	// 写しの置き場は run ディレクトリの下（OS の一時ディレクトリではない）。レビュー待ちの間に元のファイルが変わっても・消えても、
+	// run は写しを読む（差し戻しの後の段へ渡るパスも写しのまま）
+	if want := filepath.Join(v.RunDir, "task"); copyDir != want {
+		t.Errorf("the copy is in %q, want the run directory's %q", copyDir, want)
+	}
+	if err := os.WriteFile(taskFile, []byte("# 書き換えた\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(taskFile); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, resolved.TaskFile); got != "# T-12 widget を足す\n" {
+		t.Errorf("the copy after the original changed and was removed = %q", got)
 	}
 	// 空の入力は run_started.inputs に入らない
 	for _, name := range []string{"issue", "base", "worktree", "challenge_id"} {

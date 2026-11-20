@@ -13,7 +13,7 @@
 # stdout に JSON を 1 つ出す（schemas/resolve-ticket.json）。outcome は ok | base_missing | links_invalid | input_invalid |
 # integration_unsupported。key は名前の鍵（task-<n> か issue-<n>。作業ツリーの場所とブランチの名前に使う）、scope は作業の範囲の正本
 # （task_file があれば task_file、無ければ issue）。--task_file があるときは、文面のファイルが範囲の正本で、Issue は PR が閉じる
-# 対象としてだけ読む（Refs:・Closes: 行だけ。Base: 行は読まない）。文面のファイルは解釈せず、在ることだけを確かめ、この run だけの置き場へ写して、出力の task_file・task_dir を写しのパス・置き場にする。
+# 対象としてだけ読む（Refs:・Closes: 行だけ。Base: 行は読まない）。文面のファイルは解釈せず、在ることだけを確かめ、この run だけの置き場（run ディレクトリ〔HARNESS_RUN_DIR〕の下の task/）へ写して、出力の task_file・task_dir を写しのパス・置き場にする。
 #   input_invalid: 入力の組み合わせ・形が誤り（issue も task_file も無い／task_file が絶対パスでない・読めない／task_id が T-<1 以上の整数>
 #     でない／issue も task_id も無い／uses_integration が true・false 以外）
 #   integration_unsupported: uses_integration が true（統合先を作る道はまだ無い）
@@ -108,16 +108,29 @@ if [ "$uses_integration" = true ]; then
   emit_early integration_unsupported "uses_integration が true だが、統合先を作る道はまだ無い（この版では扱えない）。uses_integration を外して再実行する"
 fi
 
-# 文面のファイルは、この run だけの置き場（そのファイルだけが在る新しいディレクトリ）へ写し、以後の段が読む正本のパス（task_file）は写しのパスにする。
-# task_dir は置き場で、LLM の段に --add-dir で渡す。元のファイルの親ディレクトリ（/tmp や / のことがある）を読める範囲に入れない。
-# 置き場は run が終わっても残す（run の記録と同じ扱い）。
+# 文面のファイルは、この run だけの置き場（そのファイルだけが在るディレクトリ）へ写し、以後の段が読む正本のパス（task_file）は写しのパスにする。
+# 置き場は run ディレクトリ（run の記録の置き場。engine が HARNESS_RUN_DIR で渡す絶対パス）の下の task/。OS の一時ディレクトリには置かない
+# （レビュー待ちの間に OS が掃除すると、差し戻しの後の段が読めなくなる）。run の記録と同じだけ残る。
+# task_dir は置き場で、LLM の段に --add-dir で渡す。元のファイルの親ディレクトリ（/tmp や / のことがある）も、run ディレクトリの全体（ログ）も
+# 読める範囲に入れない。写しが既にあれば（この段のやり直し）写し直さない: 写した後に元のファイルが変わっても、run は最初の写しを読む。
 if [ -n "$task_file" ]; then
-  tmp_base="${TMPDIR:-/tmp}"
-  task_dir="$(mktemp -d "${tmp_base%/}/harness-task.XXXXXX")" || { echo "Error: cannot create a directory for the task file" >&2; exit 1; }
-  chmod 700 "$task_dir"
-  if ! cp -- "$task_file" "$task_dir/task.md"; then
-    echo "Error: cannot copy the task file '${task_file}' to ${task_dir}" >&2
+  run_dir="${HARNESS_RUN_DIR:-}"
+  if [[ "$run_dir" != /* ]] || [ ! -d "$run_dir" ]; then
+    echo "Error: HARNESS_RUN_DIR ('${run_dir}') is not an existing absolute directory; the harness runtime sets it to the run directory, where the copy of the task file is kept" >&2
     exit 1
+  fi
+  task_dir="$run_dir/task"
+  if ! mkdir -p "$task_dir" || ! chmod 700 "$task_dir"; then
+    echo "Error: cannot create the directory for the task file (${task_dir})" >&2
+    exit 1
+  fi
+  if [ ! -f "$task_dir/task.md" ]; then
+    # 同じディレクトリの別名へ写してから名前を替える（途中で止まった写しを、次のやり直しが正本として読まないように）
+    if ! cp -- "$task_file" "$task_dir/.task.md.$$" || ! mv -f -- "$task_dir/.task.md.$$" "$task_dir/task.md"; then
+      rm -f -- "$task_dir/.task.md.$$"
+      echo "Error: cannot copy the task file '${task_file}' to ${task_dir}" >&2
+      exit 1
+    fi
   fi
   task_file="$task_dir/task.md"
 fi

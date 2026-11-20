@@ -45,10 +45,22 @@ func (e *Engine) dirFor(u *runstate.Unit) string {
 	return e.Cwd
 }
 
+// RunDirEnv は command の段へ run ディレクトリ（run の記録の置き場。§4.6 F1）の絶対パスを渡す環境変数の名前。
+// 段が、この run だけの、run が待っている間も残るファイル（resolve-ticket.sh の文面の写し）を置く場所に使う。
+const RunDirEnv = "HARNESS_RUN_DIR"
+
 // childEnv は子プロセスへ渡す環境。ワークフローに付属するスクリプトがプラグインのスクリプトを呼べるよう、
-// その置き場を HARNESS_SCRIPTS_DIR で渡す。
+// その置き場を HARNESS_SCRIPTS_DIR で渡し、run ディレクトリを HARNESS_RUN_DIR（絶対パス）で渡す。
 func (e *Engine) childEnv() []string {
-	return append(os.Environ(), "HARNESS_SCRIPTS_DIR="+e.ScriptsDir)
+	env := append(os.Environ(), "HARNESS_SCRIPTS_DIR="+e.ScriptsDir)
+	if e.Run != nil && e.Run.Dir != "" {
+		dir := e.Run.Dir
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		env = append(env, RunDirEnv+"="+dir)
+	}
+	return env
 }
 
 // withValues は with の値を解決する。省略された任意の入力は渡さない（キーごと無い）。
