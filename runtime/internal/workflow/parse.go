@@ -72,7 +72,7 @@ type kindSpec struct {
 // 種類を足すときは、ここと engine の実行器の両方に足す。
 var kinds = map[string]kindSpec{
 	"command": {keys: []string{"kind", "description", "run", "with", "output", "outcome_field", "exit", "timeout", "on"}},
-	"llm":     {keys: []string{"kind", "description", "prompt", "agent", "session", "with", "output", "budget_usd", "timeout", "on"}},
+	"llm":     {keys: []string{"kind", "description", "prompt", "agent", "session", "add_dirs", "with", "output", "budget_usd", "timeout", "on"}},
 	"gate":    {keys: []string{"kind", "description", "type", "decider", "requested_action", "inputs", "observe", "contract_kind", "with", "on"}},
 	// select は参照 1 つの enum 値をそのまま outcome にする（副作用なし）。with・output は持たない。
 	"select": {keys: []string{"kind", "description", "value", "on"}},
@@ -491,6 +491,8 @@ func (p *parser) step(id string, knode, n *yaml.Node) *Step {
 			s.Prompt, _ = p.str(f.val, fw)
 		case "agent":
 			s.Agent, _ = p.matched(f.val, fw, reAgent)
+		case "add_dirs":
+			s.AddDirs = p.valueList(f.val, fw)
 		case "session":
 			if str, ok := p.str(f.val, fw); ok {
 				switch {
@@ -773,6 +775,28 @@ func (p *parser) bindings(n *yaml.Node, what string, nameRe *regexp.Regexp) []*B
 		if ok {
 			out = append(out, &Binding{Name: pr.key, Value: v, Line: pr.knode.Line})
 		}
+	}
+	return out
+}
+
+// valueList は add_dirs（参照かリテラルの文字列の列）を読む。
+func (p *parser) valueList(n *yaml.Node, what string) []*Binding {
+	if n.Kind != yaml.SequenceNode {
+		p.errf(n, "%s must be a list of references or strings", what)
+		return nil
+	}
+	var out []*Binding
+	for i, it := range n.Content {
+		fw := fmt.Sprintf("%s[%d]", what, i)
+		v, ok := p.value(it, fw)
+		if !ok {
+			continue
+		}
+		if _, isInt := v.Literal.(int64); isInt {
+			p.errf(it, "%s must be a reference or a string (a folder path)", fw)
+			continue
+		}
+		out = append(out, &Binding{Name: fmt.Sprintf("add_dirs[%d]", i), Value: v, Line: it.Line})
 	}
 	return out
 }

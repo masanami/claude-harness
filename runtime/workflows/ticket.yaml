@@ -2,6 +2,8 @@
 # PR 作成後の CI・レビュー・マージのラウンドまでを含む。shadow run（§8 C3 の段階 A）の手順は docs/harness-runtime-shadow.md。
 #
 #   harness run ticket --input issue=<番号> [--input base=<ブランチ>] [--input worktree=<絶対パス>]
+#   harness run ticket --input task_file=<絶対パス> --input task_id=T-<番号> [--input issue=<番号>] [--input base=<ブランチ>]
+#     （#388 の S3-1。値が空の入力は「無い」と読む。入力どうしの条件は resolve が確かめる。docs/harness-runtime-design.md §5.6.2）
 #
 # 設計の書き下ろし（§3.4）からの差分（実装で要ったもの。設計の決定は変えていない）:
 #   - ci は plugin/scripts/ci-wait.sh を直接ではなく scripts/ci-wait-pr.sh 経由で呼ぶ（ci-wait.sh は位置引数、
@@ -28,9 +30,13 @@ schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
 inputs:
-  issue:    { type: integer, required: true }
+  issue:    { type: integer }       # 省略可。PR が閉じる対象（task_file があれば範囲の正本は文面のファイル）。issue も task_file も無ければ resolve が input_invalid
   base:     { type: string }        # 省略可。resolve-ticket が I2 の優先順で決める
   worktree: { type: string }        # 呼び出し元がスロットを払い出した場合だけ（§5.4）
+  task_file:        { type: string }  # タスクの文面のファイルの絶対パス（UTF-8 の Markdown）。あれば作業の範囲の正本
+  task_id:          { type: string }  # T-<番号>。作業ツリーとブランチの名前の鍵（task-<番号>）になる
+  uses_integration: { type: string }  # true | false。true は integration_unsupported で止める（統合先を作る道はまだ無い）
+  challenge_id:     { type: string }  # 受けるだけで使わない
 limits:
   budget_usd: 40                    # この unit 全ラウンドの累計上限（仮の値。shadow run で較正する。§12）
   rework: 3                         # Phase 4→8 の差し戻し上限（W2・Q8）
@@ -47,18 +53,22 @@ steps:
   resolve:
     kind: command
     run: resolve-ticket             # scripts/resolve-ticket.sh: gh issue view＋Base:・Refs:・Closes: 行の抽出＋統合ブランチの remote 存在確認
-    with: { issue: $inputs.issue, base: $inputs.base }
+    with: { issue: $inputs.issue, base: $inputs.base, task_file: $inputs.task_file, task_id: $inputs.task_id,
+            uses_integration: $inputs.uses_integration }
     output: schemas/resolve-ticket.json
     timeout: 2m
     on:
       ok: analyze
       base_missing: { fail: base_missing }          # I3: 作成を促して止まる（手順は output の message に載る）
       links_invalid: { fail: links_invalid }        # Refs:・Closes: 行が読めない（直し方は output の message に載る。#305）
+      input_invalid: { fail: input_invalid }        # 入力どうしの条件・形が誤り（直し方は output の message に載る。§5.6.2）
+      integration_unsupported: { fail: integration_unsupported }   # uses_integration: true はまだ扱えない
 
   analyze:
     kind: llm
     prompt: prompts/ticket-analyze.md
-    with: { issue: $inputs.issue }
+    add_dirs: [ $steps.resolve.task_dir ]           # 文面のファイルが作業ツリーの外にあっても Read できるように（無ければ空文字で渡さない。#391）
+    with: { issue: $steps.resolve.issue, task_file: $steps.resolve.task_file, key: $steps.resolve.key }
     output: schemas/ticket-analysis.json
     budget_usd: 2
     timeout: 20m
@@ -67,7 +77,7 @@ steps:
   workspace:
     kind: workspace
     action: acquire
-    with: { issue: $inputs.issue, branch: $steps.analyze.branch,
+    with: { issue: $steps.resolve.issue, key: $steps.resolve.key, branch: $steps.analyze.branch,
             base: $steps.resolve.base, provided: $inputs.worktree }
     on:
       provided: implement
@@ -80,7 +90,8 @@ steps:
     agent: claude-harness:feature-implementer
     prompt: prompts/ticket-implement.md
     session: new
-    with: { issue: $inputs.issue, critical_design: $steps.analyze.critical_design }
+    add_dirs: [ $steps.resolve.task_dir ]
+    with: { issue: $steps.resolve.issue, task_file: $steps.resolve.task_file, critical_design: $steps.analyze.critical_design }
     output: schemas/implement-result.json
     budget_usd: 15
     timeout: 90m
@@ -130,6 +141,8 @@ steps:
   e2e:
     kind: llm
     prompt: prompts/ticket-e2e.md                   # /create-e2e まで。/explain-e2e は runtime の外（§3.7）
+    add_dirs: [ $steps.resolve.task_dir ]
+    with: { task_file: $steps.resolve.task_file }   # 文面のファイルがあれば要件の正本（無ければ空文字。#391）
     session: continue:implement
     output: schemas/e2e-result.json
     budget_usd: 8

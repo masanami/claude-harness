@@ -61,11 +61,17 @@ type acquireOutput struct {
 // acquire は作業ツリーを得る: 呼び出し元が渡していれば検証して provided、無ければ worktree-setup で created / reused。
 // 使えない払い出し先（別ブランチの worktree・未登録のディレクトリ・別のリポジトリ）は conflict。
 func (e *Engine) acquire(tools *stepTools, u *runstate.Unit, step *workflow.Step, with map[string]json.RawMessage) result {
-	issue, ok1 := jsonInt(with["issue"])
+	// 名前の鍵: key があれば key、無ければ issue（0 は「無い」）から issue-<n> として worktree-setup に渡す。どちらも無ければ誤り。
+	issue, _ := jsonInt(with["issue"])
+	key, _ := jsonString(with["key"])
 	branch, ok2 := jsonString(with["branch"])
 	base, ok3 := jsonString(with["base"])
-	if !ok1 || !ok2 || !ok3 || issue <= 0 || branch == "" || base == "" {
-		return stepError("with.issue (a positive integer), with.branch and with.base (non-empty strings) are required")
+	if (key == "" && issue <= 0) || !ok2 || !ok3 || branch == "" || base == "" {
+		return stepError("with.key (a non-empty string) or with.issue (a positive integer), and with.branch and with.base (non-empty strings) are required")
+	}
+	setupArg := key
+	if setupArg == "" {
+		setupArg = strconv.FormatInt(issue, 10)
 	}
 	acquireMu.Lock()
 	defer acquireMu.Unlock()
@@ -109,7 +115,7 @@ func (e *Engine) acquire(tools *stepTools, u *runstate.Unit, step *workflow.Step
 		return r
 	}
 
-	argv := []string{"bash", filepath.Join(e.ScriptsDir, "worktree-setup.sh"), strconv.FormatInt(issue, 10), branch, base}
+	argv := []string{"bash", filepath.Join(e.ScriptsDir, "worktree-setup.sh"), setupArg, branch, base}
 	r := tools.run(e.Cwd, argv...)
 	if !r.ok() {
 		if r.startErr == nil && r.how == exited && r.code > 0 {

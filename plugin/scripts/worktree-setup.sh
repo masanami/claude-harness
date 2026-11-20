@@ -1,6 +1,8 @@
 #!/bin/bash
 # worktree-setup.sh
-# 使い方: scripts/worktree-setup.sh <issue番号> <branch名> <base> [worktree_root]（詳細は下記参照）
+# 使い方: scripts/worktree-setup.sh <issue番号 | 鍵> <branch名> <base> [worktree_root]（詳細は下記参照）
+# 第 1 引数は Issue の番号（数字だけ。鍵は issue-<数字> になる）か、鍵（issue-<n>・task-<n>・pr-<n>）。鍵は作業ツリーの
+# 場所（<root>/<鍵>）とブランチの名前（{type}/<鍵>-{説明}）の両方に使う。
 # 仕様の正本は scripts/specs/worktree-setup.md を参照。
 
 set -u
@@ -17,13 +19,28 @@ WORKTREE_SETUP_BRANCH_TYPES="feature fix refactor docs hotfix"
 # 純粋関数（git/ghを呼ばない）
 # ---------------------------------------------------------------------------
 
-# ブランチ名が `{type}/issue-{issue番号}-{ケバブケース説明}` 形式かを検証する。
+# 第 1 引数（Issue の番号か鍵）から鍵を決める。数字だけなら issue-<数字>、鍵の形（issue-<n>・task-<n>・pr-<n>。n は数字）なら
+# そのまま。それ以外は空文字（呼び出し側が誤りとして扱う）。
+resolve_key() {
+  local arg="$1"
+  if [[ "$arg" =~ ^[0-9]+$ ]]; then
+    echo "issue-${arg}"
+  elif [[ "$arg" =~ ^(issue|task|pr)-[0-9]+$ ]]; then
+    echo "$arg"
+  else
+    echo ""
+  fi
+}
+
+# ブランチ名が `{type}/<鍵>-{ケバブケース説明}` 形式かを検証する（鍵は issue-<n> など。数字だけの鍵は issue-<数字> として読む）。
 # 結果: "valid" または "invalid"
 validate_branch_name() {
-  local issue="$1" branch="$2"
+  local key
+  key="$(resolve_key "$1")"
+  local branch="$2"
   local type_pattern
   type_pattern="$(echo "$WORKTREE_SETUP_BRANCH_TYPES" | tr ' ' '|')"
-  if [[ "$branch" =~ ^(${type_pattern})/issue-${issue}-[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+  if [ -n "$key" ] && [[ "$branch" =~ ^(${type_pattern})/${key}-[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
     echo "valid"
   else
     echo "invalid"
@@ -31,8 +48,9 @@ validate_branch_name() {
 }
 
 compute_worktree_path() {
-  local worktree_root="$1" issue="$2"
-  echo "${worktree_root%/}/issue-${issue}"
+  local worktree_root="$1" key
+  key="$(resolve_key "$2")"
+  echo "${worktree_root%/}/${key}"
 }
 
 default_worktree_root() {
@@ -220,7 +238,7 @@ create_worktree_existing_remote_branch() {
 print_usage() {
   local prog
   prog="$(basename "$0")"
-  echo "Usage: ${prog} <issue番号> <branch名> <base> [worktree_root]" >&2
+  echo "Usage: ${prog} <issue番号 | 鍵(issue-<n>|task-<n>|pr-<n>)> <branch名> <base> [worktree_root]" >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -228,24 +246,29 @@ print_usage() {
 # ---------------------------------------------------------------------------
 
 main() {
-  local issue="${1:-}" branch="${2:-}" base="${3:-}" worktree_root="${4:-}"
+  local arg="${1:-}" branch="${2:-}" base="${3:-}" worktree_root="${4:-}"
 
-  if [ -z "$issue" ] || [ -z "$branch" ] || [ -z "$base" ]; then
+  if [ -z "$arg" ] || [ -z "$branch" ] || [ -z "$base" ]; then
     print_usage
     exit 1
   fi
-  if ! [[ "$issue" =~ ^[0-9]+$ ]]; then
-    echo "Error: issue number must be numeric, got '${issue}'" >&2
+  local key
+  key="$(resolve_key "$arg")"
+  if [ -z "$key" ]; then
+    echo "Error: first argument must be an issue number (digits only) or a key (issue-<n>, task-<n>, pr-<n>), got '${arg}'" >&2
     print_usage
     exit 1
   fi
+  # issue は鍵が issue-<n> のときだけ数、ほかは null（出力の JSON 用）
+  local issue_json="null"
+  if [[ "$key" =~ ^issue-([0-9]+)$ ]]; then issue_json="${BASH_REMATCH[1]}"; fi
 
   if ! check_jq; then
     exit 1
   fi
 
-  if [ "$(validate_branch_name "$issue" "$branch")" != "valid" ]; then
-    echo "Error: branch name '${branch}' does not match required pattern '{type}/issue-${issue}-{description}' (type in: ${WORKTREE_SETUP_BRANCH_TYPES})" >&2
+  if [ "$(validate_branch_name "$key" "$branch")" != "valid" ]; then
+    echo "Error: branch name '${branch}' does not match required pattern '{type}/${key}-{description}' (type in: ${WORKTREE_SETUP_BRANCH_TYPES})" >&2
     exit 1
   fi
 
@@ -277,7 +300,7 @@ main() {
     worktree_root="$(default_worktree_root "$repo_root")"
   fi
   local worktree_path
-  worktree_path="$(compute_worktree_path "$worktree_root" "$issue")"
+  worktree_path="$(compute_worktree_path "$worktree_root" "$key")"
   worktree_path="$(canonicalize_path "$worktree_path")"
 
   if ! verify_base_remote "$base"; then
@@ -295,11 +318,12 @@ main() {
   if [ -n "$existing_branch" ]; then
     if [ "$existing_branch" = "$branch" ]; then
       jq -n \
-        --argjson issue "$issue" \
+        --argjson issue "$issue_json" \
+        --arg key "$key" \
         --arg branch "$branch" \
         --arg base "$base" \
         --arg worktree_path "$worktree_path" \
-        '{issue: $issue, branch: $branch, base: $base, worktree_path: $worktree_path, created: false, reused: true, branch_existed: true}'
+        '{issue: $issue, key: $key, branch: $branch, base: $base, worktree_path: $worktree_path, created: false, reused: true, branch_existed: true}'
       exit 0
     fi
     echo "Error: worktree path '${worktree_path}' is already registered for a different branch ('${existing_branch}', expected '${branch}'). Refusing to overwrite; resolve manually." >&2
@@ -333,12 +357,13 @@ main() {
   fi
 
   jq -n \
-    --argjson issue "$issue" \
+    --argjson issue "$issue_json" \
+    --arg key "$key" \
     --arg branch "$branch" \
     --arg base "$base" \
     --arg worktree_path "$worktree_path" \
     --argjson branch_existed "$branch_existed" \
-    '{issue: $issue, branch: $branch, base: $base, worktree_path: $worktree_path, created: true, reused: false, branch_existed: $branch_existed}'
+    '{issue: $issue, key: $key, branch: $branch, base: $base, worktree_path: $worktree_path, created: true, reused: false, branch_existed: $branch_existed}'
   # 正常に return する経路でも、ここでロックを解放して trap を外す（最後のコマンドを組み込みにする）。
   # スクリプトとして実行したときは末尾の exit で EXIT の trap が発火するが、関数を source してコマンド置換
   # （$(main ...)）の中で呼ぶと、bash 5.2 はサブシェルの最後の外部コマンド（上の jq）を exec に置き換え、

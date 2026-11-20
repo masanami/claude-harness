@@ -1,0 +1,16 @@
+# workspace 種類の acquire は、名前の鍵（key）があれば key を、無ければ issue を worktree-setup に渡す。どちらも無ければ step_error（#388 S3-1）。
+schema: harness.workflow/v1
+id: ws-key
+inputs:
+  key:   { type: string }
+  issue: { type: integer }
+steps:
+  acquire:
+    kind: workspace
+    action: acquire
+    with: { key: $inputs.key, issue: $inputs.issue, branch: feature/task-12-x, base: main }
+    on: { provided: release, created: release, reused: release, conflict: { fail: conflict } }
+  release:
+    kind: workspace
+    action: release
+    on: { released: { done: released }, kept: { done: kept }, dirty: { done: dirty } }

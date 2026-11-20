@@ -445,8 +445,10 @@ func exitFor(status string) int {
 }
 
 // parseInputs は --input NAME=VALUE を宣言された型で読む。integer・string はそのまま、array・object は JSON で渡す。
+// 値が空の文字列（NAME=）は型を見る前に読み飛ばし、入力が無いものとして扱う。
 func parseInputs(wf *workflow.Workflow, raw []string) (map[string]json.RawMessage, error) {
 	out := map[string]json.RawMessage{}
+	seen := map[string]bool{} // 同じ名前を 2 度渡す誤りは、空の値でも数える
 	for _, kv := range raw {
 		name, val, ok := strings.Cut(kv, "=")
 		if !ok {
@@ -456,8 +458,13 @@ func parseInputs(wf *workflow.Workflow, raw []string) (map[string]json.RawMessag
 		if in == nil {
 			return nil, fmt.Errorf("input %q is not declared by workflow %s", name, wf.ID)
 		}
-		if _, dup := out[name]; dup {
+		if seen[name] {
 			return nil, fmt.Errorf("input %q given twice", name)
+		}
+		seen[name] = true
+		if val == "" {
+			// 値が空の文字列の入力は、型に関わらず「無い」と読む（呼び出し元の差し込みが空になる場合。run_started.inputs に入れない）。
+			continue
 		}
 		var v any
 		switch in.Type.Name {

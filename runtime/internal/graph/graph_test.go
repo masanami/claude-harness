@@ -76,7 +76,7 @@ func TestTicketNodes(t *testing.T) {
 	if g.Entry != "resolve" {
 		t.Fatalf("entry = %q", g.Entry)
 	}
-	wantTerms := []string{"fail:base_missing", "fail:links_invalid", "fail:worktree_conflict", "fail:quality_gate",
+	wantTerms := []string{"fail:base_missing", "fail:links_invalid", "fail:input_invalid", "fail:integration_unsupported", "fail:worktree_conflict", "fail:quality_gate",
 		"fail:self_review_incomplete", "fail:commit", "fail:e2e", "fail:quality_gate_red", "fail:quality_gate_undeclared", "fail:ci_red", "fail:ci_timeout", "fail:aborted_by_human",
 		"fail:pr_closed", "done:merged", "done:merged_worktree_dirty"}
 	if !reflect.DeepEqual(terms, wantTerms) {
@@ -93,9 +93,9 @@ func TestTicketNodes(t *testing.T) {
 	}
 	// 設計文書 §12 の数: 53 本（尽きたときの辺 3 本を含む）に、quality（#326）の 4 本（pass・fail・fail が尽きたとき・undeclared）と、
 	// ci の skipped（#363。CI の運用の宣言が after-merge で CI を待たなかった）の 1 本と、self-review-route（#381）の 5 本
-	// （complete・incomplete と not_run の implement へ戻る辺 2 本と、それぞれが尽きたときの辺 2 本）を足した 63 本。
-	if len(g.Edges) != 63 {
-		t.Fatalf("edges = %d, want 63", len(g.Edges))
+	// （complete・incomplete と not_run の implement へ戻る辺 2 本と、それぞれが尽きたときの辺 2 本）と、resolve の input_invalid・integration_unsupported（#391）の 2 本を足した 65 本。
+	if len(g.Edges) != 65 {
+		t.Fatalf("edges = %d, want 65", len(g.Edges))
 	}
 	if n := node(t, g, "implement"); n.Kind != "llm" || n.Agent != "claude-harness:feature-implementer" || n.BudgetUSD != 15 ||
 		FormatDuration(n.Timeout) != "90m" {

@@ -331,8 +331,8 @@ func TestGraphMermaidTicket(t *testing.T) {
 		`  n0["resolve<br/>command 2m"]`, `  n3("implement<br/>llm $15 90m")`, `  n13{{"review<br/>gate input any"}}`,
 		`  n16{"merge-route<br/>select $steps.resolve.base_kind"}`,
 		`  n2 -->|"provided / created / reused"| n3`,
-		`  n8 -->|"fail (rework#lt;=3)"| n5`, `  n8 -.->|"fail (rework exhausted)"| n27`,
-		`  n9["quality<br/>command 30m"]`, `  n9 -->|"fail (rework#lt;=3)"| n5`, `  n9 -.->|"fail (rework exhausted)"| n28`,
+		`  n8 -->|"fail (rework#lt;=3)"| n5`, `  n8 -.->|"fail (rework exhausted)"| n29`,
+		`  n9["quality<br/>command 30m"]`, `  n9 -->|"fail (rework#lt;=3)"| n5`, `  n9 -.->|"fail (rework exhausted)"| n30`,
 		`  n11 -->|"timeout (retry#lt;=1)"| n11`, `  n11 -.->|"timeout (retry exhausted)"| n12`,
 		"  class n15,n18,n19 human\n",
 	} {

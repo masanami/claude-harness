@@ -8,4 +8,5 @@ printf '%s\n' "$*" >> "$dir/setup.calls"
 if [ -f "$dir/setup.stderr" ]; then cat "$dir/setup.stderr" >&2; exit "$(cat "$dir/setup.code" 2>/dev/null || echo 1)"; fi
 if [ -d "$dir/wt" ]; then c=false; r=true; else c=true; r=false; mkdir -p "$dir/wt"; fi
 wt=$(cd "$dir/wt" && pwd -P)
-printf '{"issue":%s,"branch":"%s","base":"%s","worktree_path":"%s","created":%s,"reused":%s,"branch_existed":false}\n' "$1" "$2" "$3" "$wt" "$c" "$r"
+case "$1" in *[!0-9]*) issue=null; key="$1" ;; *) issue="$1"; key="issue-$1" ;; esac
+printf '{"issue":%s,"key":"%s","branch":"%s","base":"%s","worktree_path":"%s","created":%s,"reused":%s,"branch_existed":false}\n' "$issue" "$key" "$2" "$3" "$wt" "$c" "$r"
