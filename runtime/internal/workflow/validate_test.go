@@ -426,6 +426,11 @@ func TestRejectsLLMAndGate(t *testing.T) {
 		{"contract_kind not a string", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    contract_kind: [review]\n", "contract_kind"},
 		{"contract_kind review on a human gate", "    inputs: [follow, abort]\n", "    inputs: [follow, abort]\n    contract_kind: review\n", "contract_kind review is only valid for type input with decider parent or any"},
 		{"contract_kind review on an observe gate", "    observe: pr\n", "    observe: pr\n    contract_kind: review\n", "contract_kind review is only valid for type input with decider parent or any"},
+		// refresh（§5.6.2）: 書ける値は pr-head だけで、input 型のゲートにだけ書ける。
+		{"refresh other than pr-head", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    refresh: pr-state\n", `refresh "pr-state" must be pr-head`},
+		{"refresh not a string", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    refresh: [pr-head]\n", "refresh"},
+		{"refresh on an observe gate", "    observe: pr\n", "    observe: pr\n    refresh: pr-head\n", "refresh is only valid for type input"},
+		{"refresh on an llm step", "    budget_usd: 2\n", "    budget_usd: 2\n    refresh: pr-head\n", `unknown key "refresh"`},
 		{"contract_kind on an llm step", "    budget_usd: 2\n", "    budget_usd: 2\n    contract_kind: review\n", `unknown key "contract_kind"`},
 		// add_dirs（#391）: llm だけ。値は文字列（参照かリテラル）の列。
 		{"add_dirs is not a list", "    budget_usd: 2\n", "    budget_usd: 2\n    add_dirs: $inputs.n\n", "add_dirs must be a list"},

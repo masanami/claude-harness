@@ -241,6 +241,7 @@ steps:
     requested_action: PR のレビューを待つ。対応が要れば respond。この中身を宛先へ入れてよければ land（--approved-ref に通した先頭のコミット）。呼び出し元の側で反映まで済ませたなら ready を渡して resume
     inputs: [respond, ready, land]
     contract_kind: review                           # 接続契約で review（レビュー待ち）として見せる（受け付けを宣言した呼び出し元だけ。§5.6.1・#372）
+    refresh: pr-head                                # 待っている間に外から push されても、status が PR の先頭を取り直す（契約の commit が新しい先頭になる。§5.6.2）
     on:
       respond: { goto: respond, with: { note: $gate.note }, note: optional }   # #377: 添え書き（差し戻しの理由）を respond へ。無ければ空文字
       ready: merge-route                            # 変えない（land とは別の道）

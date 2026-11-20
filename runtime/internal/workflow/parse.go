@@ -73,7 +73,7 @@ type kindSpec struct {
 var kinds = map[string]kindSpec{
 	"command": {keys: []string{"kind", "description", "run", "with", "output", "outcome_field", "exit", "timeout", "on"}},
 	"llm":     {keys: []string{"kind", "description", "prompt", "agent", "session", "add_dirs", "with", "output", "budget_usd", "timeout", "on"}},
-	"gate":    {keys: []string{"kind", "description", "type", "decider", "requested_action", "inputs", "observe", "contract_kind", "with", "on"}},
+	"gate":    {keys: []string{"kind", "description", "type", "decider", "requested_action", "inputs", "observe", "contract_kind", "refresh", "with", "on"}},
 	// select は参照 1 つの enum 値をそのまま outcome にする（副作用なし）。with・output は持たない。
 	"select": {keys: []string{"kind", "description", "value", "on"}},
 	// workspace と pull-request は出力の形を Go が決める（output を書かせない。builtin.go）。
@@ -524,6 +524,8 @@ func (p *parser) step(id string, knode, n *yaml.Node) *Step {
 			s.Observe, _ = p.matched(f.val, fw, reOutcome)
 		case "contract_kind":
 			s.ContractKind, _ = p.str(f.val, fw)
+		case "refresh":
+			s.Refresh, _ = p.str(f.val, fw)
 		case "value":
 			s.Value = p.reference(f.val, fw)
 		case "action":

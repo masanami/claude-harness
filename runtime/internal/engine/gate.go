@@ -46,7 +46,7 @@ const (
 func gateOpenedEvent(unit string, g *workflow.Step, detail string) runstate.Event {
 	return runstate.Event{Type: runstate.EvGateOpened, GateOpened: &runstate.GateOpened{
 		Unit: unit, Gate: g.ID, Type: g.GateType, Decider: g.Decider, RequestedAction: g.RequestedAction,
-		Inputs: g.GateInputs, Observe: g.Observe, RequiresTTY: workflow.RequiresTTY(g.GateType, g.Decider), ContractKind: g.ContractKind,
+		Inputs: g.GateInputs, Observe: g.Observe, RequiresTTY: workflow.RequiresTTY(g.GateType, g.Decider), ContractKind: g.ContractKind, Refresh: g.Refresh,
 		Detail: detail,
 	}}
 }
