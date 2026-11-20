@@ -40,7 +40,7 @@ func (f *integrationReflect) integrationView(state, merge string) string {
 	if merge != "" {
 		mc = `{"oid":"` + merge + `"}`
 	}
-	return `{"state":"` + state + `","headRefOid":"` + f.head + `","headRefName":"` + integration + `","baseRefName":"main","mergeCommit":` + mc + `,"isDraft":false}`
+	return `{"title":"feat: add the widget set","state":"` + state + `","headRefOid":"` + f.head + `","headRefName":"` + integration + `","baseRefName":"main","mergeCommit":` + mc + `,"isDraft":false}`
 }
 
 func (f *integrationReflect) originBranch() string {
@@ -165,7 +165,7 @@ func TestReflectIntegrationBranchEndToEnd(t *testing.T) {
 	// land は、レビュー待ちの先頭（取り込み後）で行う。
 	f.head = remote
 	d = f.land(id)
-	if want := "pr\tmerge\t7\t--squash\t--match-head-commit\t" + remote + "\n"; !strings.Contains(f.ghCalls(), want) {
+	if want := "pr\tmerge\t7\t--squash\t--match-head-commit\t" + remote + "\t--subject\tfeat: add the widget set (#7)\n"; !strings.Contains(f.ghCalls(), want) {
 		t.Fatalf("gh calls lack %q:\n%s", want, f.ghCalls())
 	}
 	v = f.h.statusOf(id)

@@ -918,7 +918,7 @@ inputs:
 | 7 | 宛先と PR の先頭を fetch し（`git fetch origin <base>` と `refs/pull/<番号>/head`）、PR の先頭が宛先の最新を含んでいない（`git merge-base --is-ancestor` の終了コード 1） | `behind` | 2（取り込んで待つ） |
 | 7' | 7 の fetch が通らない・祖先の判定が 0 でも 1 でもない終了コードで終わった | `blocked`（理由を `detail` に） | 4 |
 | 8 | 下書きの PR・失敗か未完了のチェックがある・チェックを読めない | `blocked` | 4（理由を出して待つ） |
-| 9 | `gh pr merge <pr> --squash --match-head-commit <approved_ref>` が通った → PR を読み直す（下） | `landed`・`not_confirmed` | 1・続けられない |
+| 9 | `gh pr merge <pr> --squash --match-head-commit <approved_ref> --subject "<PR の題名> (#<pr>)"` が通った → PR を読み直す（下） | `landed`・`not_confirmed` | 1・続けられない |
 | 10 | 9 が通らなかった → 1〜7' をもう一度確かめ、当たればその結果。どれにも当たらなければ `blocked`（`gh` の標準エラーを `detail` に） | — | 2・3・4 |
 
 - **2 を 3 より前に置く**: 宛先を付け替えられて、別のブランチへ入った PR を `landed` にしない。入った後の PR の `baseRefName` は、入った先のブランチである。
@@ -930,7 +930,7 @@ inputs:
 - 8 のチェックは、PR の宛先の CI の運用の宣言が `after-merge`（§3.4 ⑪）なら見ない。ほかは `gh pr checks --json bucket` の `fail`・`cancel`・`pending` が 1 件でもあれば「通っていない」とする。**チェックが 0 件の PR は「通っていない」に数えない**（`ci-wait.sh` の `none` と同じ扱い）。`gh pr checks` は、未完了・失敗のチェックがあると 0 でない終了コードを返し、0 件のときは標準出力を空にして標準エラーに `no checks reported` を出すので、成否は終了コードではなく「標準出力が JSON の配列か」で決め、0 件は標準エラーの文で見分ける（`plugin/scripts/lib/common.sh` の `fetch_pr_checks` と同じ読み方。実コード確証・high）。どちらでもなければ「読めない」で `blocked`。flywheel は `land` の前に自分でチェックを確かめるので、ここは足しの確かめである。
 - `--delete-branch`・`--auto`・`--admin` は付けない。入れ方は squash に固定する（`docs/branching-strategy.md` の既定。リポジトリの設定が squash を許さなければ 10 で `blocked`）。
 - 実物の `gh` で確かめたこと・確かめていないこと（S3-3〔#393〕。実物の `gh` 2.67.0・このリポジトリ）:
-  - **確かめた** ― `gh pr view <n> --json state,headRefOid,baseRefName,mergeCommit,isDraft` は、入った PR で `mergeCommit` が `{"oid": …}`、`headRefOid` が最後のコミット（squash のため、入ったコミットとは別）、`baseRefName` が入った先のブランチ（PR #390 で確認）。開いている PR の `mergeCommit` は `null`（`land` は null を「無い」と読む）。`gh pr merge` の help に `--squash`・`--match-head-commit SHA`・`--auto`・`--admin`・`--delete-branch` がある（`land` は最初の 2 つだけを付ける）。`gh pr checks <pr> --json …` は、チェックが無ければ標準出力が空・標準エラーが `no checks reported on the '<branch>' branch`（`land` はこの文だけを 0 件と読む）。偽の `gh` は同じ形を出す（`checks.none`）。
+  - **確かめた** ― `gh pr view <n> --json state,headRefOid,baseRefName,mergeCommit,isDraft` は、入った PR で `mergeCommit` が `{"oid": …}`、`headRefOid` が最後のコミット（squash のため、入ったコミットとは別）、`baseRefName` が入った先のブランチ（PR #390 で確認）。開いている PR の `mergeCommit` は `null`（`land` は null を「無い」と読む）。`gh pr merge` の help に `--squash`・`--match-head-commit SHA`・`--auto`・`--admin`・`--delete-branch` がある（`land` は `--squash`・`--match-head-commit` を付ける。#417 で、出来るコミットの題名のために `--subject` も付けるようにし、`gh pr view` の `--json` に `title` を足した。この記録は、それより前に確かめたもの）。`gh pr checks <pr> --json …` は、チェックが無ければ標準出力が空・標準エラーが `no checks reported on the '<branch>' branch`（`land` はこの文だけを 0 件と読む）。偽の `gh` は同じ形を出す（`checks.none`）。
   - **確かめていない** ― 書き込める検証用のリポジトリが要り、公開リポジトリの PR を作らないため、実物では確かめていない: `--match-head-commit` が食い違うときの終了の仕方（`land` は終了コードが 0 でなければ 10 へ進み、確かめ直して当たらなければ `gh` の標準エラーを `detail` に入れて `blocked` にする。終了コードの値には依らない）。マージの待ち行列のあるリポジトリで、`gh pr merge` が通った直後の PR の状態（`land` は約 10 秒、1 秒おきに読み直し、`MERGED` にならなければ `merge_not_confirmed`）。squash を許さないリポジトリでの `gh pr merge` の失敗（10 の `blocked` で見せる）。
   - 試験は偽の `gh`（`runtime/internal/engine/testdata/scripts/fake-gh.sh`）と、実の `git` の bare の origin で書いた。偽の `gh` が出す JSON の形は、上の実物の出力に合わせてある。
 
@@ -1328,7 +1328,7 @@ A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a
 | 7 | `T-<番号>` が、同じリポジトリへ出す 2 つの flywheel のワークスペースで重なること | (a) 受ける（`worktree_conflict` で止まる）。(b) 鍵に `challenge_id` も入れる | (a)。`challenge_id` もストアごとの番号で、入れても解けない |
 | 8 | 文面のファイルと Issue の両方があるとき、Issue の本文の `Base:` 行を読まないこと | (a) 読まない（宛先は `base` の入力か既定ブランチ）。(b) 読む（いまと同じ） | (a)。flywheel の S3a は、宛先を反映先（既定ブランチ）と決めて PR の宛先を確かめる（`base_changed`）。Issue の本文で宛先が変わると食い違う |
 
-### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。S3b-1〔#411〕・S3b-2〔#412〕・S3b-3〔#413〕は実装済み。残りは S3b-4 以降）
+### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。S3b-1〔#411〕・S3b-2〔#412〕・S3b-3〔#413〕は実装済み。S3b-4 の実物での通しは #409 のコメント。リリースの準備は #417）
 
 §5.6.2 の「B の粗い設計」を、実装できる細かさに起こしたものである。flywheel が、課題ごとの統合先（統合ブランチ）を使い始める（flywheel `docs/features/core-redesign.md` の節「委譲先との契約（S3 で使う受け口）」の「足すもの 2・3・4」と「claude-harness の側で要るもの（S3b）」。食い違えば flywheel 側が正）。**契約の形（flywheel が渡すもの・受け取るもの）は変えない**。この節に書いた入力・段・キー・理由の語は、下の「実装の分け方」の PR で実物になる（設計を書いた時点の実物は main `9911091`＝5.2.0。「いまの動き」の行の番号は、この版のもの）。§5.6.2 の記録は書き換えていない。
 
@@ -1531,6 +1531,7 @@ steps:
   | 取り込みで宛先を fetch した | fetch した `origin/<統合ブランチ>` の先頭 | `sync`・`land-sync`（`with.base` が、記録した統合ブランチと同じときだけ書く） |
   | `land` が宛先を fetch した（`behind` などで入れなかった） | 同上 | `land`（同じ条件） |
   | `land` が統合ブランチへ入れた（`landed`） | **入れた後のコミット**（`gh pr view` の `mergeCommit.oid`。squash で統合ブランチに出来たコミット） | `land`（同じ条件。`merge_commit` の記録と同じ値） |
+  | `land` が入れる命令を通したが、入ったと確かめられなかった（`not_confirmed`。実行は失敗 `merge_not_confirmed`） | 宛先を fetch したときの先頭（**入れる前の値**。入れた後のコミットとしては書かない。入ったかどうかは、flywheel が上流で確かめる） | `land`（同じ条件） |
   | レビュー待ちで待っている間 | `status` が読み直した origin の先頭 | 下の「待っている間の取り直し」 |
 
   - 入れて終えた実行（`succeeded`）では、`role` の無い `commit`（`merge_commit`）と、`role` が `integration` の `commit` が、同じ値になる。前者は「このタスクの成果の、入れた後の中身」、後者は「入れた後の統合ブランチの中身」で、意味は別である。
@@ -1655,7 +1656,7 @@ steps:
 
 統合ブランチを上げるときも、`land` の 9 の `gh pr merge --squash --match-head-commit` を、そのまま使う。`land` の段に、入れ方を選ぶ口は足さない。
 
-- 課題 1 つが、既定ブランチのコミット 1 つになる（題名は、`describe` が書いた PR の題名）。人が統合ブランチを上げる、いまの運用（`docs/branching-strategy.md` §2.5 の「main への昇格」）と同じ形である。
+- 課題 1 つが、既定ブランチのコミット 1 つになる（題名は、`describe` が書いた PR の題名）。**題名は、PR のコミットの数に関わらず「PR の題名 (#番号)」にする**（題名を読めないときだけ `--subject` を付けず、GitHub の既定に任せる）: `land` は `gh pr merge` に `--subject "<PR の題名> (#<番号>)"` を付ける（GitHub の既定は、コミットが 1 つだけの PR ではそのコミットの文面が題名になる。S3b-4 の通しで見つけた食い違い。Issue #417）。統合ブランチ宛て・既定ブランチ宛て（`ticket`・`reflect`）のどちらにも効く。`--match-head-commit` と、通した中身（`approved_ref`）の確かめは変えない。人が統合ブランチを上げる、いまの運用（`docs/branching-strategy.md` §2.5 の「main への昇格」）と同じ形である。
 - **squash で入れると、統合ブランチと既定ブランチの履歴が分かれる**（統合ブランチのコミットは、既定ブランチの祖先にならない）。統合ブランチは、入れた後に `retire` が消すので、分かれたまま使い続けることは無い。`retire` が残した（`kept`）・落ちて残った統合ブランチへ、同じ名前で次の課題のタスクが相乗りしたときは、次の `reflect` の取り込み（既定ブランチの最新のマージ）で、同じ中身どうしのマージになる（多くは衝突しないが、既定ブランチの側で同じ所が変わっていれば、衝突を直す段へ行く）。
 - マージのコミットで入れる案（タスクごとのコミットが既定ブランチに残る）は採らない。`land` の段に入れ方の分岐を持ち込むこと・マージのコミットを許さない設定のリポジトリで入れられないこと・既定ブランチの履歴が、課題によって形が違ってくること、が理由である（下の表の 7）。
 
@@ -1695,8 +1696,9 @@ steps:
 - **ワークフローのスキーマ版は `harness.workflow/v1` のまま**（§5.6.2 と同じ扱い）。足す文法は、`pull-request` の `action` の値 3 つ（`ensure-base`・`open`・`retire`）と、その `with` だけ。定義はバイナリに埋め込むので、新しい定義を古い CLI が読むことは無い。
 - **`uses_integration` を受けていない実行で変わること**: `ticket` は、段が 1 つ（`integration-route`。`select`。外部を呼ばない）増えるだけで、動き・出力・名前・失敗の理由は変わらない。`reflect` に PR の URL を渡した実行は、`land` の後に `retire-route`（`select`）を 1 つ通るだけで、変わらない。PR の URL でもブランチの名前でもない `artifact_ref` の失敗の理由の語が、`integration_reflect_unsupported` から `artifact_ref_invalid` に変わる。
 - **状態の記録**: `Workspace` の欄 2 つと、`workspace` イベントの `action: integration` を足す（任意の欄）。この版より前の記録には無く、読む側は「無ければ出さない」で扱う。新しい記録を、古い CLI は畳み込めない（知らない `action` は誤り。いままでの足し方と同じで、版を下げて続けることは支えない）。
-- **この版より前に始めた run**: 開始時の版の定義で続く（§7.3・N3）。5.2.0 で `uses_integration=true` を受けた `ticket` は、`resolve` で失敗して終わっているので、続きは無い。5.2.0 で始めて待っている `reflect`（PR の URL）は、5.2.0 の定義のまま、いままでどおり終わる（`retire-route` を通らない）。5.2.0 で始めて待っている `ticket` は、`uses_integration` を受けていないので、変わらない。
-- **版**: CLI は minor を上げる（`runtime/v5.3.0` の見込み）。プラグインの配布物（`plugin/`）のスクリプトは変えない見込み（`worktree-setup.sh`・`worktree-cleanup.sh`・`ci-trigger.sh` は、いまの引数のまま使う）。プラグインの版は、5.x のリリースでは CLI とそろえて上げてきた（`CHANGELOG.md` の見出し）ので、リリースの PR で 5.3.0 にそろえる。CLI が受けるプラグインの範囲（`>=4.9.0 <6.0.0`）は変えない。flywheel の S3b が要るのは、CLI のリリースである。
+- **`land` の squash の題名（#417）**: どの `land` でも、出来るコミットの題名が「PR の題名 (#番号)」になる（コミットが 1 つだけの PR では、今までコミットの文面だった）。契約・スキーマ版・出力のキーと値は変えない。題名を読めない（空）ときは `--subject` を付けず、GitHub の既定に任せる。
+- **この版より前に始めた run**: 開始時の版の定義で続く（§7.3・N3）。5.2.0 で `uses_integration=true` を受けた `ticket` は、`resolve` で失敗して終わっているので、続きは無い。5.2.0 の CLI で始めてレビュー待ちのまま残っている `reflect`（PR の URL）の実行は、**新しい CLI では再開できない**（組み込みの `adopt` の出力に足した結果〔`no_pr`・`branch_missing`・`empty`〕を、開始時の定義の `adopt.on` が扱わないため、再開時の検査で版の不一致として止まる）。5.2.0 の CLI で終えるか、`harness cancel` して新しい CLI で依頼し直す（CHANGELOG の「利用者が取る操作」にも同じことを書く）。5.2.0 で始めて待っている `ticket` は、`uses_integration` を受けていないので、変わらない。
+- **版**: CLI は minor を上げる（`runtime/v5.3.0`。#417 でプラグインの版も 5.3.0 にそろえた）。プラグインの配布物（`plugin/`）のスクリプトは変えない（`worktree-setup.sh`・`worktree-cleanup.sh`・`ci-trigger.sh` は、いまの引数のまま使う）。プラグインの版は、5.x のリリースでは CLI とそろえて上げてきた（`CHANGELOG.md` の見出し）ので、リリースの PR で 5.3.0 にそろえる。CLI が受けるプラグインの範囲（`>=4.9.0 <6.0.0`）は変えない。flywheel の S3b が要るのは、CLI のリリースである。
 
 #### 実装の分け方
 
@@ -1763,18 +1765,19 @@ S3b-1 → S3b-2 → S3b-3 の順に進める（S3b-2 と S3b-3 は、機能の�
 | 10 | 無い参照を、同じ付け方で消す | `!`・`[rejected] (stale info)`・終了コード 1（素の push で消すと、`-`・終了コード 0 になり、「消した」と読み違える） |
 | 11 | 無い参照への `git ls-remote --exit-code --heads origin refs/heads/<名前>` | 終了コード 2 |
 
-【要確認】（実装の PR か、S3b-4 の通しで確かめる。推測で書いた所）:
+【要確認】（S3b-4 の実物での通し〔#409 のコメント。統合ブランチ `feat/issue-409` の先頭 `2a673b6` のビルド・試験用の非公開リポジトリ・1 回〕で確かめた点は印を外して結果を書いた。確かめていない点は【要確認】のまま）:
 
-- **GitHub に対する `--force-with-lease`**（上の 5〜10 を、GitHub の origin で）。条件つきの更新は git のプロトコルの決まり（前の値を付けて送り、サーバが比べる）なので、同じ結果の見込み。ブランチの保護の決まり・リポジトリのルールで、ブランチを作る・消すことを絞っているリポジトリでの、状態の行の出方（`!` の見込み。`ensure-base` は `refused`、`retire` は `kept` に倒れる）。
-- **統合ブランチ宛ての PR に書いた `Closes #<番号>` が、統合ブランチへ入ったときに Issue を閉じないこと**（GitHub の決まりでは、閉じるのは既定ブランチへ入ったとき）と、`open` が既定ブランチ宛ての PR の本文へ写した `Closes` が、入ったときに閉じること。
-- **`gh pr list --head <ブランチ> --base <ブランチ> --state open|merged --json …` の出力の形**（`number`・`url`・`title`・`body`・`headRefOid`・`isCrossRepository`・`isDraft`）。`publish` は、`--head` と `--state open` の形を、すでに使っている（`pullrequest.go` の 109 行）。`--base` と `--state merged`・`body` は、まだ使っていない。件数の上限（既定は 30 件）を、`--limit` で広げる要否。
-- **既定ブランチと中身が同じ（コミットは在るが、差分が無い）統合ブランチ**の PR を、`gh pr create` が作れるか・`gh pr merge --squash` が入れられるか。`empty` は、コミットの数で判定している。
-- **入った後の PR の `mergeCommit.oid` が、squash で宛先に出来たコミットであること**は、§5.6.2 で、既定ブランチ宛ての PR で確かめた。統合ブランチ宛てでも同じであること。
+- **確かめた** ― GitHub に対する `--force-with-lease` の、作る・消すの 2 つ: 統合ブランチが origin に無い状態から、`--force-with-lease=<参照>:`（期待する値が空）の「無いときだけ作る」が通り、既定ブランチの先頭で作られた。2 本目の依頼は作らずに在るものを使った。`retire` の `--force-with-lease=<参照>:<先頭>` の削除も通った（上の 5・9 に当たる）。**【要確認】のまま**: 在る参照への子孫の push が動かないこと・在る参照への同じ SHA（6・7）・無い参照を消すこと（10）を GitHub の origin で確かめたこと、ブランチの保護の決まり・リポジトリのルールで作る・消すことを絞っているリポジトリでの出方（`ensure-base` は `refused`、`retire` は `kept` に倒れる見込み。通しは踏まなかった）、同時に始めた 2 本の `ensure-base`。
+- **確かめた** ― 統合ブランチ宛ての PR に書いた `Closes #<番号>` は、統合ブランチへ入ったときに Issue を閉じなかった。`open` が既定ブランチ宛ての PR の本文へ写した `Closes` は、既定ブランチへ入ったときに Issue を閉じた。
+- **一部を確かめた** ― `gh pr list --state merged --json …` の出力の形は、実物のものから「入っているタスクの PR」の表と `Closes` の写しを作れた（`open` の `gh pr list --head <ブランチ> --base <ブランチ>` の形も実物で通った）。**【要確認】のまま**: 件数の上限（既定は 30 件）を `--limit` で広げる要否（merged の一覧が多い場合は通しが踏まなかった）。
+- **【要確認】のまま** ― 既定ブランチと中身が同じ（コミットは在るが、差分が無い）統合ブランチの PR を、`gh pr create` が作れるか・`gh pr merge --squash` が入れられるか。`empty` は、コミットの数で判定している（通しは踏まなかった）。
+- **確かめた** ― 入った後の PR の `mergeCommit.oid` が、統合ブランチ宛てでも、squash で宛先に出来たコミットであること。`land` で統合ブランチへ入れたとき、`role` の無い `commit`・`role: integration` の `commit`・`mergeCommit.oid`・origin の先頭が一致した。
 - **リポジトリの「マージ後に head のブランチを自動で消す」設定が入っているとき**、`reflect` が入れた直後に統合ブランチが消え、`retire` が `absent` を返すこと。同じ設定で、タスクの PR を統合ブランチへ入れたときに、タスクの作業ブランチが消えても、`cleanup` が通ること（いまの既定ブランチ宛てと同じ見込み）。
 - **宛先のブランチが消えたときの、開いている PR の扱い**（GitHub が閉じる、と書いた。`retire` は、開いている PR があれば消さないので、設計はこの動きに頼っていない）。
 - **flywheel の宣言の差し込みが、引数の要素の途中でも置き換わること**（上の「残る重なり」の逃げ道）。
 - **落ちて残った統合ブランチ**（`interrupted_after_land`・`retire` の `kept`）を、誰がいつ消すか。harness は、後から消す口を持たない（人が消す）。口が要るかは、S3b-4 の通しと、flywheel の運用を見て決める。
-- **実の `claude` での `describe`**（偽の `claude` の試験は、出力の形まで）。
+- **【要確認】のまま** ― `--subject` を付けた squash で、コミットが 1 つだけの PR でも、出来るコミットの題名が「PR の題名 (#番号)」になること（実物では未確認。通しのビルドは `--subject` を足す前で、試験は偽の `gh` に渡した引数の並びまで）。
+- **確かめた** ― 実の `claude` での `describe`: 統合ブランチの名前で `reflect` を依頼すると、`describe` → `open` で既定ブランチ宛ての PR が 1 つ作られ、レビュー待ちの `options` は `land` だけだった。
 
 #### 選択肢があった点と、採った案
 
