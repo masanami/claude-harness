@@ -70,6 +70,15 @@ func interruptEvents(st *runstate.State, asRunner, markedOnly bool) []runstate.E
 	if runstate.Terminal(st.Status) || (!asRunner && runstate.RunnerAlive(st)) {
 		return nil
 	}
+	if stale(st) {
+		// release_on の片付けの間に、片付ける側が落ちた: 終わりだけを書く（片付けは AppendEnding が済ませる）。
+		if reason, ok := failedAwaitingFinish(st); ok {
+			return []runstate.Event{{Type: runstate.EvRunFinished, RunFinished: &runstate.RunFinished{Status: runstate.StatusFailed, Reason: reason}}}
+		}
+		if cancelledAwaitingFinish(st) {
+			return []runstate.Event{{Type: runstate.EvRunCancelled, RunCancelled: &runstate.RunCancelled{Actor: st.Cancel.Actor, Channel: st.Cancel.Channel, Note: "finished by the cleanup after the canceller stopped"}}}
+		}
+	}
 	var evs []runstate.Event
 	failReason := ""
 	for _, u := range st.Units {
@@ -117,6 +126,42 @@ func interruptEvents(st *runstate.State, asRunner, markedOnly bool) []runstate.E
 	return evs
 }
 
+// failedAwaitingFinish は、すべての unit が終わっていて、どれかが失敗で、run がまだ終わっていないとき、その理由を返す。
+func failedAwaitingFinish(st *runstate.State) (string, bool) {
+	reason := ""
+	for _, u := range st.Units {
+		if !runstate.Terminal(u.Status) {
+			return "", false
+		}
+		if u.Status == runstate.StatusFailed {
+			reason = u.Reason
+		}
+	}
+	return reason, reason != ""
+}
+
+// cancelledAwaitingFinish は、取り消しの要求が記録済みで、どの unit にも実行中の段が無く、run が終わっていないか。
+func cancelledAwaitingFinish(st *runstate.State) bool {
+	if st.Cancel == nil {
+		return false
+	}
+	for _, u := range st.Units {
+		if u.Running() != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanupGrace は、終わりの片付け（最長 releaseTimeout）が進行中かもしれないと見る時間の余裕。
+const cleanupGrace = releaseTimeout + time.Minute
+
+// stale は、最後の記録から cleanupGrace を過ぎているか（片付けている側が落ちたと見てよいか）。読めなければ偽。
+func stale(st *runstate.State) bool {
+	t, err := time.Parse(time.RFC3339Nano, st.UpdatedAt)
+	return err == nil && time.Since(t) > cleanupGrace
+}
+
 // markedFailure は印のあるラウンドの unit を、interrupted ゲートへ送らず失敗へ送る遷移。
 func markedFailure(u *runstate.Unit, reason string) runstate.Event {
 	return runstate.Event{Type: runstate.EvTransition, Transition: &runstate.Transition{
@@ -127,7 +172,7 @@ func markedFailure(u *runstate.Unit, reason string) runstate.Event {
 // 失敗）。印のあるラウンドの unit だけを InterruptEvents と同じに失敗で終え、記録した後の状態を返す。印の無いラウンドは
 // 何も記録しない（いまと同じく、runner の居ない running として残して次の status・resume に任せる）。
 func AbandonMarked(run *runstate.Run) (*runstate.State, error) {
-	return run.AppendIf(func(st *runstate.State) ([]runstate.Event, error) {
+	return AppendEnding(run, func(st *runstate.State) ([]runstate.Event, error) {
 		if st.PID != os.Getpid() {
 			return nil, nil
 		}
@@ -145,7 +190,7 @@ func interruptedGate(unit, action string) runstate.Event {
 
 // Interrupt は InterruptEvents をロックの中で確かめ直して記録する（status / resume が呼ぶ）。
 func Interrupt(run *runstate.Run) (*runstate.State, error) {
-	return run.AppendIf(func(st *runstate.State) ([]runstate.Event, error) {
+	return AppendEnding(run, func(st *runstate.State) ([]runstate.Event, error) {
 		return InterruptEvents(st), nil
 	})
 }
@@ -414,7 +459,7 @@ func (e *Engine) ResolveGate(ctx context.Context, req Resolution) (*runstate.Sta
 	if req.GateOpenedAt != "" && req.GateOpenedAt != openedAt {
 		return nil, refused("gate %s of unit %s was reopened after it was shown; nothing was recorded", gateAt, u.Key)
 	}
-	return e.Run.AppendIf(func(cur *runstate.State) ([]runstate.Event, error) {
+	return AppendEnding(e.Run, func(cur *runstate.State) ([]runstate.Event, error) {
 		cu := cur.Unit(u.Key)
 		if runstate.Terminal(cur.Status) {
 			return nil, refused("run %s already ended as %s", cur.RunID, cur.Status)

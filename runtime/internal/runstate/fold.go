@@ -44,6 +44,8 @@ type State struct {
 	// Facts は run_started に記録した facts の宣言の写し（名前 → 段と欄）。無ければ（宣言の無いワークフロー・この版より前の run）
 	// facts は出ない。
 	FactSources map[string][]FactSource `json:"fact_sources,omitempty"`
+	// ReleaseOn は run_started に写した release_on（取り消し・失敗で終わるとき、終わりを書く前に作業ツリーを片付ける）。
+	ReleaseOn []string `json:"release_on,omitempty"`
 
 	// Overrides は run_started の上書きの記録（resume が同じ上書きで定義を組み立て直す材料。§7.2）。state.json には
 	// 出さない。status --json は cli の statusView が workflow の下に overrides・changes・skipped_steps を足して出す（#314）。
@@ -290,7 +292,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		p := ev.RunStarted
 		s = &State{
 			RunID: p.RunID, Workflow: p.Workflow.WorkflowRef, Overrides: p.Workflow.OverrideRecord, Inputs: p.Inputs, Limits: p.Limits,
-			FactSources: p.Facts, Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID, PIDStart: p.PIDStart,
+			FactSources: p.Facts, ReleaseOn: p.ReleaseOn, Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID, PIDStart: p.PIDStart,
 			ScriptsDir: p.ScriptsDir, WorkflowDir: p.WorkflowDir, CLIVersion: p.CLIVersion, Embedded: p.Embedded, Units: []*Unit{},
 		}
 		for _, k := range p.Units {
@@ -613,6 +615,9 @@ func applyWorkspace(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
 		return applyHead(s, u, p, seq)
 	}
 	if u.Running() == nil {
+		if p.Action == WorkspaceReleased {
+			return applyReleasedAtEnd(s, u, p, seq)
+		}
 		return fmt.Errorf("workspace (seq %d) outside a running step", seq)
 	}
 	switch p.Action {
@@ -626,8 +631,9 @@ func applyWorkspace(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
 		prev := u.Workspace
 		u.Workspace = &Workspace{RepoRoot: p.RepoRoot, WorktreePath: p.WorktreePath, Branch: p.Branch, Base: p.Base,
 			ProvidedBy: p.ProvidedBy, Created: p.Created}
-		if prev != nil && prev.WorktreePath == p.WorktreePath {
-			// 同じ作業ツリーを取り直した（interrupted からのやり直し等）: PR の記録は持ち越す。
+		if prev != nil && (prev.WorktreePath == p.WorktreePath || prev.WorktreePath == "") {
+			// 同じ作業ツリーを取り直した（interrupted からのやり直し等）か、作業ツリーの前に PR を記録していた（adopt。§5.6.2）:
+			// PR の記録は持ち越す。
 			u.Workspace.PRNumber, u.Workspace.PRURL, u.Workspace.HeadSHAs = prev.PRNumber, prev.PRURL, prev.HeadSHAs
 			u.Workspace.HeadSHA, u.Workspace.MergeCommit = prev.HeadSHA, prev.MergeCommit
 		}
@@ -669,6 +675,26 @@ func applyWorkspace(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
 	default:
 		return fmt.Errorf("workspace action %q (seq %d) is unknown", p.Action, seq)
 	}
+	return nil
+}
+
+// applyReleasedAtEnd は、終わりの片付け（release_on。§5.6.2）の released を適用する。実行中の段の外で書くので、許すのは
+// run が終わっていない・unit に払い出して、まだ返していない作業ツリーの記録がある、のうえで、次のどれかのときだけ:
+// 取り消しの要求（cancel_requested）が記録済み／unit がすでに failed（失敗への遷移の後・run_finished の前）／
+// unit が running（runner がシグナルで止められ、実行中だった段を打ち切った後）。取り消しの要求が無いままゲートで待っている
+// unit・succeeded の unit・作業ツリーの記録が無い（または返した後の）unit は誤りにする。
+func applyReleasedAtEnd(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
+	switch {
+	case Terminal(s.Status):
+		return fmt.Errorf("workspace released (seq %d) after the run ended as %s", seq, s.Status)
+	case u.Workspace == nil || u.Workspace.WorktreePath == "" || u.Workspace.Released:
+		return fmt.Errorf("workspace released (seq %d) outside a running step, but unit %q holds no unreleased worktree", seq, u.Key)
+	case s.Cancel == nil && u.Status != StatusFailed && u.Status != StatusRunning:
+		return fmt.Errorf("workspace released (seq %d) outside a running step while unit %q is %s without a cancel request", seq, u.Key, u.Status)
+	case p.Removed && !u.Workspace.Created:
+		return fmt.Errorf("workspace released (seq %d): removed a worktree the runtime did not create", seq)
+	}
+	u.Workspace.Released, u.Workspace.Removed, u.Workspace.ReleaseNote = true, p.Removed, p.Detail
 	return nil
 }
 

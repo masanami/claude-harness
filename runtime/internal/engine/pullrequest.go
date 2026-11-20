@@ -50,6 +50,8 @@ func (e *Engine) executePullRequest(ctx context.Context, st *runstate.State, u *
 			return c.push()
 		case workflow.PRActionLand:
 			return c.land()
+		case workflow.PRActionAdopt:
+			return c.adopt()
 		}
 		return stepError("pull-request action %q is not supported", action)
 	}

@@ -2,7 +2,9 @@
 # テスト用の偽の gh（実際の gh を呼ばずに pull-request 種類・pr-state の観測・resolve-ticket・ci-wait を試す）。FAKE_GH_DIR の下で動く。
 #   calls: 受け取った argv（1 呼び出し 1 行。引数は TAB 区切り）
 #   issue view            → issue.json（無ければ exit 1）
-#   repo view             → default-branch（無ければ main）
+#   repo view             → default-branch（無ければ main）。--json に nameWithOwner があれば（reflect の adopt）、repo-view.json の中身
+#                           （無ければ o/r と default-branch から作る）
+#   pr view <url> --json ...isCrossRepository...（reflect の adopt） → adopt.json の中身（無ければ exit 1）
 #   pr list               → pr-list（無ければ []）
 #   pr create             → create.code があればその終了コードで失敗。--body-file の中身を body.<n>.md に写し、PR の URL を出す。
 #                           以後の pr list が作った PR を返すよう pr-list を書く
@@ -23,7 +25,13 @@ case "$1 ${2:-}" in
     [ -f "$dir/issue.json" ] || { echo "fake gh: no issue.json" >&2; exit 1; }
     cat "$dir/issue.json" ;;
   "repo view")
-    cat "$dir/default-branch" 2>/dev/null || echo main ;;
+    case "$*" in
+      *nameWithOwner*)
+        if [ -f "$dir/repo-view.json" ]; then cat "$dir/repo-view.json"; else
+          printf '{"nameWithOwner":"o/r","defaultBranchRef":{"name":"%s"}}\n' "$(cat "$dir/default-branch" 2>/dev/null || echo main)"
+        fi ;;
+      *) cat "$dir/default-branch" 2>/dev/null || echo main ;;
+    esac ;;
   "pr list")
     cat "$dir/pr-list" 2>/dev/null || echo '[]' ;;
   "pr create")
@@ -42,6 +50,11 @@ case "$1 ${2:-}" in
     printf '[{"number":%s,"url":"https://github.com/o/r/pull/%s","baseRefName":"%s"}]\n' "$num" "$num" "$base" > "$dir/pr-list"
     echo "https://github.com/o/r/pull/$num" ;;
   "pr view")
+    case "$*" in
+      *isCrossRepository*)
+        [ -f "$dir/adopt.json" ] || { echo "fake gh: no adopt.json" >&2; exit 1; }
+        cat "$dir/adopt.json"; exit 0 ;;
+    esac
     [ -f "$dir/pr-missing" ] && { echo "fake gh: no pull requests found" >&2; exit 1; }
     n=$(( $(cat "$dir/pr-view.count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$dir/pr-view.count"
     if [ -f "$dir/pr-view.$n" ]; then cat "$dir/pr-view.$n"; exit 0; fi

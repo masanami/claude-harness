@@ -115,7 +115,17 @@ func (e *Engine) acquire(tools *stepTools, u *runstate.Unit, step *workflow.Step
 		return r
 	}
 
-	argv := []string{"bash", filepath.Join(e.ScriptsDir, "worktree-setup.sh"), setupArg, branch, base}
+	argv := []string{"bash", filepath.Join(e.ScriptsDir, "worktree-setup.sh")}
+	// mode: detached は、ブランチを checkout しない形で作る（上げる PR のブランチが別の作業ツリーで checkout されたままでも進める。§5.6.2）。
+	detached := false
+	if mode, given := jsonString(with["mode"]); given && mode != "" {
+		if mode != workflow.WorkspaceModeDetached {
+			return stepError("with.mode must be %q", workflow.WorkspaceModeDetached)
+		}
+		detached = true
+		argv = append(argv, "--detach")
+	}
+	argv = append(argv, setupArg, branch, base)
 	r := tools.run(e.Cwd, argv...)
 	if !r.ok() {
 		if r.startErr == nil && r.how == exited && r.code > 0 {
@@ -152,6 +162,14 @@ func (e *Engine) acquire(tools *stepTools, u *runstate.Unit, step *workflow.Step
 		}
 	} else {
 		out.Outcome = workflow.WorkspaceReused
+		if detached {
+			// 別の run の所有の印がある detached の作業ツリーは、相乗りせず conflict にする（同じ PR への依頼が 2 本重なったとき）。
+			if mark, ok := e.readOwner(tools, setup.WorktreePath); ok && mark != e.ownerMark(u.Key) {
+				out.Outcome, out.WorktreePath = workflow.WorkspaceConflict, ""
+				out.Detail = fmt.Sprintf("the detached worktree %q carries another run's ownership mark; not sharing it", setup.WorktreePath)
+				return builtinOutput(step, out)
+			}
+		}
 		// 同じ run が前に作り、まだ返していない作業ツリーを取り直した（interrupted からのやり直し等）なら、作ったのはこの run のまま。
 		// 印で同じ作業ツリーであることを確かめる（同じパスに別の run が作り直したものを自分のものにしない）。
 		if prev := u.Workspace; prev != nil && prev.Created && !prev.Released && samePath(prev.WorktreePath, setup.WorktreePath) &&
@@ -283,10 +301,19 @@ func (e *Engine) markOwner(tools *stepTools, worktree, unit string) bool {
 
 // ownedBy は作業ツリーがこの run（と unit）の印を持つか。
 func (e *Engine) ownedBy(tools *stepTools, worktree, unit string) bool {
+	mark, ok := e.readOwner(tools, worktree)
+	return ok && mark == e.ownerMark(unit)
+}
+
+// readOwner は作業ツリーの印の中身（印が無い・読めなければ偽）。
+func (e *Engine) readOwner(tools *stepTools, worktree string) (string, bool) {
 	p := e.ownerPath(tools, worktree)
 	if p == "" {
-		return false
+		return "", false
 	}
 	data, err := os.ReadFile(p)
-	return err == nil && string(data) == e.ownerMark(unit)
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
 }

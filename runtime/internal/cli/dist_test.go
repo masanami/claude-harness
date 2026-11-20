@@ -29,7 +29,7 @@ func TestValidateUsesTheEmbeddedDefinitions(t *testing.T) {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
 	}
 	root := filepath.Join(data, "runtime", "1.2.3")
-	for _, wf := range []string{"ticket", "list-tests"} {
+	for _, wf := range []string{"ticket", "reflect", "list-tests"} {
 		if !strings.Contains(out, "ok "+filepath.Join(root, "workflows", wf+".yaml")) {
 			t.Errorf("validate did not check the embedded %s:\n%s", wf, out)
 		}

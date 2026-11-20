@@ -7,7 +7,7 @@
 - ワークフロー定義（式を持たない YAML・§3.1〜§3.3）の読み込みと `harness validate`（§6.3）
 - イベントログ（`events.jsonl` が正本）と状態の畳み込み（`state.json`）・状態の置き場（§4・§4.6）
 - ステップ種類は `command`・`llm`・`gate`・`select`・`workspace`・`pull-request`（`fanout`・`plan-parallel` は PR-5 とともに見送った。設計文書 §11.3・§11.4）
-- 同梱のワークフロー `ticket`（1 チケットの実装フロー。§3.4）。shadow run（§8 C3 の段階 A）の手順と指標の取り方は [`docs/harness-runtime-shadow.md`](../docs/harness-runtime-shadow.md)
+- 同梱のワークフロー `ticket`（1 チケットの実装フロー。§3.4）と `reflect`（すでにある PR を既定ブランチへ上げる依頼。下の「`reflect`」）。shadow run（§8 C3 の段階 A）の手順と指標の取り方は [`docs/harness-runtime-shadow.md`](../docs/harness-runtime-shadow.md)
 - unit の累計予算と費用の fail-closed（§4.3）・ラウンド（ゲートとゲートの間。§4.2）
 - `run` / `status [--json]` / `runs [--json]` / `resume` / `approve` / `cancel`（§5.1）
 - runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）。ステップの間で runner が落ちた unit も同じゲートで止まる（#347）
@@ -316,6 +316,21 @@ steps:
 
 - 参照先のステップは、select へ至るどの経路でも先に成功していなければならない（validate が確かめる）。`$inputs`・`$edge`・`$gate.note`・`$gate.approved_ref` は選べない（enum が無い）。
 
+## `reflect`（すでにある PR を既定ブランチへ上げる依頼。#388 の S3-6）
+
+```
+harness run reflect --input artifact_ref=https://<host>/<owner>/<repo>/pull/<番号> [--input challenge_id=<ID>]
+```
+
+段は `adopt` → `workspace` → `sync`（→ `sync-resolve`）→ `quality` → `push` → `review`（ゲート）→ `land`（→ `land-sync` → `land-sync-resolve` → `land-push` → `review`）→ `cleanup`。`sync` から下は `ticket` と同じ中身で、PR の番号と宛先は `adopt` の出力を読む。
+
+- `adopt`（`pull-request` の `action: adopt`、`with.ref`）: 起動したリポジトリの、開いていて、宛先が既定ブランチで、フォークからでなく、下書きでない PR を、この run の成果物として受ける（PR の番号・URL・ブランチ・先頭を記録）。`outcome`: `adopted`・`unsupported_ref`（URL の形でない。ブランチの名前・番号だけの入力もここ。失敗の理由 `integration_reflect_unsupported`）・`not_open`・`not_default_base`・`fork`・`draft`・`other_repo`（理由は `pr_not_open`・`pr_not_default_base`・`pr_from_fork`・`pr_draft`・`pr_other_repo`）。`gh pr view <ref> --json …` と `gh repo view --json nameWithOwner,defaultBranchRef` で確かめる。出力は `pr_number`・`pr_url`・`branch`・`base`・`head_sha`・`key`（`pr-<番号>`）・`detail`。
+- 作業ツリーは、`workspace` の `acquire` の `with: { mode: detached }`（リテラルの `detached` だけ。`provided` とは一緒に使えない）で、ブランチを checkout しない形で作る（`worktree-setup.sh --detach <鍵> <ブランチ> <base>`）。上げる PR のブランチが、作った側の作業ツリーで checkout されたままでも進める。`push` は `HEAD:refs/heads/<ブランチ>` へ行う。別の run の所有の印がある detached の作業ツリーには相乗りせず `conflict`（`worktree_conflict`）にする。
+- 用意の検証（`quality`）は検査だけで、`fix` の段を持たない。落ちたら `quality_gate_red`、宣言が無ければ `quality_gate_undeclared` で失敗で終える。`options` は `land` だけ（`respond`・`ready` は受けない）。`facts` は宣言しない（出力に `facts` は出ない）。
+- 既定ブランチへは、`land`（`--approved-ref` に通した先頭のコミット）を受けるまで入れない。入れ方・確かめは `ticket` の `land` と同じ（先頭の一致と宛先の最新を含むことを確かめ、`gh pr merge --squash --match-head-commit`）。入れた後の origin の作業ブランチは消さない（リポジトリの設定に任せる）。終わりの理由は `landed`・`landed_worktree_dirty`。
+- **最上位の `release_on`**（`[cancelled, failed]` のうちの値。`succeeded` は書けない。上書きでは書けない）: その終わり方をするとき、**終わりのイベント（`run_cancelled`・`run_finished` の `failed`）を書く前に**、この run が作った作業ツリー（所有の印で確かめる）を `worktree-cleanup.sh --force` で消し、`workspace` イベント（`released`）を残す。`run_started` に写しを記録するので、終わりを記録する側（runner・runner が居ないときの `harness cancel`・`status`/`resume` の後始末・runner を起動できなかった `resume`）は定義を読み込まずに動く。消せなくても終わりは成立させ、理由を `released` の記録と標準エラーに残す。既定ブランチへは入れず、PR は閉じない。`ticket` は `release_on` を書かない（取り消し・失敗で作業ツリーを残す、いまの動き）。
+- 同じ PR への依頼が 2 本重なると、後の方は `worktree_conflict` で失敗する（先の run の作業ツリーは消さない）。
+
 ## `workspace` 種類の書き方
 
 ```yaml
@@ -333,6 +348,7 @@ steps:
 - `acquire`: `provided`（呼び出し元が渡した worktree。在るディレクトリ・作業ツリーの最上位・run を開始したリポジトリと同じリポジトリであることを確かめる）があれば `provided`。無ければ `plugin/scripts/worktree-setup.sh <key か issue> <branch> <base>` を呼んで `created` / `reused`（`with.key`〔`issue-<n>`・`task-<n>`・`pr-<n>`〕があれば key を、無ければ `with.issue` の数字を渡す。`issue` は任意で、0 は「無い」と読む。どちらも無ければ `step_error`。作業ツリーの場所は `<root>/<鍵>`、ブランチは `{type}/<鍵>-{説明}`）。払い出し先が別ブランチの worktree・未登録のディレクトリ・別のリポジトリなら `conflict`。払い出しはプロセスの中で直列化する（スクリプトの mkdir ロックは第二層）。
 - 払い出した後のステップ（`command`・`llm`・`pull-request`・observe 型ゲートの観測）は作業ツリーの中で動く（`release` の後は run を開始したディレクトリに戻る）。
 - `release`: **この run が作ったものだけ**を `worktree-cleanup.sh <path> --skip-if-dirty` で消す（`released`）。「この run が作った」は、作ったときに作業ツリーの git dir へ書いた印（`claude-harness-owner`: run id と unit）で確かめる（払い出し先のパスは同じ Issue の run どうしで同じなので、パスだけでは判定しない）。呼び出し元の作業ツリーが base そのもの・detached なら `conflict`。呼び出し元が渡したもの・この run が作っていない再利用は消さない（`kept`）。未コミットの変更があれば消さない（`dirty`）。
+- `with.mode`（任意。リテラルの `detached` だけ）: 作業ツリーを、ブランチを checkout しない形で作る（`worktree-setup.sh --detach`。ブランチが origin に無ければ `step_error`）。`provided` とは一緒に使えない（読み込みで拒否）。
 - 出力（`$steps.<id>.worktree_path` 等）の形は Go が決める（`output` は書かない）。
 
 ## `pull-request` 種類の書き方
@@ -361,5 +377,6 @@ steps:
 - **`action`（#388 の S3-3）**: `pull-request` は `action` を書ける（書かなければ `publish` で、上の動き）。どれも決定的な Go の段で、LLM を呼ばない。`sync`・`push`・`land` は、返す文を出力の `detail` に入れる（`land` は `head_sha`〔確かめた PR のいまの先頭〕・`merge_commit` も）。`rebase`・強制 push はしない。
   - `sync`（`with: { base, expect_head? }`。`outcome`: `current`・`synced`・`conflict`・`unresolved`・`not_merge_only`・`diverged`・`head_moved`・`unavailable`）: 宛先の最新を `git merge --no-ff --no-edit` で作業ブランチへ取り込む（push はしない）。衝突は、マージの途中のまま `conflict` を返し（`head_before`・`base_sha` を出力に残す）、LLM の段（`prompts/sync-resolve.md`）が直してから `sync` へ戻る。戻ったときは、`HEAD` が「第 1 の親 = `head_before`・第 2 の親 = `base_sha`」のマージのコミットであることを機械が確かめる（違えば `not_merge_only`）。`expect_head`（`land` の後の取り込みだけが渡す）は、最初に入ったときだけ手元の `HEAD` と比べる（違えば `head_moved`。`ticket` はこれを失敗の理由 `local_head_mismatch` で終える）。
   - `push`（`with: { pr, base }`。`outcome`: `pushed`・`unchanged`・`rejected`・`unavailable`）: `git push --porcelain origin HEAD:refs/heads/<作業ブランチ>`（強制しない）。既定ブランチと PR の宛先そのものへは push しない。PR の先頭（`Workspace.head_sha`）を記録する。
-  - `land`（`with: { pr, base, approved_ref }`。`outcome`: `landed`・`behind`・`mismatch`・`blocked`・`closed`・`merged_other`・`base_changed`・`not_confirmed`）: PR の先頭が `approved_ref`（ゲートの解決の `--approved-ref`。`approved_ref` は `$edge` で受け、ゲートの解決からしか届かない）と一致し、宛先の最新を含み、下書きでなくチェックが通っているときだけ、`gh pr merge <pr> --squash --match-head-commit <approved_ref>` で入れる（`--auto`・`--admin`・`--delete-branch` は付けない）。入れた後は PR を読み直して確かめる。確かめる所と入れる所は 1 つの段の中にあり、上書きでは付け替えられない。`land` を受けられるのは `ticket` のレビュー待ち（`options` に `land`）だけで、入れ終えるかレビュー待ちへ戻るまで他の待ちへ移らない（失敗で終える）。
+  - `land`（`with: { pr, base, approved_ref }`。`outcome`: `landed`・`behind`・`mismatch`・`blocked`・`closed`・`merged_other`・`base_changed`・`not_confirmed`）: PR の先頭が `approved_ref`（ゲートの解決の `--approved-ref`。`approved_ref` は `$edge` で受け、ゲートの解決からしか届かない）と一致し、宛先の最新を含み、下書きでなくチェックが通っているときだけ、`gh pr merge <pr> --squash --match-head-commit <approved_ref>` で入れる（`--auto`・`--admin`・`--delete-branch` は付けない）。入れた後は PR を読み直して確かめる。確かめる所と入れる所は 1 つの段の中にあり、上書きでは付け替えられない。`land` を受けられるのは `ticket`・`reflect` のレビュー待ち（`options` に `land`）だけで、入れ終えるかレビュー待ちへ戻るまで他の待ちへ移らない（失敗で終える）。
+  - `adopt`（`with: { ref }`。`outcome`: `adopted`・`unsupported_ref`・`not_open`・`not_default_base`・`fork`・`draft`・`other_repo`）: すでにある PR を、この run の成果物として受ける（`reflect` 用。上の「`reflect`」）。
 - observe 型ゲートの観測 `pr-state`（`with: { pr: <PR 番号> }`）は `gh pr view` で PR の実状態を確かめ、`merged` / `open` / `closed` を返す。

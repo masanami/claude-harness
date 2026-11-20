@@ -1,6 +1,8 @@
 #!/bin/bash
 # worktree-setup.sh
-# 使い方: scripts/worktree-setup.sh <issue番号 | 鍵> <branch名> <base> [worktree_root]（詳細は下記参照）
+# 使い方: scripts/worktree-setup.sh [--detach] <issue番号 | 鍵> <branch名> <base> [worktree_root]（詳細は下記参照）
+# --detach: 既に origin にあるブランチを、checkout しない形（detached）で作業ツリーにする（ブランチ名の形を検査しない。
+# 上げる PR のブランチが別の作業ツリーで checkout されたままでも作れる）
 # 第 1 引数は Issue の番号（数字だけ。鍵は issue-<数字> になる）か、鍵（issue-<n>・task-<n>・pr-<n>）。鍵は作業ツリーの
 # 場所（<root>/<鍵>）とブランチの名前（{type}/<鍵>-{説明}）の両方に使う。
 # 仕様の正本は scripts/specs/worktree-setup.md を参照。
@@ -220,6 +222,21 @@ find_registered_worktree_branch() {
   '
 }
 
+# 指定パスが git worktree として登録済みで、detached HEAD なら 0（branch 行が無く detached 行がある）。
+find_registered_worktree_detached() {
+  local target="$1"
+  git worktree list --porcelain | awk -v target="$target" '
+    /^worktree / { wt=$0; sub(/^worktree /, "", wt) }
+    /^detached$/ { if (wt == target) { found = 1 } }
+    END { exit !found }
+  '
+}
+
+create_worktree_detached() {
+  local path="$1" branch="$2"
+  git worktree add --detach "$path" "origin/${branch}" >/dev/null 2>&1
+}
+
 create_worktree_new_branch() {
   local path="$1" branch="$2" base="$3"
   git worktree add "$path" -b "$branch" "origin/${base}" >/dev/null 2>&1
@@ -238,7 +255,50 @@ create_worktree_existing_remote_branch() {
 print_usage() {
   local prog
   prog="$(basename "$0")"
-  echo "Usage: ${prog} <issue番号 | 鍵(issue-<n>|task-<n>|pr-<n>)> <branch名> <base> [worktree_root]" >&2
+  echo "Usage: ${prog} [--detach] <issue番号 | 鍵(issue-<n>|task-<n>|pr-<n>)> <branch名> <base> [worktree_root]" >&2
+}
+
+# --detach の本体。ロックを取った後（main の中）で呼ぶ。ブランチが origin に無ければ失敗。登録済みの detached の作業ツリーは再利用
+# （reused。別の run が作ったものかどうかは呼び出し側が見分ける）、ブランチを checkout した登録済みの作業ツリーは拒否する。
+detach_worktree() {
+  local key="$1" issue_json="$2" branch="$3" base="$4" worktree_path="$5"
+  if ! remote_branch_exists "$branch"; then
+    echo "Error: branch '${branch}' does not exist on remote 'origin'" >&2
+    exit 1
+  fi
+  if ! git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" >/dev/null 2>&1; then
+    echo "Error: git fetch origin '${branch}' failed" >&2
+    exit 1
+  fi
+  local out_reused="false" out_created="false"
+  if git worktree list --porcelain | grep -qxF "worktree ${worktree_path}"; then
+    if find_registered_worktree_detached "$worktree_path"; then
+      out_reused="true"
+    else
+      echo "Error: worktree path '${worktree_path}' is already registered for a different branch ('$(find_registered_worktree_branch "$worktree_path")', expected a detached worktree). Refusing to overwrite; resolve manually." >&2
+      exit 1
+    fi
+  elif [ -e "$worktree_path" ]; then
+    echo "Error: worktree path '${worktree_path}' already exists but is not a registered git worktree (stale directory?). Refusing to overwrite; resolve manually." >&2
+    exit 1
+  else
+    if ! create_worktree_detached "$worktree_path" "$branch"; then
+      echo "Error: git worktree add --detach failed for branch '${branch}'" >&2
+      exit 1
+    fi
+    out_created="true"
+  fi
+  jq -n \
+    --argjson issue "$issue_json" \
+    --arg key "$key" \
+    --arg branch "$branch" \
+    --arg base "$base" \
+    --arg worktree_path "$worktree_path" \
+    --argjson created "$out_created" \
+    --argjson reused "$out_reused" \
+    '{issue: $issue, key: $key, branch: $branch, base: $base, worktree_path: $worktree_path, created: $created, reused: $reused, branch_existed: true, detached: true}'
+  release_worktree_lock "$lock_dir"
+  trap - EXIT
 }
 
 # ---------------------------------------------------------------------------
@@ -246,6 +306,11 @@ print_usage() {
 # ---------------------------------------------------------------------------
 
 main() {
+  local detach="false"
+  if [ "${1:-}" = "--detach" ]; then
+    detach="true"
+    shift
+  fi
   local arg="${1:-}" branch="${2:-}" base="${3:-}" worktree_root="${4:-}"
 
   if [ -z "$arg" ] || [ -z "$branch" ] || [ -z "$base" ]; then
@@ -267,7 +332,7 @@ main() {
     exit 1
   fi
 
-  if [ "$(validate_branch_name "$key" "$branch")" != "valid" ]; then
+  if [ "$detach" = "false" ] && [ "$(validate_branch_name "$key" "$branch")" != "valid" ]; then
     echo "Error: branch name '${branch}' does not match required pattern '{type}/${key}-{description}' (type in: ${WORKTREE_SETUP_BRANCH_TYPES})" >&2
     exit 1
   fi
@@ -310,6 +375,11 @@ main() {
   if ! fetch_base "$base"; then
     echo "Error: git fetch origin '${base}' failed" >&2
     exit 1
+  fi
+
+  if [ "$detach" = "true" ]; then
+    detach_worktree "$key" "$issue_json" "$branch" "$base" "$worktree_path"
+    return $?
   fi
 
   local existing_branch

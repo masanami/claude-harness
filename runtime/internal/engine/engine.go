@@ -102,6 +102,7 @@ func Start(p StartParams) (*Engine, error) {
 			Inputs:      p.Inputs,
 			Limits:      limits,
 			Facts:       facts,
+			ReleaseOn:   p.WF.ReleaseOn,
 			Origin:      p.Origin,
 			Cwd:         p.Cwd,
 			PID:         os.Getpid(),
@@ -201,7 +202,8 @@ func (e *Engine) Loop(ctx context.Context) (*runstate.State, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := e.Run.Append(evs...); err != nil {
+		// run の終わり（失敗）を含むときは、release_on に従って作業ツリーを片付けてから終わりを書く（AppendEnding）。
+		if _, err := AppendEnding(e.Run, func(*runstate.State) ([]runstate.Event, error) { return evs, nil }); err != nil {
 			return nil, err
 		}
 	}
@@ -227,7 +229,9 @@ func (e *Engine) cancel(ctx context.Context) (*runstate.State, error) {
 	} else if ctx.Err() != nil {
 		actor, channel = "signal", "signal"
 	}
-	return e.Run.Append(CancelEvents(st, actor, channel, "stopped by the runner")...)
+	return AppendEnding(e.Run, func(cur *runstate.State) ([]runstate.Event, error) {
+		return CancelEvents(cur, actor, channel, "stopped by the runner"), nil
+	})
 }
 
 // CancelEvents は停止の記録に要るイベント（実行中のステップの打ち切り＋run_cancelled）を作る。
