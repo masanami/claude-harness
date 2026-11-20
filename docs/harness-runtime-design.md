@@ -201,6 +201,8 @@ YAML と Go のステップ種類が許す判定は**一致だけ**である。�
 
 **#388 の設計で足すもの（§5.6.2。`workspace` の `acquire` の `key` は S3-1〔#391〕、`pull-request` の `action` の `sync`・`push`・`land` は S3-3〔#393〕、`adopt`・`mode: detached` は S3-6〔#396〕で実装済み）**: 種類は増やさず、`pull-request` に `action`（`publish`〔既定。上の行の動き〕・`sync`〔宛先の最新をマージのコミットで取り込む〕・`push`・`land`〔先頭の一致を確かめて、満たすときだけ宛先へ入れる〕・`adopt`〔すでにある PR を受ける〕）を足す。`workspace` の `acquire` は、Issue の番号の代わりに名前の鍵（`key`）を受け、ブランチを checkout しない作業ツリー（`mode: detached`）も作れるようにする。
 
+**#409 の設計で足すもの（§5.6.3。未実装）**: 種類は増やさず、`pull-request` の `action` に `ensure-base`（宛先のブランチを、無いときだけ作る）・`open`（すでに在るブランチから PR を作る）・`retire`（入った後のブランチを、条件を満たすときだけ消す）を足し、`adopt` がブランチの名前も受けるようにする。
+
 ### 3.3 値の受け渡し: 参照だけを許し、加工を許さない
 
 **書き切れる**。文法は次の 4 形だけで、演算・連結・添字計算・既定値の指定は持たない。
@@ -442,6 +444,8 @@ steps:
 >
 > **#388 の設計で足すもの（⑬ は S3-1〔#391〕、⑭・⑮ は S3-3〔#393〕、⑯ は S3-4〔#394〕、⑰ は S3-5〔#395〕で実装済み。定義の全体は §5.6.2 の「`ticket` の遷移」）**: ⑬ 入力に `task_file`・`task_id`・`uses_integration`・`challenge_id` を足し、`issue` を任意にする。`resolve` が入力の組み合わせを確かめ（`input_invalid`・`integration_unsupported`）、名前の鍵（`key`）を出す。`analyze`・`workspace`・`implement` は `$inputs.issue` ではなく `resolve` の出力を読む。 ⑭ `commit` の後・`e2e-route` の前に、宛先の最新をマージのコミットで取り込む `sync`（`pull-request` の `action: sync`）と、衝突を直す `sync-resolve`（`llm`）を置く（`commit.committed` を `sync` へ向ける）。 ⑮ `review` の `inputs` に `land` を足し（`[respond, ready, land]`）、`land: { goto: land, with: { approved_ref: $gate.approved_ref } }` で `land`（`pull-request` の `action: land`）へ送る。`land` は、一致して宛先の最新を含めば入れて `cleanup` へ、宛先が動いていれば `land-sync` → `land-push` で取り込んで `review` へ、一致しない・入れられないなら理由（`detail`）を添えて `review` へ戻る。`ready` の後の `merge-route`・`merge`・`human-merge` は変えない。 ⑯ 最上位に `facts: { self_review: [...] }` を書き、`fix`・`respond` の出力にも必須の欄 `self_review`（`complete`・`incomplete`・`not_run`）を足す（必須にしたのは #403）。 ⑰ `review` に `refresh: pr-head` を書く。
 >
+> **#409 の設計で足すもの（§5.6.3。未実装）**: ⑱ `resolve` の後に、統合先を使う実行だけが通る `integration-route`（`select`）と `integration`（`pull-request` の `action: ensure-base`）を足す。`resolve` の `integration_unsupported` は外す。定義の差分は §5.6.3 の「`ticket` の遷移」。
+>
 > `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す（§3.3。Q12 で決定）。
 >
 > `ci-pending` は `decider: any`（外部待ちで、解決に意思決定を含まない）なので TTY を要求しない。`recheck` で `ci` に戻ると、`retry` はラウンド単位で数えるため再び 1 回の再試行を持つ（§3.1）。`limit: rework` の累計は戻らない。
@@ -541,6 +545,8 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 | **StepExecution** | `step_id`・`attempt`・`round_no`・開始／終了・outcome（予約値を含む）・検証済みの出力 JSON・Claude の `session_id`・`cost_usd`・ログと成果物のパス | 「完了済み step を再実行しない」の根拠 |
 
 **#388 の設計で足す記録（§5.6.2。`head_sha`・`merge_commit` は S3-3〔#393〕、`approved_ref`・`detail` は S3-2〔#392〕、Run の `facts` は S3-4〔#394〕、開いたゲートの `refresh` と `workspace` の `head` は S3-5〔#395〕、Run の `release_on` の写しは S3-6〔#396〕で実装済み）**: Workspace に `head_sha`（PR のいまの先頭。取り込みの後・外からの push の後も追従する）と `merge_commit`（宛先へ入れた後のコミット）。Gate の解決に `approved_ref`、開いたゲートに `detail`・`refresh`。Run に、定義の `facts`・`release_on` の写しと、unit ごとの `facts` の値。Round の契機に、`interrupted` の印（失敗の理由の語）。
+
+**#409 の設計で足す記録（§5.6.3。未実装）**: `Workspace` に `integration_branch`・`integration_head`（統合ブランチの名前と先頭）。`workspace` イベントに `action: integration`（段の中では `pull-request` の種類の段が書き、段の外では、`refresh` の印のあるゲートで待っている間の取り直しだけが書く）。
 
 ### 4.2 ラウンドの定義
 
@@ -703,6 +709,8 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 **`resume` も常にすぐ戻る（#359・2026-11-11）**: `contract resume` はゲートを解いた後の進行を切り離し（§4.5）、その時点の状態の JSON を返す。多くは `state: running`・`requested_action: null` で、速い runner なら次のゲートの `waiting`、解決で終端に着けばその終端の状態になる。拒否（受け付けない入力・`decider: human` のゲート・終わった run・版の不一致）は従来どおり、run の状態のまま理由を `summary` に添えて返る。続きは `contract status` で読む。契約の版は v1 のまま。
 
 **出力**: `{"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}` を 1 つ出す（宣言と値があるときだけ、任意のキー `facts`〔名前 → 値の文字列〕が付く。§5.6.2「`facts`」）。
+
+**#409 の設計で足すもの（§5.6.3。未実装）**: `artifacts` の要素に、任意のキー `role` を足す。`uses_integration` に `true` を受けた `ticket` の実行だけが、統合ブランチ（`kind: branch`）とその先頭（`kind: commit`）を、`role: integration` の要素で 1 つずつ出す。`role` の無い要素の意味と数は変えない。
 
 | フィールド | 写し方 |
 | --- | --- |
@@ -1296,6 +1304,8 @@ A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a
 
 #### B の粗い設計（A が邪魔をしないこと）
 
+> **#409 で、実装できる細かさに起こした（§5.6.3）**。下の表は、#388 のときの粗い設計の記録として残す（書き換えていない）。§5.6.3 が、この表から変えた点: 統合ブランチを作る段を `resolve` と分けた（`ensure-base`）／`reflect` の PR を作る所を `adopt` と分けた（`describe`・`open`）／統合ブランチを消す段（`retire`）を足した／`integration_reflect_unsupported` は、外して `artifact_ref_invalid` に置き換える。
+
 | B で足すもの | 形（粗い） | A の側の受け |
 | --- | --- | --- |
 | 統合先を決めて作る | `resolve` が、`uses_integration: true` と `challenge_id` から統合ブランチの名前を決め（規則は B で決める）、無ければ既定ブランチの先頭から作る（作る所は Go の段にする）。`base` をそのブランチ、`base_kind` を `integration` にする | `integration_unsupported` の行を外すだけ。`land`・`sync` は宛先を `with.base` で受けていて、既定ブランチに限っていない |
@@ -1317,6 +1327,507 @@ A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a
 | 6 | 入れた後の作業ブランチ（origin）を消すか | (a) 消さない（リポジトリの「マージ後に自動で消す」の設定に任せる）。(b) `cleanup` で消す | (a)。`reflect` の PR のブランチは、この run が作ったものではない |
 | 7 | `T-<番号>` が、同じリポジトリへ出す 2 つの flywheel のワークスペースで重なること | (a) 受ける（`worktree_conflict` で止まる）。(b) 鍵に `challenge_id` も入れる | (a)。`challenge_id` もストアごとの番号で、入れても解けない |
 | 8 | 文面のファイルと Issue の両方があるとき、Issue の本文の `Base:` 行を読まないこと | (a) 読まない（宛先は `base` の入力か既定ブランチ）。(b) 読む（いまと同じ） | (a)。flywheel の S3a は、宛先を反映先（既定ブランチ）と決めて PR の宛先を確かめる（`base_changed`）。Issue の本文で宛先が変わると食い違う |
+
+### 5.6.3 統合先の受け口（#409・2026-11-20。設計。flywheel の区切り S3b で使う分。実装はまだ無い）
+
+§5.6.2 の「B の粗い設計」を、実装できる細かさに起こしたものである。flywheel が、課題ごとの統合先（統合ブランチ）を使い始める（flywheel `docs/features/core-redesign.md` の節「委譲先との契約（S3 で使う受け口）」の「足すもの 2・3・4」と「claude-harness の側で要るもの（S3b）」。食い違えば flywheel 側が正）。**契約の形（flywheel が渡すもの・受け取るもの）は変えない**。この節に書いた入力・段・キー・理由の語は、下の「実装の分け方」の PR で実物になる（設計を書いた時点の実物は main `9911091`＝5.2.0。「いまの動き」の行の番号は、この版のもの）。§5.6.2 の記録は書き換えていない。
+
+足すものは 4 つ（Issue #409 の「要るもの」1〜4）。
+
+| # | 足すもの | ワークフロー |
+| --- | --- | --- |
+| 1 | 統合ブランチの名前を決め、origin に無ければ既定ブランチの先頭から作る。タスクの PR の宛先を統合ブランチにする | `ticket` |
+| 2 | 成果物に、統合ブランチとその先頭を `role: integration` の要素で出す | `ticket` |
+| 3 | 統合ブランチ宛ての `land`・取り込みを、試験で確かめる（作りは宛先を問わない） | `ticket` |
+| 4 | `artifact_ref` に統合ブランチの名前を受け、既定ブランチへの PR を用意して、`land` で入れた後に統合ブランチを片付ける | `reflect` |
+
+#### flywheel が渡すもの・読むもの（契約と、flywheel の機能要件から読んだこと）
+
+| 場面 | flywheel がすること | harness の側の読み |
+| --- | --- | --- |
+| タスクを始める | `commands.start` に `{uses_integration}`＝`true`・`{challenge_id}`＝課題の ID（`C-<番号>`）・`{task_id}`・`{task_file}` を渡す。同じ課題のタスクは、同じ `{challenge_id}` で、同時に 2 本以上始まりうる | 名前の鍵は `challenge_id` だけ。宛先（`base`）は渡されない |
+| タスクのレビュー待ちを読む | 成果物に、既定ブランチ宛ての PR が 1 つでもあれば保留。`role` が `integration` の `branch` と `commit` が、ちょうど 1 つずつ無ければ保留（`integration_ref_invalid`）。`branch` の `ref` を課題に記録し（`challenge.integration_ref`）、2 本目からは、記録と同じことを確かめる | 同じ課題の実行は、いつも同じ名前を返す。`role` の無い `commit` は、いままでどおり PR の先頭を 1 つ |
+| タスクへ `land` を返す | 完了の検証の判断点がタスクを「満たした」とした後（オーナーの承認は無い）。`{approved_ref}` は、検証した PR の先頭 | §5.6.2 の `land` と同じ。宛先が統合ブランチなだけ |
+| タスクの `succeeded` を読む | 上流で、PR が統合ブランチへ入ったことを自分で確かめ、出力の `role` が `integration` の `commit`（入れた後のもの）を、成果物の記録に残す | 入れた直後の統合ブランチの先頭を出す |
+| 課題を上げる | 全部のタスクが済んだ後、オーナーの完了の承認の前に、`commands.reflect` を `{artifact_ref}`＝課題に記録した統合先の識別（harness が返したブランチの名前、そのまま）・`{challenge_id}` で呼ぶ。取り消し・失敗の後は、同じ値で呼び直しうる | `reflect` は、名前を `artifact_ref` から受ける（`challenge_id` から作り直さない）。同じ統合ブランチへの依頼が、時間をおいて 2 度来うる |
+| 上げる依頼のレビュー待ちを読む | `options` に `land`・`role` の無い `commit` がちょうど 1 つ・既定ブランチ宛ての PR がちょうど 1 つ、を確かめ、その PR を、課題の単位の確かめとオーナーの承認の対象にする | PR の URL を受けたときと同じ形の出力。`role` の付いた要素は出さない（`reflect` は `uses_integration` を受けない） |
+| 上げる依頼へ `land` を返す | オーナーの完了の承認の後。通さないときは `cancel` | §5.6.2 の `reflect` と同じ |
+
+flywheel は `ready` を返さない（契約の「足すもの 3」の末尾）。
+
+#### いまの動き（5.2.0。読んだファイルと行）
+
+| 所 | いまの動き | 裏 |
+| --- | --- | --- |
+| `resolve` | `uses_integration` が `true` なら、`gh`・`git` を呼ばずに `integration_unsupported` を返す。`challenge_id` は `resolve` へ渡していない | `runtime/workflows/scripts/resolve-ticket.sh` の 107〜109 行。`runtime/workflows/ticket.yaml` の 66〜67 行（`with`）・75 行 |
+| `resolve` の宛先 | `base` の入力 ＞ Issue の本文の `Base:` 行（`task_file` が無いときだけ）＞ 既定ブランチ。既定ブランチでなければ `base_kind` は `integration` で、origin に無ければ `base_missing`（作らない） | 同スクリプトの 195〜216 行・223〜244 行 |
+| `sync`・`push`・`land` | 宛先を `with.base` で受け、既定ブランチかどうかを見ない。`land` は `gh pr merge <pr> --squash --match-head-commit <approved_ref>` | `runtime/internal/engine/pullrequest_actions.go` の 137〜257 行（`sync`）・345〜404 行（`push`）・478〜560 行（`land`。入れる命令は 523 行）・589〜655 行（`landChecks`。宛先の見比べは 603 行） |
+| `push`・`publish` の検査 | 作業ブランチが、PR の宛先そのもの・既定ブランチなら、push を断る | 同 418〜433 行（`refuseProtected`）。`runtime/internal/engine/pullrequest.go` の 86〜97 行 |
+| `land` のチェックの見方 | 宛先の CI の運用の宣言を `ci-trigger.sh --base <宛先>` で読み、`after-merge` ならチェックを見ない。宣言は `origin/<宛先>` の `.claude-harness/ci.json` から読む（宛先がどのブランチでも同じ） | 同 666〜715 行（`checksNotPassing`・`afterMergeCI`）。`plugin/scripts/ci-trigger.sh` の `ci_trigger_main` |
+| `adopt` | PR の URL の形でなければ `unsupported_ref`（→ `integration_reflect_unsupported`）。PR の宛先が既定ブランチでなければ `not_default_base` | `runtime/internal/engine/pullrequest_adopt.go` の 14 行・36〜39 行・97 行。`runtime/workflows/reflect.yaml` の 31〜42 行 |
+| 成果物 | 要素は `kind` と `ref` だけ。unit の PR・作業ブランチ・`commit`（入れた後のコミット ＞ PR のいまの先頭）を 1 つずつ | `runtime/internal/cli/contract.go` の 82〜85 行（型）・430〜464 行（`artifacts`・`commitRef`） |
+| 記録 | `Workspace` は、作業ツリー・PR・先頭・入れた後のコミットを持つ。統合ブランチの欄は無い。`acquired` の畳み込みは、前の記録から PR の欄だけを持ち越す | `runtime/internal/runstate/fold.go` の 83〜100 行・631〜639 行。`event.go` の 277〜310 行 |
+| 待っている間の取り直し | `refresh: pr-head` のゲートで待つ unit の PR の先頭だけを、`status` が `gh pr view` で読み直す | `runtime/internal/engine/refresh.go` の 28〜72 行 |
+| 作業ツリー | `worktree-setup.sh` は、宛先が origin に無ければ失敗する。`--detach` は `origin/<ブランチ>` から、checkout しない形で作る | `plugin/scripts/worktree-setup.sh` の 371〜378 行・263〜300 行 |
+| 片付け | `release`（`cleanup` の段）と、取り消し・失敗のときの片付け（`release_on`）は、この run が作った作業ツリーだけを消す。origin のブランチは消さない | `runtime/internal/engine/workspace.go` の 230〜277 行。`release_on.go` |
+| `ready` の後 | `merge-route` が `base_kind` で振り分け、`integration` は `merge`（LLM。`/pr-merge`。先頭の一致は見ない）、`default` は `human-merge` | `ticket.yaml` の 251 行・325〜348 行。`runtime/workflows/prompts/ticket-merge.md` |
+
+#### 入力（`ticket`）
+
+入力の宣言は変えない（`uses_integration`・`challenge_id` は 5.2.0 で宣言済み）。変えるのは `resolve` の読み方である。`resolve` の `with` に `challenge_id: $inputs.challenge_id` を足す（スクリプトの引数は `--challenge_id`。`with` の名前のまま渡る。§5.6.2 の「S3-1 の実装の記録」）。
+
+| 条件 | 結果 |
+| --- | --- |
+| `uses_integration` が `true` で、`challenge_id` が無い | `input_invalid` |
+| `uses_integration` が `true` で、`challenge_id` が下の形でない | `input_invalid` |
+| `uses_integration` が `true` で、`base` の入力がある | `input_invalid`（宛先は統合ブランチに決まる。両方を渡した呼び出しを、どちらかへ黙って倒さない） |
+| `uses_integration` が `true`（上のどれにも当たらない） | `ok`。`base` は統合ブランチの名前、`base_kind` は `integration`、`base_source` は `challenge`（足す値）、`integration` は `create`（足す欄） |
+| `uses_integration` が `true` でない | いまと同じ（`challenge_id` は受けるだけで使わない）。`integration` は `none` |
+
+- `integration_unsupported` の行と、`resolve` の `outcome`・`ticket.yaml` の遷移・スキーマの値から、この語を外す。
+- **`uses_integration` が `true` のときは、Issue の本文の `Base:` 行を読まない**（`task_file` が無く `issue` だけのときも）。宛先を決めるのは `uses_integration` と `challenge_id` だけにする。
+- **`resolve` は、統合ブランチが origin に在るかを確かめない**（いまの 229〜244 行の確かめを、`base_source` が `challenge` のときは飛ばす）。作るのは次の段（下の `ensure-base`）で、`resolve` は名前を決めるだけにする。`Base:` 行・`base` の入力で渡された統合ブランチ（人が作る、いまの運用）は、いままでどおり、無ければ `base_missing` で止める（作らない）。
+- 入力の検査は、いまと同じく `gh`・`git` を呼ぶ前に終える。`input_invalid` のときの出力は、足す欄 `integration` を `none` にして、必須の欄をすべて埋める。
+- `schemas/resolve-ticket.json`: `outcome` から `integration_unsupported` を外す。`base_source` に `challenge` を足す。必須の欄 `integration`（`create`・`none`）を足す。
+
+#### 統合ブランチの名前
+
+```
+integration/<challenge_id を小文字にしたもの>        例: challenge_id=C-12 → integration/c-12
+```
+
+- `challenge_id` の形: `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` で、`..` を含まず、末尾が `.`・`.lock` でない。flywheel の `C-<番号>` はこの形に入る。`C-<番号>` に限らないのは、下の「残る重なり」の逃げ道（宣言で前に語を付ける）を塞がないためである。
+- 小文字にするのは、大文字と小文字を区別しないファイルシステムの手元（macOS の既定）で、`C-12` と `c-12` の 2 つの参照が衝突しないようにするためである。
+- **先頭の語 `integration/` は固定**する。タスクの作業ブランチ（`{type}/task-<n>-…`・`{type}/issue-<n>-…`）や、人が作る統合ブランチ（`docs/branching-strategy.md` §2.5 の `feat/issue-<親>`）と重ならない。リポジトリに `integration` という名前のブランチがあると、`integration/…` は作れない（git の参照の決まり）。そのときは、下の `ensure-base` が `refused`（失敗 `integration_create_failed`）で止まる。
+- **`reflect` は、名前を作り直さない**。flywheel が渡す `artifact_ref`（harness が成果物に出した名前、そのまま）を使う。名前の規則を知っているのは `resolve` だけにする（規則を変えても、走っている課題の `reflect` が食い違わない）。
+- **残る重なり**: `challenge_id` は flywheel のストアごとの番号なので、同じリポジトリへ出す 2 つのワークスペースが、同じ番号の課題を同時に進めると、同じ統合ブランチになる。作業ツリーの重なり（§5.6.2 の「名前と場所」。`worktree_conflict` で止まる）と違い、**止まらずに相乗りになる**（後から来た側は、ブランチが在るので、そのまま使う）。起きること: 片方の課題の `reflect` の PR に、もう片方のタスクの変更が混ざる。片方の `reflect` が入れた後に統合ブランチを消すと、もう片方の、開いているタスクの PR は、宛先が無くなって閉じる（そのタスクの `land` は `pr_closed` で失敗する。下の `retire` は、開いている PR があるうちは消さないので、消える前に気付ける）。
+  - harness の側では、これを見分けられない。入力に、ワークスペースを表す値が無い（`challenge_id`・`task_id` はストアごとの番号、run の ID は実行ごとに違い、同じ課題の 2 本目のタスクが「自分の課題が作った統合ブランチ」と確かめる鍵にならない）。
+  - 逃げ道（契約を変えない）: flywheel の宣言の `commands.start` で、`challenge_id=<ワークスペースごとの語>-{challenge_id}` のように、前に語を付けて渡す。harness は、付いた値をそのまま鍵にする（`integration/<語>-c-12`）。`reflect` は名前を `artifact_ref` で受けるので、`commands.reflect` の側は変えなくてよい。【要確認】flywheel の差し込みが、引数の要素の途中（`challenge_id=` の後ろに語を挟んだ形）でも置き換わること（いまの宣言の `challenge_id={challenge_id}` は、要素の途中の差し込みなので、通る見込み）。
+
+#### 新しい段: `pull-request` の `action`（足すもの）
+
+§5.6.2 の `action` に 3 つを足し、`adopt` を広げる。どれも決定的な Go の段で、LLM を呼ばない。
+
+| `action` | `with` | `outcome` | すること |
+| --- | --- | --- | --- |
+| `ensure-base` | `branch`・`from` | `created`・`existing`・`refused`・`unavailable` | origin に `branch` が無ければ、`from`（既定ブランチ）の先頭から作る。在れば何もしない。統合ブランチの名前と先頭を記録する |
+| `open` | `head`・`base`・`title`・`summary`・`challenge_id`（任意） | `opened`・`existing` | `head` から `base` への PR を作る（在れば、それを使う）。push はしない |
+| `retire` | `pr`・`branch`・`base`・`head` | `deleted`・`absent`・`kept` | 入った後の統合ブランチを、origin から消す。条件に 1 つでも合わなければ、消さずに `kept` |
+| `adopt`（広げる） | `ref` | いまの 7 つに、`no_pr`・`branch_missing`・`empty` を足す | PR の URL のほかに、ブランチの名前を受ける |
+
+**`ensure-base`**（作業ツリーの払い出しより前の段。run を始めたディレクトリで動く）:
+
+1. `branch` が `from` と同じ・ブランチの名前として受けられない形 → `step_error`。
+2. `git ls-remote --exit-code --heads origin refs/heads/<branch>` を、最大 3 回試す。終了コード 0 → `existing`（先頭は、出力の SHA）。終了コード 2 → 無い（3 へ）。ほか（3 回とも） → `unavailable`。
+3. `git fetch origin +refs/heads/<from>:refs/remotes/origin/<from>`（最大 3 回）。通らなければ `unavailable`。取れた `refs/remotes/origin/<from>` の SHA を、作る先頭にする。
+4. `git push --porcelain --force-with-lease=refs/heads/<branch>: origin <SHA>:refs/heads/<branch>`。**期待する値を空にした `--force-with-lease` は「その参照が origin に無いときだけ作る」の条件**で、在る参照を書き換えない（下の実測の 5〜7）。参照ごとの状態の行で読む:
+
+   | 状態の行 | 意味 | 結果 |
+   | --- | --- | --- |
+   | `*`（新しい参照） | 自分が作った | `created`（先頭は、渡した SHA） |
+   | `=`（変更なし） | 別の実行が、同じ先頭で先に作っていた | `existing`（先頭は、渡した SHA） |
+   | `!`（拒否） | 別の実行が、違う先頭で先に作った・すでに進んでいる。または、作ること自体を origin が拒んだ | 5 へ |
+   | 行が無い | origin へ届かなかった | 5 へ |
+
+5. 2 の `ls-remote` をやり直す。在る → `existing`（先頭は、読んだ SHA）。無くて、4 が `!` だった → `refused`（origin が、作ることを拒んだ。保護の決まり・権限・`integration` という名前のブランチが在る）。無くて、4 が届いていなかった → 3 回まで 4 からやり直し、だめなら `unavailable`。
+
+- **同時に始まった 2 つの実行**: どちらも 2 で「無い」と読み、4 へ進む。先に届いた方が `*`、後の方は `=`（既定ブランチが動いていなければ同じ SHA）か `!`（間に既定ブランチが動いた）で、後の方は 5 で在ることを読んで `existing` になる。**どちらも失敗しない**。在る統合ブランチを、後から来た実行が動かすことも無い。
+- **`--force-with-lease` を使う理由**（「強制の push をしない」の決まりとの関係）: 素の `git push <SHA>:refs/heads/<branch>` は、origin の統合ブランチが、渡した SHA の祖先のとき、**早送りで統合ブランチを動かしてしまう**（下の実測の 3。先に作った実行の後で既定ブランチが進み、後の実行が新しい先頭を push した場合）。統合ブランチを動かしてよいのは、タスクの PR を入れる `land` と、`reflect` の取り込みの push だけにする。期待する値が空の `--force-with-lease` は、書き換えを許す向きには働かず、「無いときだけ」の条件を足すだけである。
+- 記録: `created`・`existing` で、`workspace` イベント（`action: integration`。下の「成果物」）に、統合ブランチの名前と先頭を書く。
+- **既定ブランチの先頭から作る**。作った後に既定ブランチが進んでも、統合ブランチへは取り込まない（取り込むのは `reflect` の用意。タスクの途中で統合ブランチが動く理由を、タスクの `land` だけにする）。
+
+**`adopt` がブランチの名前を受ける道**（`ref` が PR の URL の形〔いまの正規表現〕なら、いまと同じ。出力に `source: pr` を足すだけ）:
+
+1. `ref` が、ブランチの名前として受けられる形（`resolve-ticket.sh` の `valid_branch` と同じ決まり）でない → `unsupported_ref`。
+2. `gh repo view --json nameWithOwner,url,defaultBranchRef` で既定ブランチを読む。`ref` が既定ブランチ → `unsupported_ref`。
+3. `git ls-remote --exit-code --heads origin refs/heads/<ref>`。終了コード 2 → `branch_missing`。通ったら、`ref` と既定ブランチを fetch する（`+refs/heads/<名前>:refs/remotes/origin/<名前>`）。
+4. `gh pr list --head <ref> --base <既定ブランチ> --state open --json number,url,headRefName,headRefOid,baseRefName,isCrossRepository,isDraft` を読み、フォークからのものを除く。
+   - 1 件 → 下書きなら `draft`。そうでなければ `adopted`（いまと同じ出力。`key` は `pr-<番号>`、`source` は `integration`）。PR を記録する。
+   - 2 件以上 → `step_error`（同じ head と宛先の、開いている PR は 1 つしか作れないので、起きない見込み）。
+   - 0 件 → 5 へ。
+5. `git rev-list --count refs/remotes/origin/<既定ブランチ>..refs/remotes/origin/<ref>` が 0 → `empty`（統合ブランチに、既定ブランチに無いコミットが 1 つも無い。PR を作れない）。1 以上 → `no_pr`（出力に `branch`・`base`・`head_sha`。`pr_number` は 0）。
+
+- 出力に足す欄: `source`（`pr`・`integration`）。受けられなかったとき（`adopted`・`no_pr` 以外）は `pr`（使われない）。
+- `no_pr` の後は、PR を作って、もう一度 `adopt` へ戻る（下の「`reflect`」）。後ろの段は、いままでどおり `$steps.adopt.*` だけを読む（「その経路で必ず実行済み」の検査を、PR を見つけた道と作った道で 2 通りにしない）。
+
+**`open`**:
+
+1. `adopt` の 4 と同じ読み方で、開いている PR を探す。在れば `existing`（作らない。段のやり直し・同じ統合ブランチへの 2 本目の依頼で、PR を 2 つ作らない）。
+2. 本文を Go が組み立て、`gh pr create --base <base> --head <head> --title <title> --body-file <ファイル>` で作る（`publish` と同じ作り方。URL から番号を読む）。`opened`。
+3. どちらでも、PR（番号・URL・ブランチ・先頭）を記録する。
+
+- 本文（決定的。LLM が書くのは `title` と `summary` だけ。`publish` の I13 と同じ考え方）:
+  - 「概要」: `summary`。
+  - 「入っているタスクの PR」: `gh pr list --base <head> --state merged --json number,title,url,body` の全件を、番号・題名・URL の表にする。
+  - 「Issue 参照」: 上の PR の本文のうち、**行の全体が `Closes #<番号>`・`Refs #<番号>` の形の行**（`publish` が書く形。`RenderPRBody`）を集め、重複を除いて書く。統合ブランチ宛ての PR が入っても、GitHub は Issue を閉じない（閉じるのは、既定ブランチへ入ったとき）ので、既定ブランチ宛ての PR へ写す。`Closes` と `Refs` の両方にある番号は `Closes` だけにする。
+  - 末尾に、run の ID と、`challenge_id`（在れば）。
+- 題名と概要は、前の段（LLM。下の `describe`）が書く。
+
+**`retire`**（どの結果でも、run を失敗にしない。この時点で、既定ブランチへは入っている）:
+
+1. `branch` が `base` と同じ・リポジトリの既定ブランチ（`gh repo view`） → `step_error`（どんな入力でも、既定ブランチを消す命令を組み立てない）。
+2. `gh pr view <pr> --json state,headRefOid,headRefName,baseRefName` を読む。**状態が `MERGED`・宛先が `base`・head のブランチが `branch`・入った先頭が `head`、のすべてを満たさなければ `kept`**（入っていない統合ブランチを消さない。確かめは、この段の中に持つ。前の段が `land` であることに頼らない）。読めないときも `kept`。
+3. `gh pr list --base <branch> --state open --json number` が 1 件以上 → `kept`（統合ブランチ宛ての、開いている PR が在る。消すと、その PR が閉じる）。読めないときも `kept`。
+4. `git push --porcelain --force-with-lease=refs/heads/<branch>:<head> origin :refs/heads/<branch>`。**origin の先頭が、入った先頭 `head` と同じときだけ消える**（入った後に、別のコミットが積まれた統合ブランチを消さない。下の実測の 8〜10）。状態の行が `-` → `deleted`。`!` → `ls-remote` で読み直し、無ければ `absent`（リポジトリの「マージ後に head のブランチを自動で消す」設定が、先に消した）、在れば `kept`（先頭が動いている）。行が無い（届かない）→ 3 回まで試して `kept`。
+
+- `detail` に、消した・残した理由を 1 文で入れる（`kept` は、後で人が消すかどうかを決められるように、理由を必ず書く）。
+- 消すのは origin の参照だけ。手元の `refs/remotes/origin/<branch>` は、次の fetch の prune に任せる。
+
+#### `ticket` の遷移
+
+```yaml
+steps:
+  resolve:
+    with: { issue: $inputs.issue, base: $inputs.base, task_file: $inputs.task_file, task_id: $inputs.task_id,
+            uses_integration: $inputs.uses_integration, challenge_id: $inputs.challenge_id }
+    on:
+      ok: integration-route                 # いまは ok: analyze
+      base_missing:  { fail: base_missing }
+      links_invalid: { fail: links_invalid }
+      input_invalid: { fail: input_invalid }
+                                            # integration_unsupported の行は外す
+
+  integration-route:                        # 統合先を使う実行だけ、統合ブランチを確かめて作る
+    kind: select
+    value: $steps.resolve.integration
+    on: { create: integration, none: analyze }
+
+  integration:
+    kind: pull-request
+    action: ensure-base
+    with: { branch: $steps.resolve.base, from: $steps.resolve.default_branch }
+    on:
+      created:  analyze
+      existing: analyze
+      refused:     { fail: integration_create_failed }
+      unavailable: { fail: remote_unavailable }
+```
+
+- **置き場は `resolve` の直後・`analyze` の前**にする。`workspace`（`worktree-setup.sh`）は、宛先が origin に在ることを求める（371〜378 行）ので、それより前に要る。`analyze`（LLM。費用がかかる）より前にするのは、作れないリポジトリで、費用を使う前に止めるためである。
+- ほかの段は変えない。`sync`・`land`・`land-sync`・`land-push`・`quality`・`ci` は、いまも `$steps.resolve.base` を読んでいて、統合ブランチの名前がそのまま渡る。`publish` の PR の宛先も同じ。
+- `ready` の後（`merge-route` → `merge` か `human-merge`）は変えない（下の「`ready` を受けたときの道」）。
+- 段の数は 27 から 29 になる（`runtime/internal/cli/graph_test.go` ほか、段の数・終端の一覧を固定で持つ試験）。終端は、`integration_unsupported` が減り、`integration_create_failed` が増える。
+- 取り消し・失敗で終わっても、作った統合ブランチは消さない（同じ課題の、ほかのタスクが使っている）。`ticket` は、統合ブランチを消す段を持たない。
+
+#### 成果物（`role: integration`）と、統合ブランチの先頭の記録
+
+- **記録**: `Workspace` に `integration_branch`（統合ブランチの名前）と `integration_head`（その先頭）を足す。書くのは、`workspace` イベントの新しい `action: integration`（`branch`・`head_sha`）。
+- **畳み込み**: `integration` は、名前と先頭を置き換えるだけ（`Workspace` が無ければ作る。`adopt` が作業ツリーの前に PR を記録するのと同じ扱い）。記録済みの名前と違う `branch` を持つイベントは誤りにする（1 つの unit の統合ブランチは 1 つ）。`acquired` の畳み込みは、前の記録から、統合ブランチの 2 つの欄を**いつも**持ち越す（作業ツリーの場所が変わっても。統合ブランチは unit の持ち物で、作業ツリーの持ち物ではない。PR の欄の持ち越しの条件は変えない）。
+- **契約の出力**: `artifact` に `role`（`omitempty`）を足す。`artifacts` は、unit に `integration_branch` があるとき、いまの要素（PR・作業ブランチ・`commit`）の後ろに、次の 2 つを足す。
+
+  ```json
+  {"kind": "branch", "ref": "integration/c-12", "role": "integration"},
+  {"kind": "commit", "ref": "<統合ブランチの先頭>", "role": "integration"}
+  ```
+
+  - `integration_branch` を書くのは `ensure-base` だけで、`ensure-base` へ入るのは `uses_integration` に `true` を受けた実行だけなので、**受けていない実行の出力には、`role` を持つ要素が出ない**（`Base:` 行や `base` の入力で統合ブランチを渡した、人の道の実行も、出さない。いまの出力を変えない）。
+  - `ensure-base` は名前と先頭を一緒に書くので、2 つは、いつも 1 つずつ出る（PR を出す前の `running`・失敗で終わった後も含めて）。
+  - **`role` の無い `commit` が、いつもちょうど 1 つ（PR を出す前は 0）、の決まりは変えない**。`commitRef` は `role` の付いた要素を数えない。作業ブランチの `branch`（`role` 無し）も、いままでどおり出る。
+- **いつの先頭か**:
+
+  | 場面 | `role: integration` の `commit` | 書く所 |
+  | --- | --- | --- |
+  | 統合ブランチを確かめた・作った | そのときの origin の先頭 | `ensure-base` |
+  | 取り込みで宛先を fetch した | fetch した `origin/<統合ブランチ>` の先頭 | `sync`・`land-sync`（`with.base` が、記録した統合ブランチと同じときだけ書く） |
+  | `land` が宛先を fetch した（`behind` などで入れなかった） | 同上 | `land`（同じ条件） |
+  | `land` が統合ブランチへ入れた（`landed`） | **入れた後のコミット**（`gh pr view` の `mergeCommit.oid`。squash で統合ブランチに出来たコミット） | `land`（同じ条件。`merge_commit` の記録と同じ値） |
+  | レビュー待ちで待っている間 | `status` が読み直した origin の先頭 | 下の「待っている間の取り直し」 |
+
+  - 入れて終えた実行（`succeeded`）では、`role` の無い `commit`（`merge_commit`）と、`role` が `integration` の `commit` が、同じ値になる。前者は「このタスクの成果の、入れた後の中身」、後者は「入れた後の統合ブランチの中身」で、意味は別である。
+  - **`landed` の値を、入れた後に読み直した origin の先頭にしない**。同じ課題の別のタスクが、直後に入れていることがあり、読み直すと「この実行が入れた後」ではなく「いま」になる。`mergeCommit.oid` は、この実行が入れたコミットそのものである。
+  - `ready` の後の道（`merge`・`human-merge`）で終えた実行は、入れた後の先頭を記録する段を通らない。`role` が `integration` の `commit` は、最後に確かめた先頭のままになる（flywheel は `ready` を返さないので、契約の「入れて終えた実行では、入れた後の中身」が当たるのは `land` の道だけ）。
+- **待っている間の取り直し**: `refresh: pr-head` のゲートで待っている unit に `integration_branch` があれば、`status`（`RefreshHeads`）は、PR の先頭に続けて、`git ls-remote origin refs/heads/<統合ブランチ>` で統合ブランチの先頭も読み、記録と違えば `workspace` イベント（`action: integration`）を足す。文法は足さない（`refresh` の値は `pr-head` のまま。統合ブランチの記録がある unit でだけ、読むものが 1 つ増える）。
+  - 決まりは、PR の先頭の取り直し（§5.6.2）と同じ: ロックの外で読む・書くのは、同じ unit が、同じゲートで、同じ `opened_at` のまま待っていると確かめ直したときだけ・読めなければ書かず、記録のまま出す（標準エラーに理由）・origin に無くなっていたら書かない。
+  - **実行中の段の外で書く `integration`** を許すのは、`head` と同じ状態（run が終わっていない・unit に実行中の段が無く、`refresh` の印のあるゲートで待っている）に、「unit に `integration_branch` があり、イベントの `branch` がそれと同じ」を足した場合だけ。ほかは誤りにする（往復テストの対象に入れる）。段の中の `integration` は、`pull-request` の種類の段だけが書く。
+  - 取り直す理由: 契約は「その時点の中身の識別」を求める。同じ課題のタスクが並んで走ると、待っている間に統合ブランチが進むのは普通で、取り直さないと、最初の `sync` のときの先頭が、長いレビュー待ちの間ずっと出続ける。
+
+#### 統合ブランチ宛ての `land`・取り込み（足りない所）
+
+作りは宛先を問わない（上の「いまの動き」）。統合ブランチ宛てで足りないのは、次の 2 つだけである。
+
+| 点 | いま | 足すこと |
+| --- | --- | --- |
+| 入れた後の統合ブランチの先頭の記録 | 無い（`merge_commit` は unit の成果の記録） | `land`・`sync` が、宛先が記録した統合ブランチのとき、`action: integration` のイベントを書く（上の表） |
+| 統合ブランチ宛てで通した試験 | 無い（`ticket_land_test.go` は既定ブランチ宛て） | 下の「実装の分け方」の S3b-2 |
+
+変えないこと（コードで確かめた）:
+
+- **チェックの見方**: `land` の 8（`checksNotPassing`）と `ci` の段（`ci-wait-pr.sh --base`）は、宛先の CI の運用の宣言を `origin/<宛先>` から読む。統合ブランチは既定ブランチの先頭から作るので、同じ宣言を持つ（タスクが宣言を変えて入れれば、後のタスクは、統合ブランチの最新の宣言で読まれる）。品質ゲートの宣言（`quality-gate.sh --base`）も同じ。
+- **統合ブランチ宛ての PR でチェックが 1 件も走らないリポジトリ**（CI の起動の条件を、既定ブランチ宛ての PR に限っている）: `ci` は `none`、`land` の 8 は「0 件は通す」で進む（いまの決まり）。統合ブランチ宛ての PR でも CI を走らせるかは、リポジトリの CI の設定で決める（harness は足さない）。既定ブランチへ上げる PR（`reflect`）では、ふつうに走る。
+- **入れ方**: 統合ブランチへも squash（`land` の 9。固定）。同じ課題の、後から入るタスクは、進んだ統合ブランチを、`land` の 7（`behind`）→ `land-sync` のマージのコミットで取り込む。
+- **宛先の保護**: `push`・`publish` の検査（作業ブランチが、宛先そのもの・既定ブランチでない）は、タスクの作業ブランチ（`{type}/task-<n>-…`）には当たらない。
+
+#### `ready` を受けたときの道（変えない）
+
+`review` の `ready` → `merge-route` → 統合ブランチ宛ては `merge`（`/pr-merge`）・既定ブランチ宛ては `human-merge`、を残す。
+
+- flywheel は `ready` を返さないが、`/impl`・`/para-impl` を人が使う道（Issue の `Base:` 行・`--base` で、人が作った統合ブランチを渡す。`docs/branching-strategy.md` §2.5 の手順 4）は、この道で統合ブランチへ入れている。
+- `uses_integration` に `true` を受けた実行も、`base_kind` が `integration` なので、`ready` を返されれば `merge` へ進む（先頭の一致は見ない）。契約の `ready` の意味（呼び出し元の側で反映まで済ませた）は変えない。統合ブランチは既定ブランチに届かず、既定ブランチへ入れる道（`reflect` の `land`）は、中身の一致を必ず確かめるので、守りは変わらない（[harness-runtime-overrides.md](harness-runtime-overrides.md) §6.2 の規則 7 の末尾）。
+
+#### 統合ブランチを既定ブランチへ上げる: `reflect`
+
+```yaml
+inputs:
+  artifact_ref: { type: string, required: true }   # PR の URL か、統合ブランチの名前
+  challenge_id: { type: string }                   # 作る PR の本文に書くだけ（名前の鍵にしない）
+limits:
+  budget_usd: 10
+  sync_resolve: 3
+  open_pr: 1                                       # PR を作って adopt へ戻る回数
+release_on: [cancelled, failed]                    # 変えない（自分が作った作業ツリーだけ。統合ブランチは消さない）
+
+steps:
+  adopt:
+    kind: pull-request
+    action: adopt
+    with: { ref: $inputs.artifact_ref }
+    on:
+      adopted: workspace
+      no_pr: { goto: describe, limit: open_pr, exhausted: { fail: pr_not_found } }
+      unsupported_ref:  { fail: artifact_ref_invalid }      # いまは integration_reflect_unsupported
+      branch_missing:   { fail: integration_missing }
+      empty:            { fail: integration_empty }
+      not_open:         { fail: pr_not_open }
+      not_default_base: { fail: pr_not_default_base }
+      fork:             { fail: pr_from_fork }
+      draft:            { fail: pr_draft }
+      other_repo:       { fail: pr_other_repo }
+
+  describe:                                        # 作る PR の題名と概要だけを書く（読むだけ。中身を変えない）
+    kind: llm
+    prompt: prompts/reflect-describe.md
+    session: new
+    with: { branch: $steps.adopt.branch, base: $steps.adopt.base }
+    output: schemas/reflect-describe.json          # outcome: ok|failure, pr_title, summary
+    budget_usd: 1
+    timeout: 15m
+    on: { ok: open, failure: { fail: describe_failed } }
+
+  open:
+    kind: pull-request
+    action: open
+    with: { head: $steps.adopt.branch, base: $steps.adopt.base, title: $steps.describe.pr_title,
+            summary: $steps.describe.summary, challenge_id: $inputs.challenge_id }   # challenge_id は省かれうる入力（任意の with。ticket の workspace の provided と同じ渡し方）
+    on: { opened: adopt, existing: adopt }
+
+  # workspace・sync・sync-resolve・quality・push・review・land-sync・land-sync-resolve・land-push は、いまと同じ
+
+  land:
+    on:
+      landed: retire-route                         # いまは landed: cleanup。ほかの遷移は変えない
+
+  retire-route:
+    kind: select
+    value: $steps.adopt.source
+    on: { integration: retire, pr: cleanup }
+
+  retire:
+    kind: pull-request
+    action: retire
+    with: { pr: $steps.adopt.pr_number, branch: $steps.adopt.branch, base: $steps.adopt.base, head: $steps.land.head_sha }
+    on: { deleted: cleanup, absent: cleanup, kept: cleanup-kept }
+
+  cleanup:                                         # 変えない（released・kept → { done: landed }、dirty → { done: landed_worktree_dirty }）
+
+  cleanup-kept:                                    # cleanup と同じ release。終わりの理由だけが違う
+    kind: workspace
+    action: release
+    on: { released: { done: landed_integration_kept }, kept: { done: landed_integration_kept }, dirty: { done: landed_worktree_dirty } }
+```
+
+- **PR を探す・無ければ作る**: `adopt` が探し、無ければ `describe` → `open` で作って、`adopt` へ戻る（2 度目の `adopt` は、作った PR を見つけて `adopted`）。戻る遷移は `limit: open_pr`（1）で数える（作ったのに見つからないときは `pr_not_found` で止まる。数えられない循環を作らない）。
+- **題名と概要は LLM の段（`describe`）が書く**。squash で入れるので、PR の題名が、既定ブランチに出来るコミットの題名になる。指示文は「`git log`・`git diff refs/remotes/origin/<base>...refs/remotes/origin/<branch>` と、統合ブランチへ入った PR の一覧を読み、リポジトリの決まり（CLAUDE.md のコミットの規約）に合う題名 1 行と、概要を書く。ファイルを変えない・コミットしない・push しない・`gh` で書き込まない」。作業ツリーの払い出しより前なので、run を始めたディレクトリで動く（`ticket` の `analyze` と同じ）。fetch は、直前の `adopt` が済ませている。本文のほかの節は、`open` が Go で組み立てる（上の「`open`」）。
+- **取り込みは、統合ブランチそのものへ push する**: 作業ツリーは、いまと同じく detached で `origin/<統合ブランチ>` から作る（`key` は `pr-<番号>`。`worktree-setup.sh` は変えない）。`sync` が既定ブランチの最新をマージのコミットで取り込み、`push` が `HEAD:refs/heads/<統合ブランチ>` へ、強制せずに push する。**`push` の「宛先そのもの・既定ブランチへ push しない」の検査（`refuseProtected`）は、変えなくてよい**: ここでの作業ブランチは統合ブランチ（PR の head）、宛先は既定ブランチで、どちらの検査にも当たらない。
+  - 用意の間に、統合ブランチへ外から push された（遅れて入ったタスク）ときは、最初の `sync` の `expect_head`（`adopt` が読んだ PR の先頭）と合わず `local_head_mismatch`、または `push` が `push_rejected` で、失敗で終わる（入れない側に倒れる。flywheel が依頼を出し直す）。
+- **上げる前の検証**: いまと同じ `quality`（検査だけ。落ちたら `quality_gate_red` で失敗。直す段を持たない）。品質ゲートの宣言は、既定ブランチの最新から読む。
+- **レビュー待ち**: いまと同じ `review`（`options` は `land` だけ。`refresh: pr-head`）。成果物は、PR・ブランチ（統合ブランチの名前。`role` 無し）・先頭のコミット（`role` 無しを 1 つ）。**`role` の付いた要素は出さない**（`reflect` は `ensure-base` を通らない）。
+- **入れた後**: `land` が `landed` を返したら、統合ブランチの名前を受けた依頼だけ、`retire` で統合ブランチを消してから、作業ツリーを片付ける。PR の URL を受けた依頼は、いまと同じ（PR のブランチは消さない。§5.6.2 の選択肢 6）。
+  - `retire` が `kept`（消さなかった）でも `succeeded` で終える。終わりの理由を `landed_integration_kept` にして、残したことを見えるようにする（理由の文は、`retire` の出力の `detail`）。
+  - 成果物は、PR と、入れた後のコミット（`merge_commit`。`role` 無し）。
+- **取り消し・失敗では、統合ブランチを消さない**: 消す操作は `retire` の段の中にしか無く、`retire` へ入れるのは `land` の `landed` の後だけである。取り消し・失敗のときの片付け（`release_on`）は、いまと同じく、この run が作った作業ツリーだけを消す。作った PR は閉じない（次の依頼が、`adopt` の 4 で見つけて使う。flywheel が作った反映の操作の参照も、その PR を指している）。push 済みの取り込みのコミットは、統合ブランチに残る。
+- **統合ブランチに差分が無い**（`empty`）: 失敗 `integration_empty` で終える。flywheel は、済みのタスクが 1 個以上あるときだけ依頼を始めるので、ふつうは起きない（起きるのは、全部のタスクが変更なしで入った、または、すでに上げ終えた統合ブランチへ依頼が来たとき）。空の PR は作れない（GitHub が「コミットが無い」で断る）ので、作ろうとしない。
+- **統合ブランチが origin に無い**（`branch_missing`）: 失敗 `integration_missing`。すでに上げて消した後に、同じ名前で依頼が来たときに当たる。入ったかどうかは、flywheel が上流で確かめる。
+- **同じ統合ブランチへの依頼が 2 本重なったとき**: 2 本とも同じ PR を受け、作業ツリーの鍵（`pr-<番号>`）が同じになるので、後の方は `worktree_conflict` で止まる（§5.6.2 の、別の run の所有の印がある detached の作業ツリー）。
+- **入れた直後に落ちた（`interrupted_after_land`）とき**: 既定ブランチへは入っているが、統合ブランチは残る。flywheel は上流で「入った」と確かめる。残った統合ブランチは、人が消す（下の【要確認】）。
+- 段の数は 12 から 17 になる（`describe`・`open`・`retire-route`・`retire`・`cleanup-kept`）。`facts` は、いままでどおり宣言しない（`describe` は値を返さない）。
+
+#### 既定ブランチへの入れ方（squash のまま）
+
+統合ブランチを上げるときも、`land` の 9 の `gh pr merge --squash --match-head-commit` を、そのまま使う。`land` の段に、入れ方を選ぶ口は足さない。
+
+- 課題 1 つが、既定ブランチのコミット 1 つになる（題名は、`describe` が書いた PR の題名）。人が統合ブランチを上げる、いまの運用（`docs/branching-strategy.md` §2.5 の「main への昇格」）と同じ形である。
+- **squash で入れると、統合ブランチと既定ブランチの履歴が分かれる**（統合ブランチのコミットは、既定ブランチの祖先にならない）。統合ブランチは、入れた後に `retire` が消すので、分かれたまま使い続けることは無い。`retire` が残した（`kept`）・落ちて残った統合ブランチへ、同じ名前で次の課題のタスクが相乗りしたときは、次の `reflect` の取り込み（既定ブランチの最新のマージ）で、同じ中身どうしのマージになる（多くは衝突しないが、既定ブランチの側で同じ所が変わっていれば、衝突を直す段へ行く）。
+- マージのコミットで入れる案（タスクごとのコミットが既定ブランチに残る）は採らない。`land` の段に入れ方の分岐を持ち込むこと・マージのコミットを許さない設定のリポジトリで入れられないこと・既定ブランチの履歴が、課題によって形が違ってくること、が理由である（下の表の 7）。
+
+#### 失敗の理由（足すもの・外すもの）
+
+| 理由 | ワークフロー | いつ |
+| --- | --- | --- |
+| `integration_create_failed`（足す） | `ticket` | 統合ブランチを作ることを、origin が拒んだ（保護の決まり・権限・`integration` という名前のブランチが在る） |
+| `remote_unavailable`（いまもある。当たる場面が増える） | `ticket` | 統合ブランチを確かめる・作るときに、origin へ届かない |
+| `input_invalid`（いまもある。当たる条件が増える） | `ticket` | `uses_integration` が `true` なのに、`challenge_id` が無い・形が不正・`base` も渡された |
+| `integration_unsupported`（外す） | `ticket` | — |
+| `artifact_ref_invalid`（足す） | `reflect` | `artifact_ref` が、PR の URL でも、受けられるブランチの名前でもない・既定ブランチの名前 |
+| `integration_reflect_unsupported`（外す） | `reflect` | —（上の `artifact_ref_invalid` に置き換わる） |
+| `integration_missing`（足す） | `reflect` | 受けた名前の統合ブランチが、origin に無い |
+| `integration_empty`（足す） | `reflect` | 統合ブランチに、既定ブランチに無いコミットが 1 つも無い |
+| `describe_failed`（足す） | `reflect` | 作る PR の題名と概要を書けなかった |
+| `pr_not_found`（足す） | `reflect` | PR を作ったのに、読み直して見つからない |
+
+終わりの理由（成功）に足すもの: `reflect` の `landed_integration_kept`（既定ブランチへ入れたが、統合ブランチを消さずに残した）。
+
+理由の語を外す・置き換えることについて: flywheel は、失敗の理由の語で分岐しない（`failed` を読んで、`summary` を保留の問いに出す）。5.2.0 の 2 つの語（`integration_unsupported`・`integration_reflect_unsupported`）は、「まだ扱えない」の印として足したもので、扱えるようになれば要らない。
+
+#### 守り（上書きで外せないこと）
+
+規則の正本は [harness-runtime-overrides.md](harness-runtime-overrides.md) §6.2。この設計で足す分は、実装の PR（S3b-3）で、規則 7 の隣に書く。要点:
+
+- **origin のブランチを消す操作は、`pull-request` の `action: retire` の段の中にしか無く、その段は、消す前に「PR が入っている・宛先・head のブランチ・入った先頭」を、自分で確かめる**。確かめる所と消す所を 2 つの段に分けない（遷移の付け替えで、確かめずに消す形が作れない）。既定ブランチと、PR の宛先は、どの入力でも消さない。消す命令には、先頭の一致の条件（`--force-with-lease=<参照>:<入った先頭>`）を付ける。
+- **統合ブランチを作る操作（`ensure-base`）は、在る参照を書き換えない**（期待する値が空の `--force-with-lease`）。rebase・書き換える向きの強制の push は、どの段にも足さない。
+- `retire`・`ensure-base`・`open` の段のキーと、そこから出る遷移は、上書きできない。3 つとも `overridable.skips` に挙げられない。`ticket.yaml`・`reflect.yaml` の `overridable.routes` に、これらへ入る・出る遷移を足さない。
+- 既定ブランチへ入れる道は、いままでどおり `land` の段だけ（規則 7）。`reflect` が統合ブランチの名前を受けても、入れる段は同じ 1 つである。
+- 取り消し・失敗のときの片付け（`release_on`）に、ブランチを消す処理を足さない。
+- `describe`（LLM）が書くのは、題名と概要だけ。`open` は、本文の「入っているタスクの PR」「Issue 参照」を、`gh` で読んだ値から Go で組み立てる（LLM の出力から、`Closes` の行を作らない）。
+
+#### 互換と版
+
+- **接続契約の版は 1 のまま**。足すのは、成果物の要素の任意のキー `role`（知らない側は読み飛ばす。出すのは `uses_integration` に `true` を受けた実行だけ）と、`reflect` の `artifact_ref` が受ける値の種類だけ。出力のキー・値の集合・答えの意味は変えない。
+- **ワークフローのスキーマ版は `harness.workflow/v1` のまま**（§5.6.2 と同じ扱い）。足す文法は、`pull-request` の `action` の値 3 つ（`ensure-base`・`open`・`retire`）と、その `with` だけ。定義はバイナリに埋め込むので、新しい定義を古い CLI が読むことは無い。
+- **`uses_integration` を受けていない実行で変わること**: `ticket` は、段が 1 つ（`integration-route`。`select`。外部を呼ばない）増えるだけで、動き・出力・名前・失敗の理由は変わらない。`reflect` に PR の URL を渡した実行は、`land` の後に `retire-route`（`select`）を 1 つ通るだけで、変わらない。PR の URL でもブランチの名前でもない `artifact_ref` の失敗の理由の語が、`integration_reflect_unsupported` から `artifact_ref_invalid` に変わる。
+- **状態の記録**: `Workspace` の欄 2 つと、`workspace` イベントの `action: integration` を足す（任意の欄）。この版より前の記録には無く、読む側は「無ければ出さない」で扱う。新しい記録を、古い CLI は畳み込めない（知らない `action` は誤り。いままでの足し方と同じで、版を下げて続けることは支えない）。
+- **この版より前に始めた run**: 開始時の版の定義で続く（§7.3・N3）。5.2.0 で `uses_integration=true` を受けた `ticket` は、`resolve` で失敗して終わっているので、続きは無い。5.2.0 で始めて待っている `reflect`（PR の URL）は、5.2.0 の定義のまま、いままでどおり終わる（`retire-route` を通らない）。5.2.0 で始めて待っている `ticket` は、`uses_integration` を受けていないので、変わらない。
+- **版**: CLI は minor を上げる（`runtime/v5.3.0` の見込み）。プラグインの配布物（`plugin/`）のスクリプトは変えない見込み（`worktree-setup.sh`・`worktree-cleanup.sh`・`ci-trigger.sh` は、いまの引数のまま使う）。プラグインの版は、5.x のリリースでは CLI とそろえて上げてきた（`CHANGELOG.md` の見出し）ので、リリースの PR で 5.3.0 にそろえる。CLI が受けるプラグインの範囲（`>=4.9.0 <6.0.0`）は変えない。flywheel の S3b が要るのは、CLI のリリースである。
+
+#### 実装の分け方
+
+この文書の PR を S3b-0 とする。どれも `make check` を通し、`CHANGELOG.md` の「未リリース」と、関係する文書（`docs/harness-runtime-overrides.md`・`runtime/README.md`・この節の「実装の記録」）を、同じ PR で直す。
+
+| PR | 中身 | 依存 | 主に触るファイル | 足す試験 |
+| --- | --- | --- | --- | --- |
+| S3b-1 | 統合先を決めて作る・成果物の印: `resolve` の読み方（`challenge_id`・`integration`・`base_source: challenge`・`integration_unsupported` を外す）。`action: ensure-base`。`ticket.yaml` の `integration-route`・`integration`。`Workspace` の欄 2 つと `workspace` イベントの `integration`（段の中）。`artifact` の `role` と `artifacts` | — | `runtime/workflows/scripts/resolve-ticket.sh`・`schemas/resolve-ticket.json`・`runtime/workflows/ticket.yaml`・`runtime/internal/workflow/builtin.go`（`action`・`with`・出力のスキーマ）・`runtime/internal/engine/pullrequest.go`（振り分け）と新しいファイル（`ensure-base`）・`runtime/internal/runstate/event.go`・`fold.go`・`runtime/internal/cli/contract.go`・`contract_test.go`・`graph_test.go` ほか段の数・終端を固定で持つ試験・`engine/testdata/scripts/`（偽の `gh`） | `resolve-ticket.sh` の表の試験に、上の「入力」の表の全行と、名前の規則（小文字・受けない形）。`ensure-base` を、実の `git` と bare の origin で 1 行ずつ: 無い → 既定ブランチの先頭から作る／在る → 動かさない（既定ブランチが進んでいても）／2 つの実行を並べて走らせ、どちらも成功し、同じ先頭を記録する／先に別の先頭で作られていたら `existing`／origin へ届かない → `unavailable`／作れない → `refused`。通しの試験: `uses_integration=true` と `challenge_id` で PR の宛先が統合ブランチになる・レビュー待ちの出力に `role` が `integration` の `branch` と `commit` が 1 つずつ・`role` の無い `commit` が 1 つ・同じ `challenge_id` の 2 本が同じ名前・`uses_integration` を渡さない実行（`base` に統合ブランチを渡した実行も）に `role` が出ない。往復テスト（イベント → 状態）: `integration` の畳み込み・`acquired` をまたぐ持ち越し・名前の違う `integration` を誤りにする |
+| S3b-2 | 統合ブランチ宛ての `land`・取り込み: `sync`・`land` が統合ブランチの先頭を書く（`landed` は入れた後のコミット）。`status` の取り直し（段の外の `integration`） | S3b-1 | `runtime/internal/engine/pullrequest_actions.go`・`refresh.go`・`runtime/internal/runstate/fold.go`・`runtime/internal/cli/ticket_land_test.go`・`ticket_refresh_test.go` | 通しの試験（偽の `gh`・bare の origin。宛先は統合ブランチ）: `land` で一致 → 統合ブランチへ入って `succeeded`、`role` が `integration` の `commit` が入れた後のコミット／先頭が `approved_ref` と違う → 入れずにレビュー待ち／統合ブランチが進んでいる → マージのコミットで取り込み、入れずに、新しい先頭を出してレビュー待ち（既定ブランチは取り込まない）／最初のレビュー待ちの前にも、進んだ統合ブランチを取り込む／入れる命令に `--match-head-commit` が付く／CI の運用の宣言を統合ブランチから読む（`after-merge`）。取り直し: 待っている間に統合ブランチが進むと、`contract status` の `role` が `integration` の `commit` が新しい先頭になる・読めなければ出力は変わらない・統合先の記録の無い unit では `ls-remote` を呼ばない・ゲートが解かれた後は書かない。往復テスト: 段の外の `integration` を許す状態と、許さない例 |
+| S3b-3 | `reflect` がブランチの名前を受ける: `adopt` の広げ方・`describe`・`action: open`・`action: retire`・`reflect.yaml`（`retire-route`・`cleanup-kept`）・理由の語の置き換え・上書きの規則 | S3b-1（S3b-2 とは、同じファイルを触るので順に） | `runtime/workflows/reflect.yaml`・`prompts/reflect-describe.md`・`schemas/reflect-describe.json`・`runtime/internal/engine/pullrequest_adopt.go` と新しいファイル（`open`・`retire`）・`runtime/internal/workflow/builtin.go`・`override.go`・`routes.go`・`runtime/internal/cli/reflect_test.go`・`override_routes_test.go`・`docs/harness-runtime-overrides.md`・`runtime/README.md` | `adopt` の足した結果を 1 行ずつ（ブランチの名前で、開いている PR が在る／無い／ブランチが無い／差分が無い／既定ブランチの名前／受けない形）。`open`: 作る・在れば作らない・本文に、入ったタスクの PR の表と、写した `Closes`・`Refs` の行が入る（行の全体が合うものだけ）。`retire` を 1 行ずつ（実の `git`・bare の origin）: 入っていて先頭が同じ → 消える／入っていない PR → 消えない／先頭が動いている → 消えない／統合ブランチ宛ての開いている PR が在る → 消えない／すでに無い → `absent`／既定ブランチの名前 → `step_error`。通しの試験: ブランチの名前 → PR が作られる → 取り込みが統合ブランチへ push される → 検証 → レビュー待ち（`options` は `land` だけ・`role` の無い `commit` が 1 つ・`role` の付いた要素が無い）→ `land` の前に既定ブランチへ入らない → `land` → 入って、統合ブランチが消え、`succeeded`。取り消しで、統合ブランチと PR が残り、作業ツリーが消える。失敗（検証が落ちた）でも、統合ブランチが残る。在る PR を使う（2 度目の依頼で PR が増えない）。PR の URL の依頼は、統合ブランチを消さない（`retire` を通らない）。上書きで、`retire`・`open`・`ensure-base` のキーと遷移を変えられない |
+| S3b-4 | 実物での通し 1 回: 書き込める試験用のリポジトリで、手元で作ったバイナリを使い、2 つのタスクを統合ブランチへ入れ、統合ブランチを既定ブランチへ上げる。結果と、下の【要確認】の確かめを、この節の「実物で確かめたこと」に追記する | S3b-1〜3 | `docs/harness-runtime-design.md`（記録だけ）。見つかった不具合は、別の PR で直す | —（手順と結果を、PR の説明と、この節に残す） |
+| S3b-5 | リリース（`chore(release)`）: `CHANGELOG.md`・`plugin/.claude-plugin/plugin.json`。CLI のタグは人が打つ | 全部 | — | — |
+
+S3b-1 → S3b-2 → S3b-3 の順に進める（S3b-2 と S3b-3 は、機能の依存は無いが、`pull-request` の種類のファイルと偽の `gh` を両方が触る）。flywheel の S3b は、S3b-5 の後に main へ入る。
+
+#### 実物で確かめたこと・【要確認】
+
+設計のときに確かめたこと（実の `git` 2.53.0 と、手元の bare の origin。GitHub に対しては確かめていない）:
+
+| # | 確かめたこと | 結果 |
+| --- | --- | --- |
+| 1 | 無い参照へ、素の `git push --porcelain origin <SHA>:refs/heads/<名前>` | `*`・`[new branch]`・終了コード 0 |
+| 2 | 同じ SHA を、もう一度 | `=`・`[up to date]`・終了コード 0 |
+| 3 | 在る参照へ、その子孫の SHA を、素の push | **早送りで動く**（状態の行の先頭は空白。終了コード 0）。`ensure-base` に素の push を使わない理由 |
+| 4 | 在る参照へ、その祖先の SHA を、素の push | `!`・`[rejected] (non-fast-forward)`・終了コード 1 |
+| 5 | 無い参照へ、`--force-with-lease=<参照>:`（期待する値が空）を付けて push | `*`・`[new branch]`・終了コード 0 |
+| 6 | 在る参照へ、同じ SHA を、同じ付け方で | `=`・`[up to date]`・終了コード 0 |
+| 7 | 在る参照へ、その子孫の SHA を、同じ付け方で | `!`・`[rejected] (stale info)`・終了コード 1（**動かない**） |
+| 8 | 先頭が期待と違う参照を、`--force-with-lease=<参照>:<SHA>` を付けて消す（`:refs/heads/<名前>`） | `!`・`[rejected] (stale info)`・終了コード 1（消えない） |
+| 9 | 先頭が期待と同じ参照を、同じ付け方で消す | `-`・`[deleted]`・終了コード 0 |
+| 10 | 無い参照を、同じ付け方で消す | `!`・`[rejected] (stale info)`・終了コード 1（素の push で消すと、`-`・終了コード 0 になり、「消した」と読み違える） |
+| 11 | 無い参照への `git ls-remote --exit-code --heads origin refs/heads/<名前>` | 終了コード 2 |
+
+【要確認】（実装の PR か、S3b-4 の通しで確かめる。推測で書いた所）:
+
+- **GitHub に対する `--force-with-lease`**（上の 5〜10 を、GitHub の origin で）。条件つきの更新は git のプロトコルの決まり（前の値を付けて送り、サーバが比べる）なので、同じ結果の見込み。ブランチの保護の決まり・リポジトリのルールで、ブランチを作る・消すことを絞っているリポジトリでの、状態の行の出方（`!` の見込み。`ensure-base` は `refused`、`retire` は `kept` に倒れる）。
+- **統合ブランチ宛ての PR に書いた `Closes #<番号>` が、統合ブランチへ入ったときに Issue を閉じないこと**（GitHub の決まりでは、閉じるのは既定ブランチへ入ったとき）と、`open` が既定ブランチ宛ての PR の本文へ写した `Closes` が、入ったときに閉じること。
+- **`gh pr list --head <ブランチ> --base <ブランチ> --state open|merged --json …` の出力の形**（`number`・`url`・`title`・`body`・`headRefOid`・`isCrossRepository`・`isDraft`）。`publish` は、`--head` と `--state open` の形を、すでに使っている（`pullrequest.go` の 109 行）。`--base` と `--state merged`・`body` は、まだ使っていない。件数の上限（既定は 30 件）を、`--limit` で広げる要否。
+- **既定ブランチと中身が同じ（コミットは在るが、差分が無い）統合ブランチ**の PR を、`gh pr create` が作れるか・`gh pr merge --squash` が入れられるか。`empty` は、コミットの数で判定している。
+- **入った後の PR の `mergeCommit.oid` が、squash で宛先に出来たコミットであること**は、§5.6.2 で、既定ブランチ宛ての PR で確かめた。統合ブランチ宛てでも同じであること。
+- **リポジトリの「マージ後に head のブランチを自動で消す」設定が入っているとき**、`reflect` が入れた直後に統合ブランチが消え、`retire` が `absent` を返すこと。同じ設定で、タスクの PR を統合ブランチへ入れたときに、タスクの作業ブランチが消えても、`cleanup` が通ること（いまの既定ブランチ宛てと同じ見込み）。
+- **宛先のブランチが消えたときの、開いている PR の扱い**（GitHub が閉じる、と書いた。`retire` は、開いている PR があれば消さないので、設計はこの動きに頼っていない）。
+- **flywheel の宣言の差し込みが、引数の要素の途中でも置き換わること**（上の「残る重なり」の逃げ道）。
+- **落ちて残った統合ブランチ**（`interrupted_after_land`・`retire` の `kept`）を、誰がいつ消すか。harness は、後から消す口を持たない（人が消す）。口が要るかは、S3b-4 の通しと、flywheel の運用を見て決める。
+- **実の `claude` での `describe`**（偽の `claude` の試験は、出力の形まで）。
+
+#### 選択肢があった点と、推奨する案
+
+右の列は、この設計が推奨し、上の文面の前提にした案である。**確定は、この PR のレビューで行う**（確定したら、列の見出しを「採った案」に改め、§11.10 に記録する）。
+
+| # | 点 | 選択肢 | 推奨する案と理由 |
+| --- | --- | --- | --- |
+| 1 | 統合ブランチの名前と、別のワークスペースの同じ `challenge_id` との重なり | (a) `integration/<challenge_id を小文字に>`。重なりは受け、`challenge_id` の形をゆるく受けて、宣言で前に語を付けられるようにする。(b) 名前に、リポジトリの側の宣言（`.claude-harness/`）の語を入れる。(c) 作った印（持ち主）を、統合ブランチか別の参照に持ち、合わなければ止める | (a)。(b) は、同じリポジトリの 2 つのワークスペースを分けない（宣言はリポジトリのもの）。(c) は、持ち主を表す値が入力に無く（run の ID は実行ごとに違う）、契約に値を足さないと作れない。重なりを確実に止めるには、flywheel の側で、ワークスペースをまたいで重ならない値を渡す必要がある（この設計では決めない） |
+| 2 | 統合ブランチを作る所と、作り方 | (a) Go の段（`ensure-base`）で、「無いときだけ作る」条件つきの push。(b) `resolve-ticket.sh` の中で作る。(c) Go の段で、素の push と読み直し | (a)。(b) は、`command` の段が記録（成果物の元）を書けない。(c) は、在る統合ブランチを早送りで動かしうる（実測の 3） |
+| 3 | レビュー待ちの間の、統合ブランチの先頭の取り直し | (a) `status` が、PR の先頭と一緒に読み直す。(b) 取り直さない（段が fetch したときの値のまま） | (a)。契約の「その時点の中身」に合わせる。費用は、`status` 1 回につき `git ls-remote` が 1 回。flywheel が、レビュー待ちの値を判定に使わないと分かれば、(b) へ寄せてよい |
+| 4 | 入れて終えた実行の、`role` が `integration` の `commit` | (a) `land` が読んだ `mergeCommit.oid`。(b) 入れた後に読み直した origin の先頭 | (a)。(b) は、直後に入った別のタスクの分を含みうる |
+| 5 | `ready` を受けたときの、統合ブランチ宛ての自動マージ（`merge-route` → `merge`） | (a) 残す（変えない）。(b) 外す（`ready` は、宛先によらず `human-merge`）。(c) `uses_integration` を受けた実行でだけ外す | (a)。`/impl`・`/para-impl` の、人が統合ブランチを渡す道が使っている。既定ブランチへは届かない |
+| 6 | `reflect` が作る PR の題名と概要 | (a) LLM の段（`describe`）が書き、ほかの節は Go が組み立てる。(b) 決まった形の題名（`<challenge_id> の統合ブランチを上げる` など）を Go が作る。(c) 入ったタスクの PR が 1 つなら、その題名を使い、2 つ以上なら (b) | (a)。squash で入れるので、題名が、既定ブランチのコミットの題名になる。契約は、`reflect` へ課題の題名を渡さない（自由記述の差し込みを持たない）ので、(b) では、中身の分からないコミットが既定ブランチに並ぶ。費用は 1 回 1 ドルまで。LLM の段を `reflect` に足したくなければ (c) |
+| 7 | 統合ブランチを既定ブランチへ入れる入れ方 | (a) squash（いまの `land` のまま）。(b) マージのコミット。(c) リポジトリの宣言で選ぶ | (a)。課題 1 つがコミット 1 つ。人の運用と同じ。履歴が分かれる点は、入れた後に統合ブランチを消すので、残らない。(c) は、squash を許さないリポジトリが出たときに足す（§5.6.2 の選択肢 3 と同じ） |
+| 8 | 入れた後に統合ブランチを消す条件 | (a) PR が入っている・先頭が入った先頭と同じ・統合ブランチ宛ての開いている PR が無い、のすべてを満たすときだけ消す。満たさなければ残して `succeeded`。(b) いつも消す。(c) 消さない（リポジトリの「自動で消す」設定に任せる） | (a)。契約は「入れた後、統合先を片付ける」。(b) は、遅れて入ったコミット・別の課題の相乗りを、黙って捨てる。(c) は、設定の無いリポジトリで、統合ブランチが残り続ける |
+| 9 | `uses_integration` が `true` で、`base` も渡されたとき | (a) `input_invalid`。(b) `base` を無視する。(c) `base` を統合ブランチの名前として使う | (a)。黙ってどちらかへ倒すと、flywheel が記録した統合先と食い違ったときに、原因が見えない。(c) は、名前を決める所が 2 つになる |
+| 10 | 統合ブランチに差分が無いときの `reflect` | (a) 失敗（`integration_empty`）。(b) 何もせず `succeeded` | (a)。flywheel は、完了でない課題の上げる依頼が終わりの状態を返したら、`succeeded` でも保留にする（`reflect_failed`）ので、成功に見せる意味が無い。失敗の方が、理由が見える |
+
+#### 受入基準（確定。Issue #409 の案を、この設計に合わせた）
+
+特に断らない限り、偽の `gh`・偽の `claude` と、実の `git`（bare の origin）を使う Go の試験で確かめる。
+
+統合先を決めて作る:
+
+- [ ] `uses_integration=true` と `challenge_id=C-12` を渡した `ticket` は、`integration_unsupported` で止まらない。
+- [ ] その実行の PR の宛先は、`integration/c-12` である。
+- [ ] その実行の `resolve` の出力の `base_kind` は、`integration` である。
+- [ ] 統合ブランチが origin に無いとき、既定ブランチの先頭と同じコミットで作られる。
+- [ ] 統合ブランチが origin に在るとき、その先頭は変わらない（既定ブランチが進んでいても）。
+- [ ] 同じ `challenge_id` の 2 つの実行は、同じ統合ブランチの名前を使う。
+- [ ] 統合ブランチが無い状態で、同じ `challenge_id` の 2 つの実行を同時に始めると、どちらも `ensure-base` で失敗しない。
+- [ ] `uses_integration=true` で `challenge_id` が空の実行は、`input_invalid` で終わる。
+- [ ] `uses_integration=true` で `base` も渡した実行は、`input_invalid` で終わる。
+- [ ] 統合ブランチを作ることを origin が拒むと、`integration_create_failed` で終わる。
+- [ ] `uses_integration` を渡さず、`base` に在る統合ブランチを渡した実行は、いままでどおり進む（統合ブランチを作らない）。
+
+成果物の印:
+
+- [ ] `uses_integration=true` の実行のレビュー待ちの出力に、`role` が `integration` の `branch` が、ちょうど 1 つある。
+- [ ] 同じ出力に、`role` が `integration` の `commit` が、ちょうど 1 つある。
+- [ ] 同じ出力に、`role` の無い `commit` が、ちょうど 1 つある。
+- [ ] `role` が `integration` の `branch` の `ref` は、統合ブランチの名前である。
+- [ ] 統合ブランチへ入れて終えた実行（`succeeded`）の出力の、`role` が `integration` の `commit` は、入れた後の統合ブランチのコミットである。
+- [ ] レビュー待ちの間に統合ブランチが進むと、次の `contract status` の `role` が `integration` の `commit` は、進んだ後の先頭である。
+- [ ] `uses_integration` を渡さない実行の出力に、`role` を持つ要素は無い。
+
+統合ブランチ宛ての `land` と取り込み:
+
+- [ ] 統合ブランチ宛ての `land` は、PR の先頭が `approved_ref` と一致し、統合ブランチの最新を含むとき、統合ブランチへ入れる。
+- [ ] 統合ブランチ宛ての `land` は、先頭が `approved_ref` と一致しないとき、入れずにレビュー待ちへ戻る。
+- [ ] 統合ブランチ宛ての `land` は、統合ブランチが進んでいるとき、入れずにレビュー待ちへ戻る。
+- [ ] そのとき、統合ブランチの最新が、マージのコミットで作業ブランチへ取り込まれる。
+- [ ] そのレビュー待ちの出力の `role` の無い `commit` は、取り込んだ後の先頭である。
+- [ ] 最初のレビュー待ちの前に、進んだ統合ブランチが、作業ブランチへ取り込まれる。
+- [ ] `uses_integration=true` の実行は、`land` を受けるまで、統合ブランチへ入れない。
+
+統合ブランチを既定ブランチへ上げる:
+
+- [ ] `reflect` の `artifact_ref` に統合ブランチの名前を渡すと、統合ブランチから既定ブランチへの PR が作られる。
+- [ ] 統合ブランチから既定ブランチへの、開いている PR が在るとき、新しい PR は作られない。
+- [ ] 作られた PR の本文に、統合ブランチへ入った PR の `Closes #<番号>` の行が写る。
+- [ ] 既定ブランチの最新は、マージのコミットで、統合ブランチへ push される。
+- [ ] その `reflect` のレビュー待ちの `options` は、`land` だけである。
+- [ ] その `reflect` のレビュー待ちの出力に、`role` の無い `commit` が、ちょうど 1 つある。
+- [ ] その `reflect` の出力に、`role` を持つ要素は無い。
+- [ ] その `reflect` は、`land` を受けるまで、既定ブランチへ入れない。
+- [ ] その `reflect` が `land` で既定ブランチへ入れた後、統合ブランチが origin から消える。
+- [ ] 入れた後に統合ブランチの先頭が動いていたら、統合ブランチは消えず、実行は `succeeded`（理由 `landed_integration_kept`）で終わる。
+- [ ] 統合ブランチ宛ての開いている PR が在るとき、統合ブランチは消えない。
+- [ ] その `reflect` を取り消しても、統合ブランチは消えない。
+- [ ] その `reflect` が失敗で終わっても、統合ブランチは消えない。
+- [ ] その `reflect` を取り消すと、この実行が作った作業ツリーは消える。
+- [ ] `artifact_ref` に、origin に無いブランチの名前を渡すと、`integration_missing` で終わる。
+- [ ] `artifact_ref` に、既定ブランチと差の無い統合ブランチの名前を渡すと、`integration_empty` で終わる。
+- [ ] `artifact_ref` に PR の URL を渡した `reflect` は、入れた後に、PR のブランチを消さない。
+
+守りと互換:
+
+- [ ] 上書きで、`retire`・`open`・`ensure-base` の段のキーと遷移は変えられない。
+- [ ] `retire` は、入っていない PR の統合ブランチを消さない。
+- [ ] `ready` を受けた、統合ブランチ宛ての実行は、いままでどおり `merge` の段へ進む。
+- [ ] 契約の出力の `contract_version` は、1 のままである。
+
+実物（要人間判定）:
+
+- [ ] 書き込める試験用のリポジトリで、2 つのタスクを統合ブランチへ入れ、統合ブランチを既定ブランチへ上げる、を 1 回通す（S3b-4）。
 
 ---
 
@@ -1437,6 +1948,7 @@ make check
 - 再開時も照合する: run は開始時のワークフロー定義のハッシュを記録しており、**`resume` 時に定義が変わっていたら既定では止まる**（途中で遷移表が変わった run を黙って続けない）。
 - S1 では **CLI を更新すると同梱の定義も変わる**ため、ゲートで待っている run（レビュー待ち等）が更新後の `resume` で止まる。回避策として、run が開始時の CLI 版を記録し、新しい CLI が**開始時の版の展開ディレクトリ（`~/.local/share/claude-harness/runtime/<開始時の版>/`）の定義**を、そのスキーマ版に対応していれば読み込んで続ける（N3 で決定・2026-09-21）。対応していなければ、止まって「開始時の版で `resume` する」か「その run を `cancel` する」かを案内する。
 - **#388 の受け口（§5.6.2）と版**: 接続契約の版は 1、ワークフローのスキーマ版は `harness.workflow/v1` のまま。CLI は minor を上げる（flywheel の S3a が要るのは CLI のリリース）。プラグインも minor を上げる（5.1.0 → 5.2.0。変わるのは `worktree-setup.sh` の引数の受け方だけ）が、CLI が受けるプラグインの範囲（`>=4.9.0 <6.0.0`）は変えず、新しい CLI は古いプラグインのままでも動く（runtime は埋め込んだ側のスクリプトを使う。§6.5）。この版より前に始めて待っている run は、上の N3 のとおり開始時の版の定義で続くので、`land` を受けられない（`options` に出ない）。
+- **#409 の受け口（§5.6.3。設計）と版**: 接続契約の版は 1、ワークフローのスキーマ版は `harness.workflow/v1` のまま（足すのは、成果物の要素の任意のキー `role` と、`pull-request` の `action` の値 3 つ）。CLI は minor を上げる（`runtime/v5.3.0` の見込み。flywheel の S3b が要るのは CLI のリリース）。プラグインの配布物のスクリプトは変えない見込みで、CLI が受けるプラグインの範囲も変えない。この版より前に始めて待っている run は、開始時の版の定義で続く（統合先を使う run は、5.2.0 では始められなかったので、続きは無い）。
 
 ---
 
@@ -1643,9 +2155,22 @@ flywheel が、成果を宛先へ入れる処理を委譲先へ移すために�
 
 選択肢があった点は §5.6.2 の「選択肢があった点と、採った案」。
 
+### 11.10 統合先の受け口（#409・2026-11-20）
+
+flywheel の区切り S3b（複数のタスクと統合先）のために足す受け口。設計は §5.6.3。§11.1〜§11.9 の記録は書き換えていない。
+
+| # | 決定 | 決めた人 |
+| --- | --- | --- |
+| M1 | 契約の形（flywheel が渡すもの・受け取るもの）は変えない。接続契約の版は 1、ワークフローのスキーマ版は `harness.workflow/v1` のまま | 人間（flywheel の S3b の仕様） |
+| M2 | 統合先の名前と作り方は、harness が決める（flywheel は、作らず、名前も決めない）。`reflect` は、名前を `artifact_ref` で受ける | 人間（同上） |
+| M3 | `role` が `integration` の要素を出すのは、`uses_integration` に `true` を受けた実行だけ | 人間（同上） |
+
+選択肢があった点（名前の規則と重なり・作り方・先頭の取り直し・`ready` の道・作る PR の題名・入れ方・消す条件 ほか）は、§5.6.3 の「選択肢があった点と、推奨する案」。**推奨の段階で、確定していない**（確定したら、この表に足す）。
+
 ## 12. 未検証事項
 
 - #388 の受け口（§5.6.2）: ~~マージ済みの PR の `headRefOid` が「入ったときの先頭」であること~~・~~`gh pr checks --json` の終了コードと 0 件のときの出力~~ → S3-2（#392）で実物の `gh` 2.67.0 で確かめた（§5.6.2 の「ゲートの解き方」の冒頭の注）。残り: `gh pr merge --match-head-commit` が通らないときの終了の仕方、マージの待ち行列のあるリポジトリで入れる命令が通った直後の PR の状態、マージのコミットを含む PR ブランチを rebase マージのリポジトリで入れられるか。S3-3（`land` の段）の PR で確かめる。
+- #409 の受け口（§5.6.3）: 設計のときに確かめたのは、実の `git` と手元の bare の origin での、条件つきの push（無いときだけ作る・先頭が同じときだけ消す）の結果だけ。GitHub の origin での同じ結果、統合ブランチ宛ての PR の `Closes` が Issue を閉じないこと、`gh pr list --base … --state merged` の出力の形、差分の無い統合ブランチの PR、「マージ後に head のブランチを自動で消す」設定との重なり、実の `claude` での `describe` は、確かめていない（一覧は §5.6.3 の「実物で確かめたこと・【要確認】」。実装の PR と、S3b-4 の実物での通しで確かめる）。
 
 - ~~`claude -p --agent claude-harness:feature-implementer` でプラグインのエージェントをセッションの主体に据えられるか~~ → PR-3 で実測済み（§1.1）。
 - ~~`claude -p --output-format json` の結果に含まれる費用・`session_id` のフィールド名~~ → PR-3 で実測済み（§4.3）。
