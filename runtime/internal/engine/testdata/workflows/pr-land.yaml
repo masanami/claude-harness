@@ -1,0 +1,38 @@
+# pull-request 種類の action: land（§5.6.2・規則 7）。通した中身は、レビュー待ちの解決（--approved-ref）からだけ届く。
+# 結果の outcome ごとに別の理由で終える（試験が理由で見分ける）。
+schema: harness.workflow/v1
+id: pr-land
+inputs:
+  json: { type: string, required: true }
+  pr:   { type: integer, required: true }
+  base: { type: string, required: true }
+steps:
+  prep:
+    kind: command
+    run: emit
+    with: { json: $inputs.json, code: 0 }
+    output: schemas/detail.json
+    on:
+      back: { gate: review }
+      end: { done: ended }
+  review:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: land (with the approved ref)
+    inputs: [land]
+    on:
+      land: { goto: land, with: { approved_ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }
+  land:
+    kind: pull-request
+    action: land
+    with: { pr: $inputs.pr, base: $inputs.base, approved_ref: $edge.approved_ref }
+    on:
+      landed: { done: landed }
+      behind: { done: behind }
+      mismatch: { done: mismatch }
+      blocked: { done: blocked }
+      closed: { fail: pr_closed }
+      merged_other: { fail: merged_unapproved }
+      base_changed: { fail: pr_base_changed }
+      not_confirmed: { fail: merge_not_confirmed }

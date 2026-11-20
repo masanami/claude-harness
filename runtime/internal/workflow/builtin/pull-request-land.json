@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "pull-request 種類の action: land の出力。runtime が生成する（docs/harness-runtime-design.md §5.6.2）。head_sha は確かめた PR のいまの先頭、merge_commit は landed のときの入れた後のコミット",
+  "type": "object",
+  "required": ["outcome", "detail", "head_sha", "merge_commit"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["landed", "behind", "mismatch", "blocked", "closed", "merged_other", "base_changed", "not_confirmed"] },
+    "detail": { "type": "string" },
+    "head_sha": { "type": "string" },
+    "merge_commit": { "type": "string" }
+  },
+  "additionalProperties": false
+}

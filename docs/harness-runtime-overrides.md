@@ -171,7 +171,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 - ゲート: `type`・`decider`・`inputs`・`observe`・`requested_action`・`contract_kind`（`decider` を `human` から `any` へ変えると、TTY を要求しない経路でゲートを解決できてしまう。設計書 §5.3）
 - 遷移: `overridable.routes` に宣言の無い `on` のすべて。`limit`・`exhausted`・`retry` の形も変えられない（回数は `limits` の値で変える）
 - `overridable` 自体（上書きで候補を広げることはできない）
-- #388 の設計で足すキー（設計書 §5.6.2。`detail`・`interrupted` は S3-2〔#392〕で実装済み、ほかは実装はこれから。`detail` を持つ遷移はステップ id だけの形ではないので宣言できず、`interrupted` も `goto` の遷移の一部なので上書きで外せない）: 最上位の `facts`・`release_on`、ゲートの `refresh`、ゲートへの遷移の `detail`、ゲートから出る `goto` の `interrupted`。入れる段（`pull-request` の `action: land`）には、上書きで書けるキーが無い（§6.2 の規則 7）
+- #388 の設計で足すキー（設計書 §5.6.2。`detail`・`interrupted` は S3-2〔#392〕、`pull-request` の `action` は S3-3〔#393〕で実装済み、ほかは実装はこれから。`detail` を持つ遷移はステップ id だけの形ではないので宣言できず、`interrupted` も `goto` の遷移の一部なので上書きで外せない）: 最上位の `facts`・`release_on`、ゲートの `refresh`、ゲートへの遷移の `detail`、ゲートから出る `goto` の `interrupted`。入れる段（`pull-request` の `action: land`）には、上書きで書けるキーが無い（§6.2 の規則 7）
 
 ## 6. 外せないゲート: 人のゲートと、そこへ向かう遷移と、`fail` への遷移
 
@@ -182,7 +182,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 | 対象 | 形 | 何を守っているか | 扱い |
 | --- | --- | --- | --- |
 | `human-merge` | `observe` × `human`。`merge-route.default` から入る | `ready`（マージしてよい）を受けた後の、既定ブランチ（本番反映先）へのマージを人が行う（設計書 R5。2026-11-20 に改めた後も、この道は残る） | 外せない（Issue の要件 3） |
-| `land`（#388 の設計。実装はこれから） | `pull-request` の `action: land`。`review.land` から入る | 「入れてよい」（`land`）に添えられた、通した中身（先頭のコミット）と PR の先頭が一致し、宛先の最新を含むときだけ、機械が宛先（統合ブランチでも既定ブランチでも）へ入れる（設計書 R5 を改めた分・§5.6.2） | 外せない・迂回できない・付け替えられない（§6.2 の規則 7） |
+| `land`（#388 の S3-3〔#393〕で実装済み） | `pull-request` の `action: land`。`review.land` から入る | 「入れてよい」（`land`）に添えられた、通した中身（先頭のコミット）と PR の先頭が一致し、宛先の最新を含むときだけ、機械が宛先（統合ブランチでも既定ブランチでも）へ入れる（設計書 R5 を改めた分・§5.6.2） | 外せない・迂回できない・付け替えられない（§6.2 の規則 7） |
 | `design-deviation` | `input` × `human`（TTY 必須）。`implement.deviation`・`fix.deviation` から入る | クリティカル設計からの逸脱を人が判断する | 外せない |
 | `review-human` | `input` × `human`（TTY 必須）。`respond.needs_human`・`merge.blocked` から入る | レビュー対応で品質ゲートの失敗や設計変更が出たときに人が判断する | 外せない |
 | 品質の失敗での停止 | `implement.failure`・`implement.review_incomplete`・`fix.failure`・`commit.failure` → `fail` | 品質ゲートに通らない変更・セルフレビューと合流できない変更を PR にしない（#262） | 付け替え不可 |
@@ -215,7 +215,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
    - 検査は 2 段に置く。元の定義の検査で、`overridable.routes` の候補を 1 つずつ当てて迂回する候補を拒否し（保守者が宣言を足す PR で落ちる）、上書きを重ねた時点で付け替えの組み合わせをまとめて検査する。組み合わせで P を迂回できるなら、その経路の上の付け替えのどれか 1 つだけを当てた時点で、P が支配していた何かの節点へ P を通らずに届く（経路の上で、元の定義では P を通らずに届かない最初の節点の手前の付け替えを当てればよい）。そのため前段を通った定義では後段は落ちず、後段は二重の検査である。
    - 支配は遷移のグラフの経路で決め、値（`select` が読む出力など）は見ない。「既定ブランチ宛のときだけ `human-merge` を通る」のような値に依る条件は表せないので、人のゲートへ分岐するステップ（`merge-route`）を守ることで、分岐の手前を前段ごと飛ばす形を止める。
    - `ticket.yaml` の保守側の 2 本（`merge-route.integration: [merge, human-merge]`・`e2e-route.no` の候補 `e2e`）はこの規則に当たらない（`merge` はどのステップも支配していない。`e2e` を足す付け替えは支配を減らさない）。`quality` を省く候補（`e2e-route.no`・`e2e.pass` の `publish`。#326。`respond.pushed` の `ci`。#339）は当たるが、`quality` を `overridable.skips` に挙げているので通る。§5.2 で後から開きうるとした付け替えのうち、`e2e-route.yes → quality`・`ci.green`/`ci.none → merge-route` は当たらず、`publish.opened`/`publish.updated → review`（CI 待ちの省略）は `ci` が `fail` へ落ちうるため、開くときに `ci` を `overridable.skips` に挙げる必要がある。
-7. **一致を確かめて入れる段は、外せず、迂回できず、付け替えられない**（#388 で追加。オーナーの決定 2026-11-20。実装はこれから）: 対象は、種類と `action` で決まる「入れる段」（`pull-request` の `action: land`）である。段の名前は Go に書かない。
+7. **一致を確かめて入れる段は、外せず、迂回できず、付け替えられない**（#388 で追加。オーナーの決定 2026-11-20。S3-3〔#393〕で実装済み。`runtime/internal/workflow/landrules.go`・`routes.go`）: 対象は、種類と `action` で決まる「入れる段」（`pull-request` の `action: land`）である。段の名前は Go に書かない。
    - **確かめと入れる操作は 1 つの段の中にある**: 入れる段は、先頭のコミットの一致と、宛先の最新を含むことを確かめた後にだけ `gh pr merge --match-head-commit` を呼ぶ。確かめる所と入れる所を別の段に分ける文法は持たない（間の遷移を付け替えて「確かめずに入れる」形が作れない）。宛先へ入れる操作を持つ決定的な段は、これだけである。
    - **入れる段のキーは上書きに書けない**: `kind`・`action`・`with` は §5.3 で閉じている。`pull-request` の種類は数値のキー（`budget_usd`・`timeout`。§5.1）を持たないので、入れる段に上書きで書けるキーは無い。
    - **入れる段の遷移と、入れる段へ入る遷移は、`overridable.routes` に宣言できない**: 入れる段の `on` のすべて（`landed`・`behind`・`mismatch`・`blocked` と、失敗で終える結果）と、`$gate.approved_ref` を `with` で渡す遷移。宣言があれば元の定義の検査で拒否する（規則 2 と同じ扱い）。

@@ -26,14 +26,14 @@ func stepLines(lines []string) []string {
 func TestTextUnwrapped(t *testing.T) {
 	g := Build(load(t, repoWorkflows, repoScripts, "ticket"), SourceEmbedded, "1.2.3")
 	lines := text(g, 0)
-	if lines[0] != "workflow ticket (embedded, cli 1.2.3)  entry: resolve" || lines[1] != "limits: budget_usd=40 rework=3 self_review=1" {
+	if lines[0] != "workflow ticket (embedded, cli 1.2.3)  entry: resolve" || lines[1] != "limits: budget_usd=40 rework=3 self_review=1 sync_resolve=3" {
 		t.Fatalf("header = %q", lines[:2])
 	}
 	if !strings.HasPrefix(lines[2], "legend: [human] decided by a person") || !strings.Contains(lines[3], "interrupted") {
 		t.Fatalf("legend = %q", lines[2:4])
 	}
 	steps := stepLines(lines)
-	if len(steps) != 21 {
+	if len(steps) != 27 {
 		t.Fatalf("%d step lines:\n%s", len(steps), strings.Join(steps, "\n"))
 	}
 	want := map[string][]string{

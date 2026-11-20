@@ -234,8 +234,8 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 	for _, x := range u.Rounds[0].Steps {
 		seq = append(seq, x.Step+":"+x.Outcome)
 	}
-	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:red " +
-		"fix:pass commit:committed e2e-route:no quality:pass publish:updated ci:timeout ci:timeout"
+	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:red " +
+		"fix:pass commit:committed sync:current e2e-route:no quality:pass publish:updated ci:timeout ci:timeout"
 	if strings.Join(seq, " ") != want {
 		t.Fatalf("round 1 steps:\n got %s\nwant %s", strings.Join(seq, " "), want)
 	}
@@ -260,7 +260,7 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 			t.Errorf("claude call %d ran in %s, want the worktree %s", n, pwd, wt)
 		}
 	}
-	implement, fix := u.Rounds[0].Steps[3], u.Rounds[0].Steps[10]
+	implement, fix := u.Rounds[0].Steps[3], u.Rounds[0].Steps[11]
 	if implement.Resume || !fix.Resume || fix.SessionID != implement.SessionID || fix.SessionID == "" {
 		t.Errorf("session hand-over: implement %s (resume %v), fix %s (resume %v)", implement.SessionID, implement.Resume, fix.SessionID, fix.Resume)
 	}

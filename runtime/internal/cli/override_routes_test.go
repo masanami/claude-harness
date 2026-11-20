@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -206,4 +207,70 @@ func stepsStarted(t *testing.T, runDir string) string {
 		}
 	}
 	return strings.Join(ids, ",")
+}
+
+// §6.2 の規則 7（#388 の S3-3）: 一致を確かめて入れる段（pull-request の action: land）は、外せず、迂回できず、付け替えられない。
+// 上書きは land の段のどのキーも書けず、land から出る遷移と、通した中身（$gate.approved_ref）を渡す遷移も付け替えられない。
+func TestValidateOverrideRejectsTheLandStep(t *testing.T) {
+	h := newHarness(t)
+	for _, c := range []struct{ name, body, want string }{
+		{"a transition leaving land", "steps: { land: { on: { landed: human-merge } } }",
+			`steps.land.on.landed cannot be overridden: the transition leaves step "land", which lands the pull request (pull-request action: land) (§6.2 rule 7)`},
+		{"every outcome of land is locked", "steps: { land: { on: { behind: cleanup } } }", `steps.land.on.behind cannot be overridden`},
+		{"the transition that passes the approved ref", "steps: { review: { on: { land: cleanup } } }",
+			"steps.review.on.land cannot be overridden: the transition passes $gate.approved_ref to a step that lands the pull request (§6.2 rule 7)"},
+		{"the with of land", "steps: { land: { with: { approved_ref: x } } }", "steps.land.with cannot be overridden"},
+		{"the action of land", "steps: { land: { action: sync } }", "steps.land.action cannot be overridden"},
+		{"a timeout on land", "steps: { land: { timeout: 5m } }", "steps.land.timeout: a pull-request step has no timeout"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ov := writeFile(t, filepath.Join(t.TempDir(), "ov.yaml"), "schema: harness.workflow-override/v1\nworkflow: ticket\n"+c.body+"\n")
+			out, errOut, code := h.run("validate", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "--override", ov, "ticket")
+			if code != ExitFailed || !strings.Contains(errOut, c.want) {
+				t.Fatalf("validate exit %d, want a rejection containing %q\n%s\n%s", code, c.want, out, errOut)
+			}
+		})
+	}
+}
+
+// 元の定義の検査: land を overridable.skips に挙げる・land の遷移を overridable.routes に宣言する・通した中身をゲートの解決以外から渡す
+// 定義は、--workflow-dir の定義でも validate が拒否する（`$gate.approved_ref` の行き先と interrupted の検査は定義そのものの規則）。
+func TestValidateRejectsDefinitionsThatLoosenTheLandStep(t *testing.T) {
+	h := newHarness(t)
+	base := readFile(t, filepath.Join(repoWorkflows, "ticket.yaml"))
+	for _, c := range []struct{ name, old, new, want string }{
+		{"land in skips", "  skips: [quality]", "  skips: [quality, land]", `overridable.skips: step "land" lands the pull request into its base (pull-request action: land); it can never be skipped by an override (§6.2 rule 7)`},
+		{"a land outcome declared overridable", "    respond.pushed: [quality, ci]", "    respond.pushed: [quality, ci]\n    land.landed: [cleanup, human-merge]",
+			`overridable.routes.land.landed: the transition leaves step "land", which lands the pull request (pull-request action: land); it cannot be declared overridable (§6.2 rule 7)`},
+		{"the approved ref from an input", "approved_ref: $edge.approved_ref }", "approved_ref: $inputs.task_id }", "optional input"},
+		{"the approved ref as a literal", "approved_ref: $edge.approved_ref }", `approved_ref: "abc" }`, "must read it as $edge.<name>"},
+		{"the approved ref not passed by a gate transition", "land: { goto: land, with: { approved_ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }",
+			"land: { goto: land, with: { approved_ref: $steps.publish.pr_url } }", "must pass approved_ref as $gate.approved_ref"},
+		{"the approved ref without interrupted", ", interrupted: { fail: interrupted_after_land } }", " }", "must write interrupted: { fail: <reason> }"},
+		{"the approved ref to another step", "ready: merge-route                            # 変えない（land とは別の道）",
+			"ready: { goto: respond, with: { note: $gate.approved_ref }, interrupted: { fail: x } }",
+			"$gate.approved_ref can be passed only to the with.approved_ref of a step that lands the pull request"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if strings.Count(base, c.old) != 1 {
+				t.Fatalf("%q occurs %d times in ticket.yaml", c.old, strings.Count(base, c.old))
+			}
+			dir := copyWorkflowDir(t)
+			writeFile(t, filepath.Join(dir, "ticket.yaml"), strings.Replace(base, c.old, c.new, 1))
+			out, errOut, code := h.run("validate", "--workflow-dir", dir, "--scripts-dir", abs(t, repoScripts), "ticket")
+			if code != ExitFailed || !strings.Contains(errOut, c.want) {
+				t.Fatalf("validate exit %d, want a rejection containing %q\n%s\n%s", code, c.want, out, errOut)
+			}
+		})
+	}
+}
+
+// copyWorkflowDir は runtime/workflows を一時ディレクトリへ写す（定義を書き換えた写しで validate を試す）。
+func copyWorkflowDir(t *testing.T) string {
+	t.Helper()
+	dst := filepath.Join(t.TempDir(), "workflows")
+	if out, err := exec.Command("cp", "-R", abs(t, repoWorkflows), dst).CombinedOutput(); err != nil {
+		t.Fatalf("cp: %v\n%s", err, out)
+	}
+	return dst
 }

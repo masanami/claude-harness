@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "pull-request 種類の action: sync の出力。runtime が生成する（docs/harness-runtime-design.md §5.6.2）。head_before・base_sha は conflict のときの、衝突を直した後の形の確かめ（第 1 の親・第 2 の親）の材料",
+  "type": "object",
+  "required": ["outcome", "detail", "head_sha", "head_before", "base_sha"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["current", "synced", "conflict", "unresolved", "not_merge_only", "diverged", "head_moved", "unavailable"] },
+    "detail": { "type": "string" },
+    "head_sha": { "type": "string" },
+    "head_before": { "type": "string" },
+    "base_sha": { "type": "string" }
+  },
+  "additionalProperties": false
+}

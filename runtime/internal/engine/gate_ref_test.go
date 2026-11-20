@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,18 +18,14 @@ const refJSON = `{"outcome":"back","detail":"the head moved: now abc123"}`
 func startRef(t *testing.T, json string) (string, *Engine) {
 	t.Helper()
 	log := filepath.Join(t.TempDir(), "log")
-	st, e := start(t, "gate-ref", map[string]any{"log": log, "json": json})
+	t.Setenv("FAKE_GH_DIR", t.TempDir())
+	st, e := startWith(t, "gate-ref", map[string]any{"log": log, "json": json}, func(e *Engine) {
+		e.GhBin = testdata(t, "scripts", "fake-gh.sh")
+	})
 	if st.Status != runstate.StatusWaiting || st.Unit(MainUnit).Gate.Gate != "review" {
 		t.Fatalf("status = %s gate = %+v", st.Status, st.Unit(MainUnit).Gate)
 	}
 	return log, e
-}
-
-func lastRefLine(t *testing.T, log string) string {
-	t.Helper()
-	data, _ := os.ReadFile(log)
-	l := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	return l[len(l)-1]
 }
 
 func gateOf(st *runstate.State) *runstate.Gate { return st.Unit(MainUnit).Gate }
@@ -36,16 +33,17 @@ func gateOf(st *runstate.State) *runstate.Gate { return st.Unit(MainUnit).Gate }
 // --approved-ref の値は、ゲートの解決の記録（gate_resolved.approved_ref）を経て $gate.approved_ref で次の段へ届く。
 // --note は求めない。添えなければ空の文字列を渡す（拒否しない）。
 func TestApprovedRefReachesTheNextStep(t *testing.T) {
-	log, e := startRef(t, refJSON)
+	_, e := startRef(t, refJSON)
 	st := mustResolve(t, e, Resolution{Input: "land", HasInput: true, ApprovedRef: "deadbeef"})
 	if gateOf(st) == nil || gateOf(st).Gate != "review" {
 		t.Fatalf("gate = %+v", gateOf(st))
 	}
-	if got := lastEdgeFrom(t, e, "review")["ref"]; got != `"deadbeef"` {
-		t.Fatalf("edge ref = %s", got)
+	if got := lastEdgeFrom(t, e, "review")["approved_ref"]; got != `"deadbeef"` {
+		t.Fatalf("edge approved_ref = %s", got)
 	}
-	if l := lastRefLine(t, log); !strings.Contains(l, "--ref deadbeef") {
-		t.Fatalf("the ref did not reach the step: %q", l)
+	// 通した中身は land の段に届く（偽の gh の PR の先頭とは一致しないので、mismatch の detail に受け取った値が入る）。
+	if out := output(t, st, "land"); !strings.Contains(fmt.Sprint(out["detail"]), `"deadbeef"`) {
+		t.Fatalf("the ref did not reach the land step: %v", out)
 	}
 	var resolved *runstate.GateResolved
 	for _, ev := range events(t, e) {
@@ -62,8 +60,8 @@ func TestApprovedRefReachesTheNextStep(t *testing.T) {
 
 	// 添えなければ空の文字列。
 	mustResolve(t, e, Resolution{Input: "land", HasInput: true})
-	if got := lastEdgeFrom(t, e, "review")["ref"]; got != `""` {
-		t.Fatalf("edge ref = %s, want the empty string", got)
+	if got := lastEdgeFrom(t, e, "review")["approved_ref"]; got != `""` {
+		t.Fatalf("edge approved_ref = %s, want the empty string", got)
 	}
 	var last *runstate.GateResolved
 	for _, ev := range events(t, e) {

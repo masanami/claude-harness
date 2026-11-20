@@ -13,6 +13,12 @@ import (
 
 const refBack = `json={"outcome":"back","detail":"the head moved: now abc123"}`
 
+// refHarness は gate-ref 用の harness。land の段（pull-request の action: land）が呼ぶ gh は偽物（先頭が一致しない PR を返す）。
+func refHarness(t *testing.T) *harness {
+	t.Helper()
+	return newHarness(t, "HARNESS_STATE_DIR="+t.TempDir(), "HARNESS_GH_BIN="+abs(t, testScripts+"/fake-gh.sh"), "FAKE_GH_DIR="+t.TempDir())
+}
+
 // startGateRef は gate-ref を同期の run で始め、review のゲートで待たせる。
 func startGateRef(t *testing.T, h *harness) string {
 	t.Helper()
@@ -26,7 +32,7 @@ func startGateRef(t *testing.T, h *harness) string {
 // contract resume --approved-ref の値は、ゲートの解決の記録に残り（status --json のゲートの履歴）、次の段へ届く。戻ったゲートの
 // detail は、status --json の waiting[].detail・requested_action.text の先頭の文の後ろ・summary の末尾に出る。--note は求めない。
 func TestContractResumeApprovedRefAndDetail(t *testing.T) {
-	h := newHarness(t, "HARNESS_STATE_DIR="+t.TempDir())
+	h := refHarness(t)
 	id := startGateRef(t, h)
 	d, errOut := h.contract("resume", "--unit", "main", "--input", "land", "--approved-ref", "deadbeef", id)
 	if d.State != runstate.StatusWaiting || d.RequestedAction == nil {
@@ -59,7 +65,7 @@ func TestContractResumeApprovedRefAndDetail(t *testing.T) {
 
 // resume も --approved-ref を受ける。approve は受けない（人の承認の道に通した中身の識別を足さない）。
 func TestResumeTakesApprovedRefAndApproveDoesNot(t *testing.T) {
-	h := newHarness(t, "HARNESS_STATE_DIR="+t.TempDir())
+	h := refHarness(t)
 	id := startGateRef(t, h)
 	out, errOut, code := h.run("resume", "--input", "land", "--approved-ref", "deadbeef", id)
 	if code != ExitWaiting {
@@ -95,7 +101,7 @@ func (h *harness) stateDir() string {
 // 印（interrupted）のあるラウンドで runner を起動できなかった contract resume は、runner の居ない running のまま返さず、
 // その場で印の理由の failed を返す。印の無いラウンドは、いまと同じに running のまま返す。
 func TestContractResumeThatCannotStartARunner(t *testing.T) {
-	h := newHarness(t, "HARNESS_STATE_DIR="+t.TempDir())
+	h := refHarness(t)
 	id := startGateRef(t, h)
 	breakRunnerLog(t, h, id)
 	d, _ := h.contractNow("resume", "--unit", "main", "--input", "land", "--approved-ref", "deadbeef", id)
@@ -108,7 +114,7 @@ func TestContractResumeThatCannotStartARunner(t *testing.T) {
 		t.Fatalf("after the end: doc = %+v", d)
 	}
 
-	h = newHarness(t, "HARNESS_STATE_DIR="+t.TempDir())
+	h = refHarness(t)
 	id = startGateRef(t, h)
 	breakRunnerLog(t, h, id)
 	d, _ = h.contractNow("resume", "--unit", "main", "--input", "respond", id)

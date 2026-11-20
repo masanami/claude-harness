@@ -415,7 +415,7 @@ func runCost(st *runstate.State) (float64, int) {
 	return cost, unknown
 }
 
-// artifacts は unit ごとの PR・ブランチ・最後に push した commit（§4.1 Workspace）。
+// artifacts は unit ごとの PR・ブランチ・commit（§4.1 Workspace）。
 func artifacts(st *runstate.State) []artifact {
 	out := []artifact{}
 	for _, u := range st.Units {
@@ -432,11 +432,24 @@ func artifacts(st *runstate.State) []artifact {
 		if ws.Branch != "" {
 			out = append(out, artifact{Kind: artifactBranch, Ref: ws.Branch})
 		}
-		if sha := lastHead(ws.HeadSHAs); sha != "" {
+		if sha := commitRef(ws); sha != "" {
 			out = append(out, artifact{Kind: artifactCommit, Ref: sha})
 		}
 	}
 	return out
+}
+
+// commitRef は成果物の commit の識別: 宛先へ入れて終わった run は入れた後のコミット、そうでなければ PR のいまの先頭。
+// この版より前に始めた run の記録には先頭の記録（head_sha）が無いので、ラウンドごとの記録の最新を使う。
+// kind が commit の要素は、PR を出した後はいつもちょうど 1 つ（PR を出す前は 0）。
+func commitRef(ws *runstate.Workspace) string {
+	switch {
+	case ws.MergeCommit != "":
+		return ws.MergeCommit
+	case ws.HeadSHA != "":
+		return ws.HeadSHA
+	}
+	return lastHead(ws.HeadSHAs)
 }
 
 // lastHead は最も新しいラウンドで push した head（キーはラウンド番号）。

@@ -84,3 +84,42 @@ func TestFoldRejectsInconsistentWorkspace(t *testing.T) {
 		})
 	}
 }
+
+// PR のいまの先頭（head_sha）と、入れた後のコミット（merge_commit）。publish の記録はラウンドごとの先頭（head_sha_by_round）も書き、
+// push・land の記録（head_only）は PR のいまの先頭だけを書く。URL を省いた記録（land）は、記録済みの URL を消さない。
+// どちらの記録も、この版より前の記録（head_sha だけ）と同じ畳み込みで読める。
+func TestFoldPRHeadAndMergeCommit(t *testing.T) {
+	evs := workspaced(true, true)[:9]
+	st, err := Fold(evs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws := st.Unit("main").Workspace; ws.HeadSHA != "abc" || ws.HeadSHAs["1"] != "abc" || ws.MergeCommit != "" {
+		t.Fatalf("after publish = %+v", ws)
+	}
+	// 同じラウンドで、push の記録が先頭を更新しても、ラウンドごとの記録は publish のまま。
+	out := append(append([]Event{}, evs[:8]...),
+		Event{Type: EvWorkspace, Workspace: &WorkspaceEvent{Unit: "main", Action: WorkspacePR, PRNumber: 7, HeadSHA: "def", HeadOnly: true}},
+		Event{Type: EvWorkspace, Workspace: &WorkspaceEvent{Unit: "main", Action: WorkspacePR, PRNumber: 7, HeadSHA: "def", MergeCommit: "mmm", HeadOnly: true}},
+		evs[8])
+	st, err = Fold(withSeq(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := st.Unit("main").Workspace
+	if ws.HeadSHA != "def" || ws.MergeCommit != "mmm" || ws.HeadSHAs["1"] != "abc" || len(ws.HeadSHAs) != 1 || ws.PRURL != "u" || ws.Branch != "feature/issue-7-x" {
+		t.Fatalf("workspace = %+v", ws)
+	}
+	// 往復: 記録のイベントは JSON を経ても同じ状態になる。
+	data, err := json.Marshal(withSeq(out)[8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"head_only":true`) || !strings.Contains(string(data), `"head_sha":"def"`) {
+		t.Fatalf("event = %s", data)
+	}
+	var back Event
+	if err := json.Unmarshal(data, &back); err != nil || back.Workspace == nil || !back.Workspace.HeadOnly || back.Workspace.HeadSHA != "def" {
+		t.Fatalf("round trip = %+v %v", back.Workspace, err)
+	}
+}

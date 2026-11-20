@@ -76,8 +76,8 @@ func TestContractOptionsFromTicketGates(t *testing.T) {
 		kind string
 		want []string
 	}{
-		{"review", accepted{}, actionAnswer, []string{"respond", "ready"}},
-		{"review", accepted{review: true}, actionReview, []string{"respond", "ready"}},
+		{"review", accepted{}, actionAnswer, []string{"respond", "ready", "land"}},
+		{"review", accepted{review: true}, actionReview, []string{"respond", "ready", "land"}},
 		{"design-deviation", accepted{}, actionApprove, []string{"follow-decision", "abort"}},
 		{"human-merge", accepted{}, actionObserve, nil},
 	} {

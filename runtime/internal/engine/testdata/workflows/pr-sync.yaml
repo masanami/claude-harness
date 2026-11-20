@@ -1,0 +1,30 @@
+# pull-request 種類の action: sync（§5.6.2）。衝突は command（merge-fixer）が直す。直した後は sync へ戻り、機械が形を確かめる。
+# 結果の outcome ごとに別の理由で終える（試験が理由で見分ける）。
+schema: harness.workflow/v1
+id: pr-sync
+inputs:
+  base:        { type: string, required: true }
+  mode:        { type: string, required: true }
+  expect_head: { type: string }
+limits:
+  resolve: 2
+steps:
+  sync:
+    kind: pull-request
+    action: sync
+    with: { base: $inputs.base, expect_head: $inputs.expect_head }
+    on:
+      current: { done: current }
+      synced: { done: synced }
+      conflict: { goto: fix, limit: resolve, exhausted: { fail: sync_conflict } }
+      unresolved: { fail: unresolved }
+      not_merge_only: { fail: not_merge_only }
+      diverged: { fail: diverged }
+      head_moved: { fail: head_moved }
+      unavailable: { fail: unavailable }
+  fix:
+    kind: command
+    run: merge-fixer
+    with: { mode: $inputs.mode }
+    output: schemas/pass.json
+    on: { pass: sync }

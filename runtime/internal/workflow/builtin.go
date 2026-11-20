@@ -33,6 +33,28 @@ const (
 	PRUpdated = "updated"
 )
 
+// pull-request 種類の action（§5.6.2）。書かなければ publish（push して PR を作る・更新する）。
+const (
+	PRActionPublish = "publish"
+	PRActionSync    = "sync"
+	PRActionPush    = "push"
+	PRActionLand    = "land"
+)
+
+// PRAction は pull-request 種類のステップの action（書かなければ publish）。ほかの種類は空文字。
+func PRAction(s *Step) string {
+	if s == nil || s.Kind != "pull-request" {
+		return ""
+	}
+	if s.Action == "" {
+		return PRActionPublish
+	}
+	return s.Action
+}
+
+// IsLandStep は、宛先へ入れる段（pull-request の action: land）か。§6.2 の規則 7 は段の名前ではなくこの性質で決める。
+func IsLandStep(s *Step) bool { return PRAction(s) == PRActionLand }
+
 // withSpec は種類が受け取る with の 1 項目（名前・型・必須か）。
 type withSpec struct {
 	name     string
@@ -50,6 +72,19 @@ var builtinWith = map[string][]withSpec{
 		{name: "provided", typ: "string"}, // 呼び出し元が払い出した worktree（省略可。§5.4）
 	},
 	"workspace:" + ActionRelease: {},
+	"pull-request:" + PRActionSync: {
+		{name: "base", typ: "string", required: true},
+		{name: "expect_head", typ: "string"}, // 手元の HEAD がこの値であることを、最初に入ったときだけ確かめる（land の後の取り込みだけが渡す）
+	},
+	"pull-request:" + PRActionPush: {
+		{name: "pr", typ: "integer", required: true},
+		{name: "base", typ: "string", required: true},
+	},
+	"pull-request:" + PRActionLand: {
+		{name: "pr", typ: "integer", required: true},
+		{name: "base", typ: "string", required: true},
+		{name: "approved_ref", typ: "string", required: true}, // $edge で受ける（ゲートの解決からだけ届く。§6.2 の規則 7）
+	},
 	"pull-request": {
 		{name: "base", typ: "string", required: true},
 		{name: "closes", typ: "integer"}, // 本文に Closes #N を書く Issue。省略か 0 なら closing キーワードを書かない（#305）
@@ -68,6 +103,9 @@ func builtinKey(s *Step) string {
 	if s.Kind == "workspace" {
 		return "workspace:" + s.Action
 	}
+	if a := PRAction(s); a != "" && a != PRActionPublish {
+		return "pull-request:" + a
+	}
 	return s.Kind
 }
 
@@ -82,6 +120,14 @@ func builtinSchemaFile(s *Step) string {
 			return "workspace-release.json"
 		}
 	case "pull-request":
+		switch PRAction(s) {
+		case PRActionSync:
+			return "pull-request-sync.json"
+		case PRActionPush:
+			return "pull-request-push.json"
+		case PRActionLand:
+			return "pull-request-land.json"
+		}
 		return "pull-request.json"
 	}
 	return ""
@@ -114,6 +160,14 @@ func (v *validator) builtinKind(s *Step) {
 			return
 		default:
 			v.errf(s.Line, "steps.%s: action %q must be acquire or release", s.ID, s.Action)
+			return
+		}
+	}
+	if s.Kind == "pull-request" {
+		switch s.Action {
+		case "", PRActionPublish, PRActionSync, PRActionPush, PRActionLand:
+		default:
+			v.errf(s.Line, "steps.%s: action %q must be publish, sync, push or land for kind pull-request", s.ID, s.Action)
 			return
 		}
 	}

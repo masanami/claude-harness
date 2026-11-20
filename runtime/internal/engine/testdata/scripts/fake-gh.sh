@@ -6,8 +6,12 @@
 #   pr list               → pr-list（無ければ []）
 #   pr create             → create.code があればその終了コードで失敗。--body-file の中身を body.<n>.md に写し、PR の URL を出す。
 #                           以後の pr list が作った PR を返すよう pr-list を書く
-#   pr view <n>           → pr-missing があれば exit 1。state は pr-state（無ければ OPEN）
-#   pr checks             → checks.<n>（n 回目の呼び出し）、無ければ checks（無ければ []）
+#   pr view <n>           → pr-missing があれば exit 1。pr-view.<n 回目の呼び出し> か pr-view.json があればその中身（land の試験用に、
+#                           state・headRefOid・baseRefName・mergeCommit・isDraft を持つ JSON）。無ければ state は pr-state（無ければ OPEN）
+#   pr merge <n> ...      → merge.code があればその終了コードで失敗（標準エラーに merge.err の中身）。通ったら merge.then の中身を
+#                           pr-view.json に写し（入った後の PR を見せる）、merge.kill があれば呼び出し元（harness）を SIGKILL する
+#   pr checks             → checks.<n>（n 回目の呼び出し）、無ければ checks（無ければ []）。checks.none があれば、実物の gh が
+#                           チェック 0 件のときの振る舞い（標準出力は空、標準エラーに "no checks reported"、終了コード 1）
 #   run view <id>         → 失敗ログの代わりの 1 行（run-log-empty があれば何も出さない＝CI が実行されずに失敗した）
 set -u
 dir="$FAKE_GH_DIR"
@@ -37,9 +41,18 @@ case "$1 ${2:-}" in
     echo "https://github.com/o/r/pull/$num" ;;
   "pr view")
     [ -f "$dir/pr-missing" ] && { echo "fake gh: no pull requests found" >&2; exit 1; }
+    n=$(( $(cat "$dir/pr-view.count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$dir/pr-view.count"
+    if [ -f "$dir/pr-view.$n" ]; then cat "$dir/pr-view.$n"; exit 0; fi
+    if [ -f "$dir/pr-view.json" ]; then cat "$dir/pr-view.json"; exit 0; fi
     state=$(cat "$dir/pr-state" 2>/dev/null || echo OPEN)
     printf '{"number":%s,"url":"https://github.com/o/r/pull/%s","state":"%s","mergedAt":null,"baseRefName":"main"}\n' "$3" "$3" "$state" ;;
+  "pr merge")
+    if [ -f "$dir/merge.code" ]; then cat "$dir/merge.err" >&2 2>/dev/null; exit "$(cat "$dir/merge.code")"; fi
+    [ -f "$dir/merge.then" ] && cp "$dir/merge.then" "$dir/pr-view.json"
+    [ -f "$dir/merge.kill" ] && kill -9 "$PPID"
+    exit 0 ;;
   "pr checks")
+    if [ -f "$dir/checks.none" ]; then echo "no checks reported on the 'feature/x' branch" >&2; exit 1; fi
     n=$(( $(cat "$dir/checks.count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$dir/checks.count"
     if [ -f "$dir/checks.$n" ]; then cat "$dir/checks.$n"; else cat "$dir/checks" 2>/dev/null || echo '[]'; fi ;;
   "run view")
