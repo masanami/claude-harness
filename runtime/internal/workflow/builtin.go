@@ -204,7 +204,7 @@ func (v *validator) selectKind(s *Step) {
 		return
 	}
 	if r.Kind != RefSteps {
-		v.errf(s.Line, "steps.%s: value %s: select takes a step's output field ($steps.<step>.<field>); inputs, $edge and $gate.note have no enum to select on", s.ID, r.Raw)
+		v.errf(s.Line, "steps.%s: value %s: select takes a step's output field ($steps.<step>.<field>); inputs, $edge, $gate.note and $gate.approved_ref have no enum to select on", s.ID, r.Raw)
 		return
 	}
 	src := v.wf.Step(r.Step)

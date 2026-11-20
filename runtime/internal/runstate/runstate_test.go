@@ -82,6 +82,51 @@ func gated() []Event {
 
 const gatedWaiting = 7
 
+// approved は通した中身の識別（approved_ref）・ゲートの detail・ラウンドの契機の interrupted の印を含む列（#392）。
+func approved() []Event {
+	return []Event{
+		{Type: EvRunStarted, RunStarted: &RunStarted{
+			RunID: "r1", Workflow: WorkflowRecord{WorkflowRef: WorkflowRef{ID: "w", Schema: "harness.workflow/v1", Hash: "h", Path: "/w.yaml"}},
+			Inputs: map[string]json.RawMessage{}, Origin: "cli", Cwd: "/repo", PID: 123, Units: []string{"main"}, EntryStep: "publish",
+		}},
+		{Type: EvRoundStarted, RoundStarted: &RoundStarted{Unit: "main", Round: 1, Trigger: Trigger{Kind: "start"}}},
+		{Type: EvStepStarted, StepStarted: &StepStarted{Unit: "main", Step: "publish", Attempt: 1}},
+		{Type: EvStepFinished, StepFinished: &StepFinished{Unit: "main", Step: "publish", Attempt: 1, Outcome: "pass", ExitCode: intp(0)}},
+		{Type: EvTransition, Transition: &Transition{Unit: "main", From: "publish", Outcome: "pass", Action: "gate", To: "review"}},
+		{Type: EvGateOpened, GateOpened: &GateOpened{Unit: "main", Gate: "review", Type: "input", Decider: "any", RequestedAction: "land or respond", Inputs: []string{"land", "respond"}}},
+		{Type: EvRunnerStarted, RunnerStarted: &RunnerStarted{PID: 124, Command: "resume"}},
+		{Type: EvGateResolved, GateResolved: &GateResolved{Unit: "main", Gate: "review", Outcome: "land", ApprovedRef: "deadbeef", Actor: "resume", Channel: "non-tty"}},
+		{Type: EvTransition, Transition: &Transition{Unit: "main", From: "review", Outcome: "land", Action: "step", To: "land", Interrupted: "interrupted_after_land", Edge: map[string]json.RawMessage{"ref": json.RawMessage(`"deadbeef"`)}}},
+		{Type: EvRoundStarted, RoundStarted: &RoundStarted{Unit: "main", Round: 2, Trigger: Trigger{Kind: "gate", Gate: "review", Input: "land", Interrupted: "interrupted_after_land"}}},
+		{Type: EvStepStarted, StepStarted: &StepStarted{Unit: "main", Step: "land", Attempt: 1}},
+		{Type: EvStepFinished, StepFinished: &StepFinished{Unit: "main", Step: "land", Attempt: 1, Outcome: "behind", ExitCode: intp(0)}},
+		{Type: EvTransition, Transition: &Transition{Unit: "main", From: "land", Outcome: "behind", Action: "gate", To: "review", Detail: "the target moved"}},
+		{Type: EvGateOpened, GateOpened: &GateOpened{Unit: "main", Gate: "review", Type: "input", Decider: "any", RequestedAction: "land or respond", Inputs: []string{"land", "respond"}, Detail: "the target moved"}},
+	}
+}
+
+// approved_ref は解決の記録に、detail は開いたゲートに、interrupted の印はラウンドの契機に残る。
+func TestFoldApprovedRefDetailAndMark(t *testing.T) {
+	s, err := Fold(withSeq(approved()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := s.Unit("main")
+	if r := u.Gates[0].Resolution; r == nil || r.ApprovedRef != "deadbeef" {
+		t.Fatalf("resolution = %+v", r)
+	}
+	if u.Gate == nil || u.Gate.Detail != "the target moved" || u.Gates[0].Detail != "" {
+		t.Fatalf("gates = %s", mustJSON(t, u.Gates))
+	}
+	if u.Rounds[0].Trigger.Interrupted != "" || u.Rounds[1].Trigger.Interrupted != "interrupted_after_land" {
+		t.Fatalf("triggers = %s", mustJSON(t, u.Rounds))
+	}
+	// 空の値・無い印は JSON に出ない（知らない側が読み飛ばせる形のまま）。
+	if j := mustJSON(t, withSeq(gated())); strings.Contains(j, "approved_ref") || strings.Contains(j, `"interrupted":`) || strings.Contains(j, `"detail"`) {
+		t.Fatalf("a run that does not use them writes them: %s", j)
+	}
+}
+
 func TestFoldGatesAndBudget(t *testing.T) {
 	s, err := Fold(withSeq(gated()[:gatedWaiting]))
 	if err != nil {
@@ -172,7 +217,7 @@ func mustJSON(t *testing.T, v any) string {
 
 // イベント列 → events.jsonl → 状態 が、どの経路で作っても同じになる（往復）。
 func TestRoundTrip(t *testing.T) {
-	for name, evs := range map[string][]Event{"cancelled": sample(), "finished": finished(), "gated": gated()} {
+	for name, evs := range map[string][]Event{"cancelled": sample(), "finished": finished(), "gated": gated(), "approved": approved()} {
 		t.Run(name, func(t *testing.T) {
 			r := newRun(t)
 			var appended *State

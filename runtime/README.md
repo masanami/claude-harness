@@ -11,6 +11,7 @@
 - unit の累計予算と費用の fail-closed（§4.3）・ラウンド（ゲートとゲートの間。§4.2）
 - `run` / `status [--json]` / `runs [--json]` / `resume` / `approve` / `cancel`（§5.1）
 - runner が落ちて running のまま残ったステップ実行は、次の `status` / `resume` で `interrupted` になり、unit は組み込みの `interrupted` ゲートで止まる（§4.5。自動で再実行しない）。ステップの間で runner が落ちた unit も同じゲートで止まる（#347）
+- ゲートの解決に、通した中身の識別を添えられる（Issue #392。#388 の S3-2）: `resume`・`contract resume` の `--approved-ref SHA`（`approve` には無い）。`gate_resolved` に `approved_ref`（空なら出さない）として残り、input 型のゲートから出る `goto` の `with` で `$gate.approved_ref`（添えなければ空の文字列。`--note` は求めない）として次の段へ渡せる。ゲートへの遷移 `{ gate: <id>, detail: <参照> }` の `detail` は、開いたゲートの `waiting[].detail`・契約の `requested_action.text` と `summary` に出る。`goto` の `interrupted: { fail: <理由> }` を書いた遷移で始まるラウンドは、runner が居なくなったら `interrupted` ゲートで待たず、その理由で失敗で終わる（`status`・`resume` が記録する。runner を起動できなかった `contract resume` はその場で `failed` を返す）。いずれも使わなければ今までと同じ動き
 - 切り離した run（Issue #347。下の「切り離した run」）: `run --detach` と `contract start` は、run を進めるプロセスを新しいセッションへ切り離して起動し、すぐ戻る。再開も同じ形にできる（Issue #359）: `resume --detach`・`approve --detach`、`contract resume` は常に
 - 定義とスクリプトのバイナリへの埋め込みと展開（§6.5 の S1）・`setup`・`version`・版の照合（§7.3。N3 を含む）・リリース用の GitHub Actions（§6.4）
 - 衝突の予測だけを返す読み取り専用の口 `predict-conflicts`（§5.4.1。下の「衝突の予測」）
@@ -196,7 +197,7 @@ go run ./cmd/harness graph --run <run-id>            # run が使った定義の
 - `runner.lock` は解決の前に取る。別の runner が持っていれば、ゲートを解かずに終了コード 1 で止まる（従来の `resume` と同じ）。解決を記録した後にロックを放し、runner を起動する。解決の記録に入る `runner_started`（`command: resume`／`approve`）の PID はこのプロセスのもので、runner はそれを親から引き継ぐ（`command: detached`）。runner が引き継ぐまでの間はこのプロセスが生きているので、ほかの `resume`・runner は「進めている」として拒否される。
 - 解決の記録で run がゲートか終端に着いた（遷移先が終端・`interrupted` ゲートの `abort` など）ときは、進めるものが無いので runner を起動せず、従来どおりその状態と終了コード（0・1・3）を返す。
 - runner に渡せたら、その時点の状態（`status --json` と同じ JSON。多くは `running`、速い runner なら次のゲートで `waiting`）を標準出力に出し、終了コード 0 で戻る。その後は `harness status <run-id> [--json]` で読む。`contract resume` はその状態の契約 v1 の JSON を返す。
-- runner が引き継ぐ前に終わった・起動できなかった場合は終了コード 1 で、`runner.log` を見るよう標準エラーに出す。ゲートは解かれた後なので、run は runner の居ない `running` として残り、上の規則どおり次の `status`／`resume` で `interrupted` ゲートで待つ（`rerun` で続ける）。新しい状態は作らない。
+- runner が引き継ぐ前に終わった・起動できなかった場合は終了コード 1 で、`runner.log` を見るよう標準エラーに出す。ゲートは解かれた後なので、run は runner の居ない `running` として残り、上の規則どおり次の `status`／`resume` で `interrupted` ゲートで待つ（`rerun` で続ける）。新しい状態は作らない。ただし、解いた遷移が `interrupted: { fail: <理由> }` を持つ（そのラウンドに印がある）ときは、その場で印の理由の `failed` を記録して返す。
 
 ## 衝突の予測（`predict-conflicts`。§5.4.1・Issue #288）
 
@@ -311,7 +312,7 @@ steps:
     on: { yes: e2e, no: publish }     # enum の値がそのまま outcome（一致だけ。比較・組み合わせは無い。Q12）
 ```
 
-- 参照先のステップは、select へ至るどの経路でも先に成功していなければならない（validate が確かめる）。`$inputs`・`$edge`・`$gate.note` は選べない（enum が無い）。
+- 参照先のステップは、select へ至るどの経路でも先に成功していなければならない（validate が確かめる）。`$inputs`・`$edge`・`$gate.note`・`$gate.approved_ref` は選べない（enum が無い）。
 
 ## `workspace` 種類の書き方
 

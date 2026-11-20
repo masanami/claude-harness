@@ -229,6 +229,9 @@ func TestRouteDeclarationRejects(t *testing.T) {
 		{"unknown step", withRoutes("    zz.ok: [b]\n"), `overridable.routes.zz.ok: step "zz" does not exist`},
 		{"unknown outcome", withRoutes("    a.maybe: [b]\n"), `step "a" has no transition for outcome "maybe"`},
 		{"goto form", withRoutes("    c.bad: [a, b]\n"), "only a transition written as a plain step id can be declared overridable (this one is a goto transition)"},
+		// 遷移の detail は上書きできない: detail を持つ gate の遷移は、ステップ id だけの形ではないので宣言も付け替えもできない。
+		{"gate form with detail", strings.NewReplacer("decider: human", "decider: any", "bad: { gate: h }", "bad: { gate: h, detail: $steps.b.outcome }").Replace(withRoutes("    b.bad: [h, c]\n")),
+			"only a transition written as a plain step id can be declared overridable (this one is a gate transition)"},
 		{"key without outcome", withRoutes("    a: [b]\n"), `overridable.routes: key "a" must be <step id>.<outcome>`},
 		{"empty candidates", withRoutes("    a.ok: []\n"), "overridable.routes.a.ok must be a non-empty list of step ids"},
 		{"duplicate candidate", withRoutes("    a.ok: [b, b]\n"), `duplicate step id "b"`},

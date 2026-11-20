@@ -88,7 +88,7 @@ commands:
       show where a run is (the event log is the source of truth)
   runs [--json]
       list runs in the state directory
-  resume [--detach] [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
+  resume [--detach] [--unit KEY] [--input VALUE] [--note TEXT] [--approved-ref SHA] <run-id>
       resolve the gate a run waits at and advance it to the next gate or the end
       (gates decided by a human with an input are not resolvable here; use approve);
       with --detach, resolve the gate here (errors are reported at once), then advance the run in a detached process
@@ -605,6 +605,8 @@ type waitingView struct {
 	ResumeCommand   string   `json:"resume_command"`
 	// ContractKind はゲートの定義の contract_kind（§5.6.1・#372）。contract は status --json を読み直して写すので、ここに出す。
 	ContractKind string `json:"contract_kind,omitempty"`
+	// Detail はゲートを開いた遷移の detail（戻った理由などの文。開き直すたびに置き換わる。書かない遷移で開けば無い）。
+	Detail string `json:"detail,omitempty"`
 }
 
 func view(run *runstate.Run, st *runstate.State, torn *runstate.Torn) statusView {
@@ -637,7 +639,7 @@ func runnerAlive(st *runstate.State) *bool {
 // 切り離したければ人が --detach を足せる）。
 func waiting(runID string, u *runstate.Unit) waitingView {
 	g := u.Gate
-	w := waitingView{Unit: u.Key, Gate: g.Gate, Type: g.Type, Decider: g.Decider, RequestedAction: g.RequestedAction, Inputs: g.Inputs, RequiresTTY: g.RequiresTTY, ContractKind: g.ContractKind}
+	w := waitingView{Unit: u.Key, Gate: g.Gate, Type: g.Type, Decider: g.Decider, RequestedAction: g.RequestedAction, Inputs: g.Inputs, RequiresTTY: g.RequiresTTY, ContractKind: g.ContractKind, Detail: g.Detail}
 	switch {
 	case g.Type == workflow.GateObserve:
 		w.ResumeCommand = fmt.Sprintf("harness resume --detach %s --unit %s", runID, u.Key)
@@ -798,7 +800,7 @@ func cmdRuns(args []string, env Env) int {
 // 確認の入力を求める。どちらも解決の記録に actor（コマンド）と channel（tty / non-tty）を残す。
 func cmdResolve(actor string, args []string, env Env) int {
 	flags, pos, err := parseArgs(args, flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true},
-		flagSpec{name: "detach"})
+		flagSpec{name: "approved-ref", value: true}, flagSpec{name: "detach"})
 	if err != nil {
 		return usageErr(env, err)
 	}
@@ -808,6 +810,10 @@ func cmdResolve(actor string, args []string, env Env) int {
 	_, detached := flags["detach"]
 	_, hasInput := flags["input"]
 	_, hasNote := flags["note"]
+	_, hasApprovedRef := flags["approved-ref"]
+	if actor == "approve" && hasApprovedRef {
+		return usageErr(env, errors.New("approve takes no --approved-ref (it is passed with resume or contract resume)"))
+	}
 	if actor == "approve" && !hasInput {
 		return usageErr(env, errors.New("approve needs --input"))
 	}
@@ -871,7 +877,7 @@ func cmdResolve(actor string, args []string, env Env) int {
 	tools(eng, env)
 	req := engine.Resolution{
 		Unit: first(flags, "unit"), Input: first(flags, "input"), HasInput: hasInput, Note: first(flags, "note"), HasNote: hasNote,
-		Actor: actor, User: env.Getenv("USER"), Channel: channel,
+		ApprovedRef: first(flags, "approved-ref"), Actor: actor, User: env.Getenv("USER"), Channel: channel,
 	}
 	u, err := eng.CheckResolution(st, req)
 	if err != nil {
@@ -937,6 +943,13 @@ func resolveDetached(env Env, eng *engine.Engine, ctx context.Context, req engin
 	}
 	if _, err := detach(env, run, cwd); err != nil {
 		fmt.Fprintf(env.Stderr, "harness: run %s: %v\n", run.ID, err)
+		// 印（interrupted）のあるラウンドは、runner の居ない running のまま返さず、その場で失敗で終える（記録上の runner は
+		// このプロセス自身）。印の無いラウンドは AbandonMarked が何も記録せず、そのときの状態（running）を返して、
+		// 次の status・resume に任せる。
+		if cur, aerr := engine.AbandonMarked(run); aerr == nil {
+			writeJSON(env.Stdout, view(run, cur, nil))
+			return ExitFailed
+		}
 		if cur, _, lerr := run.Load(); lerr == nil {
 			writeJSON(env.Stdout, view(run, cur, nil))
 		}

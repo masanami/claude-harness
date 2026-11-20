@@ -85,7 +85,7 @@ const contractUsage = `usage: harness contract <start|status|resume|cancel> [opt
 
   start [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [--input NAME=VALUE]... <workflow>
   status [--accept-kind KIND]... <run-id>
-  resume [--accept-kind KIND]... [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
+  resume [--accept-kind KIND]... [--unit KEY] [--input VALUE] [--note TEXT] [--approved-ref SHA] <run-id>
   cancel <run-id>
 
 start always returns at once: the run is advanced by a detached process (as run --detach), so start prints
@@ -115,7 +115,7 @@ func cmdContract(args []string, env Env) int {
 	case "start":
 		return contractStart(rest, env)
 	case "status", "resume":
-		acc, rest, err := acceptKinds(rest, "unit", "input", "note")
+		acc, rest, err := acceptKinds(rest, "unit", "input", "note", "approved-ref")
 		if err != nil {
 			return contractOut(env, failedDoc(nil, err.Error()))
 		}
@@ -125,7 +125,7 @@ func cmdContract(args []string, env Env) int {
 		// 常に切り離して再開する（resume --detach。#359）: ゲートの解決はこのプロセスで行い、その後の進行は runner に
 		// 渡してすぐ戻る。--detach は契約の引数ではないので、利用者が渡すと usage の誤りになる。
 		return contractByRun(rest, env, acc, func(a []string, e Env) int { return cmdResolve("resume", append([]string{"--detach"}, a...), e) }, resumeBlock,
-			flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true})
+			flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true}, flagSpec{name: "approved-ref", value: true})
 	case "cancel":
 		return contractByRun(rest, env, accepted{}, cmdCancel, nil)
 	case "help", "-h", "--help":
@@ -394,6 +394,9 @@ func summarize(v statusView, unknownCost int, note string) string {
 	if note != "" {
 		s += "; " + note
 	}
+	if st.Status == runstate.StatusWaiting && len(v.Waiting) > 0 && v.Waiting[0].Detail != "" {
+		s += "; detail: " + v.Waiting[0].Detail
+	}
 	return s
 }
 
@@ -468,14 +471,19 @@ func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 		decider = contractHuman
 	}
 	where := fmt.Sprintf("gate %s, unit %s", w.Gate, w.Unit)
+	lead := w.RequestedAction
+	if w.Detail != "" {
+		// 開き直した理由（gate_opened.detail）を、定義の固定の文（先頭の文）の後ろに足す。
+		lead += " Detail: " + w.Detail
+	}
 	switch {
 	case w.Type == workflow.GateObserve:
 		return &requestedAction{Kind: actionObserve, Decider: decider, Text: fmt.Sprintf(
-			"%s [%s]. Then resume re-checks the state: harness contract resume %s --unit %s", w.RequestedAction, where, runID, w.Unit)}
+			"%s [%s]. Then resume re-checks the state: harness contract resume %s --unit %s", lead, where, runID, w.Unit)}
 	case w.RequiresTTY:
 		return &requestedAction{Kind: actionApprove, Decider: contractHuman, ResolvableBy: resolvableTerminal, Options: options(w.Inputs), Text: fmt.Sprintf(
 			"%s [%s; choices: %s]. A person resolves it from a terminal: harness approve %s --unit %s --input <%s> [--note <text>]",
-			w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
+			lead, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
 	}
 	kind := actionAnswer
 	if acc.review && w.ContractKind == workflow.ContractKindReview {
@@ -483,7 +491,7 @@ func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 	}
 	return &requestedAction{Kind: kind, Decider: decider, Options: options(w.Inputs), Text: fmt.Sprintf(
 		"%s [%s; choices: %s]. Answer with: harness contract resume %s --unit %s --input <%s> [--note <text>]",
-		w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
+		lead, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
 }
 
 // options は requested_action.options の値: ゲートの inputs（text の choices と --input の照合に使う一覧）の写し。
