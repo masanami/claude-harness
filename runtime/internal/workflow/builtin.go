@@ -33,6 +33,33 @@ const (
 	PRUpdated = "updated"
 )
 
+// pull-request 種類の action（§5.6.2）。書かなければ publish（push して PR を作る・更新する）。
+const (
+	PRActionPublish = "publish"
+	PRActionSync    = "sync"
+	PRActionPush    = "push"
+	PRActionLand    = "land"
+	PRActionAdopt   = "adopt"
+)
+
+// WorkspaceModeDetached は workspace の acquire の with.mode に書ける唯一の値。作業ツリーを、ブランチを checkout しない形
+// （detached）で作る（docs/harness-runtime-design.md §5.6.2。上げる PR のブランチが別の作業ツリーで checkout されたままでも進める）。
+const WorkspaceModeDetached = "detached"
+
+// PRAction は pull-request 種類のステップの action（書かなければ publish）。ほかの種類は空文字。
+func PRAction(s *Step) string {
+	if s == nil || s.Kind != "pull-request" {
+		return ""
+	}
+	if s.Action == "" {
+		return PRActionPublish
+	}
+	return s.Action
+}
+
+// IsLandStep は、宛先へ入れる段（pull-request の action: land）か。§6.2 の規則 7 は段の名前ではなくこの性質で決める。
+func IsLandStep(s *Step) bool { return PRAction(s) == PRActionLand }
+
 // withSpec は種類が受け取る with の 1 項目（名前・型・必須か）。
 type withSpec struct {
 	name     string
@@ -43,12 +70,30 @@ type withSpec struct {
 // builtinWith は Go が振る舞いを持つ種類の with の許可リスト。ここに無い名前は拒否する（渡したのに使われない値を作らない）。
 var builtinWith = map[string][]withSpec{
 	"workspace:" + ActionAcquire: {
-		{name: "issue", typ: "integer", required: true},
+		{name: "issue", typ: "integer"}, // 取り込み元の Issue（省略か 0 なら無い）。key か issue のどちらも無ければ step_error（#388 S3-1）
+		{name: "key", typ: "string"},    // 名前の鍵（issue-<n>・task-<n>・pr-<n>）。あれば key を、無ければ issue を worktree-setup に渡す
 		{name: "branch", typ: "string", required: true},
 		{name: "base", typ: "string", required: true},
 		{name: "provided", typ: "string"}, // 呼び出し元が払い出した worktree（省略可。§5.4）
+		{name: "mode", typ: "string"},     // リテラルの detached だけ。provided とは一緒に使えない（§5.6.2）
 	},
 	"workspace:" + ActionRelease: {},
+	"pull-request:" + PRActionSync: {
+		{name: "base", typ: "string", required: true},
+		{name: "expect_head", typ: "string"}, // 手元の HEAD がこの値であることを、最初に入ったときだけ確かめる（land の後の取り込みだけが渡す）
+	},
+	"pull-request:" + PRActionPush: {
+		{name: "pr", typ: "integer", required: true},
+		{name: "base", typ: "string", required: true},
+	},
+	"pull-request:" + PRActionLand: {
+		{name: "pr", typ: "integer", required: true},
+		{name: "base", typ: "string", required: true},
+		{name: "approved_ref", typ: "string", required: true}, // $edge で受ける（ゲートの解決からだけ届く。§6.2 の規則 7）
+	},
+	"pull-request:" + PRActionAdopt: {
+		{name: "ref", typ: "string", required: true}, // PR の URL（https://<host>/<owner>/<repo>/pull/<番号>）
+	},
 	"pull-request": {
 		{name: "base", typ: "string", required: true},
 		{name: "closes", typ: "integer"}, // 本文に Closes #N を書く Issue。省略か 0 なら closing キーワードを書かない（#305）
@@ -67,6 +112,9 @@ func builtinKey(s *Step) string {
 	if s.Kind == "workspace" {
 		return "workspace:" + s.Action
 	}
+	if a := PRAction(s); a != "" && a != PRActionPublish {
+		return "pull-request:" + a
+	}
 	return s.Kind
 }
 
@@ -81,6 +129,16 @@ func builtinSchemaFile(s *Step) string {
 			return "workspace-release.json"
 		}
 	case "pull-request":
+		switch PRAction(s) {
+		case PRActionSync:
+			return "pull-request-sync.json"
+		case PRActionPush:
+			return "pull-request-push.json"
+		case PRActionLand:
+			return "pull-request-land.json"
+		case PRActionAdopt:
+			return "pull-request-adopt.json"
+		}
 		return "pull-request.json"
 	}
 	return ""
@@ -116,10 +174,23 @@ func (v *validator) builtinKind(s *Step) {
 			return
 		}
 	}
+	if s.Kind == "pull-request" {
+		switch s.Action {
+		case "", PRActionPublish, PRActionSync, PRActionPush, PRActionLand, PRActionAdopt:
+		default:
+			v.errf(s.Line, "steps.%s: action %q must be publish, sync, push, land or adopt for kind pull-request", s.ID, s.Action)
+			return
+		}
+	}
 	specs := builtinWith[builtinKey(s)]
 	given := map[string]bool{}
 	for _, b := range s.With {
 		given[b.Name] = true
+		if s.Kind == "workspace" && s.Action == ActionAcquire && b.Name == "mode" {
+			if lit, ok := b.Value.Literal.(string); b.Value.Ref != nil || !ok || lit != WorkspaceModeDetached {
+				v.errf(b.Line, "steps.%s.with.mode: must be the literal %q (the only mode)", s.ID, WorkspaceModeDetached)
+			}
+		}
 		found := false
 		for _, sp := range specs {
 			if sp.name == b.Name {
@@ -138,6 +209,9 @@ func (v *validator) builtinKind(s *Step) {
 		if sp.required && !given[sp.name] {
 			v.errf(s.Line, "steps.%s.with: %s is required for kind %s", s.ID, sp.name, builtinKey(s))
 		}
+	}
+	if s.Kind == "workspace" && s.Action == ActionAcquire && given["mode"] && given["provided"] {
+		v.errf(s.Line, "steps.%s.with: mode: %s cannot be used together with provided (a worktree the caller provided is used as it is)", s.ID, WorkspaceModeDetached)
 	}
 	sch, err := loadBuiltinSchema(builtinSchemaFile(s))
 	if err != nil {
@@ -203,7 +277,7 @@ func (v *validator) selectKind(s *Step) {
 		return
 	}
 	if r.Kind != RefSteps {
-		v.errf(s.Line, "steps.%s: value %s: select takes a step's output field ($steps.<step>.<field>); inputs, $edge and $gate.note have no enum to select on", s.ID, r.Raw)
+		v.errf(s.Line, "steps.%s: value %s: select takes a step's output field ($steps.<step>.<field>); inputs, $edge, $gate.note and $gate.approved_ref have no enum to select on", s.ID, r.Raw)
 		return
 	}
 	src := v.wf.Step(r.Step)

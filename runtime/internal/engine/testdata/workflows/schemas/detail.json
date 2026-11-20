@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["outcome", "detail"],
+  "additionalProperties": false,
+  "properties": {
+    "outcome": { "type": "string", "enum": ["back", "end"] },
+    "detail": { "type": "string" }
+  }
+}

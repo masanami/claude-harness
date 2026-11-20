@@ -1,0 +1,162 @@
+# すでにある PR を、既定ブランチの最新を取り込んで検証し、land を受けたら既定ブランチへ入れる依頼（docs/harness-runtime-design.md §5.6.2 の
+# 「PR を受けて既定ブランチへ上げる依頼: reflect」・#388 の S3-6）。
+#
+#   harness run reflect --input artifact_ref=https://<host>/<owner>/<repo>/pull/<番号> [--input challenge_id=<ID>]
+#
+# 段は adopt → workspace → sync（→ sync-resolve）→ quality → push → review（gate）→ land（→ land-sync → land-sync-resolve → land-push → review）
+# → cleanup。sync 以降は ticket と同じ中身で、pr・base は adopt の出力を読む。ticket との違い:
+#   - 最初の sync に expect_head（adopt が受けた PR の先頭）を渡す。使い回した作業ツリーの、push していない手元のコミットを一緒に出さない（local_head_mismatch）
+#   - 作業ツリーは detached で作る（上げる PR のブランチが、作った側の作業ツリーで checkout されたままでもよい）。push は HEAD:refs/heads/<ブランチ>
+#   - 用意の検証（quality）は検査だけ。落ちたら fix へ送らず失敗で終える（通した中身に関係のない変更を足さない）
+#   - review は land だけを受ける（respond・ready は受けない）。レビューの指摘への対応はこの依頼の外
+#   - facts を宣言しない（作業の段が無く、返す値が無い）
+#   - release_on: 取り消し・失敗で終わるとき、この run が作った作業ツリーを、終わりを書く前に片付ける。既定ブランチへは入れず、PR は閉じない
+schema: harness.workflow/v1
+id: reflect
+description: すでにある PR を、既定ブランチの最新を取り込んで検証し、land を受けたら既定ブランチへ入れる
+inputs:
+  artifact_ref: { type: string, required: true }   # PR の URL（統合ブランチの名前を受ける道はまだ無い。adopt が unsupported_ref で止める）
+  challenge_id: { type: string }                   # 受けるだけで使わない
+limits:
+  budget_usd: 10
+  sync_resolve: 3                                  # 取り込みの衝突を LLM に直させる回数（この unit の累計。sync と land-sync の両方で数える）
+release_on: [cancelled, failed]                    # 取り消し・失敗で終わるとき、自分が作った作業ツリーを片付ける
+overridable:
+  routes:
+    sync.current: [quality, push]                  # push は quality の省略
+    sync.synced:  [quality, push]
+  skips: [quality]
+
+steps:
+  adopt:
+    kind: pull-request
+    action: adopt
+    with: { ref: $inputs.artifact_ref }
+    on:
+      adopted: workspace
+      unsupported_ref:  { fail: integration_reflect_unsupported }   # PR の URL でない（ブランチの名前の入力は、まだ受けない）
+      not_open:         { fail: pr_not_open }
+      not_default_base: { fail: pr_not_default_base }
+      fork:             { fail: pr_from_fork }
+      draft:            { fail: pr_draft }
+      other_repo:       { fail: pr_other_repo }
+
+  workspace:
+    kind: workspace
+    action: acquire
+    with: { key: $steps.adopt.key, branch: $steps.adopt.branch, base: $steps.adopt.base, mode: detached }
+    on:
+      created:  sync
+      reused:   sync
+      provided: sync                                # 到達しない: reflect は run の入力に worktree を持たず、provided は入力の worktree を受けたときだけ返る
+      conflict: { fail: worktree_conflict }         # 別の run の所有の印がある detached の作業ツリー・別ブランチの作業ツリー・未登録ディレクトリ
+
+  sync:                                             # ticket の最初の sync と違い expect_head を渡す（PR が正本。使い回した作業ツリーの、push していない手元のコミットを、受けた PR へ一緒に出さない）
+    kind: pull-request
+    action: sync
+    with: { base: $steps.adopt.base, expect_head: $steps.adopt.head_sha }
+    on:
+      current: quality
+      synced:  quality
+      conflict: { goto: sync-resolve, limit: sync_resolve, exhausted: { fail: sync_conflict } }
+      unresolved:     { fail: sync_conflict }
+      not_merge_only: { fail: sync_not_merge_only }
+      diverged:       { fail: branch_diverged }
+      head_moved:     { fail: local_head_mismatch } # 手元の HEAD が受けた PR の先頭と違う（push していない手元のコミット）。push せずに終える
+      unavailable:    { fail: remote_unavailable }  # 戻るレビュー待ちがまだ無い
+
+  sync-resolve:
+    kind: llm
+    prompt: prompts/sync-resolve.md
+    session: new                                    # 引き継ぐ実装のセッションが無い
+    with: { base: $steps.adopt.base }
+    output: schemas/sync-resolve-result.json
+    budget_usd: 4
+    timeout: 30m
+    on: { resolved: sync, failure: { fail: sync_conflict } }
+
+  quality:                                          # ticket と同じ command。検査だけ（fix の段を持たない）
+    kind: command
+    run: quality-gate
+    with: { base: $steps.adopt.base }
+    output: schemas/quality-gate.json
+    outcome_field: result
+    timeout: 30m
+    on:
+      pass: push
+      fail: { fail: quality_gate_red }
+      undeclared: { fail: quality_gate_undeclared }
+
+  push:                                             # 取り込んだコミットを push する（強制しない）。宛先へは入れず、先頭を出してレビュー待ちへ
+    kind: pull-request
+    action: push
+    with: { pr: $steps.adopt.pr_number, base: $steps.adopt.base }
+    on:
+      pushed:    { gate: review, detail: $steps.push.detail }
+      unchanged: { gate: review, detail: $steps.push.detail }
+      rejected:    { fail: push_rejected }
+      unavailable: { fail: push_failed }
+
+  review:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: 既定ブランチへ上げる用意ができた。この中身を入れてよければ land（--approved-ref に通した先頭のコミット）。やめるなら、この run を cancel
+    inputs: [land]
+    contract_kind: review
+    refresh: pr-head                                # 待っている間に外から push されても、status が PR の先頭を取り直す
+    on:
+      land: { goto: land, with: { approved_ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }
+
+  land:                                             # ticket の land と同じ
+    kind: pull-request
+    action: land
+    with: { pr: $steps.adopt.pr_number, base: $steps.adopt.base, approved_ref: $edge.approved_ref }
+    on:
+      landed:   cleanup
+      behind:   land-sync
+      mismatch: { gate: review, detail: $steps.land.detail }
+      blocked:  { gate: review, detail: $steps.land.detail }
+      closed:       { fail: pr_closed }
+      merged_other: { fail: merged_unapproved }
+      base_changed: { fail: pr_base_changed }
+      not_confirmed: { fail: merge_not_confirmed }
+
+  land-sync:
+    kind: pull-request
+    action: sync
+    with: { base: $steps.adopt.base, expect_head: $steps.land.head_sha }
+    on:
+      current: land-push
+      synced:  land-push
+      conflict: { goto: land-sync-resolve, limit: sync_resolve, exhausted: { fail: sync_conflict } }
+      unresolved:     { fail: sync_conflict }
+      not_merge_only: { fail: sync_not_merge_only }
+      diverged:       { fail: branch_diverged }
+      head_moved:     { fail: local_head_mismatch }
+      unavailable:    { gate: review, detail: $steps.land-sync.detail }   # 何も変えていないのでレビュー待ちへ戻す
+
+  land-sync-resolve:
+    kind: llm
+    prompt: prompts/sync-resolve.md
+    session: new
+    with: { base: $steps.adopt.base }
+    output: schemas/sync-resolve-result.json
+    budget_usd: 4
+    timeout: 30m
+    on: { resolved: land-sync, failure: { fail: sync_conflict } }
+
+  land-push:
+    kind: pull-request
+    action: push
+    with: { pr: $steps.adopt.pr_number, base: $steps.adopt.base }
+    on:
+      pushed:    { gate: review, detail: $steps.land-push.detail }
+      unchanged: { gate: review, detail: $steps.land-push.detail }
+      rejected:    { fail: push_rejected }
+      unavailable: { fail: push_failed }
+
+  cleanup:
+    kind: workspace
+    action: release                                 # 自分が作った worktree だけを消す。入れた後の origin の作業ブランチは消さない（リポジトリの設定に任せる）
+    on: { released: { done: landed }, kept: { done: landed }, dirty: { done: landed_worktree_dirty } }

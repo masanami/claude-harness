@@ -600,3 +600,39 @@ func TestBehaviorKindsMatchTheSchema(t *testing.T) {
 		}
 	}
 }
+
+// acquire は、key があれば key を、無ければ issue（issue-<数字>）を worktree-setup の第 1 引数に渡す（#388 S3-1）。
+func TestWorkspaceAcquirePassesTheKeyOrTheIssue(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		inputs map[string]any
+		want   string
+	}{
+		{"key", map[string]any{"key": "task-12"}, "task-12 feature/task-12-x main"},
+		{"issue", map[string]any{"issue": 7}, "7 feature/task-12-x main"},
+		{"key wins over issue", map[string]any{"key": "task-12", "issue": 7}, "task-12 feature/task-12-x main"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tl := newTools(t)
+			st, _ := tl.start("ws-key", c.inputs)
+			if st.Status != runstate.StatusSucceeded || st.Reason != "released" {
+				t.Fatalf("status %s reason %s: %s", st.Status, st.Reason, steps(st))
+			}
+			if got := strings.TrimSpace(tl.read(tl.wt, "setup.calls")); got != c.want {
+				t.Errorf("worktree-setup args = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// key も issue も無ければ、worktree-setup を呼ばずに step_error。
+func TestWorkspaceAcquireNeedsAKeyOrAnIssue(t *testing.T) {
+	tl := newTools(t)
+	st, _ := tl.start("ws-key", nil)
+	if st.Status != runstate.StatusFailed || st.Reason != "step_error" {
+		t.Fatalf("status %s reason %s: %s", st.Status, st.Reason, steps(st))
+	}
+	if got := tl.read(tl.wt, "setup.calls"); got != "" {
+		t.Errorf("worktree-setup was called: %q", got)
+	}
+}

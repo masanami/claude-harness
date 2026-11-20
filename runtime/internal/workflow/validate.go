@@ -81,6 +81,7 @@ func validate(wf *Workflow, opts Options, overridden bool, skipped []string) Pro
 		v.errf(wf.Steps[0].Line, "steps.%s: the first step must not be a gate (a gate is opened by a transition into it)", wf.Steps[0].ID)
 	}
 	v.budget()
+	v.factDecls()
 	for _, s := range wf.Steps {
 		v.onTable(s)
 	}
@@ -97,6 +98,7 @@ func validate(wf *Workflow, opts Options, overridden bool, skipped []string) Pro
 	}
 	g := buildGraph(wf)
 	v.references(g)
+	v.landRules(g)
 	v.sessions(g)
 	v.reachability(g)
 	v.uncountedCycles()
@@ -113,6 +115,33 @@ func (v *validator) stepKind(s *Step) {
 		v.gate(s)
 	case "workspace", "pull-request":
 		v.builtinKind(s)
+	}
+}
+
+// factDecls は最上位の facts の参照を検査する: 段が在ること、その欄が段の出力スキーマにある文字列であること。
+// 値は「並べた段のうち最後に成功し、その欄を返した段」なので、段が必ず通る経路上に在る必要は無い（検査しない）。
+func (v *validator) factDecls() {
+	for _, d := range v.wf.Facts {
+		for _, r := range d.Refs {
+			what := fmt.Sprintf("facts.%s: %s", d.Name, r.Raw)
+			src := v.wf.Step(r.Step)
+			if src == nil {
+				v.errf(d.Line, "%s refers to a step that does not exist", what)
+				continue
+			}
+			if src.OutputSchema == nil {
+				v.errf(d.Line, "%s: step %q has no output schema", what, src.ID)
+				continue
+			}
+			t, err := src.OutputSchema.FieldType(r.Path)
+			if err != nil {
+				v.errf(d.Line, "%s: %v", what, err)
+				continue
+			}
+			if t == nil || t.Name != "string" {
+				v.errf(d.Line, "%s is %s; a fact value must be a string field", what, t)
+			}
+		}
 	}
 }
 
@@ -207,6 +236,13 @@ func (v *validator) gate(s *Step) {
 		v.errf(s.Line, "steps.%s: contract_kind %q must be %s (the only kind a gate can declare for the connection contract)", s.ID, s.ContractKind, ContractKindReview)
 	case s.GateType != GateInput || RequiresTTY(s.GateType, s.Decider):
 		v.errf(s.Line, "steps.%s: contract_kind %s is only valid for type input with decider parent or any (a gate the caller answers with resume --input)", s.ID, s.ContractKind)
+	}
+	switch {
+	case s.Refresh == "":
+	case s.Refresh != RefreshPRHead:
+		v.errf(s.Line, "steps.%s: refresh %q must be %s (the only value; it re-reads the PR head while the gate waits)", s.ID, s.Refresh, RefreshPRHead)
+	case s.GateType != GateInput:
+		v.errf(s.Line, "steps.%s: refresh is only valid for type input", s.ID)
 	}
 	switch s.GateType {
 	case GateInput:
@@ -461,6 +497,15 @@ func (v *validator) references(g *graph) {
 				v.acceptable(s, b.Name, t, b.Line, what)
 			}
 		}
+		for _, b := range s.AddDirs {
+			what := fmt.Sprintf("steps.%s.%s", s.ID, b.Name)
+			if t := v.valueType(g, b, what, s.ID, "", false); t != nil && t.Name != "string" {
+				v.errf(b.Line, "%s: must be a string (a folder path), got %s", what, t)
+			}
+			if b.Value.Ref != nil && b.Value.Ref.Kind == RefEdge {
+				edgeNames[b.Value.Ref.Name] = true
+			}
+		}
 		if s.Kind == "select" && s.Value != nil && s.Value.Kind == RefSteps && s.Value.Step != s.ID {
 			// 選ぶ値は、その経路で必ず成功しているステップの出力でなければならない（値の無い経路を作らない）。
 			if !g.guaranteed(s.Value.Step, s.ID) {
@@ -485,8 +530,45 @@ func (v *validator) transitionRefs(g *graph, s *Step, outcome string, t *Transit
 			}
 		}
 	}
+	v.transitionMarks(g, s, outcome, t)
 	if t.Exhausted != nil {
 		v.transitionRefs(g, s, outcome, t.Exhausted)
+	}
+}
+
+// transitionMarks は遷移の detail と interrupted を検査する。
+//   - detail は gate の遷移だけが書ける。参照は $steps（遷移元のステップか、必ず成功している先行のステップ）か必須の
+//     $inputs の、string の値（遷移で運ぶ値を持たない $edge・$gate は書けない）。
+//   - interrupted は input 型のゲートから出る goto だけが書ける。$gate.approved_ref を渡す遷移は interrupted を書かなければならない。
+func (v *validator) transitionMarks(g *graph, s *Step, outcome string, t *Transition) {
+	what := fmt.Sprintf("steps.%s.on.%s", s.ID, outcome)
+	if t.Detail != nil {
+		r := t.Detail
+		b := &Binding{Name: "detail", Value: Value{Ref: r}, Line: t.Line}
+		switch r.Kind {
+		case RefInputs, RefSteps:
+			if typ := v.valueType(g, b, what+".detail", s.ID, outcome, true); typ != nil && typ.Name != "string" {
+				v.errf(t.Line, "%s.detail: %s is %s; detail is a sentence (string)", what, r.Raw, typ)
+			}
+			if r.Kind == RefInputs {
+				if in := v.wf.Input(r.Name); in != nil && !in.Required {
+					v.errf(t.Line, "%s.detail: %s is an optional input; only required inputs can be passed on a transition", what, r.Raw)
+				}
+			}
+		default:
+			v.errf(t.Line, "%s.detail: %s cannot be used here; detail is one reference to $steps.<step>.<field> or a required $inputs.<name>", what, r.Raw)
+		}
+	}
+	inputGate := s.Kind == "gate" && s.GateType == GateInput
+	if t.Interrupted != "" && !(t.Kind == TGoto && inputGate) {
+		v.errf(t.Line, "%s.interrupted is only valid on a goto leaving an input gate (step %q is not an input gate with a goto here)", what, s.ID)
+	}
+	if t.Kind == TGoto && t.Interrupted == "" {
+		for _, b := range t.With {
+			if r := b.Value.Ref; r != nil && r.Kind == RefGate && r.Name == GateApprovedRef {
+				v.errf(b.Line, "%s.with.%s: a transition that passes $gate.approved_ref must write interrupted: { fail: <reason> } (a run whose runner is gone after it must end as failed, not wait at the interrupted gate)", what, b.Name)
+			}
+		}
 	}
 }
 
@@ -541,13 +623,13 @@ func (v *validator) valueType(g *graph, b *Binding, what, stepID, outcome string
 		return v.edgeType(g, stepID, r.Name, b.Line, what)
 	case RefGate:
 		if !inTransition {
-			v.errf(b.Line, "%s: $gate.note is only valid in the with of a transition leaving an input gate (see §3.3)", what)
+			v.errf(b.Line, "%s: %s is only valid in the with of a transition leaving an input gate (see §3.3)", what, r.Raw)
 			return nil
 		}
 		if s := v.wf.Step(stepID); s.Kind == "gate" && s.GateType == GateInput {
 			return &Type{Name: "string"}
 		}
-		v.errf(b.Line, "%s: $gate.note is only valid in the with of a transition leaving an input gate; step %q is not an input gate", what, stepID)
+		v.errf(b.Line, "%s: %s is only valid in the with of a transition leaving an input gate; step %q is not an input gate", what, r.Raw, stepID)
 		return nil
 	}
 	return nil

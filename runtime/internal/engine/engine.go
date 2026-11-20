@@ -79,6 +79,15 @@ func Start(p StartParams) (*Engine, error) {
 	if len(limits) == 0 {
 		limits = nil
 	}
+	var facts map[string][]runstate.FactSource
+	for _, d := range p.WF.Facts {
+		if facts == nil {
+			facts = map[string][]runstate.FactSource{}
+		}
+		for _, r := range d.Refs {
+			facts[d.Name] = append(facts[d.Name], runstate.FactSource{Step: r.Step, Field: r.Path})
+		}
+	}
 	overrides, err := copyOverrides(run, p.WF)
 	if err != nil {
 		return nil, err
@@ -92,6 +101,8 @@ func Start(p StartParams) (*Engine, error) {
 			},
 			Inputs:      p.Inputs,
 			Limits:      limits,
+			Facts:       facts,
+			ReleaseOn:   p.WF.ReleaseOn,
 			Origin:      p.Origin,
 			Cwd:         p.Cwd,
 			PID:         os.Getpid(),
@@ -191,7 +202,8 @@ func (e *Engine) Loop(ctx context.Context) (*runstate.State, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := e.Run.Append(evs...); err != nil {
+		// run の終わり（失敗）を含むときは、release_on に従って作業ツリーを片付けてから終わりを書く（AppendEnding）。
+		if _, err := AppendEnding(e.Run, func(*runstate.State) ([]runstate.Event, error) { return evs, nil }); err != nil {
 			return nil, err
 		}
 	}
@@ -217,7 +229,9 @@ func (e *Engine) cancel(ctx context.Context) (*runstate.State, error) {
 	} else if ctx.Err() != nil {
 		actor, channel = "signal", "signal"
 	}
-	return e.Run.Append(CancelEvents(st, actor, channel, "stopped by the runner")...)
+	return AppendEnding(e.Run, func(cur *runstate.State) ([]runstate.Event, error) {
+		return CancelEvents(cur, actor, channel, "stopped by the runner"), nil
+	})
 }
 
 // CancelEvents は停止の記録に要るイベント（実行中のステップの打ち切り＋run_cancelled）を作る。
@@ -326,7 +340,7 @@ func (e *Engine) transitionEvents(st *runstate.State, u *runstate.Unit, step *wo
 		if target == nil || target.Kind != "gate" {
 			return nil, fmt.Errorf("gate %q is not a gate step of workflow %s", tr.To, e.WF.ID)
 		}
-		evs = append(evs, gateOpenedEvent(u.Key, target))
+		evs = append(evs, gateOpenedEvent(u.Key, target, tr.Detail))
 	case "fail":
 		evs = append(evs, runstate.Event{Type: runstate.EvRunFinished, RunFinished: &runstate.RunFinished{Status: runstate.StatusFailed, Reason: tr.Reason}})
 	case "done":
@@ -341,6 +355,8 @@ type done struct {
 	outputs  map[string]json.RawMessage
 	outcomes map[string]string
 	note     *string
+	// approvedRef は resume の --approved-ref（空は「無い」）。$gate.approved_ref は、添えられていなければ空の文字列に解決する。
+	approvedRef string
 }
 
 func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.Step, t *workflow.Transition, cur done, tr *runstate.Transition) error {
@@ -371,6 +387,7 @@ func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.St
 			tr.Limit = t.Limit
 		}
 		tr.Action, tr.To = "step", t.Target
+		tr.Interrupted = t.Interrupted
 		if len(t.With) > 0 {
 			if t.NoteOptional && cur.note == nil {
 				// note: optional（#377）: --note の無い resume では $gate.note を空文字にする（前の resume の添え書きは持ち越さない）。
@@ -382,7 +399,7 @@ func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.St
 				v, err := value(st, cur, nil, b.Value)
 				if err != nil {
 					// 検証済みの参照が解決できないのは出力の中身の問題（null 等）。run を失敗で止める。
-					tr.Action, tr.To, tr.Limit, tr.Edge = "fail", "", "", nil
+					tr.Action, tr.To, tr.Limit, tr.Edge, tr.Interrupted = "fail", "", "", nil, ""
 					tr.Reason = "reference_unresolved"
 					return nil
 				}
@@ -391,6 +408,19 @@ func (e *Engine) resolve(st *runstate.State, u *runstate.Unit, step *workflow.St
 		}
 	case workflow.TGate:
 		tr.Action, tr.To = "gate", t.Target
+		if t.Detail != nil {
+			v, err := value(st, cur, nil, workflow.Value{Ref: t.Detail})
+			var s string
+			if err == nil {
+				err = json.Unmarshal(v, &s)
+			}
+			if err != nil {
+				tr.Action, tr.To = "fail", ""
+				tr.Reason = "reference_unresolved"
+				return nil
+			}
+			tr.Detail = s
+		}
 	}
 	return nil
 }
@@ -446,6 +476,9 @@ func value(st *runstate.State, cur done, edge map[string]json.RawMessage, v work
 		}
 		return json.Marshal(cur)
 	case workflow.RefGate:
+		if r.Name == workflow.GateApprovedRef {
+			return json.Marshal(cur.approvedRef)
+		}
 		if cur.note == nil {
 			return nil, fmt.Errorf("%s: no note was given when the gate was resolved", r.Raw)
 		}

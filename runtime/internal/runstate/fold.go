@@ -41,6 +41,11 @@ type State struct {
 	Cancel      *CancelRequested           `json:"cancel_requested,omitempty"`
 	Cancelled   *RunCancelled              `json:"cancelled,omitempty"`
 	Units       []*Unit                    `json:"units"`
+	// Facts は run_started に記録した facts の宣言の写し（名前 → 段と欄）。無ければ（宣言の無いワークフロー・この版より前の run）
+	// facts は出ない。
+	FactSources map[string][]FactSource `json:"fact_sources,omitempty"`
+	// ReleaseOn は run_started に写した release_on（取り消し・失敗で終わるとき、終わりを書く前に作業ツリーを片付ける）。
+	ReleaseOn []string `json:"release_on,omitempty"`
 
 	// Overrides は run_started の上書きの記録（resume が同じ上書きで定義を組み立て直す材料。§7.2）。state.json には
 	// 出さない。status --json は cli の statusView が workflow の下に overrides・changes・skipped_steps を足して出す（#314）。
@@ -69,6 +74,9 @@ type Unit struct {
 	Rounds []*Round `json:"rounds"`
 	// Workspace は unit の作業ツリー（§4.1。workspace 種類の acquire で入り、release で Released になる）と PR。
 	Workspace *Workspace `json:"workspace,omitempty"`
+	// Facts は facts の名前ごとの値: 並べた段のうち最後に成功して終わり、その欄を返した段の値（接続契約の facts の元）。
+	// 欄を返さなかった段は値を置き換えない。
+	Facts map[string]string `json:"facts,omitempty"`
 }
 
 // Workspace は unit の作業ツリーと PR（§4.1 Workspace）。HeadSHAs はラウンドごとの PR の head（pull-request 種類が push した時点）。
@@ -85,6 +93,10 @@ type Workspace struct {
 	PRNumber     int               `json:"pr_number,omitempty"`
 	PRURL        string            `json:"pr_url,omitempty"`
 	HeadSHAs     map[string]string `json:"head_sha_by_round,omitempty"`
+	// HeadSHA は PR のいまの先頭（publish・push・land が書く）。MergeCommit は宛先へ入れた後のコミット（land が書く）。
+	// どちらも、この版より前に始めた run の記録には無い（その場合、読む側は head_sha_by_round の最新を使う）。
+	HeadSHA     string `json:"head_sha,omitempty"`
+	MergeCommit string `json:"merge_commit,omitempty"`
 }
 
 // ActiveWorkspace は、acquire 済みでまだ release していない作業ツリーのパス（無ければ空）。
@@ -114,13 +126,15 @@ type Gate struct {
 
 // GateResolution はゲートの解決の記録（§5.3: actor・channel を必ず残す）。
 type GateResolution struct {
-	Outcome  string          `json:"outcome"`
-	Note     string          `json:"note,omitempty"`
-	Observed json.RawMessage `json:"observed,omitempty"`
-	Actor    string          `json:"actor"`
-	User     string          `json:"user,omitempty"`
-	Channel  string          `json:"channel"`
-	At       string          `json:"at"`
+	Outcome string `json:"outcome"`
+	Note    string `json:"note,omitempty"`
+	// ApprovedRef は resume に添えられた、通した中身の識別（空なら省く）。
+	ApprovedRef string          `json:"approved_ref,omitempty"`
+	Observed    json.RawMessage `json:"observed,omitempty"`
+	Actor       string          `json:"actor"`
+	User        string          `json:"user,omitempty"`
+	Channel     string          `json:"channel"`
+	At          string          `json:"at"`
 }
 
 // Round はゲートとゲートの間（§4.2）。
@@ -278,7 +292,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		p := ev.RunStarted
 		s = &State{
 			RunID: p.RunID, Workflow: p.Workflow.WorkflowRef, Overrides: p.Workflow.OverrideRecord, Inputs: p.Inputs, Limits: p.Limits,
-			Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID, PIDStart: p.PIDStart,
+			FactSources: p.Facts, ReleaseOn: p.ReleaseOn, Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID, PIDStart: p.PIDStart,
 			ScriptsDir: p.ScriptsDir, WorkflowDir: p.WorkflowDir, CLIVersion: p.CLIVersion, Embedded: p.Embedded, Units: []*Unit{},
 		}
 		for _, k := range p.Units {
@@ -403,6 +417,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 					u.Outputs = map[string]json.RawMessage{}
 				}
 				u.Outputs[p.Step] = p.Output
+				u.updateFacts(s.FactSources, p.Step, p.Output)
 			}
 		}
 	case EvTransition:
@@ -502,7 +517,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		if u.Gate.RequiresTTY && p.Channel != "tty" {
 			return nil, fmt.Errorf("gate_resolved (seq %d): gate %q requires a terminal but was resolved over %s", ev.Seq, p.Gate, p.Channel)
 		}
-		u.Gate.Resolution = &GateResolution{Outcome: p.Outcome, Note: p.Note, Observed: p.Observed, Actor: p.Actor, User: p.User, Channel: p.Channel, At: ev.TS}
+		u.Gate.Resolution = &GateResolution{Outcome: p.Outcome, Note: p.Note, ApprovedRef: p.ApprovedRef, Observed: p.Observed, Actor: p.Actor, User: p.User, Channel: p.Channel, At: ev.TS}
 		if !u.Gate.Builtin {
 			if u.Outcomes == nil {
 				u.Outcomes = map[string]string{}
@@ -520,7 +535,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := applyWorkspace(u, p, ev.Seq); err != nil {
+		if err := applyWorkspace(s, u, p, ev.Seq); err != nil {
 			return nil, err
 		}
 	case EvCancelRequested:
@@ -594,8 +609,15 @@ func checkPayload(ev *Event) error {
 }
 
 // applyWorkspace は workspace イベントを unit へ適用する。作業ツリーの記録はステップ実行の中で起きる（running のステップがある）。
-func applyWorkspace(u *Unit, p *WorkspaceEvent, seq int) error {
+// 例外は head だけ（実行中の段の外で書く。§5.6.2）。
+func applyWorkspace(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
+	if p.Action == WorkspaceHead {
+		return applyHead(s, u, p, seq)
+	}
 	if u.Running() == nil {
+		if p.Action == WorkspaceReleased {
+			return applyReleasedAtEnd(s, u, p, seq)
+		}
 		return fmt.Errorf("workspace (seq %d) outside a running step", seq)
 	}
 	switch p.Action {
@@ -609,9 +631,11 @@ func applyWorkspace(u *Unit, p *WorkspaceEvent, seq int) error {
 		prev := u.Workspace
 		u.Workspace = &Workspace{RepoRoot: p.RepoRoot, WorktreePath: p.WorktreePath, Branch: p.Branch, Base: p.Base,
 			ProvidedBy: p.ProvidedBy, Created: p.Created}
-		if prev != nil && prev.WorktreePath == p.WorktreePath {
-			// 同じ作業ツリーを取り直した（interrupted からのやり直し等）: PR の記録は持ち越す。
+		if prev != nil && (prev.WorktreePath == p.WorktreePath || prev.WorktreePath == "") {
+			// 同じ作業ツリーを取り直した（interrupted からのやり直し等）か、作業ツリーの前に PR を記録していた（adopt。§5.6.2）:
+			// PR の記録は持ち越す。
 			u.Workspace.PRNumber, u.Workspace.PRURL, u.Workspace.HeadSHAs = prev.PRNumber, prev.PRURL, prev.HeadSHAs
+			u.Workspace.HeadSHA, u.Workspace.MergeCommit = prev.HeadSHA, prev.MergeCommit
 		}
 	case WorkspaceReleased:
 		if u.Workspace == nil {
@@ -629,18 +653,105 @@ func applyWorkspace(u *Unit, p *WorkspaceEvent, seq int) error {
 			// 作業ツリーを払い出さないワークフロー（呼び出し元の作業ツリーで動く）でも PR は記録する。
 			u.Workspace = &Workspace{}
 		}
-		u.Workspace.PRNumber, u.Workspace.PRURL = p.PRNumber, p.PRURL
+		u.Workspace.PRNumber = p.PRNumber
+		if p.PRURL != "" {
+			u.Workspace.PRURL = p.PRURL
+		}
 		if p.Branch != "" {
 			u.Workspace.Branch = p.Branch
 		}
 		if p.HeadSHA != "" {
-			if u.Workspace.HeadSHAs == nil {
-				u.Workspace.HeadSHAs = map[string]string{}
+			u.Workspace.HeadSHA = p.HeadSHA
+			if !p.HeadOnly {
+				if u.Workspace.HeadSHAs == nil {
+					u.Workspace.HeadSHAs = map[string]string{}
+				}
+				u.Workspace.HeadSHAs[fmt.Sprint(u.CurrentRound().No)] = p.HeadSHA
 			}
-			u.Workspace.HeadSHAs[fmt.Sprint(u.CurrentRound().No)] = p.HeadSHA
+		}
+		if p.MergeCommit != "" {
+			u.Workspace.MergeCommit = p.MergeCommit
 		}
 	default:
 		return fmt.Errorf("workspace action %q (seq %d) is unknown", p.Action, seq)
 	}
 	return nil
+}
+
+// applyReleasedAtEnd は、終わりの片付け（release_on。§5.6.2）の released を適用する。実行中の段の外で書くので、許すのは
+// run が終わっていない・unit に払い出して、まだ返していない作業ツリーの記録がある、のうえで、次のどれかのときだけ:
+// 取り消しの要求（cancel_requested）が記録済み／unit がすでに failed（失敗への遷移の後・run_finished の前）／
+// unit が running（runner がシグナルで止められ、実行中だった段を打ち切った後）。取り消しの要求が無いままゲートで待っている
+// unit・succeeded の unit・作業ツリーの記録が無い（または返した後の）unit は誤りにする。
+func applyReleasedAtEnd(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
+	switch {
+	case Terminal(s.Status):
+		return fmt.Errorf("workspace released (seq %d) after the run ended as %s", seq, s.Status)
+	case u.Workspace == nil || u.Workspace.WorktreePath == "" || u.Workspace.Released:
+		return fmt.Errorf("workspace released (seq %d) outside a running step, but unit %q holds no unreleased worktree", seq, u.Key)
+	case s.Cancel == nil && u.Status != StatusFailed && u.Status != StatusRunning:
+		return fmt.Errorf("workspace released (seq %d) outside a running step while unit %q is %s without a cancel request", seq, u.Key, u.Status)
+	case p.Removed && !u.Workspace.Created:
+		return fmt.Errorf("workspace released (seq %d): removed a worktree the runtime did not create", seq)
+	}
+	u.Workspace.Released, u.Workspace.Removed, u.Workspace.ReleaseNote = true, p.Removed, p.Detail
+	return nil
+}
+
+// applyHead は、待っている間に外から push された PR の先頭の取り直し（workspace の head。§5.6.2）を適用する。許すのは
+// run が終わっていない・unit に実行中の段が無く、refresh の印のあるゲートで待っている・unit に PR の記録がある、のときだけ。
+// 段の中の先頭の記録は pr のイベントで書くので、段の中の head は誤りにする。ラウンドごとの記録（head_sha_by_round）は書かない。
+func applyHead(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
+	switch {
+	case Terminal(s.Status):
+		return fmt.Errorf("workspace head (seq %d) after the run ended as %s", seq, s.Status)
+	case u.Running() != nil:
+		return fmt.Errorf("workspace head (seq %d) inside a running step; a step records the head with a pr event", seq)
+	case u.Gate == nil:
+		return fmt.Errorf("workspace head (seq %d) while unit %q is not waiting at a gate", seq, u.Key)
+	case u.Gate.Refresh == "":
+		return fmt.Errorf("workspace head (seq %d): gate %q has no refresh mark", seq, u.Gate.Gate)
+	case u.Workspace == nil || u.Workspace.PRNumber <= 0:
+		return fmt.Errorf("workspace head (seq %d) but unit %q has no PR record", seq, u.Key)
+	case p.HeadSHA == "":
+		return fmt.Errorf("workspace head (seq %d) needs head_sha", seq)
+	}
+	u.Workspace.HeadSHA = p.HeadSHA
+	return nil
+}
+
+// updateFacts は、成功して終わった段 step の出力が、facts の宣言にある欄（文字列）を返していれば、その名前の値を置き換える。
+// 欄が無い・文字列でない出力は何も変えない（前の値のまま）。
+func (u *Unit) updateFacts(decl map[string][]FactSource, step string, output json.RawMessage) {
+	if len(decl) == 0 {
+		return
+	}
+	var doc any
+	for name, sources := range decl {
+		for _, src := range sources {
+			if src.Step != step {
+				continue
+			}
+			if doc == nil {
+				if err := json.Unmarshal(output, &doc); err != nil {
+					return
+				}
+			}
+			cur := doc
+			for _, k := range src.Field {
+				m, ok := cur.(map[string]any)
+				if !ok {
+					cur = nil
+					break
+				}
+				cur = m[k]
+			}
+			if str, ok := cur.(string); ok {
+				if u.Facts == nil {
+					u.Facts = map[string]string{}
+				}
+				u.Facts[name] = str
+			}
+		}
+	}
 }

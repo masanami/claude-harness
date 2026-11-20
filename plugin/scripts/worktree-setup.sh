@@ -1,6 +1,10 @@
 #!/bin/bash
 # worktree-setup.sh
-# 使い方: scripts/worktree-setup.sh <issue番号> <branch名> <base> [worktree_root]（詳細は下記参照）
+# 使い方: scripts/worktree-setup.sh [--detach] <issue番号 | 鍵> <branch名> <base> [worktree_root]（詳細は下記参照）
+# --detach: 既に origin にあるブランチを、checkout しない形（detached）で作業ツリーにする（ブランチ名の形を検査しない。
+# 上げる PR のブランチが別の作業ツリーで checkout されたままでも作れる）
+# 第 1 引数は Issue の番号（数字だけ。鍵は issue-<数字> になる）か、鍵（issue-<n>・task-<n>・pr-<n>）。鍵は作業ツリーの
+# 場所（<root>/<鍵>）とブランチの名前（{type}/<鍵>-{説明}）の両方に使う。
 # 仕様の正本は scripts/specs/worktree-setup.md を参照。
 
 set -u
@@ -17,13 +21,28 @@ WORKTREE_SETUP_BRANCH_TYPES="feature fix refactor docs hotfix"
 # 純粋関数（git/ghを呼ばない）
 # ---------------------------------------------------------------------------
 
-# ブランチ名が `{type}/issue-{issue番号}-{ケバブケース説明}` 形式かを検証する。
+# 第 1 引数（Issue の番号か鍵）から鍵を決める。数字だけなら issue-<数字>、鍵の形（issue-<n>・task-<n>・pr-<n>。n は数字）なら
+# そのまま。それ以外は空文字（呼び出し側が誤りとして扱う）。
+resolve_key() {
+  local arg="$1"
+  if [[ "$arg" =~ ^[0-9]+$ ]]; then
+    echo "issue-${arg}"
+  elif [[ "$arg" =~ ^(issue|task|pr)-[0-9]+$ ]]; then
+    echo "$arg"
+  else
+    echo ""
+  fi
+}
+
+# ブランチ名が `{type}/<鍵>-{ケバブケース説明}` 形式かを検証する（鍵は issue-<n> など。数字だけの鍵は issue-<数字> として読む）。
 # 結果: "valid" または "invalid"
 validate_branch_name() {
-  local issue="$1" branch="$2"
+  local key
+  key="$(resolve_key "$1")"
+  local branch="$2"
   local type_pattern
   type_pattern="$(echo "$WORKTREE_SETUP_BRANCH_TYPES" | tr ' ' '|')"
-  if [[ "$branch" =~ ^(${type_pattern})/issue-${issue}-[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+  if [ -n "$key" ] && [[ "$branch" =~ ^(${type_pattern})/${key}-[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
     echo "valid"
   else
     echo "invalid"
@@ -31,8 +50,9 @@ validate_branch_name() {
 }
 
 compute_worktree_path() {
-  local worktree_root="$1" issue="$2"
-  echo "${worktree_root%/}/issue-${issue}"
+  local worktree_root="$1" key
+  key="$(resolve_key "$2")"
+  echo "${worktree_root%/}/${key}"
 }
 
 default_worktree_root() {
@@ -202,6 +222,21 @@ find_registered_worktree_branch() {
   '
 }
 
+# 指定パスが git worktree として登録済みで、detached HEAD なら 0（branch 行が無く detached 行がある）。
+find_registered_worktree_detached() {
+  local target="$1"
+  git worktree list --porcelain | awk -v target="$target" '
+    /^worktree / { wt=$0; sub(/^worktree /, "", wt) }
+    /^detached$/ { if (wt == target) { found = 1 } }
+    END { exit !found }
+  '
+}
+
+create_worktree_detached() {
+  local path="$1" branch="$2"
+  git worktree add --detach "$path" "origin/${branch}" >/dev/null 2>&1
+}
+
 create_worktree_new_branch() {
   local path="$1" branch="$2" base="$3"
   git worktree add "$path" -b "$branch" "origin/${base}" >/dev/null 2>&1
@@ -220,7 +255,50 @@ create_worktree_existing_remote_branch() {
 print_usage() {
   local prog
   prog="$(basename "$0")"
-  echo "Usage: ${prog} <issue番号> <branch名> <base> [worktree_root]" >&2
+  echo "Usage: ${prog} [--detach] <issue番号 | 鍵(issue-<n>|task-<n>|pr-<n>)> <branch名> <base> [worktree_root]" >&2
+}
+
+# --detach の本体。ロックを取った後（main の中）で呼ぶ。ブランチが origin に無ければ失敗。登録済みの detached の作業ツリーは再利用
+# （reused。別の run が作ったものかどうかは呼び出し側が見分ける）、ブランチを checkout した登録済みの作業ツリーは拒否する。
+detach_worktree() {
+  local key="$1" issue_json="$2" branch="$3" base="$4" worktree_path="$5"
+  if ! remote_branch_exists "$branch"; then
+    echo "Error: branch '${branch}' does not exist on remote 'origin'" >&2
+    exit 1
+  fi
+  if ! git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" >/dev/null 2>&1; then
+    echo "Error: git fetch origin '${branch}' failed" >&2
+    exit 1
+  fi
+  local out_reused="false" out_created="false"
+  if git worktree list --porcelain | grep -qxF "worktree ${worktree_path}"; then
+    if find_registered_worktree_detached "$worktree_path"; then
+      out_reused="true"
+    else
+      echo "Error: worktree path '${worktree_path}' is already registered for a different branch ('$(find_registered_worktree_branch "$worktree_path")', expected a detached worktree). Refusing to overwrite; resolve manually." >&2
+      exit 1
+    fi
+  elif [ -e "$worktree_path" ]; then
+    echo "Error: worktree path '${worktree_path}' already exists but is not a registered git worktree (stale directory?). Refusing to overwrite; resolve manually." >&2
+    exit 1
+  else
+    if ! create_worktree_detached "$worktree_path" "$branch"; then
+      echo "Error: git worktree add --detach failed for branch '${branch}'" >&2
+      exit 1
+    fi
+    out_created="true"
+  fi
+  jq -n \
+    --argjson issue "$issue_json" \
+    --arg key "$key" \
+    --arg branch "$branch" \
+    --arg base "$base" \
+    --arg worktree_path "$worktree_path" \
+    --argjson created "$out_created" \
+    --argjson reused "$out_reused" \
+    '{issue: $issue, key: $key, branch: $branch, base: $base, worktree_path: $worktree_path, created: $created, reused: $reused, branch_existed: true, detached: true}'
+  release_worktree_lock "$lock_dir"
+  trap - EXIT
 }
 
 # ---------------------------------------------------------------------------
@@ -228,24 +306,34 @@ print_usage() {
 # ---------------------------------------------------------------------------
 
 main() {
-  local issue="${1:-}" branch="${2:-}" base="${3:-}" worktree_root="${4:-}"
+  local detach="false"
+  if [ "${1:-}" = "--detach" ]; then
+    detach="true"
+    shift
+  fi
+  local arg="${1:-}" branch="${2:-}" base="${3:-}" worktree_root="${4:-}"
 
-  if [ -z "$issue" ] || [ -z "$branch" ] || [ -z "$base" ]; then
+  if [ -z "$arg" ] || [ -z "$branch" ] || [ -z "$base" ]; then
     print_usage
     exit 1
   fi
-  if ! [[ "$issue" =~ ^[0-9]+$ ]]; then
-    echo "Error: issue number must be numeric, got '${issue}'" >&2
+  local key
+  key="$(resolve_key "$arg")"
+  if [ -z "$key" ]; then
+    echo "Error: first argument must be an issue number (digits only) or a key (issue-<n>, task-<n>, pr-<n>), got '${arg}'" >&2
     print_usage
     exit 1
   fi
+  # issue は鍵が issue-<n> のときだけ数、ほかは null（出力の JSON 用）
+  local issue_json="null"
+  if [[ "$key" =~ ^issue-([0-9]+)$ ]]; then issue_json="${BASH_REMATCH[1]}"; fi
 
   if ! check_jq; then
     exit 1
   fi
 
-  if [ "$(validate_branch_name "$issue" "$branch")" != "valid" ]; then
-    echo "Error: branch name '${branch}' does not match required pattern '{type}/issue-${issue}-{description}' (type in: ${WORKTREE_SETUP_BRANCH_TYPES})" >&2
+  if [ "$detach" = "false" ] && [ "$(validate_branch_name "$key" "$branch")" != "valid" ]; then
+    echo "Error: branch name '${branch}' does not match required pattern '{type}/${key}-{description}' (type in: ${WORKTREE_SETUP_BRANCH_TYPES})" >&2
     exit 1
   fi
 
@@ -277,7 +365,7 @@ main() {
     worktree_root="$(default_worktree_root "$repo_root")"
   fi
   local worktree_path
-  worktree_path="$(compute_worktree_path "$worktree_root" "$issue")"
+  worktree_path="$(compute_worktree_path "$worktree_root" "$key")"
   worktree_path="$(canonicalize_path "$worktree_path")"
 
   if ! verify_base_remote "$base"; then
@@ -289,17 +377,23 @@ main() {
     exit 1
   fi
 
+  if [ "$detach" = "true" ]; then
+    detach_worktree "$key" "$issue_json" "$branch" "$base" "$worktree_path"
+    return $?
+  fi
+
   local existing_branch
   existing_branch="$(find_registered_worktree_branch "$worktree_path")"
 
   if [ -n "$existing_branch" ]; then
     if [ "$existing_branch" = "$branch" ]; then
       jq -n \
-        --argjson issue "$issue" \
+        --argjson issue "$issue_json" \
+        --arg key "$key" \
         --arg branch "$branch" \
         --arg base "$base" \
         --arg worktree_path "$worktree_path" \
-        '{issue: $issue, branch: $branch, base: $base, worktree_path: $worktree_path, created: false, reused: true, branch_existed: true}'
+        '{issue: $issue, key: $key, branch: $branch, base: $base, worktree_path: $worktree_path, created: false, reused: true, branch_existed: true}'
       exit 0
     fi
     echo "Error: worktree path '${worktree_path}' is already registered for a different branch ('${existing_branch}', expected '${branch}'). Refusing to overwrite; resolve manually." >&2
@@ -333,12 +427,13 @@ main() {
   fi
 
   jq -n \
-    --argjson issue "$issue" \
+    --argjson issue "$issue_json" \
+    --arg key "$key" \
     --arg branch "$branch" \
     --arg base "$base" \
     --arg worktree_path "$worktree_path" \
     --argjson branch_existed "$branch_existed" \
-    '{issue: $issue, branch: $branch, base: $base, worktree_path: $worktree_path, created: true, reused: false, branch_existed: $branch_existed}'
+    '{issue: $issue, key: $key, branch: $branch, base: $base, worktree_path: $worktree_path, created: true, reused: false, branch_existed: $branch_existed}'
   # 正常に return する経路でも、ここでロックを解放して trap を外す（最後のコマンドを組み込みにする）。
   # スクリプトとして実行したときは末尾の exit で EXIT の trap が発火するが、関数を source してコマンド置換
   # （$(main ...)）の中で呼ぶと、bash 5.2 はサブシェルの最後の外部コマンド（上の jq）を exec に置き換え、

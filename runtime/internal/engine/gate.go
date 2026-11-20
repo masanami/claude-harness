@@ -43,10 +43,11 @@ const (
 	InterruptedAbort = "abort"
 )
 
-func gateOpenedEvent(unit string, g *workflow.Step) runstate.Event {
+func gateOpenedEvent(unit string, g *workflow.Step, detail string) runstate.Event {
 	return runstate.Event{Type: runstate.EvGateOpened, GateOpened: &runstate.GateOpened{
 		Unit: unit, Gate: g.ID, Type: g.GateType, Decider: g.Decider, RequestedAction: g.RequestedAction,
-		Inputs: g.GateInputs, Observe: g.Observe, RequiresTTY: workflow.RequiresTTY(g.GateType, g.Decider), ContractKind: g.ContractKind,
+		Inputs: g.GateInputs, Observe: g.Observe, RequiresTTY: workflow.RequiresTTY(g.GateType, g.Decider), ContractKind: g.ContractKind, Refresh: g.Refresh,
+		Detail: detail,
 	}}
 }
 
@@ -55,14 +56,46 @@ func gateOpenedEvent(unit string, g *workflow.Step) runstate.Event {
 // 無い unit（ステップの間で runner が落ちた）も同じゲートへ送る（#347: running のまま残さない）。
 // 自動で再実行はしない（LLM ステップは部分的な変更を残しうるため冪等ではない）。
 // 子プロセスのグループがまだ生きている実行は対象にしない（呼び出し元が止めてから呼ぶ）。
+//
+// いまのラウンドの契機に interrupted の印（Trigger.Interrupted。遷移の interrupted: { fail: <理由> } が付けた）がある unit は、
+// interrupted ゲートを開かず、実行中のステップを打ち切って失敗への遷移と run_finished（failed・印の理由）を記録する
+// （段の間で落ちたときも同じ）。
 func InterruptEvents(st *runstate.State) []runstate.Event {
-	if runstate.Terminal(st.Status) || runstate.RunnerAlive(st) {
+	return interruptEvents(st, false, false)
+}
+
+// interruptEvents は InterruptEvents の本体。asRunner は、記録上の runner が呼び出し元のプロセス自身で（生きていて）、
+// その runner として諦める呼び出し（runner を起動できなかった resume）。markedOnly は印のある unit だけを対象にする。
+func interruptEvents(st *runstate.State, asRunner, markedOnly bool) []runstate.Event {
+	if runstate.Terminal(st.Status) || (!asRunner && runstate.RunnerAlive(st)) {
 		return nil
 	}
+	if stale(st) {
+		// release_on の片付けの間に、片付ける側が落ちた: 終わりだけを書く（片付けは AppendEnding が済ませる）。
+		if reason, ok := failedAwaitingFinish(st); ok {
+			return []runstate.Event{{Type: runstate.EvRunFinished, RunFinished: &runstate.RunFinished{Status: runstate.StatusFailed, Reason: reason}}}
+		}
+		if cancelledAwaitingFinish(st) {
+			return []runstate.Event{{Type: runstate.EvRunCancelled, RunCancelled: &runstate.RunCancelled{Actor: st.Cancel.Actor, Channel: st.Cancel.Channel, Note: "finished by the cleanup after the canceller stopped"}}}
+		}
+	}
 	var evs []runstate.Event
+	failReason := ""
 	for _, u := range st.Units {
+		mark := ""
+		if r := u.CurrentRound(); r != nil {
+			mark = r.Trigger.Interrupted
+		}
+		if markedOnly && mark == "" {
+			continue
+		}
 		x := u.Running()
 		if x == nil && u.Gate == nil && u.Status == runstate.StatusRunning {
+			if mark != "" {
+				evs = append(evs, markedFailure(u, mark))
+				failReason = mark
+				continue
+			}
 			// ステップとステップの間で runner が落ちた（#347）: 実行中のステップは無いが、誰も run を進めていない。running の
 			// まま残さず、同じ interrupted ゲートで待たせる。rerun は次に実行するはずだったステップ（current_step）を新しい
 			// ラウンドで実行する。
@@ -77,14 +110,74 @@ func InterruptEvents(st *runstate.State) []runstate.Event {
 		fin := &runstate.StepFinished{Unit: u.Key, Step: x.Step, Attempt: x.Attempt, Interrupted: true,
 			Error: fmt.Sprintf("the runner (pid %d) is not alive and the step's process is gone; the step did not finish", st.PID)}
 		chargeUnknown(fin, x.BudgetGrantedUSD)
-		evs = append(evs,
-			runstate.Event{Type: runstate.EvStepFinished, StepFinished: fin},
-			interruptedGate(u.Key, fmt.Sprintf("step %s (attempt %d) was interrupted because the runner died; it is not re-run automatically "+
-				"(an llm step may have left partial changes). Check the working tree, then resume with %s to run the step again or %s to fail the run",
-				x.Step, x.Attempt, InterruptedRerun, InterruptedAbort)),
-		)
+		evs = append(evs, runstate.Event{Type: runstate.EvStepFinished, StepFinished: fin})
+		if mark != "" {
+			evs = append(evs, markedFailure(u, mark))
+			failReason = mark
+			continue
+		}
+		evs = append(evs, interruptedGate(u.Key, fmt.Sprintf("step %s (attempt %d) was interrupted because the runner died; it is not re-run automatically "+
+			"(an llm step may have left partial changes). Check the working tree, then resume with %s to run the step again or %s to fail the run",
+			x.Step, x.Attempt, InterruptedRerun, InterruptedAbort)))
+	}
+	if failReason != "" {
+		evs = append(evs, runstate.Event{Type: runstate.EvRunFinished, RunFinished: &runstate.RunFinished{Status: runstate.StatusFailed, Reason: failReason}})
 	}
 	return evs
+}
+
+// failedAwaitingFinish は、すべての unit が終わっていて、どれかが失敗で、run がまだ終わっていないとき、その理由を返す。
+func failedAwaitingFinish(st *runstate.State) (string, bool) {
+	reason := ""
+	for _, u := range st.Units {
+		if !runstate.Terminal(u.Status) {
+			return "", false
+		}
+		if u.Status == runstate.StatusFailed {
+			reason = u.Reason
+		}
+	}
+	return reason, reason != ""
+}
+
+// cancelledAwaitingFinish は、取り消しの要求が記録済みで、どの unit にも実行中の段が無く、run が終わっていないか。
+func cancelledAwaitingFinish(st *runstate.State) bool {
+	if st.Cancel == nil {
+		return false
+	}
+	for _, u := range st.Units {
+		if u.Running() != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanupGrace は、終わりの片付け（最長 releaseTimeout）が進行中かもしれないと見る時間の余裕。
+const cleanupGrace = releaseTimeout + time.Minute
+
+// stale は、最後の記録から cleanupGrace を過ぎているか（片付けている側が落ちたと見てよいか）。読めなければ偽。
+func stale(st *runstate.State) bool {
+	t, err := time.Parse(time.RFC3339Nano, st.UpdatedAt)
+	return err == nil && time.Since(t) > cleanupGrace
+}
+
+// markedFailure は印のあるラウンドの unit を、interrupted ゲートへ送らず失敗へ送る遷移。
+func markedFailure(u *runstate.Unit, reason string) runstate.Event {
+	return runstate.Event{Type: runstate.EvTransition, Transition: &runstate.Transition{
+		Unit: u.Key, From: u.CurrentStep, Outcome: "interrupted", Action: "fail", Reason: reason}}
+}
+
+// AbandonMarked は、runner を起動できなかった呼び出し元が、自分が記録上の runner として諦める（resume --detach の detach の
+// 失敗）。印のあるラウンドの unit だけを InterruptEvents と同じに失敗で終え、記録した後の状態を返す。印の無いラウンドは
+// 何も記録しない（いまと同じく、runner の居ない running として残して次の status・resume に任せる）。
+func AbandonMarked(run *runstate.Run) (*runstate.State, error) {
+	return AppendEnding(run, func(st *runstate.State) ([]runstate.Event, error) {
+		if st.PID != os.Getpid() {
+			return nil, nil
+		}
+		return interruptEvents(st, true, true), nil
+	})
 }
 
 // interruptedGate は組み込みの interrupted ゲートを開くイベント（§4.5）。
@@ -97,7 +190,7 @@ func interruptedGate(unit, action string) runstate.Event {
 
 // Interrupt は InterruptEvents をロックの中で確かめ直して記録する（status / resume が呼ぶ）。
 func Interrupt(run *runstate.Run) (*runstate.State, error) {
-	return run.AppendIf(func(st *runstate.State) ([]runstate.Event, error) {
+	return AppendEnding(run, func(st *runstate.State) ([]runstate.Event, error) {
 		return InterruptEvents(st), nil
 	})
 }
@@ -212,9 +305,11 @@ type Resolution struct {
 	HasInput bool
 	Note     string
 	HasNote  bool
-	Actor    string // resume | approve
-	User     string
-	Channel  string // tty | non-tty
+	// ApprovedRef は --approved-ref（通した中身の識別。先頭のコミット）。空の文字列は「無い」。
+	ApprovedRef string
+	Actor       string // resume | approve
+	User        string
+	Channel     string // tty | non-tty
 	// GateOpenedAt は、確認を求めたときに見ていたゲートの開いた時刻（approve）。解決の時点で同じゲートが開き直して
 	// いれば（別の解決で進んでまた同じゲートに来た）、人が見ていない文脈を解決しないように拒否する。
 	GateOpenedAt string
@@ -300,11 +395,11 @@ func (e *Engine) CheckResolution(st *runstate.State, req Resolution) (*runstate.
 	return u, nil
 }
 
-// readsNote は遷移が --note を必須にするか（$gate.note を渡し、note: optional を宣言していない。#377）。
+// readsNote は遷移が --note を必須にするか（$gate.note を渡し（$gate.approved_ref だけを渡す遷移は --note を求めない）、note: optional を宣言していない。#377）。
 func readsNote(t *workflow.Transition) bool {
 	if !t.NoteOptional {
 		for _, b := range t.With {
-			if b.Value.Ref != nil && b.Value.Ref.Kind == workflow.RefGate {
+			if b.Value.Ref != nil && b.Value.Ref.Kind == workflow.RefGate && b.Value.Ref.Name == workflow.GateNote {
 				return true
 			}
 		}
@@ -364,7 +459,7 @@ func (e *Engine) ResolveGate(ctx context.Context, req Resolution) (*runstate.Sta
 	if req.GateOpenedAt != "" && req.GateOpenedAt != openedAt {
 		return nil, refused("gate %s of unit %s was reopened after it was shown; nothing was recorded", gateAt, u.Key)
 	}
-	return e.Run.AppendIf(func(cur *runstate.State) ([]runstate.Event, error) {
+	return AppendEnding(e.Run, func(cur *runstate.State) ([]runstate.Event, error) {
 		cu := cur.Unit(u.Key)
 		if runstate.Terminal(cur.Status) {
 			return nil, refused("run %s already ended as %s", cur.RunID, cur.Status)
@@ -392,6 +487,7 @@ func (e *Engine) ResolveGate(ctx context.Context, req Resolution) (*runstate.Sta
 		if req.HasNote {
 			res.Note = req.Note
 		}
+		res.ApprovedRef = req.ApprovedRef
 		evs = append(evs, runstate.Event{Type: runstate.EvGateResolved, GateResolved: res})
 		next, err := e.afterGate(cur, cu, outcome, req)
 		if err != nil {
@@ -428,11 +524,13 @@ func (e *Engine) afterGate(st *runstate.State, u *runstate.Unit, outcome string,
 		note := req.Note
 		cur.note = &note
 	}
+	cur.approvedRef = req.ApprovedRef
 	evs, err := e.transitionEvents(st, u, step, outcome, false, cur)
 	if err != nil {
 		return nil, err
 	}
 	if tr := evs[0].Transition; tr.Action == "step" {
+		round.RoundStarted.Trigger.Interrupted = tr.Interrupted
 		evs = append(evs, round)
 	}
 	return evs, nil

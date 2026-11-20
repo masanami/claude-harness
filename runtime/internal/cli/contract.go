@@ -56,6 +56,9 @@ type contractDoc struct {
 	RequestedAction *requestedAction `json:"requested_action"`
 	Artifacts       []artifact       `json:"artifacts"`
 	CostUSD         *float64         `json:"cost_usd"`
+	// Facts は任意のキー（名前 → 値。どちらも文字列）。ワークフローの定義が facts を宣言し、値が 1 つでもあるときだけ出す。
+	// 値は run が記録した facts から写す（定義も段の名前も読まない）。
+	Facts map[string]string `json:"facts,omitempty"`
 }
 
 // requestedAction は契約 v1 の requested_action。ResolvableBy は後方互換の任意項目（#378・masanami/flywheel#631）で、
@@ -85,7 +88,7 @@ const contractUsage = `usage: harness contract <start|status|resume|cancel> [opt
 
   start [--workflow-dir DIR] [--scripts-dir DIR] [--override FILE] [--input NAME=VALUE]... <workflow>
   status [--accept-kind KIND]... <run-id>
-  resume [--accept-kind KIND]... [--unit KEY] [--input VALUE] [--note TEXT] <run-id>
+  resume [--accept-kind KIND]... [--unit KEY] [--input VALUE] [--note TEXT] [--approved-ref SHA] <run-id>
   cancel <run-id>
 
 start always returns at once: the run is advanced by a detached process (as run --detach), so start prints
@@ -96,7 +99,7 @@ then ("running", or "waiting" / an end when the run got there already); read the
 
 the connection contract v1 for flywheel: each command prints one JSON document
 {"contract_version": 1, "run_id", "state", "summary", "requested_action", "artifacts", "cost_usd"}
-and exits 0 whenever it printed it; waiting, success and failure are in "state", not in the exit code.
+(plus "facts", name -> string, when the workflow declares facts and has a value) and exits 0 whenever it printed it; waiting, success and failure are in "state", not in the exit code.
 the options and the arguments are the same as those of run / status / resume / cancel, except --accept-kind.
 
 --accept-kind KIND (status and resume; repeatable) declares a requested_action.kind the caller accepts beyond
@@ -115,7 +118,7 @@ func cmdContract(args []string, env Env) int {
 	case "start":
 		return contractStart(rest, env)
 	case "status", "resume":
-		acc, rest, err := acceptKinds(rest, "unit", "input", "note")
+		acc, rest, err := acceptKinds(rest, "unit", "input", "note", "approved-ref")
 		if err != nil {
 			return contractOut(env, failedDoc(nil, err.Error()))
 		}
@@ -125,7 +128,7 @@ func cmdContract(args []string, env Env) int {
 		// 常に切り離して再開する（resume --detach。#359）: ゲートの解決はこのプロセスで行い、その後の進行は runner に
 		// 渡してすぐ戻る。--detach は契約の引数ではないので、利用者が渡すと usage の誤りになる。
 		return contractByRun(rest, env, acc, func(a []string, e Env) int { return cmdResolve("resume", append([]string{"--detach"}, a...), e) }, resumeBlock,
-			flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true})
+			flagSpec{name: "unit", value: true}, flagSpec{name: "input", value: true}, flagSpec{name: "note", value: true}, flagSpec{name: "approved-ref", value: true})
 	case "cancel":
 		return contractByRun(rest, env, accepted{}, cmdCancel, nil)
 	case "help", "-h", "--help":
@@ -365,6 +368,14 @@ func contractFromView(v statusView, note string, acc accepted) contractDoc {
 	d := contractDoc{ContractVersion: ContractVersion, RunID: &id, State: st.Status, Artifacts: artifacts(st)}
 	cost, unknown := runCost(st)
 	d.CostUSD = &cost
+	for _, u := range st.Units {
+		for k, val := range u.Facts {
+			if d.Facts == nil {
+				d.Facts = map[string]string{}
+			}
+			d.Facts[k] = val
+		}
+	}
 	if !runstate.Terminal(st.Status) {
 		d.RequestedAction = pickAction(st.RunID, v.Waiting, acc)
 	}
@@ -394,6 +405,9 @@ func summarize(v statusView, unknownCost int, note string) string {
 	if note != "" {
 		s += "; " + note
 	}
+	if st.Status == runstate.StatusWaiting && len(v.Waiting) > 0 && v.Waiting[0].Detail != "" {
+		s += "; detail: " + v.Waiting[0].Detail
+	}
 	return s
 }
 
@@ -412,7 +426,7 @@ func runCost(st *runstate.State) (float64, int) {
 	return cost, unknown
 }
 
-// artifacts は unit ごとの PR・ブランチ・最後に push した commit（§4.1 Workspace）。
+// artifacts は unit ごとの PR・ブランチ・commit（§4.1 Workspace）。
 func artifacts(st *runstate.State) []artifact {
 	out := []artifact{}
 	for _, u := range st.Units {
@@ -429,11 +443,24 @@ func artifacts(st *runstate.State) []artifact {
 		if ws.Branch != "" {
 			out = append(out, artifact{Kind: artifactBranch, Ref: ws.Branch})
 		}
-		if sha := lastHead(ws.HeadSHAs); sha != "" {
+		if sha := commitRef(ws); sha != "" {
 			out = append(out, artifact{Kind: artifactCommit, Ref: sha})
 		}
 	}
 	return out
+}
+
+// commitRef は成果物の commit の識別: 宛先へ入れて終わった run は入れた後のコミット、そうでなければ PR のいまの先頭。
+// この版より前に始めた run の記録には先頭の記録（head_sha）が無いので、ラウンドごとの記録の最新を使う。
+// kind が commit の要素は、PR を出した後はいつもちょうど 1 つ（PR を出す前は 0）。
+func commitRef(ws *runstate.Workspace) string {
+	switch {
+	case ws.MergeCommit != "":
+		return ws.MergeCommit
+	case ws.HeadSHA != "":
+		return ws.HeadSHA
+	}
+	return lastHead(ws.HeadSHAs)
 }
 
 // lastHead は最も新しいラウンドで push した head（キーはラウンド番号）。
@@ -468,22 +495,38 @@ func gateAction(runID string, w waitingView, acc accepted) *requestedAction {
 		decider = contractHuman
 	}
 	where := fmt.Sprintf("gate %s, unit %s", w.Gate, w.Unit)
+	lead := w.RequestedAction
+	if w.Detail != "" {
+		// 開き直した理由（gate_opened.detail）を、定義の固定の文（先頭の文）の後ろに足す。
+		lead += " Detail: " + w.Detail
+	}
 	switch {
 	case w.Type == workflow.GateObserve:
 		return &requestedAction{Kind: actionObserve, Decider: decider, Text: fmt.Sprintf(
-			"%s [%s]. Then resume re-checks the state: harness contract resume %s --unit %s", w.RequestedAction, where, runID, w.Unit)}
+			"%s [%s]. Then resume re-checks the state: harness contract resume %s --unit %s", lead, where, runID, w.Unit)}
 	case w.RequiresTTY:
 		return &requestedAction{Kind: actionApprove, Decider: contractHuman, ResolvableBy: resolvableTerminal, Options: options(w.Inputs), Text: fmt.Sprintf(
 			"%s [%s; choices: %s]. A person resolves it from a terminal: harness approve %s --unit %s --input <%s> [--note <text>]",
-			w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
+			lead, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
 	}
 	kind := actionAnswer
 	if acc.review && w.ContractKind == workflow.ContractKindReview {
 		kind = actionReview
 	}
 	return &requestedAction{Kind: kind, Decider: decider, Options: options(w.Inputs), Text: fmt.Sprintf(
-		"%s [%s; choices: %s]. Answer with: harness contract resume %s --unit %s --input <%s> [--note <text>]",
-		w.RequestedAction, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"))}
+		"%s [%s; choices: %s]. Answer with: harness contract resume %s --unit %s --input <%s> [--note <text>]%s",
+		lead, where, strings.Join(w.Inputs, "|"), runID, w.Unit, strings.Join(w.Inputs, "|"), landNote(w.Inputs))}
+}
+
+// landNote は、選択肢に land があるときの添え書き。land は人のマージを通らずに宛先へ入れる道で、承認を持つ呼び出し元だけが、承認した
+// 先頭のコミットを --approved-ref に付けて使う（付けなければ engine が断る）。承認を持たない呼び出し元は渡さない。
+func landNote(inputs []string) string {
+	for _, in := range inputs {
+		if in == "land" {
+			return ". land enters the destination without a person's merge: only a caller that holds the approval passes it, with --approved-ref <the approved leading commit of the PR>"
+		}
+	}
+	return ""
 }
 
 // options は requested_action.options の値: ゲートの inputs（text の choices と --input の照合に使う一覧）の写し。

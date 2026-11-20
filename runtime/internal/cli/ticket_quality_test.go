@@ -82,7 +82,7 @@ func TestTicketQualityRunsTheBaseDeclarationOnTheCommit(t *testing.T) {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:provided implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:green"; got != want {
+	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:provided implement:pass self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:green"; got != want {
 		t.Fatalf("steps:\n got %s\nwant %s", got, want)
 	}
 	q := qualityOf(t, v)
@@ -122,8 +122,8 @@ func TestTicketQualityFailGoesToFixAndRunsAgain(t *testing.T) {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:fail " +
-		"fix:pass commit:committed e2e-route:no quality:pass publish:opened ci:green"
+	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current e2e-route:no quality:fail " +
+		"fix:pass commit:committed sync:current e2e-route:no quality:pass publish:opened ci:green"
 	if got := stepSeq(v); got != want {
 		t.Fatalf("steps:\n got %s\nwant %s", got, want)
 	}
@@ -207,7 +207,7 @@ func TestTicketQualitySkippedByARepositoryOverride(t *testing.T) {
 		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no publish:opened ci:green"; got != want {
+	if got, want := stepSeq(v), "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current e2e-route:no publish:opened ci:green"; got != want {
 		t.Fatalf("steps:\n got %s\nwant %s", got, want)
 	}
 	if _, ran := v.Unit("main").Outputs["quality"]; ran {
@@ -262,7 +262,7 @@ func TestTicketQualityStopsWhenReworkIsExhausted(t *testing.T) {
 	f := newTicketFixture(t)
 	declareQualityGate(t, f.repo, `{"test": "false"}`)
 	for n := 6; n <= 9; n += 2 { // fix と commit の 2 回目・3 回目（1 回目は newTicketFixture の 4・5）
-		respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": ""}, 5.5+float64(n)))
+		respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": "", "self_review": "complete"}, 5.5+float64(n)))
 		respond(t, f.fdir, n+1, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "x", "summary": "committed"}, 6+float64(n)))
 	}
 	out, errOut, code := f.h.run("run", "--input", "issue=42", "--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "ticket")
@@ -366,7 +366,6 @@ func TestTicketQualityFailsClosed(t *testing.T) {
 		{"exit 1 without fail", `echo '{"result":"pass","gates":{}}'; exit 1`, "exited 1 without a fail result"},
 		{"exit 1 without JSON", `echo 'usage' >&2; exit 1`, "exited 1 without a fail result"},
 		{"unexpected exit code", `exit 7`, "quality-check-runner.sh failed (exit 7)"},
-		{"cannot fetch the base", "", "cannot fetch the base 'main' from origin"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newTicketFixture(t)
@@ -374,10 +373,7 @@ func TestTicketQualityFailsClosed(t *testing.T) {
 			if c.runner != "" {
 				scripts = fakeScriptsDir(t, c.runner)
 			}
-			wt := providedWorktree(t, f) // workspace が fetch しない経路（fetch の失敗を quality で起こすため）
-			if c.runner == "" {
-				git(t, f.repo, "remote", "set-url", "origin", filepath.Join(f.root, "gone.git"))
-			}
+			wt := providedWorktree(t, f)
 			f.h.cwd = wt
 			out, errOut, code := f.h.run("run", "--input", "issue=42", "--input", "worktree="+wt,
 				"--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", scripts, "ticket")
@@ -389,5 +385,23 @@ func TestTicketQualityFailsClosed(t *testing.T) {
 				t.Fatalf("reason %s steps %s\n%s", v.Reason, stepSeq(v), out)
 			}
 		})
+	}
+}
+
+// 宛先を取得できない（origin に届かない）ときは、quality より前の取り込み（sync）が、PR を出す前の失敗（remote_unavailable）で止める。
+// quality の fail-closed（宛先の宣言を読めない）は、sync が先に止めるので、この経路では quality まで届かない。
+func TestTicketUnreachableOriginStopsAtSyncBeforeQuality(t *testing.T) {
+	f := newTicketFixture(t)
+	wt := providedWorktree(t, f)
+	git(t, f.repo, "remote", "set-url", "origin", filepath.Join(f.root, "gone.git"))
+	f.h.cwd = wt
+	out, errOut, code := f.h.run("run", "--input", "issue=42", "--input", "worktree="+wt,
+		"--workflow-dir", abs(t, repoWorkflows), "--scripts-dir", abs(t, repoScripts), "ticket")
+	if code != ExitFailed {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	v := decode[statusView](t, out)
+	if v.Reason != "remote_unavailable" || !strings.HasSuffix(stepSeq(v), "commit:committed sync:unavailable") {
+		t.Fatalf("reason %s steps %s", v.Reason, stepSeq(v))
 	}
 }

@@ -139,6 +139,18 @@ overridable:
 - `skips` は付け替えを開くものではない。省く付け替えそのものは `routes` に候補として宣言し、上書きで選ぶ。`skips` は、その付け替えが規則 6 に当たらないようにするだけである。
 - `overridable` は上書きに書けない（§5.3）ので、`skips` を広げられるのも保守者だけである。
 
+同梱の `reflect`（#396）も `overridable` を宣言する。`quality`（用意の検証）へ入る遷移は `sync.current`・`sync.synced` の 2 本で、省く上書きは **2 行そろえて** 書く（`steps: { sync: { on: { current: push, synced: push } } }`。`push` は `quality` の省略）。
+
+```yaml
+overridable:
+  routes:
+    sync.current: [quality, push]   # push は quality の省略
+    sync.synced:  [quality, push]
+  skips: [quality]
+```
+
+`reflect` の `quality` は検査だけで `fix` を持たない（落ちたら `quality_gate_red` で失敗）。1 行だけ書くと、付け替えた側の経路でだけ `quality` を通らない（`ticket` と同じ。`skipped_steps` には出ず `changes` にだけ出る）。
+
 ステップの「省略」は、このしくみで前段の遷移を後段へ付け替えることとして表す（`skip: true` のような専用のキーは持たない）。省略したときにどこへ進むかが定義に書かれた候補から読め、`outcome` の仮定（省略したステップが何を返したことにするか）を持ち込まずに済むためである。
 
 `ticket.yaml` で付け替えの候補になりうる遷移と、v1 での扱い:
@@ -167,10 +179,11 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 次のキーは上書きに書けない。書けば `validate` が「上書きできない」として拒否する。
 
 - 定義の同定と入口: `schema`・`id`・`description`・`inputs`
-- ステップの振る舞い: `kind`・`run`・`prompt`・`agent`・`output`・`outcome_field`・`exit`・`session`・`with`・`value`・`action`
+- ステップの振る舞い: `kind`・`run`・`prompt`・`agent`・`output`・`outcome_field`・`exit`・`session`・`with`（`workspace` の `with.key`・`with.mode` を含む）・`value`・`action`・`add_dirs`（LLM の段が読めるフォルダ。上書きで増やすと、読める範囲が広がる）
 - ゲート: `type`・`decider`・`inputs`・`observe`・`requested_action`・`contract_kind`（`decider` を `human` から `any` へ変えると、TTY を要求しない経路でゲートを解決できてしまう。設計書 §5.3）
 - 遷移: `overridable.routes` に宣言の無い `on` のすべて。`limit`・`exhausted`・`retry` の形も変えられない（回数は `limits` の値で変える）
 - `overridable` 自体（上書きで候補を広げることはできない）
+- #388 の設計で足すキー（設計書 §5.6.2。`detail`・`interrupted` は S3-2〔#392〕、`pull-request` の `action` は S3-3〔#393〕、最上位の `facts` は S3-4〔#394〕、ゲートの `refresh` は S3-5〔#395〕、最上位の `release_on`・`pull-request` の `action: adopt`・`workspace` の `with.mode` は S3-6〔#396〕で実装済み。`release_on` は上書きで足す・外すことができない（`key "release_on" cannot be overridden`。取り消し・失敗で作業ツリーを片付けるかは定義が決める。`reflect` は片付け、`ticket` は残す）。`refresh` は上書きで足す・外すことができない（`steps.<id>.refresh cannot be overridden`）。`detail` を持つ遷移はステップ id だけの形ではないので宣言できず、`interrupted` も `goto` の遷移の一部なので上書きで外せない）: 最上位の `facts`・`release_on`、ゲートの `refresh`、ゲートへの遷移の `detail`、ゲートから出る `goto` の `interrupted`。入れる段（`pull-request` の `action: land`）には、上書きで書けるキーが無い（§6.2 の規則 7）
 
 ## 6. 外せないゲート: 人のゲートと、そこへ向かう遷移と、`fail` への遷移
 
@@ -180,16 +193,26 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 
 | 対象 | 形 | 何を守っているか | 扱い |
 | --- | --- | --- | --- |
-| `human-merge` | `observe` × `human`。`merge-route.default` から入る | 既定ブランチ（本番反映先）へのマージを人が行う（設計書 R5） | 外せない（Issue の要件 3） |
+| `human-merge` | `observe` × `human`。`merge-route.default` から入る | `ready`（マージしてよい）を受けた後の、既定ブランチ（本番反映先）へのマージを人が行う（設計書 R5。2026-11-20 に改めた後も、この道は残る） | 外せない（Issue の要件 3） |
+| `land`（#388 の S3-3〔#393〕で実装済み） | `pull-request` の `action: land`。`review.land` から入る | 「入れてよい」（`land`）に添えられた、通した中身（先頭のコミット）と PR の先頭が一致し、宛先の最新を含むときだけ、機械が宛先（統合ブランチでも既定ブランチでも）へ入れる（設計書 R5 を改めた分・§5.6.2） | 外せない・迂回できない・付け替えられない（§6.2 の規則 7） |
 | `design-deviation` | `input` × `human`（TTY 必須）。`implement.deviation`・`fix.deviation` から入る | クリティカル設計からの逸脱を人が判断する | 外せない |
 | `review-human` | `input` × `human`（TTY 必須）。`respond.needs_human`・`merge.blocked` から入る | レビュー対応で品質ゲートの失敗や設計変更が出たときに人が判断する | 外せない |
 | 品質の失敗での停止 | `implement.failure`・`implement.review_incomplete`・`fix.failure`・`commit.failure` → `fail` | 品質ゲートに通らない変更・セルフレビューと合流できない変更を PR にしない（#262） | 付け替え不可 |
-| 入口の検査での停止 | `resolve.base_missing`・`resolve.links_invalid`・`workspace.conflict` → `fail` | 宛先や作業ツリーが不正なまま進まない | 付け替え不可 |
+| 入口の検査での停止 | `resolve.base_missing`・`resolve.links_invalid`・`resolve.input_invalid`・`resolve.integration_unsupported`・`workspace.conflict` → `fail` | 宛先や作業ツリーが不正なまま進まない | 付け替え不可 |
 | 差し戻しの上限 | `e2e.fail`・`ci.red`・`quality.fail`（#326）の `limit: rework` | 修正の繰り返しを止める | 形は変えない。回数は `limits.rework` で変えられる（§5.1） |
 | `quality`（#326） | `command`。`fail` は `fix` へ差し戻し、尽きたら `quality_gate_red`。宣言が無ければ `quality_gate_undeclared` | PR を作る前に、push するコミットに対して品質ゲートを機械で回す | `quality` 自身の遷移は付け替え不可。前段から省くことは `overridable.skips` で許す（§5.2） |
 | `review`・`ci-pending` | `input` × `any` | レビュー待ち・CI を確かめる外部待ち | ゲート自体のキーは閉じる（§5.3）。前段から飛ばすことは v1 では許さない（§5.2） |
 
 `merge` ステップ（`/pr-merge`）のプロンプトは、マージの前に PR の base が既定ブランチでないことを `gh pr view` で確かめ、既定ブランチ宛なら `blocked` を返す（`runtime/workflows/prompts/ticket-merge.md`。実コード確証・high）。これは LLM が守る散文の歯止めで、構造の歯止めは `merge-route` の振り分けである。上書きで構造の歯止めを外せないようにするのが §6.2 の規則である。
+
+**2026-11-20 に改めた決まり（#388。オーナーの決定。設計書 R5・§11.9 の L1）**: 既定ブランチへ入れる道は 2 本になる。
+
+| 道 | 受ける答え | 入れる主体 | 歯止め |
+| --- | --- | --- | --- |
+| 人のマージを待つ（いまもある） | `ready` | 人（`human-merge` で観測する）。統合ブランチ宛ては `merge`（`/pr-merge`） | `merge-route` の振り分けと `human-merge`（規則 1〜3・6） |
+| 通した中身と一致したときだけ入れる（足す） | `land` と `--approved-ref` | 機械（`land` の段） | 先頭のコミットの一致（`land` の段の中の確かめと、`gh pr merge --match-head-commit`）。規則 7 |
+
+2 本目の道には、人のゲートが無い。通した側（flywheel）が人の承認を取ったうえで、承認した中身の識別を付けて返すからで、harness の側が守るのは「識別と一致しない中身を入れない」ことである。リポジトリごとに 2 本目を許す・禁じる設定は持たない（`land` を返さなければ、2 本目は通らない）。一致の確かめは LLM の散文ではなく Go で行う。
 
 ### 6.2 規則（Go で持つ。宣言に依らず効く）
 
@@ -204,8 +227,17 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
    - 検査は 2 段に置く。元の定義の検査で、`overridable.routes` の候補を 1 つずつ当てて迂回する候補を拒否し（保守者が宣言を足す PR で落ちる）、上書きを重ねた時点で付け替えの組み合わせをまとめて検査する。組み合わせで P を迂回できるなら、その経路の上の付け替えのどれか 1 つだけを当てた時点で、P が支配していた何かの節点へ P を通らずに届く（経路の上で、元の定義では P を通らずに届かない最初の節点の手前の付け替えを当てればよい）。そのため前段を通った定義では後段は落ちず、後段は二重の検査である。
    - 支配は遷移のグラフの経路で決め、値（`select` が読む出力など）は見ない。「既定ブランチ宛のときだけ `human-merge` を通る」のような値に依る条件は表せないので、人のゲートへ分岐するステップ（`merge-route`）を守ることで、分岐の手前を前段ごと飛ばす形を止める。
    - `ticket.yaml` の保守側の 2 本（`merge-route.integration: [merge, human-merge]`・`e2e-route.no` の候補 `e2e`）はこの規則に当たらない（`merge` はどのステップも支配していない。`e2e` を足す付け替えは支配を減らさない）。`quality` を省く候補（`e2e-route.no`・`e2e.pass` の `publish`。#326。`respond.pushed` の `ci`。#339）は当たるが、`quality` を `overridable.skips` に挙げているので通る。§5.2 で後から開きうるとした付け替えのうち、`e2e-route.yes → quality`・`ci.green`/`ci.none → merge-route` は当たらず、`publish.opened`/`publish.updated → review`（CI 待ちの省略）は `ci` が `fail` へ落ちうるため、開くときに `ci` を `overridable.skips` に挙げる必要がある。
+7. **一致を確かめて入れる段は、外せず、迂回できず、付け替えられない**（#388 で追加。オーナーの決定 2026-11-20。S3-3〔#393〕で実装済み。`runtime/internal/workflow/landrules.go`・`routes.go`）: 対象は、種類と `action` で決まる「入れる段」（`pull-request` の `action: land`）である。段の名前は Go に書かない。
+   - **確かめと入れる操作は 1 つの段の中にある**: 入れる段は、先頭のコミットの一致と、宛先の最新を含むことを確かめた後にだけ `gh pr merge --match-head-commit` を呼ぶ。確かめる所と入れる所を別の段に分ける文法は持たない（間の遷移を付け替えて「確かめずに入れる」形が作れない）。宛先へ入れる操作を持つ決定的な段は、これだけである。
+   - **入れる段のキーは上書きに書けない**: `kind`・`action`・`with` は §5.3 で閉じている。`pull-request` の種類は数値のキー（`budget_usd`・`timeout`。§5.1）を持たないので、入れる段に上書きで書けるキーは無い。
+   - **入れる段の遷移と、入れる段へ入る遷移は、`overridable.routes` に宣言できない**: 入れる段の `on` のすべて（`landed`・`behind`・`mismatch`・`blocked` と、失敗で終える結果）と、`$gate.approved_ref` を `with` で渡す遷移。宣言があれば元の定義の検査で拒否する（規則 2 と同じ扱い）。
+   - **入れる段は守るステップで、`overridable.skips` に挙げられない**: 規則 6 の守るステップに、入れる段を足す（`fail` へ入る遷移の有無に依らない）。挙げれば元の定義の検査で拒否する。
+   - **通した中身の識別は、ゲートの解決からしか届かない**（元の定義の検査）: 入れる段の `with.approved_ref` は `$edge.<名前>` でなければならず、入れる段へ入るすべての遷移は、その名前を `$gate.approved_ref` で渡さなければならない（リテラル・入力・ほかの段の出力を渡す定義は拒否する）。`$gate.approved_ref` を渡せる先は、入れる段だけである。
+   - **`$gate.approved_ref` を渡す遷移は、`interrupted: { fail: <理由> }` を書かなければならない**（元の定義の検査）: 入れてよいの答えを受けた後に runner が居なくなっても、`interrupted` のゲート（人や呼び出し元の `rerun` で、同じ識別のまま入れる段をやり直す待ち）を開かず、失敗で終える。やり直しは、新しい答え（新しい識別）からにする。
+   - 規則 7 が守るのは「一致しない中身が宛先へ入らない」ことで、`land` を受けるゲートへ到達できることは守らない（`land` の道が通らなくなる上書きは、入れない側に倒れるだけである）。
+   - `ready` の後の道（`merge-route`・`merge`・`human-merge`）は、規則 1〜3・6 のまま。`merge` の段（`/pr-merge`）は先頭の一致を確かめないが、既定ブランチ宛てへは `merge-route` が通さない。
 
-規則 1〜3・6 はゲートの名前（`human-merge` 等）を Go に書かず、`decider: human` という性質で決める。`ticket` 以外のワークフローにも同じ規則が効き、新しい人のゲートを足したときに Go を直す必要が無い。`fail` への遷移まで含めたのは、付け替えられると品質ゲートに通らない変更（#262 で塞いだ `review_incomplete` を含む）を PR にする経路が上書き 1 行で開くためである。
+規則 1〜3・6 はゲートの名前（`human-merge` 等）を Go に書かず、`decider: human` という性質で決める。規則 7 も段の名前を書かず、種類と `action` で決める。`ticket` 以外のワークフローにも同じ規則が効き、新しい人のゲートを足したときに Go を直す必要が無い。`fail` への遷移まで含めたのは、付け替えられると品質ゲートに通らない変更（#262 で塞いだ `review_incomplete` を含む）を PR にする経路が上書き 1 行で開くためである。
 
 ### 6.3 `--workflow-dir` はこの規則の外にある
 

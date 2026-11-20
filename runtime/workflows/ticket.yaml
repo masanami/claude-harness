@@ -2,6 +2,8 @@
 # PR 作成後の CI・レビュー・マージのラウンドまでを含む。shadow run（§8 C3 の段階 A）の手順は docs/harness-runtime-shadow.md。
 #
 #   harness run ticket --input issue=<番号> [--input base=<ブランチ>] [--input worktree=<絶対パス>]
+#   harness run ticket --input task_file=<絶対パス> --input task_id=T-<番号> [--input issue=<番号>] [--input base=<ブランチ>]
+#     （#388 の S3-1。値が空の入力は「無い」と読む。入力どうしの条件は resolve が確かめる。docs/harness-runtime-design.md §5.6.2）
 #
 # 設計の書き下ろし（§3.4）からの差分（実装で要ったもの。設計の決定は変えていない）:
 #   - ci は plugin/scripts/ci-wait.sh を直接ではなく scripts/ci-wait-pr.sh 経由で呼ぶ（ci-wait.sh は位置引数、
@@ -22,19 +24,33 @@
 #   - implement の self_review（/self-review を実行したか）が complete でなければ、outcome が pass・skip でも PR へ進めない（#381）。
 #     self-review-route（select）で 1 回だけ implement へ戻して /self-review を実行させ、2 回目も complete でなければ
 #     review_incomplete と同じ self_review_incomplete で止める。回数は goto の limit（limits.self_review）で数える
+#   - commit の後・e2e-route の前に sync（宛先の最新をマージのコミットで取り込む。pull-request の action: sync）を置き、衝突は
+#     sync-resolve（llm）に直させる（#388 の S3-3。最初のレビュー待ちの前に宛先とのずれを解く。rebase・強制 push はしない）
+#   - review の入力に land を足す。land は pull-request の action: land で、通した中身（--approved-ref）と PR の先頭が一致し、宛先の最新を
+#     含むときだけ PR を宛先へ入れる。宛先が動いていれば取り込み・push して review へ戻る（land-sync・land-sync-resolve・land-push）。
+#     land の後は、入れ終えるか review へ戻るまで、ほかの待ちへ移らない（docs/harness-runtime-design.md §5.6.2・overrides §6.2 の規則 7）
+#   - 最上位に facts を書く（#388 の S3-4）。self_review は implement・fix・respond のうち、最後に成功して終わり self_review を返した段の値で、
+#     接続契約の facts.self_review に出る（fix・respond の self_review は必須の欄で、実行していなければ not_run を返す。欄を返さなかった段は値を変えない、は facts の一般の決まり。docs/harness-runtime-design.md §5.6.2）
 #   - review・review-human の respond を、resume の添え書き（$gate.note）を respond へ渡す goto にし、note: optional を付ける
 #     （#377。添え書きが無ければ空文字を渡し、今と同じく PR のコメントだけを読む。差し戻しの理由を PR へ手で書かずに済む）
 schema: harness.workflow/v1
 id: ticket
 description: 1チケット（=1 Issue）の実装フロー。PR 作成後のレビュー・マージのラウンドまでを含む
 inputs:
-  issue:    { type: integer, required: true }
+  issue:    { type: integer }       # 省略可。PR が閉じる対象（task_file があれば範囲の正本は文面のファイル）。issue も task_file も無ければ resolve が input_invalid
   base:     { type: string }        # 省略可。resolve-ticket が I2 の優先順で決める
   worktree: { type: string }        # 呼び出し元がスロットを払い出した場合だけ（§5.4）
+  task_file:        { type: string }  # タスクの文面のファイルの絶対パス（UTF-8 の Markdown）。あれば作業の範囲の正本
+  task_id:          { type: string }  # T-<番号>。作業ツリーとブランチの名前の鍵（task-<番号>）になる
+  uses_integration: { type: string }  # true | false。true は integration_unsupported で止める（統合先を作る道はまだ無い）
+  challenge_id:     { type: string }  # 受けるだけで使わない
 limits:
   budget_usd: 40                    # この unit 全ラウンドの累計上限（仮の値。shadow run で較正する。§12）
   rework: 3                         # Phase 4→8 の差し戻し上限（W2・Q8）
   self_review: 1                    # /self-review を実行しなかった implement を戻す上限（#381）
+  sync_resolve: 3                   # 取り込みの衝突を LLM に直させる回数（この unit の累計。sync と land-sync の両方で数える）
+facts:                              # 接続契約の facts に出す値（名前 → $steps.<段>.<欄>）。最後に成功して終わり、その欄を返した段の値になる（#388 の S3-4）
+  self_review: [$steps.implement.self_review, $steps.fix.self_review, $steps.respond.self_review]
 overridable:                        # 上書きで付け替えてよい遷移と候補（docs/harness-runtime-overrides.md §5.2。保守側だけ＝O2 と、quality の省略＝#326）
   routes:
     merge-route.integration: [merge, human-merge]   # 統合ブランチ宛も人のマージにできる
@@ -47,18 +63,22 @@ steps:
   resolve:
     kind: command
     run: resolve-ticket             # scripts/resolve-ticket.sh: gh issue view＋Base:・Refs:・Closes: 行の抽出＋統合ブランチの remote 存在確認
-    with: { issue: $inputs.issue, base: $inputs.base }
+    with: { issue: $inputs.issue, base: $inputs.base, task_file: $inputs.task_file, task_id: $inputs.task_id,
+            uses_integration: $inputs.uses_integration }
     output: schemas/resolve-ticket.json
     timeout: 2m
     on:
       ok: analyze
       base_missing: { fail: base_missing }          # I3: 作成を促して止まる（手順は output の message に載る）
       links_invalid: { fail: links_invalid }        # Refs:・Closes: 行が読めない（直し方は output の message に載る。#305）
+      input_invalid: { fail: input_invalid }        # 入力どうしの条件・形が誤り（直し方は output の message に載る。§5.6.2）
+      integration_unsupported: { fail: integration_unsupported }   # uses_integration: true はまだ扱えない
 
   analyze:
     kind: llm
     prompt: prompts/ticket-analyze.md
-    with: { issue: $inputs.issue }
+    add_dirs: [ $steps.resolve.task_dir ]           # 文面のファイルが作業ツリーの外にあっても Read できるように（無ければ空文字で渡さない。#391）
+    with: { issue: $steps.resolve.issue, task_file: $steps.resolve.task_file, key: $steps.resolve.key }
     output: schemas/ticket-analysis.json
     budget_usd: 2
     timeout: 20m
@@ -67,7 +87,7 @@ steps:
   workspace:
     kind: workspace
     action: acquire
-    with: { issue: $inputs.issue, branch: $steps.analyze.branch,
+    with: { issue: $steps.resolve.issue, key: $steps.resolve.key, branch: $steps.analyze.branch,
             base: $steps.resolve.base, provided: $inputs.worktree }
     on:
       provided: implement
@@ -80,7 +100,8 @@ steps:
     agent: claude-harness:feature-implementer
     prompt: prompts/ticket-implement.md
     session: new
-    with: { issue: $inputs.issue, critical_design: $steps.analyze.critical_design }
+    add_dirs: [ $steps.resolve.task_dir ]
+    with: { issue: $steps.resolve.issue, task_file: $steps.resolve.task_file, critical_design: $steps.analyze.critical_design }
     output: schemas/implement-result.json
     budget_usd: 15
     timeout: 90m
@@ -120,7 +141,31 @@ steps:
     output: schemas/commit-result.json
     budget_usd: 2
     timeout: 30m
-    on: { committed: e2e-route, failure: { fail: commit } }
+    on: { committed: sync, failure: { fail: commit } }
+
+  sync:                                             # #388: 最初のレビュー待ちの前に、宛先の最新をマージのコミットで取り込む（push はしない）
+    kind: pull-request
+    action: sync
+    with: { base: $steps.resolve.base }             # expect_head は渡さない（まだ PR が無く、手元の作業ブランチが正本）
+    on:
+      current: e2e-route
+      synced:  e2e-route
+      conflict: { goto: sync-resolve, limit: sync_resolve, exhausted: { fail: sync_conflict } }
+      unresolved:     { fail: sync_conflict }
+      not_merge_only: { fail: sync_not_merge_only }
+      diverged:       { fail: branch_diverged }
+      head_moved:     { fail: local_head_mismatch } # expect_head を渡さないので、ここでは出ない
+      unavailable:    { fail: remote_unavailable }  # 戻るレビュー待ちがまだ無い
+
+  sync-resolve:
+    kind: llm
+    prompt: prompts/sync-resolve.md
+    session: continue:implement
+    with: { base: $steps.resolve.base }
+    output: schemas/sync-resolve-result.json
+    budget_usd: 4
+    timeout: 30m
+    on: { resolved: sync, failure: { fail: sync_conflict } }
 
   e2e-route:
     kind: select
@@ -130,6 +175,8 @@ steps:
   e2e:
     kind: llm
     prompt: prompts/ticket-e2e.md                   # /create-e2e まで。/explain-e2e は runtime の外（§3.7）
+    add_dirs: [ $steps.resolve.task_dir ]
+    with: { task_file: $steps.resolve.task_file }   # 文面のファイルがあれば要件の正本（無ければ空文字。#391）
     session: continue:implement
     output: schemas/e2e-result.json
     budget_usd: 8
@@ -195,12 +242,62 @@ steps:
     kind: gate
     type: input
     decider: any
-    requested_action: PR のレビューを待つ。対応が要れば respond、マージしてよければ ready を渡して resume
-    inputs: [respond, ready]
+    requested_action: PR のレビューを待つ。対応が要れば respond。この中身を宛先へ入れてよければ land（--approved-ref に通した先頭のコミット）。呼び出し元の側で反映まで済ませたなら ready を渡して resume
+    inputs: [respond, ready, land]
     contract_kind: review                           # 接続契約で review（レビュー待ち）として見せる（受け付けを宣言した呼び出し元だけ。§5.6.1・#372）
+    refresh: pr-head                                # 待っている間に外から push されても、status が PR の先頭を取り直す（契約の commit が新しい先頭になる。§5.6.2）
     on:
       respond: { goto: respond, with: { note: $gate.note }, note: optional }   # #377: 添え書き（差し戻しの理由）を respond へ。無ければ空文字
-      ready: merge-route
+      ready: merge-route                            # 変えない（land とは別の道）
+      land: { goto: land, with: { approved_ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }   # 入れ終えるかレビュー待ちへ戻るまで、runner が落ちても別の待ちへ移らない（失敗で終える）
+
+  land:                                             # 先頭の一致と宛先の最新を含むことを確かめ、満たすときだけ入れる（squash。確かめと入れる操作は 1 つの段の中）
+    kind: pull-request
+    action: land
+    with: { pr: $steps.publish.pr_number, base: $steps.resolve.base, approved_ref: $edge.approved_ref }
+    on:
+      landed:   cleanup
+      behind:   land-sync
+      mismatch: { gate: review, detail: $steps.land.detail }
+      blocked:  { gate: review, detail: $steps.land.detail }
+      closed:       { fail: pr_closed }
+      merged_other: { fail: merged_unapproved }
+      base_changed: { fail: pr_base_changed }
+      not_confirmed: { fail: merge_not_confirmed }
+
+  land-sync:                                        # sync と同じ action。land が一致を確かめた PR の先頭（expect_head）から取り込む
+    kind: pull-request
+    action: sync
+    with: { base: $steps.resolve.base, expect_head: $steps.land.head_sha }
+    on:
+      current: land-push
+      synced:  land-push
+      conflict: { goto: land-sync-resolve, limit: sync_resolve, exhausted: { fail: sync_conflict } }
+      unresolved:     { fail: sync_conflict }
+      not_merge_only: { fail: sync_not_merge_only }
+      diverged:       { fail: branch_diverged }
+      head_moved:     { fail: local_head_mismatch }
+      unavailable:    { gate: review, detail: $steps.land-sync.detail }   # 何も変えていないのでレビュー待ちへ戻す
+
+  land-sync-resolve:                                # sync-resolve と同じ指示文。レビュー待ちは長いので session は new
+    kind: llm
+    prompt: prompts/sync-resolve.md
+    session: new
+    with: { base: $steps.resolve.base }
+    output: schemas/sync-resolve-result.json
+    budget_usd: 4
+    timeout: 30m
+    on: { resolved: land-sync, failure: { fail: sync_conflict } }
+
+  land-push:                                        # 取り込んだコミットを push する（強制しない）。宛先へは入れず、新しい先頭を出してレビュー待ちへ戻る
+    kind: pull-request
+    action: push
+    with: { pr: $steps.publish.pr_number, base: $steps.resolve.base }
+    on:
+      pushed:    { gate: review, detail: $steps.land-push.detail }
+      unchanged: { gate: review, detail: $steps.land-push.detail }
+      rejected:    { fail: push_rejected }
+      unavailable: { fail: push_failed }
 
   respond:
     kind: llm
@@ -211,7 +308,7 @@ steps:
     budget_usd: 8
     timeout: 60m
     on:
-      pushed:      quality                          # R4: 修正 push 後は quality → publish（既存の PR なので updated）→ ci（#339）
+      pushed:      quality                          # R4: respond が自分で push した後（強制しない）。quality → publish（既存の PR なので updated）→ ci（#339）。quality を省く上書き（pushed: ci）でも、コミットは返す時点で PR のブランチに在る
       no_change:   review
       needs_human: { gate: review-human }           # R2 qcFailed・R3 design_change/critical
 

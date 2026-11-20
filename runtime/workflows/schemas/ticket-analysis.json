@@ -7,7 +7,7 @@
     "outcome": { "type": "string", "enum": ["ok"] },
     "e2e_target": { "type": "string", "enum": ["yes", "no"] },
     "e2e_reason": { "type": "string" },
-    "branch": { "type": "string", "pattern": "^(feature|fix|refactor|docs|hotfix)/issue-[0-9]+-[a-z0-9][a-z0-9-]*$" },
+    "branch": { "type": "string", "pattern": "^(feature|fix|refactor|docs|hotfix)/(issue|task)-[0-9]+-[a-z0-9][a-z0-9-]*$" },
     "critical_design": { "type": "string" }
   },
   "additionalProperties": false

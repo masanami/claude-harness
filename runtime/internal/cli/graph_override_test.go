@@ -172,24 +172,24 @@ func TestGraphOverrideTicketRoute(t *testing.T) {
 	if code != ExitOK || errOut != "" {
 		t.Fatalf("graph --format mermaid: exit %d\n%s", code, errOut)
 	}
-	// merge-route=n16・merge=n17・review-human=n15・human-merge=n18・cleanup=n20。
+	// merge-route=n22・merge=n23・review-human=n21・human-merge=n24・cleanup=n26。
 	for _, want := range []string{
 		"\n  %% overrides: arg " + ov + "\n",
 		"\n  %% changes: steps.merge-route.on.integration: merge -> human-merge (arg)\n",
-		"\n  n16 ==>|\"integration (override arg, was merge)\"| n18\n",
-		"\n  n16 -->|\"default\"| n18\n",
-		"\n  n17 -.->|\"merged\"| n20\n", "\n  n17 -.->|\"blocked\"| n15\n",
-		"\n  class n17 skipped\n",
+		"\n  n22 ==>|\"integration (override arg, was merge)\"| n24\n",
+		"\n  n22 -->|\"default\"| n24\n",
+		"\n  n23 -.->|\"merged\"| n26\n", "\n  n23 -.->|\"blocked\"| n21\n",
+		"\n  class n23 skipped\n",
 	} {
 		if !strings.Contains(mmd, want) {
 			t.Errorf("mermaid does not contain %q", want)
 		}
 	}
-	if strings.Contains(mmd, "| n17\n") {
+	if strings.Contains(mmd, "| n23\n") {
 		t.Errorf("mermaid draws a line into the skipped merge")
 	}
 	// linkStyle の番号は、merge から出る 2 本の線を指す（線は書いた順に 0 から数える）。
-	if got := greyLinks(t, mmd); got != "n17 -.->|\"merged\"| n20,n17 -.->|\"blocked\"| n15" {
+	if got := greyLinks(t, mmd); got != "n23 -.->|\"merged\"| n26,n23 -.->|\"blocked\"| n21" {
 		t.Errorf("grey links = %s", got)
 	}
 	if t.Failed() {

@@ -44,6 +44,25 @@ echo "=== validate_branch_name ==="
 }
 
 echo ""
+echo "=== resolve_key / 鍵の形（#388 S3-1） ==="
+{
+  assert_eq "resolve_key: 数字だけは issue-<数字>" "issue-45" "$(resolve_key 45)"
+  assert_eq "resolve_key: issue-<n> はそのまま" "issue-45" "$(resolve_key issue-45)"
+  assert_eq "resolve_key: task-<n> はそのまま" "task-12" "$(resolve_key task-12)"
+  assert_eq "resolve_key: pr-<n> はそのまま" "pr-7" "$(resolve_key pr-7)"
+  assert_eq "resolve_key: 未知の接頭辞は空" "" "$(resolve_key foo-1)"
+  assert_eq "resolve_key: 数字の無い鍵は空" "" "$(resolve_key task-)"
+  assert_eq "resolve_key: T-12 の形は空（鍵は task-12）" "" "$(resolve_key T-12)"
+  assert_eq "鍵 task-12 のブランチは valid" "valid" "$(validate_branch_name task-12 "feature/task-12-add-x")"
+  assert_eq "鍵 task-12 に issue- のブランチは invalid" "invalid" "$(validate_branch_name task-12 "feature/issue-12-add-x")"
+  assert_eq "鍵 issue-45 に task- のブランチは invalid" "invalid" "$(validate_branch_name issue-45 "feature/task-45-add-x")"
+  assert_eq "数字だけの呼び方（45）は issue-45 のブランチだけ valid" "valid" "$(validate_branch_name 45 "feature/issue-45-add-x")"
+  assert_eq "未知の鍵は invalid" "invalid" "$(validate_branch_name foo-1 "feature/foo-1-add-x")"
+  assert_eq "compute_worktree_path: 鍵 task-12 は root/task-12" "/tmp/wt/task-12" "$(compute_worktree_path "/tmp/wt" task-12)"
+  assert_eq "compute_worktree_path: 鍵 issue-45 は root/issue-45（数字だけと同じ）" "/tmp/wt/issue-45" "$(compute_worktree_path "/tmp/wt" issue-45)"
+}
+
+echo ""
 echo "=== compute_worktree_path / default_worktree_root ==="
 {
   assert_eq "compute_worktree_path: root/issue-N を組み立てる" "/tmp/wt/issue-45" "$(compute_worktree_path "/tmp/wt" 45)"
@@ -228,6 +247,70 @@ echo "=== main(): 実際のgit worktree操作(一時リポジトリ) ==="
   assert_eq "既存ローカルブランチ: created=true(worktreeとしては新規)" "true" "$(jq -r '.created' <<<"$output3")"
   assert_eq "既存ローカルブランチ: branch_existed=true" "true" "$(jq -r '.branch_existed' <<<"$output3")"
   assert_eq "既存ローカルブランチ: 想定ブランチがcheckoutされる" "feature/issue-47-existing-branch" "$(git -C "${WORKTREE_ROOT}/issue-47" branch --show-current)"
+
+  # --- 数字だけの呼び方は鍵 issue-<数字> と同じ出力（#388 S3-1）。key を足し、issue は数 ---
+  assert_eq "数字だけの呼び方: key は issue-45" "issue-45" "$(jq -r '.key' <<<"$output")"
+  assert_eq "数字だけの呼び方: issue は数 45" "45" "$(jq -r '.issue' <<<"$output")"
+  output_key_issue="$(cd "$REPO_DIR" && main issue-45 "feature/issue-45-add-x" main "$WORKTREE_ROOT")"
+  assert_eq "鍵 issue-45 は数字だけの呼び方と同じ場所を再利用する(reused=true)" "true" "$(jq -r '.reused' <<<"$output_key_issue")"
+  assert_eq "鍵 issue-45: worktree_path は数字だけの呼び方と同じ" "$(jq -r '.worktree_path' <<<"$output")" "$(jq -r '.worktree_path' <<<"$output_key_issue")"
+
+  # --- 鍵 task-<n>: 場所は <root>/task-<n>、ブランチは {type}/task-<n>-{説明}、issue は null ---
+  output_task="$(cd "$REPO_DIR" && main task-12 "feature/task-12-add-y" main "$WORKTREE_ROOT")"
+  assert_eq "鍵 task-12: created=true" "true" "$(jq -r '.created' <<<"$output_task")"
+  assert_eq "鍵 task-12: key は task-12" "task-12" "$(jq -r '.key' <<<"$output_task")"
+  assert_eq "鍵 task-12: issue は null" "null" "$(jq -r '.issue' <<<"$output_task")"
+  assert_eq "鍵 task-12: worktree は <root>/task-12" "true" "$([ -d "${WORKTREE_ROOT}/task-12" ] && echo true || echo false)"
+  assert_eq "鍵 task-12: 作業ブランチがcheckoutされている" "feature/task-12-add-y" "$(git -C "${WORKTREE_ROOT}/task-12" branch --show-current)"
+  # 同じ Issue 番号でも task の鍵が違えば、別の作業ツリーとブランチになる
+  output_task2="$(cd "$REPO_DIR" && main task-13 "feature/task-13-add-z" main "$WORKTREE_ROOT")"
+  assert_eq "鍵 task-13: 別の作業ツリー" "${WORKTREE_ROOT}/task-13" "$(jq -r '.worktree_path' <<<"$output_task2" | sed "s#^$(cd "$WORKTREE_ROOT" && pwd -P)#${WORKTREE_ROOT}#")"
+  # 鍵とブランチの名前が合わなければ拒否する
+  mismatch_stderr="$(cd "$REPO_DIR" && main task-12 "feature/issue-12-add-y" main "$WORKTREE_ROOT" 2>&1 1>/dev/null)"
+  mismatch_exit=$?
+  assert_eq "鍵とブランチの名前の不一致: 非0 exit" "1" "$mismatch_exit"
+  assert_eq "鍵とブランチの名前の不一致: 期待する形（task-12）を示す" "true" "$(echo "$mismatch_stderr" | grep -q "{type}/task-12-{description}" && echo true || echo false)"
+  # 鍵の形でない第 1 引数は拒否する
+  bad_key_stderr="$(cd "$REPO_DIR" && main foo-1 "feature/foo-1-x" main "$WORKTREE_ROOT" 2>&1 1>/dev/null)"
+  bad_key_exit=$?
+  assert_eq "鍵の形でない第1引数: 非0 exit" "1" "$bad_key_exit"
+  assert_eq "鍵の形でない第1引数: 説明を出す" "true" "$(echo "$bad_key_stderr" | grep -q "issue number (digits only) or a key" && echo true || echo false)"
+  # 別ブランチで登録済みの鍵の場所は、いまと同じく衝突で止まる（相乗りしない）
+  task_conflict_stderr="$(cd "$REPO_DIR" && main task-12 "fix/task-12-other" main "$WORKTREE_ROOT" 2>&1 1>/dev/null)"
+  task_conflict_exit=$?
+  assert_eq "鍵 task-12 が別ブランチで登録済み: 非0 exit" "1" "$task_conflict_exit"
+  assert_eq "鍵 task-12 が別ブランチで登録済み: 衝突の説明" "true" "$(echo "$task_conflict_stderr" | grep -q "already registered for a different branch" && echo true || echo false)"
+
+  # --- --detach: 既に origin にあるブランチを、checkout しない形で作る（#388 S3-6。名前の形を検査しない）。
+  #     ブランチが別の作業ツリー（issue-45）で checkout されたままでも作れる ---
+  (cd "$REPO_DIR" && git push -q origin "feature/issue-45-add-x")
+  output_detach="$(cd "$REPO_DIR" && main --detach pr-7 "feature/issue-45-add-x" main "$WORKTREE_ROOT")"
+  assert_eq "--detach: created=true" "true" "$(jq -r '.created' <<<"$output_detach")"
+  assert_eq "--detach: key は pr-7" "pr-7" "$(jq -r '.key' <<<"$output_detach")"
+  assert_eq "--detach: issue は null" "null" "$(jq -r '.issue' <<<"$output_detach")"
+  assert_eq "--detach: branch は渡したブランチ" "feature/issue-45-add-x" "$(jq -r '.branch' <<<"$output_detach")"
+  assert_eq "--detach: detached=true" "true" "$(jq -r '.detached' <<<"$output_detach")"
+  assert_eq "--detach: 作業ツリーはブランチを checkout していない" "" "$(git -C "${WORKTREE_ROOT}/pr-7" branch --show-current)"
+  assert_eq "--detach: HEAD は origin のブランチの先頭" "$(git -C "$REPO_DIR" rev-parse origin/feature/issue-45-add-x)" "$(git -C "${WORKTREE_ROOT}/pr-7" rev-parse HEAD)"
+  output_detach2="$(cd "$REPO_DIR" && main --detach pr-7 "feature/issue-45-add-x" main "$WORKTREE_ROOT")"
+  assert_eq "--detach 再実行: reused=true" "true" "$(jq -r '.reused' <<<"$output_detach2")"
+  assert_eq "--detach 再実行: created=false" "false" "$(jq -r '.created' <<<"$output_detach2")"
+  # 名前の形（{type}/<鍵>-…）を検査しない
+  (cd "$REPO_DIR" && git push -q origin "main:refs/heads/some-free-name")
+  output_detach_free="$(cd "$REPO_DIR" && main --detach pr-8 "some-free-name" main "$WORKTREE_ROOT")"
+  assert_eq "--detach: 名前の形を検査しない" "true" "$(jq -r '.created' <<<"$output_detach_free")"
+  # ブランチが origin に無ければ失敗する
+  detach_missing_stderr="$(cd "$REPO_DIR" && main --detach pr-9 "no-such-branch" main "$WORKTREE_ROOT" 2>&1 1>/dev/null)"
+  detach_missing_exit=$?
+  assert_eq "--detach: ブランチが origin に無い: 非0 exit" "1" "$detach_missing_exit"
+  assert_eq "--detach: ブランチが origin に無い: 説明" "true" "$(echo "$detach_missing_stderr" | grep -q "branch 'no-such-branch' does not exist on remote" && echo true || echo false)"
+  assert_eq "--detach: ブランチが origin に無い: 作業ツリーを作らない" "false" "$([ -e "${WORKTREE_ROOT}/pr-9" ] && echo true || echo false)"
+  # ブランチを checkout した登録済みの場所は、衝突で止まる（相乗りしない）
+  (cd "$REPO_DIR" && git push -q origin "feature/task-12-add-y")
+  detach_clash_stderr="$(cd "$REPO_DIR" && main --detach task-12 "feature/task-12-add-y" main "$WORKTREE_ROOT" 2>&1 1>/dev/null)"
+  detach_clash_exit=$?
+  assert_eq "--detach: ブランチを checkout 済みの場所: 非0 exit" "1" "$detach_clash_exit"
+  assert_eq "--detach: ブランチを checkout 済みの場所: 衝突の説明" "true" "$(echo "$detach_clash_stderr" | grep -q "already registered for a different branch" && echo true || echo false)"
 
   cleanup
   trap - EXIT

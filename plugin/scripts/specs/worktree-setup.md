@@ -2,12 +2,15 @@
 
 `skills/para-impl/SKILL.md` Phase 3（複数Issue時のworktree・作業ブランチ作成）とPhase 10（クリーンアップ）を切り出した決定的スクリプト（Issue #45）。resume時のキャッシュ安定性（固定スクリプト呼び出し）と、worktree作成・削除の冪等性をコードで保証する。gh は呼ばない（gh非依存）。
 
-## `scripts/worktree-setup.sh <issue番号> <branch名> <base> [worktree_root]`
+## `scripts/worktree-setup.sh [--detach] <issue番号 | 鍵> <branch名> <base> [worktree_root]`
+
+第 1 引数は Issue の番号（数字だけ。鍵は `issue-<数字>` になり、出力も動きも従来と同じ）か、鍵（`issue-<n>`・`task-<n>`・`pr-<n>`。n は数字）。鍵は作業ツリーの場所とブランチの名前の両方に使う。それ以外の値は exit 1。
 
 stdout JSON:
 ```json
 {
   "issue": 45,
+  "key": "issue-45",
   "branch": "feature/issue-45-xxx",
   "base": "main",
   "worktree_path": "/path/to/xxx-worktrees/issue-45",
@@ -19,11 +22,20 @@ stdout JSON:
 
 | フィールド | 型 | 意味 |
 |---|---|---|
-| `branch` | string | `{type}/issue-{issue番号}-{ケバブケース説明}` 形式（type: feature/fix/refactor/docs/hotfix）でなければ拒否する。type・説明の意味的な決定は呼び出し側（LLM）の責務で、本スクリプトはパターン検証のみ行う |
-| `worktree_path` | string | `worktree_root`省略時は `<リポジトリの1つ上の階層>/<リポジトリ名>-worktrees/issue-{issue番号}`。symlink経由のTMPDIR（macOSの `/tmp`→`/private/tmp`等）でも `git worktree list` の記録と一致するよう実体パスへ正規化してから使う |
+| `issue` | number \| null | 鍵が `issue-<n>` のときだけ n、ほか（`task-<n>`・`pr-<n>`）は `null` |
+| `key` | string | 名前の鍵（`issue-<n>`・`task-<n>`・`pr-<n>`） |
+| `branch` | string | `{type}/<鍵>-{ケバブケース説明}`（例: `feature/issue-45-xxx`・`feature/task-12-xxx`）形式（type: feature/fix/refactor/docs/hotfix）でなければ拒否する。type・説明の意味的な決定は呼び出し側（LLM）の責務で、本スクリプトはパターン検証のみ行う |
+| `worktree_path` | string | `worktree_root`省略時は `<リポジトリの1つ上の階層>/<リポジトリ名>-worktrees/<鍵>`（Issue の番号なら `issue-{issue番号}`）。symlink経由のTMPDIR（macOSの `/tmp`→`/private/tmp`等）でも `git worktree list` の記録と一致するよう実体パスへ正規化してから使う |
 | `created` | bool | このスクリプト呼び出しで新規に `git worktree add` を実行したか |
 | `reused` | bool | `worktree_path` が既に**同一ブランチ**の登録済みworktreeだったため、新規作成せず再利用したか（resume時の冪等性） |
 | `branch_existed` | bool | 指定ブランチがローカル/リモートに既に存在していたか（前回の途中失敗でブランチだけ作成済み等）。存在する場合は `-b` せず既存ブランチをそのままcheckoutする |
+
+**`--detach`**（第 1 引数。runtime の `reflect` が、すでにある PR のブランチを検証する作業ツリーに使う）: 既に origin にあるブランチを、**checkout しない形（detached。`git worktree add --detach <場所> origin/<branch>`）**で作業ツリーにする。作った側の作業ツリー（`/impl`・`/para-impl` の `issue-<n>`）が同じブランチを checkout したままでも作れる。
+
+- ブランチ名の形（`{type}/<鍵>-{説明}`）は検査しない。ブランチが origin に無ければ exit 非0（作業ツリーは作らない）。base の確認・fetch は通常と同じ
+- 出力は上の JSON に `"detached": true` を足したもの（`branch` は渡したブランチ、`branch_existed` は常に `true`）
+- `worktree_path` が登録済みの detached の作業ツリーなら `reused: true`（誰が作ったかは見ない。呼び出し側が見分ける）。ブランチを checkout した登録済みの作業ツリーなら「already registered for a different branch」で exit 非0、未登録のディレクトリなら通常と同じく exit 非0
+- `--detach` を付けないときの出力・動きは変えない
 
 挙動の要点:
 

@@ -121,9 +121,9 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 | `cancelled` | **`failure`** として返す | 同左を報告する |
 | `succeeded` | 完了として返す | 完了として報告する |
 
-`failed` の主な `reason`: `quality_gate`（実装の中の必須ゲートを通過できない）・`quality_gate_red`（PR を作る前に runtime が回した品質ゲートが、差し戻しの上限まで直しても通らない）・`quality_gate_undeclared`（品質ゲートのコマンドの宣言 `.claude-harness/quality-gate.json` が PR の宛先に無い・形が違う・ゲートが 1 つも走らない・コマンドが拒否された。`.units[0].outputs.quality.message` の案内〔宣言を置くか、上書きで省く〕をそのまま伝える）・`commit`（コミットできなかった。コミット対象外のファイルが `.gitignore` に入らずに残っていた場合は、`.units[0].outputs.commit.summary` にファイルの一覧と「コミットに含めてよいか、消してよいか」の問いが載るので、そのまま人へ伝える。答えに従ってファイルを消すか `.gitignore` に入れてから、新しい run で再実行する）・`self_review_incomplete`（セルフレビューのレビュアーと合流できなかった）・`ci_red`（CI の red を差し戻しの上限まで直しても green にならない）・`e2e`（E2E の失敗を差し戻しの上限まで直しても通らない）・`base_missing`（統合ブランチが remote に無い。`.units[0].outputs.resolve` の案内に従い作成を促す）・`worktree_conflict`（渡された・既存の作業ツリーが使えない）。
+`failed` の主な `reason`: `quality_gate`（実装の中の必須ゲートを通過できない）・`quality_gate_red`（PR を作る前に runtime が回した品質ゲートが、差し戻しの上限まで直しても通らない）・`quality_gate_undeclared`（品質ゲートのコマンドの宣言 `.claude-harness/quality-gate.json` が PR の宛先に無い・形が違う・ゲートが 1 つも走らない・コマンドが拒否された。`.units[0].outputs.quality.message` の案内〔宣言を置くか、上書きで省く〕をそのまま伝える）・`commit`（コミットできなかった。コミット対象外のファイルが `.gitignore` に入らずに残っていた場合は、`.units[0].outputs.commit.summary` にファイルの一覧と「コミットに含めてよいか、消してよいか」の問いが載るので、そのまま人へ伝える。答えに従ってファイルを消すか `.gitignore` に入れてから、新しい run で再実行する）・`self_review_incomplete`（セルフレビューのレビュアーと合流できなかった）・`ci_red`（CI の red を差し戻しの上限まで直しても green にならない）・`e2e`（E2E の失敗を差し戻しの上限まで直しても通らない）・`base_missing`（統合ブランチが remote に無い。`.units[0].outputs.resolve` の案内に従い作成を促す）・`worktree_conflict`（渡された・既存の作業ツリーが使えない）・`sync_conflict`（宛先の最新を取り込んだとき〔コミットのたび。最初のレビュー待ちの前と差し戻しの修正の後〕衝突し、runtime が回数の上限まで直せなかった。作業ツリーに衝突が残るので、`.units[0].outputs` の案内に従い人が宛先の変更を確かめて直す）・`sync_not_merge_only`（衝突を直す段が、取り込みのコミットの外に変更を足した。runtime は受けない。足された変更を人が確かめる）・`branch_diverged`（手元の作業ブランチと origin の同名ブランチが枝分かれしている。runtime は rebase も強制 push もしない。どちらを残すかは人が決める）・`remote_unavailable`（最初のレビュー待ちの前の取り込みで、fetch が origin へ届かない。ネットワーク・認証・権限を直してから新しい run で再実行する）。
 
-**`decider: human` のゲート（`requires_tty: true`）を自分で解決しない**（`harness approve` は端末からしか通らない。Claude に解決させない設計）。**`review` ゲートに `ready` を自動で渡さない**（統合ブランチ宛では runtime がマージまで進む。マージ順は呼び出し元の判断）。
+**`decider: human` のゲート（`requires_tty: true`）を自分で解決しない**（`harness approve` は端末からしか通らない。Claude に解決させない設計）。**`review` ゲートに `ready` を自動で渡さない**（統合ブランチ宛では runtime がマージまで進む。マージ順は呼び出し元の判断）。**レビュー待ちへ `land` を投入しない（`land` は、承認を持つ呼び出し元だけが `--approved-ref <通した先頭のコミット>` を付けて使う。人のマージを通らずに宛先へ入れる道なので、人の承認を取った側だけが使う）。**
 
 ---
 
@@ -153,6 +153,7 @@ end=$((SECONDS+540)); until [ "$(harness status {run-id} --json | jq -r .status)
 11. **次のアクションの案内**（`--worktree` が無い場合）:
    - レビュー対応: `harness resume --detach {run-id} --input respond`（差し戻しの理由があれば `--note <差し戻しの理由>` を足す。`--note` で渡した差し戻しの理由はレビュー対応の段 `respond` に届き、PR にレビューコメントが無くても対応される。`review-human` の `approve` の `--note` も同じく届く。#377。注: プラグイン 5.1.0（harness CLI `runtime/v5.1.0`）より前の harness CLI では `--note` が `respond` に届かないので、PR にコメントしてから `respond` で再開する）
    - マージへ進める: `harness resume --detach {run-id} --input ready`（統合ブランチ宛は runtime がマージする。既定ブランチ宛は人がマージした後に `harness resume --detach {run-id}`）
+   - `land`（人のマージを通らずに宛先へ入れる道）は案内しても、自分では渡さない。使うのは承認を持つ呼び出し元だけで、`harness resume --detach {run-id} --input land --approved-ref <通した先頭のコミット>`（`--approved-ref` が無い・PR の先頭と違えば入らない）
    - 再開の後の合流（下記「再開と合流」）
    - 人の判断が要るゲート: 端末から `harness approve {run-id} --input <値> [--note <指示>]`
    - E2E 対象だった場合: `/explain-e2e`（テストシナリオ解説と独立検証。本スキルは実施しない）
@@ -178,5 +179,5 @@ cd "{起点}" && HARNESS_PLUGIN_VERSION="{プラグイン版}" HARNESS_CLAUDE_PE
 
 - `harness` を使わずに実装フローを自分で進めること
 - **複数 Issue を受け取って自分で並列化すること**（並列化は `/para-impl` の責務）
-- `decider: human` のゲートの解決、`review` ゲートへの `ready` の自動投入
+- `decider: human` のゲートの解決、`review` ゲートへの `ready` の自動投入、**`review` ゲートへの `land` の投入**（`land` は、承認を持つ呼び出し元だけが `--approved-ref` を付けて使う）
 - 合流前の返却、合流できない場合の run の取り消し

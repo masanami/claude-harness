@@ -120,7 +120,7 @@ func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
 	respond(t, fdir, 2, 0, claudeStructured(map[string]any{"outcome": "pass", "self_review": "complete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
 		"behaviors": behaviors, "residual_findings": findings, "unverified": []string{}, "cross_repo_attestation": "", "deviation_report": ""}, 4.0))
 	respond(t, fdir, 3, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "abc", "summary": "committed"}, 4.5))
-	respond(t, fdir, 4, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed the failing test", "deviation_report": ""}, 5.25))
+	respond(t, fdir, 4, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed the failing test", "deviation_report": "", "self_review": "complete"}, 5.25))
 	respond(t, fdir, 5, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "def", "summary": "committed"}, 5.5))
 
 	state, data := t.TempDir(), t.TempDir()
@@ -130,6 +130,24 @@ func newTicketFixture(t *testing.T, extraEnv ...string) *ticketFixture {
 	h := newHarness(t, append(env, extraEnv...)...)
 	h.cwd = repo
 	return &ticketFixture{h: h, root: root, repo: repo, origin: origin, fdir: fdir, ghDir: ghDir, dataDir: data, branch: branch, write: write}
+}
+
+// setAnalyzeBranch は偽の claude の 1 回目（analyze）の応答の作業ブランチを差し替える。
+func (f *ticketFixture) setAnalyzeBranch(branch string) { f.setAnalyzeBranchAt(1, branch) }
+
+// setAnalyzeBranchAt は偽の claude の n 回目の応答を analyze のものにする。
+func (f *ticketFixture) setAnalyzeBranchAt(n int, branch string) {
+	respond(f.h.t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "ok", "e2e_target": "no", "e2e_reason": "internal only", "branch": branch, "critical_design": ""}, 0.3))
+}
+
+// respondRest は偽の claude の n 回目から 4 回分（implement・commit・fix・commit）の応答を作る（run を 2 本通すとき用）。
+func (f *ticketFixture) respondRest(n int) {
+	t := f.h.t
+	respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pass", "self_review": "complete", "pr_title": "feat: add the widget", "summary": "Adds the widget.",
+		"behaviors": []map[string]string{}, "residual_findings": []map[string]string{}, "unverified": []string{}, "cross_repo_attestation": "", "deviation_report": ""}, 4.0))
+	respond(t, f.fdir, n+1, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "abc", "summary": "committed"}, 4.5))
+	respond(t, f.fdir, n+2, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": "", "self_review": "complete"}, 5.25))
+	respond(t, f.fdir, n+3, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "def", "summary": "committed"}, 5.5))
 }
 
 // PR 本文の Issue 参照は Issue 本文の Refs: 行・Closes: なし 行に従う（#305 の完了条件）。同梱の ticket ワークフローを
@@ -216,8 +234,8 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 	for _, x := range u.Rounds[0].Steps {
 		seq = append(seq, x.Step+":"+x.Outcome)
 	}
-	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:red " +
-		"fix:pass commit:committed e2e-route:no quality:pass publish:updated ci:timeout ci:timeout"
+	want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:red " +
+		"fix:pass commit:committed sync:current e2e-route:no quality:pass publish:updated ci:timeout ci:timeout"
 	if strings.Join(seq, " ") != want {
 		t.Fatalf("round 1 steps:\n got %s\nwant %s", strings.Join(seq, " "), want)
 	}
@@ -242,7 +260,7 @@ func ticketEndToEnd(t *testing.T, embedded bool) {
 			t.Errorf("claude call %d ran in %s, want the worktree %s", n, pwd, wt)
 		}
 	}
-	implement, fix := u.Rounds[0].Steps[3], u.Rounds[0].Steps[10]
+	implement, fix := u.Rounds[0].Steps[3], u.Rounds[0].Steps[11]
 	if implement.Resume || !fix.Resume || fix.SessionID != implement.SessionID || fix.SessionID == "" {
 		t.Errorf("session hand-over: implement %s (resume %v), fix %s (resume %v)", implement.SessionID, implement.Resume, fix.SessionID, fix.Resume)
 	}

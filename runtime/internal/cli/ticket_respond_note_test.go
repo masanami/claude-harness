@@ -81,7 +81,7 @@ func TestTicketReviewNoteReachesRespond(t *testing.T) {
 func TestTicketReviewWithoutNoteKeepsTheCurrentBehavior(t *testing.T) {
 	f := newTicketFixture(t)
 	greenCI(f)
-	noChange := claudeStructured(map[string]any{"outcome": "no_change", "summary": "no review comments", "human_question": ""}, 9)
+	noChange := claudeStructured(map[string]any{"outcome": "no_change", "summary": "no review comments", "human_question": "", "self_review": "not_run"}, 9)
 	respond(t, f.fdir, 4, 0, noChange)
 	respond(t, f.fdir, 5, 0, noChange)
 	id := runToReview(t, f)
@@ -114,10 +114,10 @@ func TestTicketReviewWithoutNoteKeepsTheCurrentBehavior(t *testing.T) {
 func TestTicketReviewHumanNoteReachesRespond(t *testing.T) {
 	f := newTicketFixture(t)
 	greenCI(f)
-	respond(t, f.fdir, 4, 0, claudeStructured(map[string]any{"outcome": "needs_human", "summary": "a design_change finding", "human_question": "which way?"}, 9))
+	respond(t, f.fdir, 4, 0, claudeStructured(map[string]any{"outcome": "needs_human", "summary": "a design_change finding", "human_question": "which way?", "self_review": "not_run"}, 9))
 	respondPushes(t, f, 5, "human-fix.txt")
-	respond(t, f.fdir, 6, 0, claudeStructured(map[string]any{"outcome": "needs_human", "summary": "still a design_change", "human_question": "which way?"}, 10))
-	respond(t, f.fdir, 7, 0, claudeStructured(map[string]any{"outcome": "no_change", "summary": "nothing to do", "human_question": ""}, 11))
+	respond(t, f.fdir, 6, 0, claudeStructured(map[string]any{"outcome": "needs_human", "summary": "still a design_change", "human_question": "which way?", "self_review": "not_run"}, 10))
+	respond(t, f.fdir, 7, 0, claudeStructured(map[string]any{"outcome": "no_change", "summary": "nothing to do", "human_question": "", "self_review": "not_run"}, 11))
 	id := runToReview(t, f)
 
 	out, errOut, code := f.h.run("resume", id, "--input", "respond")
@@ -223,6 +223,29 @@ func TestTicketRespondPromptHandlesTheNote(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Errorf("ticket-respond.md does not say %q", want)
 		}
+	}
+}
+
+// 指示文が、この段でコミットを足したら（/pr-review-respond の修正でも /self-review の指摘の修正でも）返す前に自分で作業ブランチへ通常の push を
+// して pushed を返すこと（強制 push はしない。品質ゲートを省く上書き respond.pushed: ci は publish を通らないため）、needs_human のときは
+// /self-review の指摘を直すコミットを足さないこと、self_review を必ず返すことを書いている。
+func TestTicketRespondPromptPushesItsOwnCommits(t *testing.T) {
+	p := readFile(t, filepath.Join(repoWorkflows, "prompts", "ticket-respond.md"))
+	for _, want := range []string{
+		"返す前に作業ブランチへ通常の push",
+		"強制 push・`--force`・`--force-with-lease` はしない",
+		"`outcome` は必ず `pushed`",
+		"手元にだけコミットを残して `no_change` や `needs_human` で返さない",
+		"`needs_human` を返すとき（人の判断待ち）は、`/self-review` の指摘を直すコミットを足さない",
+		"`self_review` は `outcome` に関わらず毎回返す",
+		"この段で `/self-review` を実行していなければ `not_run`",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("ticket-respond.md does not say %q", want)
+		}
+	}
+	if strings.Contains(p, "この段は push しない") {
+		t.Errorf("ticket-respond.md still says that the step does not push")
 	}
 }
 

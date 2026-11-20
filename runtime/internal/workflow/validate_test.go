@@ -273,6 +273,7 @@ func TestParseRef(t *testing.T) {
 		"$steps.ci-wait.a.b_c": RefSteps,
 		"$edge.failure":        RefEdge,
 		"$gate.note":           RefGate,
+		"$gate.approved_ref":   RefGate,
 	}
 	for s, k := range good {
 		r, err := ParseRef(s)
@@ -359,6 +360,20 @@ func TestLLMAndGateBaseIsValid(t *testing.T) {
 	}
 }
 
+// add_dirs は llm に書け、値は文字列の参照かリテラルの列（#391）。
+func TestAcceptsAddDirs(t *testing.T) {
+	y := strings.Replace(llmBase, "    budget_usd: 2\n", "    budget_usd: 2\n    add_dirs: [ /var/task, $steps.a.detail ]\n", 1)
+	err := check(t, llmWithA(y))
+	// $steps.a.detail は object 型なので、参照の型の検査で拒否される（string だけ受ける）。リテラルだけなら通る。
+	if err == nil || !strings.Contains(err.Error(), "must be a string (a folder path)") {
+		t.Fatalf("an object reference in add_dirs must be rejected, got %v", err)
+	}
+	y = strings.Replace(llmBase, "    budget_usd: 2\n", "    budget_usd: 2\n    add_dirs: [ /var/task ]\n", 1)
+	if err := check(t, llmWithA(y)); err != nil {
+		t.Fatalf("add_dirs of a string literal must be valid: %v", err)
+	}
+}
+
 // llmWithA は llmBase の先頭に command ステップ a（impl へ進む）を足す（$steps.a.detail の参照先）。
 func llmWithA(y string) string {
 	return strings.Replace(y, "steps:\n", "steps:\n  a:\n    kind: command\n    run: tool\n    output: schemas/out.json\n    on: { ok: impl, bad: { fail: a_bad } }\n", 1)
@@ -411,7 +426,29 @@ func TestRejectsLLMAndGate(t *testing.T) {
 		{"contract_kind not a string", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    contract_kind: [review]\n", "contract_kind"},
 		{"contract_kind review on a human gate", "    inputs: [follow, abort]\n", "    inputs: [follow, abort]\n    contract_kind: review\n", "contract_kind review is only valid for type input with decider parent or any"},
 		{"contract_kind review on an observe gate", "    observe: pr\n", "    observe: pr\n    contract_kind: review\n", "contract_kind review is only valid for type input with decider parent or any"},
+		// refresh（§5.6.2）: 書ける値は pr-head だけで、input 型のゲートにだけ書ける。
+		{"refresh other than pr-head", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    refresh: pr-state\n", `refresh "pr-state" must be pr-head`},
+		{"refresh not a string", "    inputs: [respond, ready]\n", "    inputs: [respond, ready]\n    refresh: [pr-head]\n", "refresh"},
+		{"refresh on an observe gate", "    observe: pr\n", "    observe: pr\n    refresh: pr-head\n", "refresh is only valid for type input"},
+		{"refresh on an llm step", "    budget_usd: 2\n", "    budget_usd: 2\n    refresh: pr-head\n", `unknown key "refresh"`},
 		{"contract_kind on an llm step", "    budget_usd: 2\n", "    budget_usd: 2\n    contract_kind: review\n", `unknown key "contract_kind"`},
+		// add_dirs（#391）: llm だけ。値は文字列（参照かリテラル）の列。
+		{"add_dirs is not a list", "    budget_usd: 2\n", "    budget_usd: 2\n    add_dirs: $inputs.n\n", "add_dirs must be a list"},
+		{"add_dirs of an integer input", "    budget_usd: 2\n", "    budget_usd: 2\n    add_dirs: [ $inputs.n ]\n", "must be a string (a folder path)"},
+		{"add_dirs of an integer literal", "    budget_usd: 2\n", "    budget_usd: 2\n    add_dirs: [ 3 ]\n", "must be a reference or a string"},
+		{"add_dirs of a missing input", "    budget_usd: 2\n", "    budget_usd: 2\n    add_dirs: [ $inputs.nope ]\n", "refers to an input that is not declared"},
+		// $gate.approved_ref・detail・interrupted（#392）。
+		{"approved_ref in a step", "with: { n: $inputs.n }", "with: { n: $gate.approved_ref }", "$gate.approved_ref is only valid in the with of a transition leaving an input gate"},
+		{"approved_ref from an llm step", "      bad: { fail: bad }\n", "      bad: { goto: review, with: { x: $gate.approved_ref }, interrupted: { fail: x } }\n", "step \"fix\" is not an input gate"},
+		{"approved_ref without interrupted", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.approved_ref } }", "must write interrupted: { fail: <reason> }"},
+		{"interrupted on a step transition", "      bad: { fail: bad }\n", "      bad: { goto: review, interrupted: { fail: x } }\n", "interrupted is only valid on a goto leaving an input gate"},
+		{"interrupted without fail", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, interrupted: {} }", "interrupted needs fail"},
+		{"interrupted with another key", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, interrupted: { done: x } }", `unknown key "done"`},
+		{"detail on a goto", "follow: { goto: fix, with: { note: $gate.note } }", "follow: { goto: fix, with: { note: $gate.note }, detail: $inputs.s }", `unknown key "detail"`},
+		{"detail from a gate reference", "      ready: { gate: merged }\n", "      ready: { gate: merged, detail: $gate.note }\n", "detail is one reference to $steps"},
+		{"detail from an edge", "      ready: { gate: merged }\n", "      ready: { gate: merged, detail: $edge.x }\n", "detail is one reference to $steps"},
+		{"detail not a string", "      ready: { gate: merged }\n", "      ready: { gate: merged, detail: $inputs.n }\n", "detail is a sentence (string)"},
+		{"detail as a literal", "      ready: { gate: merged }\n", "      ready: { gate: merged, detail: because }\n", "must be exactly one reference"},
 		{"interrupted is reserved", "  merged:\n", "  interrupted:\n    kind: gate\n    type: input\n    decider: any\n    requested_action: x\n    inputs: [go]\n    on: { go: { done: x } }\n  merged:\n", `step id "interrupted" is reserved`},
 	}
 	for _, c := range cases {

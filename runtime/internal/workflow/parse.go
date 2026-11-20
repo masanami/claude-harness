@@ -72,13 +72,13 @@ type kindSpec struct {
 // 種類を足すときは、ここと engine の実行器の両方に足す。
 var kinds = map[string]kindSpec{
 	"command": {keys: []string{"kind", "description", "run", "with", "output", "outcome_field", "exit", "timeout", "on"}},
-	"llm":     {keys: []string{"kind", "description", "prompt", "agent", "session", "with", "output", "budget_usd", "timeout", "on"}},
-	"gate":    {keys: []string{"kind", "description", "type", "decider", "requested_action", "inputs", "observe", "contract_kind", "with", "on"}},
+	"llm":     {keys: []string{"kind", "description", "prompt", "agent", "session", "add_dirs", "with", "output", "budget_usd", "timeout", "on"}},
+	"gate":    {keys: []string{"kind", "description", "type", "decider", "requested_action", "inputs", "observe", "contract_kind", "refresh", "with", "on"}},
 	// select は参照 1 つの enum 値をそのまま outcome にする（副作用なし）。with・output は持たない。
 	"select": {keys: []string{"kind", "description", "value", "on"}},
 	// workspace と pull-request は出力の形を Go が決める（output を書かせない。builtin.go）。
 	"workspace":    {keys: []string{"kind", "description", "action", "with", "on"}},
-	"pull-request": {keys: []string{"kind", "description", "with", "on"}},
+	"pull-request": {keys: []string{"kind", "description", "action", "with", "on"}},
 }
 
 // Kinds は登録済みの種類名を返す。
@@ -262,7 +262,7 @@ func Parse(path string, data []byte) (*Workflow, error) {
 	if !ok {
 		return nil, p.problems
 	}
-	p.allowKeys(top, "workflow", "schema", "id", "description", "inputs", "limits", "overridable", "steps")
+	p.allowKeys(top, "workflow", "schema", "id", "description", "inputs", "limits", "facts", "release_on", "overridable", "steps")
 	var stepsNode *yaml.Node
 	for _, pr := range top {
 		switch pr.key {
@@ -276,6 +276,10 @@ func Parse(path string, data []byte) (*Workflow, error) {
 			wf.Inputs = p.inputs(pr.val)
 		case "limits":
 			wf.Limits = p.limits(pr.val)
+		case "facts":
+			wf.Facts = p.facts(pr.val)
+		case "release_on":
+			wf.ReleaseOn = p.releaseOn(pr.val)
 		case "overridable":
 			wf.Routes = p.overridable(pr.val, wf)
 		case "steps":
@@ -415,6 +419,81 @@ func (p *parser) limits(n *yaml.Node) []*Limit {
 	return out
 }
 
+// facts は最上位の facts（名前 → 参照の配列）を読む。参照は $steps.<段>.<欄> の形だけ。
+func (p *parser) facts(n *yaml.Node) []*FactDecl {
+	pairs, ok := p.mapping(n, "facts")
+	if !ok {
+		return nil
+	}
+	var out []*FactDecl
+	for _, pr := range pairs {
+		what := "facts." + pr.key
+		if !reName.MatchString(pr.key) {
+			p.errf(pr.knode, "fact name %q must match %s", pr.key, reName.String())
+			continue
+		}
+		if !p.plain(pr.val, what) {
+			continue
+		}
+		if pr.val.Kind != yaml.SequenceNode || len(pr.val.Content) == 0 {
+			p.errf(pr.val, "%s must be a non-empty list of references ($steps.<step>.<field>)", what)
+			continue
+		}
+		d := &FactDecl{Name: pr.key, Line: pr.knode.Line}
+		for _, it := range pr.val.Content {
+			ref := p.reference(it, what+" item")
+			if ref == nil {
+				continue
+			}
+			if ref.Kind != RefSteps {
+				p.errf(it, "%s: %s must be a $steps.<step>.<field> reference (the value a step returned)", what, ref.Raw)
+				continue
+			}
+			d.Refs = append(d.Refs, ref)
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// ReleaseOnValues は release_on に書ける値（終わり方）。succeeded は書けない。
+var ReleaseOnValues = []string{"cancelled", "failed"}
+
+// releaseOn は最上位の release_on（終わり方の配列）を読む。
+func (p *parser) releaseOn(n *yaml.Node) []string {
+	if !p.plain(n, "release_on") {
+		return nil
+	}
+	if n.Kind != yaml.SequenceNode || len(n.Content) == 0 {
+		p.errf(n, "release_on must be a non-empty list of end states (cancelled, failed)")
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, it := range n.Content {
+		v, ok := p.str(it, "release_on item")
+		if !ok {
+			continue
+		}
+		known := false
+		for _, k := range ReleaseOnValues {
+			known = known || k == v
+		}
+		switch {
+		case v == "succeeded":
+			p.errf(it, "release_on: succeeded cannot be listed (the worktree is released by a cleanup step after landing)")
+		case !known:
+			p.errf(it, "release_on: %q must be cancelled or failed", v)
+		case seen[v]:
+			p.errf(it, "release_on: duplicate value %q", v)
+		default:
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func (p *parser) steps(n *yaml.Node) []*Step {
 	pairs, ok := p.mapping(n, "steps")
 	if !ok {
@@ -491,6 +570,8 @@ func (p *parser) step(id string, knode, n *yaml.Node) *Step {
 			s.Prompt, _ = p.str(f.val, fw)
 		case "agent":
 			s.Agent, _ = p.matched(f.val, fw, reAgent)
+		case "add_dirs":
+			s.AddDirs = p.valueList(f.val, fw)
 		case "session":
 			if str, ok := p.str(f.val, fw); ok {
 				switch {
@@ -522,6 +603,8 @@ func (p *parser) step(id string, knode, n *yaml.Node) *Step {
 			s.Observe, _ = p.matched(f.val, fw, reOutcome)
 		case "contract_kind":
 			s.ContractKind, _ = p.str(f.val, fw)
+		case "refresh":
+			s.Refresh, _ = p.str(f.val, fw)
 		case "value":
 			s.Value = p.reference(f.val, fw)
 		case "action":
@@ -649,7 +732,7 @@ func (p *parser) transition(n *yaml.Node, what string, nested bool) *Transition 
 		return nil
 	case "goto":
 		t.Kind = TGoto
-		if !p.allowKeys(pairs, what, "goto", "with", "limit", "exhausted", "note") {
+		if !p.allowKeys(pairs, what, "goto", "with", "limit", "exhausted", "note", "interrupted") {
 			return nil
 		}
 	case "retry":
@@ -659,7 +742,7 @@ func (p *parser) transition(n *yaml.Node, what string, nested bool) *Transition 
 		}
 	case "gate":
 		t.Kind = TGate
-		if !p.allowKeys(pairs, what, "gate") {
+		if !p.allowKeys(pairs, what, "gate", "detail") {
 			return nil
 		}
 	case "fail":
@@ -694,6 +777,10 @@ func (p *parser) transition(n *yaml.Node, what string, nested bool) *Transition 
 			}
 		case "exhausted":
 			exhausted = pr.val
+		case "detail":
+			t.Detail = p.reference(pr.val, fw)
+		case "interrupted":
+			t.Interrupted = p.interruptedMark(pr.val, fw)
 		case "note":
 			// #377: 添え書き（$gate.note）を任意にする宣言。受け付ける値は optional だけ。
 			if v, ok := p.str(pr.val, fw); ok {
@@ -724,10 +811,29 @@ func (p *parser) transition(n *yaml.Node, what string, nested bool) *Transition 
 	return t
 }
 
+// interruptedMark は goto の interrupted: { fail: <理由> } を読み、理由の語を返す。
+func (p *parser) interruptedMark(n *yaml.Node, what string) string {
+	pairs, ok := p.mapping(n, what)
+	if !ok {
+		return ""
+	}
+	if !p.allowKeys(pairs, what, "fail") {
+		return ""
+	}
+	for _, pr := range pairs {
+		if pr.key == "fail" {
+			reason, _ := p.matched(pr.val, what+".fail", reName)
+			return reason
+		}
+	}
+	p.errf(n, "%s: interrupted needs fail: <reason>", what)
+	return ""
+}
+
 // passesGateNote は with が $gate.note を渡すかを返す。
 func passesGateNote(with []*Binding) bool {
 	for _, b := range with {
-		if b.Value.Ref != nil && b.Value.Ref.Kind == RefGate {
+		if b.Value.Ref != nil && b.Value.Ref.Kind == RefGate && b.Value.Ref.Name == GateNote {
 			return true
 		}
 	}
@@ -750,6 +856,28 @@ func (p *parser) bindings(n *yaml.Node, what string, nameRe *regexp.Regexp) []*B
 		if ok {
 			out = append(out, &Binding{Name: pr.key, Value: v, Line: pr.knode.Line})
 		}
+	}
+	return out
+}
+
+// valueList は add_dirs（参照かリテラルの文字列の列）を読む。
+func (p *parser) valueList(n *yaml.Node, what string) []*Binding {
+	if n.Kind != yaml.SequenceNode {
+		p.errf(n, "%s must be a list of references or strings", what)
+		return nil
+	}
+	var out []*Binding
+	for i, it := range n.Content {
+		fw := fmt.Sprintf("%s[%d]", what, i)
+		v, ok := p.value(it, fw)
+		if !ok {
+			continue
+		}
+		if _, isInt := v.Literal.(int64); isInt {
+			p.errf(it, "%s must be a reference or a string (a folder path)", fw)
+			continue
+		}
+		out = append(out, &Binding{Name: fmt.Sprintf("add_dirs[%d]", i), Value: v, Line: it.Line})
 	}
 	return out
 }
@@ -814,8 +942,8 @@ func ParseRef(s string) (*Ref, error) {
 	if m := reRefEdge.FindStringSubmatch(s); m != nil {
 		return &Ref{Kind: RefEdge, Name: m[1], Raw: s}, nil
 	}
-	if s == "$gate.note" {
-		return &Ref{Kind: RefGate, Name: "note", Raw: s}, nil
+	if s == "$gate.note" || s == "$gate.approved_ref" {
+		return &Ref{Kind: RefGate, Name: strings.TrimPrefix(s, "$gate."), Raw: s}, nil
 	}
-	return nil, fmt.Errorf("%q is not a reference; the only forms are $inputs.<name>, $steps.<step>.<field>[.<field>...], $edge.<name>, $gate.note (no operators, concatenation, indexing or defaults, see §3.3)", s)
+	return nil, fmt.Errorf("%q is not a reference; the only forms are $inputs.<name>, $steps.<step>.<field>[.<field>...], $edge.<name>, $gate.note, $gate.approved_ref (no operators, concatenation, indexing or defaults, see §3.3)", s)
 }

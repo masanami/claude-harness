@@ -207,6 +207,16 @@ func TestShippedTicketWorkflowIsValid(t *testing.T) {
 			t.Errorf("steps.%s: contract_kind = %q, want %q", s.ID, s.ContractKind, want)
 		}
 	}
+	// refresh（§5.6.2）を書くのも review ゲートだけ。
+	for _, s := range wf.Steps {
+		want := ""
+		if s.ID == "review" {
+			want = RefreshPRHead
+		}
+		if s.Refresh != want {
+			t.Errorf("steps.%s: refresh = %q, want %q", s.ID, s.Refresh, want)
+		}
+	}
 	if r := wf.Step("review"); r == nil || r.GateType != GateInput || r.Decider != DeciderAny {
 		t.Errorf("review gate = %+v (want an input gate with decider any)", r)
 	}

@@ -31,7 +31,7 @@ func pushFile(f *ticketFixture, name string) string {
 func respondPushes(t *testing.T, f *ticketFixture, n int, name string) {
 	t.Helper()
 	runStep(t, f, n, pushFile(f, name))
-	respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pushed", "summary": "addressed the review", "human_question": ""}, 9))
+	respond(t, f.fdir, n, 0, claudeStructured(map[string]any{"outcome": "pushed", "summary": "addressed the review", "human_question": "", "self_review": "not_run"}, 9))
 }
 
 // runToReview は CI が 1 回で green になる run をレビュー待ちまで進め、run id を返す。
@@ -62,7 +62,7 @@ func originHead(t *testing.T, f *ticketFixture) string {
 	return remote[0]
 }
 
-const firstRound = "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed e2e-route:no quality:pass publish:opened ci:green"
+const firstRound = "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:green"
 
 // respond の push の後は quality を通り、PR が既にあるので publish は updated で ci へ進む。PR は作り直さず、本文も書かない。
 // 記録の commit_sha は respond が push した SHA（= 実際の PR の head）になる。
@@ -116,7 +116,7 @@ func TestTicketRespondQualityFailGoesToFixAndSharesRework(t *testing.T) {
 	declareQualityGate(t, f.repo, `{"test": "make gate"}`)
 	respondPushes(t, f, 6, "broken.txt")
 	runStep(t, f, 7, "git rm -q broken.txt\ngit commit -q -m 'fix: remove'")
-	respond(t, f.fdir, 7, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": ""}, 10))
+	respond(t, f.fdir, 7, 0, claudeStructured(map[string]any{"outcome": "pass", "summary": "fixed", "deviation_report": "", "self_review": "complete"}, 10))
 	respond(t, f.fdir, 8, 0, claudeStructured(map[string]any{"outcome": "committed", "commit_sha": "ghi", "summary": "committed"}, 11))
 	id := runToReview(t, f)
 
@@ -125,7 +125,7 @@ func TestTicketRespondQualityFailGoesToFixAndSharesRework(t *testing.T) {
 		t.Fatalf("resume exit %d\n%s\n%s", code, out, errOut)
 	}
 	v := decode[statusView](t, out)
-	want := "respond:pushed quality:fail fix:pass commit:committed e2e-route:no quality:pass publish:updated ci:green"
+	want := "respond:pushed quality:fail fix:pass commit:committed sync:current e2e-route:no quality:pass publish:updated ci:green"
 	if got := stepSeq(v); !strings.HasSuffix(got, " "+want) {
 		t.Fatalf("steps:\n got %s\nwant the suffix %s", got, want)
 	}
@@ -191,7 +191,7 @@ func TestTicketRespondSkipsQualityWithTheOverride(t *testing.T) {
 				t.Fatalf("resume exit %d\n%s\n%s", code, out, errOut)
 			}
 			v := decode[statusView](t, out)
-			want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed " + c.first + " respond:pushed ci:green"
+			want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current " + c.first + " respond:pushed ci:green"
 			if got := stepSeq(v); got != want {
 				t.Fatalf("steps:\n got %s\nwant %s", got, want)
 			}

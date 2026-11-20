@@ -48,6 +48,9 @@ const (
 // decider が human でない）にだけ書ける。
 const ContractKindReview = "review"
 
+// RefreshPRHead はゲートの refresh に書ける唯一の値（§5.6.2）: 待っている間の PR の先頭を status で取り直す。
+const RefreshPRHead = "pr-head"
+
 // RequiresTTY は、ゲートの解決に端末（TTY）が要るかを返す。要るのは input 型かつ decider: human のゲートだけ
 // （Q9・N1。observe 型は resume が判断を運ばず、runtime が外部の実状態を確かめるだけなので要求しない）。
 func RequiresTTY(gateType, decider string) bool {
@@ -84,7 +87,12 @@ type Workflow struct {
 	Description string
 	Inputs      []*Input
 	Limits      []*Limit
-	Steps       []*Step
+	// Facts は最上位の facts（名前 → 参照の並び）。接続契約の facts に出す値の宣言（docs/harness-runtime-design.md §5.6.2）。
+	Facts []*FactDecl
+	// ReleaseOn は最上位の release_on（cancelled・failed）。その終わり方をするとき、終わりを書く前に、この run が作った作業ツリーを
+	// 片付ける（docs/harness-runtime-design.md §5.6.2）。succeeded は書けない（入れた後の片付けは cleanup の段が行う）。
+	ReleaseOn []string
+	Steps     []*Step
 	// Routes は overridable.routes（docs/harness-runtime-overrides.md §5.2）。上書きで付け替えてよい遷移と候補。
 	Routes []*RouteDecl
 	// Skips は overridable.skips（§5.2・§6.2 の規則 6）。付け替えで省いてよいと定義が明示した、fail へ落ちうるステップ。
@@ -123,6 +131,13 @@ func (w *Workflow) Input(name string) *Input {
 		}
 	}
 	return nil
+}
+
+// FactDecl は facts の 1 行。Refs は $steps.<段>.<欄> だけ（読み込みで、段が在り、欄が出力スキーマの文字列であることを検査する）。
+type FactDecl struct {
+	Name string
+	Refs []*Ref
+	Line int
 }
 
 // Limit は名前で上限値を引く。無ければ nil。
@@ -198,8 +213,11 @@ type Step struct {
 	Timeout      time.Duration
 
 	// llm 種類（§3.2・§4.3・§4.4）
-	Prompt      string  // ワークフローのディレクトリからの相対パス
-	Agent       string  // claude-harness:<エージェント名>（--agent へ渡す）
+	Prompt string // ワークフローのディレクトリからの相対パス
+	Agent  string // claude-harness:<エージェント名>（--agent へ渡す）
+	// AddDirs は claude の --add-dir へ渡すフォルダ（作業ディレクトリの外のファイルを読ませる。§5.6.2）。
+	// 値は参照かリテラルの文字列。解決した値が空の文字列なら渡さない。
+	AddDirs     []*Binding
 	Session     string  // new | continue
 	SessionFrom string  // continue:<step> の <step>
 	BudgetUSD   float64 // --max-budget-usd の上限（残予算と小さいほうを付与する）
@@ -213,6 +231,9 @@ type Step struct {
 	// ContractKind は接続契約で見せる requested_action.kind（§5.6.1・#372）。書けるのは ContractKindReview だけで、
 	// 書かなければ空（ゲートの型 × decider の対応表のまま）。runtime はゲート名でなく、この宣言で kind を決める。
 	ContractKind string
+	// Refresh はゲートで待っている間に取り直すもの（§5.6.2）。書けるのは RefreshPRHead だけで、input 型のゲートにだけ書ける。
+	// 書かなければ空。status は、この印のあるゲートで待っている unit の PR の先頭を gh で読み直す。
+	Refresh string
 
 	// select 種類（§3.2・Q12）: 参照 1 つ。その enum 値がそのまま outcome になる（読み込み時に SelectOutcomes へ解決する）
 	Value          *Ref
@@ -334,8 +355,19 @@ type Transition struct {
 	Retry        int
 	Exhausted    *Transition
 	NoteOptional bool
-	Line         int
+	// Detail は gate の遷移の detail（参照 1 つ）。開くゲートに添える、戻った理由などの文（gate_opened.detail）。
+	Detail *Ref
+	// Interrupted は goto の interrupted: { fail: <理由> }。input 型のゲートから出る goto だけが書ける。この遷移で始まる
+	// ラウンドの間に runner が居なくなったら、interrupted ゲートを開かず、この理由で run を失敗で終える。
+	Interrupted string
+	Line        int
 }
+
+// $gate の参照の名前（resume で添えられた値）。
+const (
+	GateNote        = "note"
+	GateApprovedRef = "approved_ref"
+)
 
 // NoteOptionalValue は遷移の note に書ける唯一の値。
 const NoteOptionalValue = "optional"
