@@ -151,7 +151,7 @@
 | R2 | `/pr-review-respond`: `qcFailed: true` なら Step 7 以降へ進まず停止して人に判断を仰ぐ | Step 5 |
 | R3 | `/pr-review-respond`: `design_change`/`critical` 分類は人間ゲート | Step 7 |
 | R4 | 修正 push 後は CI を再確認（`ticket.yaml` では品質ゲートも通す。#339） | 暗黙 |
-| R5 | マージ: base＝統合ブランチは自律（`/pr-merge`）、既定ブランチは人間ゲート | `/impl` Phase 7 注記・`star-parallel.md` Phase 9-8 |
+| R5 | マージ: base＝統合ブランチは自律（`/pr-merge`）、既定ブランチは人間ゲート。**2026-11-20 に改めた（#388。オーナーの決定）**: 上は「マージしてよい」（`ready`）を受けた後の道として残す。そこへ、「入れてよい」（`land`）と通した中身（先頭のコミット）を受け、PR の先頭が一致したときだけ、機械が宛先（統合ブランチでも既定ブランチでも）へ入れる道を足す。通した側（flywheel）の承認が、人の承認に当たる。リポジトリごとに許す設定は持たない（§5.6.2・[harness-runtime-overrides.md](harness-runtime-overrides.md) §6） | `/impl` Phase 7 注記・`star-parallel.md` Phase 9-8。改めた分は §11.9 |
 
 ---
 
@@ -175,6 +175,8 @@ YAML に書けるのは次だけ。**条件式・演算・文字列の組み立�
 
 終了状態も `outcome` として同じ表で扱う。runtime が付与する予約値: `step_error`（非 0 終了・起動失敗）・`step_timeout`（ステップの `timeout` 超過）・`invalid_output`（スキーマ不一致・未知の enum 値）・`budget_exhausted`。予約値はステップの出力の enum 値と衝突してはならず、`harness validate` が衝突を拒否する（例: `ci-wait` は `ci: "timeout"` を返すので、予約値の側に `step_` を付けて分けた）。**予約値を `on` に書かなければ、既定で run を `failed` にする**（fail-closed。書けば明示的に別の遷移へ送れる）。
 
+**#388 の設計で足す文法（§5.6.2。実装はこれから。スキーマ版は `harness.workflow/v1` のまま）**: 最上位の `facts`（名前 → `$steps.<段>.<欄>` の配列。接続契約の `facts` に出す値の宣言）と `release_on`（`cancelled`・`failed` の配列。その状態で終わるときに、自分が作った作業ツリーを片付ける）。ゲートの `refresh`（`pr-head`。待っている間の PR の先頭を `status` で取り直す）。ゲートへの遷移 `{gate: <id>}` の `detail`（参照 1 つ。開いたゲートに添える、戻った理由の文）。input 型のゲートから出る `goto` の `interrupted: { fail: <理由> }`（その遷移で始まるラウンドの間に runner が居なくなったら、`interrupted` のゲートを開かず失敗で終える）。どれも比較・論理結合・加工を持たず、下の「式にしないための線引き」の内である。
+
 `retry` と `limit` の回数は Go が数える。数え方の単位: `limit`（差し戻し）は **unit 単位でラウンドをまたいで**累計する（§4.2）。`retry` は**ラウンド単位**で数え、ゲートを抜けて新しいラウンドに入ると 0 に戻る（例: `ci-pending` ゲートから resume した `ci` は、再び 1 回の再試行を持つ）。
 
 #### 式にしないための線引き（Q12 で決定）
@@ -195,6 +197,8 @@ YAML と Go のステップ種類が許す判定は**一致だけ**である。�
 | `pull-request` | push → PR 作成（既存なら push のみ）。本文の**転記節（振る舞いの一覧・残指摘の全件・未検証の明記・クロスリポジトリ確証）は型付きの値から Go が生成**する。LLM が書くのは題名と要約だけ | I7・I13・W4 |
 | `fanout`（見送り） | 子ワークフローを項目ごとに起動。`max_parallel`・`serial_groups`・後続の起動条件（`advance_on`）を持つ。各項目は独立に gate で止まってよく、全項目が終端に達したら `all_terminal`、ゲート待ちが残れば run を `waiting` にする | P9・P10・P7 |
 | `plan-parallel`（見送り） | `max_parallel` が入力にあれば**検証して写すだけ**（判断し直さない）。無ければ計画用の `llm` を呼ぶ。Issue 数が `predict_min_issues`（リテラル）以上なら先に予測の fan-out を行う。計画結果は「受け取った直列グループを緩めていない・天井を超えていない」ことを Go が検証し、追加直列化の差分を出力に残す | P3〜P6・P13 |
+
+**#388 の設計で足すもの（§5.6.2。実装はこれから）**: 種類は増やさず、`pull-request` に `action`（`publish`〔既定。上の行の動き〕・`sync`〔宛先の最新をマージのコミットで取り込む〕・`push`・`land`〔先頭の一致を確かめて、満たすときだけ宛先へ入れる〕・`adopt`〔すでにある PR を受ける〕）を足す。`workspace` の `acquire` は、Issue の番号の代わりに名前の鍵（`key`）を受け、ブランチを checkout しない作業ツリー（`mode: detached`）も作れるようにする。
 
 ### 3.3 値の受け渡し: 参照だけを許し、加工を許さない
 
@@ -226,6 +230,8 @@ respond:
 - 書かない遷移（`design-deviation` の `follow-decision` など）は今までどおり `--note` を必須にし、拒否の文言も変えない。`$gate.note` をすべての遷移で任意にはしない（人の指示文が要る遷移の歯止めを残す）。
 - 受け付ける値は `optional` だけで、ほかの値・文字列でない値は読み込み時に拒否する。`goto` 以外の遷移（`gate`・`fail` 等）には書けない（未知のキー）。`with` が `$gate.note` を渡さない遷移に書いたら、意味が無いので読み込み時に拒否する（`note: optional is only valid on a transition whose with passes $gate.note`）。
 - 段の `with` と遷移の `with` は合わさらない: 遷移の `with` は `$edge.<名前>` を作るだけで、段は自分の `with` に `$edge.<名前>` を書いて受け取る（§3.3 の検査: 段へ入るすべての遷移がその名前を渡す）。
+
+**`$gate.approved_ref`（#388 の設計。§5.6.2。実装はこれから）**: 参照の 5 つ目の形。input 型のゲートの resume に `--approved-ref` で添えられた、通した中身の識別（先頭のコミット）で、`$gate.note` と同じく、そのゲートから出る `goto` の `with` でだけ書ける。添えられていなければ空の文字列に解決する（`note: optional` に当たる宣言は持たない）。遷移のキーにも `select` の値にも使えない。渡せる先は、`pull-request` の `action: land` の段の `with.approved_ref` だけである（[harness-runtime-overrides.md](harness-runtime-overrides.md) §6.2 の規則 7）。
 
 - **読み込み時に全参照を検証する**: 参照先ステップの `output` スキーマにそのフィールドが在ること、型が受け手の `with` と一致することを、実行前に機械的に調べる（決定③の「実行前に検証できる」を参照にも効かせる）。
 - **「その経路でまだ実行されていないステップ」への参照が要る箇所は、遷移の `with` へ寄せる**（例: CI 失敗ログは `ci → fix` の遷移に載せる。`fix` の定義が `$steps.ci` を直接読むと、E2E 失敗から来た経路では値が無い）。これで null の扱いを文法に持ち込まずに済む。
@@ -407,7 +413,7 @@ steps:
     budget_usd: 3
     on: { merged: cleanup, blocked: { gate: review-human } }
 
-  human-merge:                                       # R5: 既定ブランチへのマージは runtime が行わない
+  human-merge:                                       # R5: ready の後の既定ブランチへのマージは runtime が行わない（land の道は下の ⑬・§5.6.2）
     kind: gate
     type: observe
     decider: human                        # observe 型なので TTY を要求しない（N1 で決定）
@@ -432,6 +438,8 @@ steps:
 ```
 
 > **PR-4 の実装（`runtime/workflows/ticket.yaml`）で上の書き下ろしから足したもの**（遷移表・決定は変えていない）: ① `ci` は `ci-wait` を直接ではなく、`runtime/workflows/scripts/ci-wait-pr.sh` 経由で呼ぶ（`ci-wait.sh` は位置引数を取り、`command` 種類は `--<名前> <値>` で渡すため。PR が見つからない〔`pr_exists: false`〕ときは `ci: none` と区別できないので失敗にする）。② `resolve-ticket` は `runtime/workflows/scripts/resolve-ticket.sh` に置いた（`command` の `run` は `<workflow-dir>/scripts/` と `plugin/scripts/` のどちらか一方にだけ在る名前を指す。S1 の埋め込み対象〔`runtime/workflows/`〕に含まれる）。③ `human-merge` に観測する PR の番号を `with: { pr: $steps.publish.pr_number }` で渡す。④ `publish` に `implement` の `unverified`（未検証の事項）を渡す。`respond`・`merge` に PR 番号（`merge` には base も）を渡す。⑤ `resolve`・`ci`・各 `llm` ステップに `timeout` を付けた。⑥ `workspace` で払い出した後のステップは作業ツリーの中で動く（§4.1 Workspace。`release` の後は run を開始したディレクトリに戻る）。 ⑦ `implement` の出力に `review_incomplete`（`/self-review` が `self_review: incomplete` で終わった）を足し、`{ fail: self_review_incomplete }` へ送る（#299。§11.6 の E6）。 ⑧ `publish` の `closes`・`refs` を、`resolve` が Issue 本文の `Closes: なし` 行・`Refs: #N` 行から決めた値にする（`pull-request` 種類の `closes` は省略可・0 で closing キーワードを書かない。読めない行は `links_invalid` で止める。#305）。 ⑨ `e2e` の後・`publish` の前に、品質ゲートを機械で回す `quality`（`command`。`runtime/workflows/scripts/quality-gate.sh`）を置き、`e2e-route.no`・`e2e.pass` をそこへ向ける。宣言 `.claude-harness/quality-gate.json` を PR の宛先から読み、結果を回したコミットの SHA と一緒に出力に残す。`fail` は `{ goto: fix, limit: rework, exhausted: { fail: quality_gate_red } }`、宣言が無ければ `{ fail: quality_gate_undeclared }`。あわせて `commit` は `/commit`（I9 の safety net の `/quality-check`）を使わず git で直接コミットする。pre-commit 等で同じゲートが回るリポジトリは上書きで `quality` を省ける（`overridable.skips: [quality]`。[harness-runtime-overrides.md](harness-runtime-overrides.md) §5.2。#326）。 ⑩ `respond.pushed` を `ci` から `quality` へ向け、レビュー対応の push の後も `quality → publish → ci` を通す（上の書き下ろしの `pushed: ci` を置き換える。PR が既にあるので `publish` は `updated` で本文を書かない。run の記録の SHA を PR の head とそろえるため。#339）。 ⑪ `ci` に `base: $steps.resolve.base` を渡し、PR の宛先の CI の運用の宣言 `.claude-harness/ci.json` が `{"trigger": "after-merge"}`（PR では CI が走らず、既定ブランチへのマージの後だけ走る）なら、`ci-wait-pr.sh` が CI を待たずに `ci: skipped`（`none` とは別の値）を返し、`skipped: review` で進む。宣言が無い・`per-push`・壊れた宣言では今の動き（#341 の約 2 分の `none` の確定を含む）のまま。宣言の読み手は `plugin/scripts/ci-trigger.sh`（`/pr-merge` は宣言を読まず、宣言に関わらず即時マージ）（[runtime/README.md](../runtime/README.md) の「CI の運用の宣言」。#363）。 ⑫ `review`・`review-human` の `respond` を `{ goto: respond, with: { note: $gate.note }, note: optional }` にし、`respond` の `with` に `note: $edge.note` を足す。呼び出し元が差し戻しの理由を `--note` で添えると `respond` の段へ届き、PR にレビューコメントが無くても添え書きに対応する（`no_change` で `review` へ戻らない）。対応したら要旨と対応を自分の PR に 1 件コメントする（`runtime/workflows/prompts/ticket-respond.md`）。添え書きが無ければ空文字で、今までどおり PR のコメントだけを読む（§3.3。#377）。
+>
+> **#388 の設計で足すもの（実装はこれから。定義の全体は §5.6.2 の「`ticket` の遷移」）**: ⑬ 入力に `task_file`・`task_id`・`uses_integration`・`challenge_id` を足し、`issue` を任意にする。`resolve` が入力の組み合わせを確かめ（`input_invalid`・`integration_unsupported`）、名前の鍵（`key`）を出す。`analyze`・`workspace`・`implement` は `$inputs.issue` ではなく `resolve` の出力を読む。 ⑭ `commit` の後・`e2e-route` の前に、宛先の最新をマージのコミットで取り込む `sync`（`pull-request` の `action: sync`）と、衝突を直す `sync-resolve`（`llm`）を置く（`commit.committed` を `sync` へ向ける）。 ⑮ `review` の `inputs` に `land` を足し（`[respond, ready, land]`）、`land: { goto: land, with: { approved_ref: $gate.approved_ref } }` で `land`（`pull-request` の `action: land`）へ送る。`land` は、一致して宛先の最新を含めば入れて `cleanup` へ、宛先が動いていれば `land-sync` → `land-push` で取り込んで `review` へ、一致しない・入れられないなら理由（`detail`）を添えて `review` へ戻る。`ready` の後の `merge-route`・`merge`・`human-merge` は変えない。 ⑯ 最上位に `facts: { self_review: [...] }` を書き、`fix`・`respond` の出力にも `self_review` を足す。 ⑰ `review` に `refresh: pr-head` を書く。
 >
 > `$gate.note` は `input` 型ゲートの resume で人が添えた自由記述。**遷移には使わない**（遷移のキーは `inputs` の enum だけ）。LLM への入力としてだけ渡す（§3.3。Q12 で決定）。
 >
@@ -531,6 +539,8 @@ Event（すべての変化の追記ログ。状態はこの畳み込みで再構
 | **Gate**（Unit が現在待っているもの） | `gate_id`・`type`（`input`/`observe`）・`decider`・`requested_action`・許される入力・再開方法・開いた時刻。解決時は `input`・`note`・`actor`・`channel`・時刻 | **ゲート**（何を待っているか） |
 | **StepExecution** | `step_id`・`attempt`・`round_no`・開始／終了・outcome（予約値を含む）・検証済みの出力 JSON・Claude の `session_id`・`cost_usd`・ログと成果物のパス | 「完了済み step を再実行しない」の根拠 |
 
+**#388 の設計で足す記録（§5.6.2。実装はこれから）**: Workspace に `head_sha`（PR のいまの先頭。取り込みの後・外からの push の後も追従する）と `merge_commit`（宛先へ入れた後のコミット）。Gate の解決に `approved_ref`、開いたゲートに `detail`・`refresh`。Run に、定義の `facts`・`release_on` の写しと、unit ごとの `facts` の値。Round の契機に、`interrupted` の印（失敗の理由の語）。
+
 ### 4.2 ラウンドの定義
 
 **ラウンド ＝ ゲートとゲートの間**。run 開始でラウンド 1 が始まり、unit がゲートで止まるとラウンドが閉じ、`resume`（ゲートの解決）で次のラウンドが始まる。
@@ -623,6 +633,7 @@ flywheel は承認を**人間の直接操作に限り**、CLI の承認は端末
 - 本文の YAML で TTY を要求するゲートは `design-deviation`・`review-human`（どちらも `type: input`・`decider: human`）。
 - **TTY を要求するのは `input` 型の human ゲートだけで、`type: observe` かつ `decider: human` のゲート（`human-merge`）には要求しない**（N1 でオーナーが決定・2026-09-21）。observe 型では resume が判断を運ばず、外部の実状態（PR がマージされたか）を runtime が確かめるだけだからである。
 - 解決の記録には `actor`・`channel`（`tty` / `non-tty`）を必ず残す（§4.1 の Gate）。
+- **`land`（#388 の設計。§5.6.2）は `decider: any` のレビュー待ちで受け、TTY を要求しない**。通した側（flywheel）が、人の承認を取ったうえで、通した中身の識別を付けて返す答えだからである（R5 を改めた決定）。harness の側の歯止めは、端末ではなく「PR の先頭が、添えられた識別と一致するときだけ入れる」ことで、これは上書きで外せない（[harness-runtime-overrides.md](harness-runtime-overrides.md) §6.2 の規則 7）。識別を添えない・古い識別を添えた `land` では、何も入らない。
 - 同じマシン・同じユーザーで動くプロセスによる意図的な回避（疑似端末の作成など）までは防げない。防ぐのは「Claude が通常の道具立てで human ゲートを解決してしまうこと」である（flywheel §9 と同じ範囲）。
 
 ### 5.4 スロット（worktree）の払い出し主体
@@ -750,6 +761,459 @@ Issue 2026-08-23 §3 の薄い契約: **run ID・汎用の状態・要約・人�
 - run の状態を読めない場合（引数の誤り・ワークフロー定義の誤り・run が見つからない・状態の読み込みの失敗）は `state: failed`・`cost_usd: null`・`requested_action: null` を出す。run を始める前の `start` の失敗の `run_id` は `null`、run ID を渡されたコマンド（見つからない run 等）はその ID。
 - 既存コマンドの標準エラー（人向けの説明）はそのまま標準エラーへ流す。
 
+### 5.6.2 flywheel の区切り S3 の受け口（#388・2026-11-20。設計。実装はこれから）
+
+flywheel が、成果を宛先（統合ブランチ・既定ブランチ）へ入れる処理を委譲先へ移す（flywheel `docs/features/core-redesign.md` の節「委譲先との契約（S3 で使う受け口）」。食い違えば flywheel 側が正）。この節は、そのために harness が足すものの設計である。**この節に書いた入力・フラグ・段・キーは、下の「実装の分け方」の PR が入るまで実物に無い**（調べた時点の実物は main `c21a1fc`。§5.6.1 までの記述は実物のまま）。
+
+範囲は 2 つに分ける。
+
+| 区分 | 中身 | 細かさ |
+| --- | --- | --- |
+| A（flywheel の S3a に要る。先に出す） | 取り込み元の無い入力／`land` と中身の一致／取り込んで入れずに待つ／`facts`／PR の URL を受けて既定ブランチへ上げる依頼 | 実装できる細かさ |
+| B（flywheel の S3b で使う。後に出す） | 統合先を作る／統合ブランチを既定ブランチへ上げる | A が邪魔をしないことが分かる粗さ（「B の粗い設計」） |
+
+#### 入力（`ticket`）
+
+```yaml
+inputs:
+  issue:            { type: integer }   # 必須でなくする。取り込み元の Issue
+  base:             { type: string }
+  worktree:         { type: string }
+  task_file:        { type: string }    # タスクの文面のファイルの絶対パス（UTF-8 の Markdown）
+  task_id:          { type: string }    # T-<番号>
+  uses_integration: { type: string }    # true | false（A では true を失敗で止める）
+  challenge_id:     { type: string }    # 課題の識別（A では受けるだけで使わない。B で統合先の鍵にする）
+```
+
+- **値が空の文字列の入力は「無い」と読む**（どの型でも）。`parseInputs`（`runtime/internal/cli/cli.go`）が、型を見る前に `NAME=` を読み飛ばす（`run_started.inputs` に入れない）。いまは `issue=`（integer）が誤りになり、`base=` は「指定あり」として `base_missing` になる（実コード確証・high）。同じ名前を 2 度渡す誤りの検査は、空でも数える。
+- **宣言の無い入力は、いまと同じく誤りにする**（`input "x" is not declared`）。そのため flywheel は、宣言に新しい差し込みを書く前に、この版の harness を入れる（契約の「新旧の組み合わせ」の節と同じ順）。
+- **`task_file` と `issue` の少なくとも片方が要る**。YAML の文法は入力どうしの条件を持たない（§3.1 の線引き）ので、`resolve` の段（`resolve-ticket.sh`）が確かめ、満たさなければ `input_invalid` で止める（run は始まり、すぐ `failed` になる。`start` の時点では止まらない）。確かめること:
+
+  | 条件 | 結果 |
+  | --- | --- |
+  | `issue` も `task_file` も無い | `input_invalid` |
+  | `task_file` があり、絶対パスでない・読めるファイルでない | `input_invalid` |
+  | `task_id` があり、`T-<1 以上の整数>` の形でない | `input_invalid` |
+  | `issue` も `task_id` も無い（名前を決める鍵が無い） | `input_invalid` |
+  | `uses_integration` が `true`・`false`・無し以外 | `input_invalid` |
+  | `uses_integration` が `true` | `integration_unsupported`（A。B で外す） |
+
+- **両方あるとき**は、文面のファイルが作業の範囲の正本で、Issue は PR が閉じる対象としてだけ使う。`resolve` は Issue の本文から `Closes: なし` 行・`Refs:` 行だけを読み（PR と Issue のつながりの宣言なので）、**`Base:` 行は読まない**（宛先は `base` の入力か、既定ブランチ。統合先は `uses_integration` で決めるものにする）。`task_file` が無いときの `Base:` 行の扱いは、いまと同じ。
+- **文面のファイルは解釈しない**。`resolve` は在ることだけを確かめ、`analyze`・`implement` へパスを渡す。両方の指示文は「`inputs.task_file` が空でなければ、そのファイルを読んで要件の正本にする（`gh issue view` で範囲を決めない）。空なら、いまと同じく Issue を読む」に改める。`critical_design` は、文面のファイルがあるときは、その文面から写す。
+- `resolve` の出力（`schemas/resolve-ticket.json`）に足す欄: `key`（名前の鍵。下）・`task_file`（無ければ空文字）・`scope`（`issue` / `task_file`）。`issue` は無ければ `0`。後ろの段は、省かれうる `$inputs.issue` を直接読まず、`$steps.resolve.issue`・`$steps.resolve.task_file`・`$steps.resolve.key` を読む（null を文法に持ち込まない。§3.3）。`outcome` に `input_invalid`・`integration_unsupported` を足す。
+
+#### 名前と場所（Issue の番号から切り離す）
+
+名前の鍵 `key` を 1 つ決め、作業ツリーの場所とブランチの名前の両方に使う。
+
+| 入力 | `key` | 作業ツリー | ブランチ |
+| --- | --- | --- | --- |
+| `task_id` がある（`T-12`） | `task-12` | `<root>/task-12` | `{type}/task-12-{説明}` |
+| `task_id` が無い（`issue` = 388） | `issue-388` | `<root>/issue-388`（いまと同じ） | `{type}/issue-388-{説明}`（いまと同じ） |
+
+- 同じ Issue を取り込み元に持つタスクが 2 つ同時に走っても、`task_id` が違えば鍵が違うので重ならない。
+- `plugin/scripts/worktree-setup.sh` の第 1 引数を「Issue の番号（数字だけ。いまの呼び方）か、鍵（`issue-<n>`・`task-<n>`・`pr-<n>`）」にする。数字だけなら鍵は `issue-<数字>` で、**出力も動きもいまと同じ**（`/para-impl` の `claude-harness-run worktree-setup {issue番号} …` を壊さない）。ブランチの名前の検査は `{type}/<鍵>-{説明}` にする。出力の JSON に `key` を足し、`issue` は鍵が `issue-<n>` のときだけ数、ほかは `null`。
+- `workspace` の `acquire` の `with` に `key`（string・任意）を足し、`issue` を任意にする。どちらも無ければ `step_error`。`key` があれば `key` を、無ければ `issue` を `worktree-setup.sh` に渡す。
+- `analyze` の出力のブランチの名前は `{type}/{inputs.key}-{説明}`。`schemas/ticket-analysis.json` の正規表現を `(issue|task)-[0-9]+` に広げる（鍵と合っているかの検査は、いまと同じく `worktree-setup.sh`）。
+- 所有の印（`ownerFile`。`runtime/internal/engine/workspace.go`）は「同じ場所を別の run が作り直しうる」前提のまま要る（同じ `task_id` の run のやり直し）。変えない。
+- **残る重なり**: `T-<番号>` は flywheel のストアごとの番号なので、2 つのワークスペースが同じリポジトリへ同じ番号のタスクを同時に出すと、場所が重なる。場所が別のブランチで登録済みなら、いまと同じく `worktree_conflict` で止まる（黙って相乗りしない）。
+
+#### ゲートの解き方: `--approved-ref`・`$gate.approved_ref`・`detail`
+
+| 足すもの | 形 |
+| --- | --- |
+| フラグ | `harness resume` と `harness contract resume` に `--approved-ref SHA`。`approve` には足さない |
+| 解く要求 | `engine.Resolution` に `ApprovedRef`。空の文字列は「無い」 |
+| 記録 | `gate_resolved` に任意の `approved_ref`（空なら省く）。`status --json` のゲートの履歴に出る |
+| 参照 | `$gate.approved_ref`。`$gate.note` と同じく、input 型のゲートから出る `goto` の `with` でだけ書ける。**添えられていなければ空の文字列**（`note: optional` に当たる宣言は要らない。空は「一致しない」として後ろの段が扱う） |
+| 遷移のキー | `{gate: <id>}` の遷移に任意の `detail`（参照 1 つ）。ゲートを開くときの記録（`gate_opened.detail`）に入り、開き直すたびに置き換わる（書かない遷移で開けば、無い） |
+| 遷移のキー | input 型のゲートから出る `goto` に任意の `interrupted: { fail: <理由> }`。その遷移で始まるラウンドの間に runner が居なくなったら、`interrupted` のゲートを開かず、その理由で失敗で終える（下の「`land` の後は `interrupted` へ移らない」） |
+
+- 直す所は、`contract.go` の 3 つ（`acceptKinds` に渡す値を取る引数の名前、`contractByRun` の `flagSpec`、usage）と、`cli.go` の `cmdResolve` の `flagSpec`（実コード確証・high）。
+- flywheel は、`land` でない答え（`respond` など）にも `--approved-ref ""` を付けて呼びうる（値の無い差し込みは空の文字列）。空は無いものとして読み、空でない値を `$gate.approved_ref` を読まない遷移へ添えたときは、記録だけして使わない（拒否しない）。
+- `--note` を必須にする検査（`readsNote`）は、いま「`$gate` の参照を渡す遷移」で見ている。`$gate.note` を渡す遷移だけを見るように直す（`$gate.approved_ref` だけを渡す `land` に `--note` を求めない）。
+- `detail` は、`status --json` の `waiting[].detail` に出し、契約では `requested_action.text` の先頭の文の後ろと、`summary` の末尾に足す。ゲートの `requested_action` は定義の固定の文なので、「なぜ戻ったか」を運ぶ口がいまは無い（実コード確証・high）。
+- **`land` を受け付けてから終わるかレビュー待ちへ戻るまで `running`**: いまの作りで満たせる（実コード確証・high）。`contract resume` は、ゲートの解決・遷移・次のラウンドの開始を呼び出し元のプロセスで記録してから戻る（`ResolveGate`）。記録の後はゲートが閉じていて、`state` は `running`。受け付ける前のレビュー待ちを返すのは、解決を拒否したとき（受け付けない値・別の runner が進めている）だけで、そのときは何も記録していない。
+- **終わった実行への `resume`**: いまの作りで、終わりの状態をそのまま返す（§5.6.1。実コード確証・high）。同じ `approved_ref` の `land` を 2 度受けても、2 度目は、進行中なら「別の runner が進めている」で拒否、終わっていれば終わりの状態、レビュー待ちへ戻っていれば新しい `land` として最初から確かめ直す。
+- **`land` の後は `interrupted`（契約では `answer`）へ移らない**: いまの決まり（§4.5）では、runner が落ちた run は、次の `status`・`resume` で組み込みの `interrupted` ゲートへ送られる。契約は「`land` の後、別の種類の待ちへ移らない」ことを求めるので、`land` で始まるラウンドだけは、失敗で終える。
+  - **印**: `review.land` の遷移に `interrupted: { fail: interrupted_after_land }` を書く。段の名前も理由の語も Go に書かない。印は、ゲートを解いたときの `round_started` の契機（`trigger`）に理由の語として記録する（`status` は定義を読み込まないので、状態から読めるようにする）。効くのは、そのラウンドが閉じる（次のゲートが開く・run が終わる）まで。`rerun` でやり直したラウンドには付かない（そもそも `interrupted` ゲートを開かないので、起きない）。
+  - **`status`・`resume` の後始末**（`engine.InterruptEvents`）: runner が生きておらず、いまのラウンドの契機に印がある unit は、実行中だった段を打ち切り（`step_finished` の `interrupted`。費用の扱いはいまと同じ）、`interrupted` ゲートの代わりに、失敗への遷移と `run_finished`（`failed`・印の理由）を記録する。段と段の間で落ちた（実行中の段が無い）ときも同じ。子プロセスがまだ生きている段には、いまと同じく `status` は触らない（`resume`・`cancel` が止めてから記録する）。
+  - **runner を起動できなかったとき**（`resolveDetached` の `detach` の失敗。`cli.go`）: いまは「runner の居ない `running`」のまま返し、次の `status` に任せている。印のあるラウンドでは、その場で同じ後始末を記録してから返す（`contract resume` の応答が `failed` になる）。このとき記録上の runner は呼び出し元のプロセス自身で、生きているので、`InterruptEvents` の「runner が生きていれば何もしない」を飛ばす口（自分が runner として諦める）を足す。印の無いラウンドの動きは変えない。
+  - **2 度入れない**: 失敗で終えた後の `resume` は、終わりの状態を返す（上）。`land` の段が入れた直後に落ちた場合も run は `failed` で終わり、入ったかどうかは flywheel が上流で確かめる（入っていれば実行済み、入っていなければ承認を取り消して見せる）。
+  - **定義の検査**: `$gate.approved_ref` を渡す遷移は、`interrupted` を書かなければならない（書き忘れた定義を読み込みで拒否する）。`interrupted` を書けるのは、input 型のゲートから出る `goto` だけ。
+
+#### 新しい段: `pull-request` の `action`
+
+`pull-request` の種類に、`workspace` と同じ形の `action` を足す。書かなければ `publish`（いまの動き: push して PR を作る）。**決定的な Go の段**で、LLM を呼ばない。`command`（スクリプト）にしないのは、`command` の段が作業ツリーと PR の記録（成果物の元。§4.1 Workspace）を書けないためである（記録できるのは Go の種類だけ。実コード確証・high）。
+
+| `action` | `with` | `outcome` | すること |
+| --- | --- | --- | --- |
+| `publish`（既定） | いまと同じ | `opened`・`updated` | いまと同じ |
+| `sync` | `base`・`expect_head`（任意） | `current`・`synced`・`conflict`・`unresolved`・`not_merge_only`・`diverged`・`head_moved`・`unavailable` | 宛先の最新を、マージのコミットで作業ブランチへ取り込む（push はしない） |
+| `push` | `pr`・`base` | `pushed`・`unchanged`・`rejected`・`unavailable` | 作業ブランチを、強制せずに push し、PR の先頭を記録する |
+| `land` | `pr`・`base`・`approved_ref` | `landed`・`behind`・`mismatch`・`blocked`・`closed`・`merged_other`・`base_changed`・`not_confirmed` | 先頭の一致と、宛先の最新を含むことを確かめ、満たすときだけ PR を宛先へ入れる |
+| `adopt` | `ref` | `adopted`・`unsupported_ref`・`not_open`・`not_default_base`・`fork`・`draft`・`other_repo` | すでにある PR を、この run の成果物として受ける（`reflect` 用） |
+
+`sync`・`push`・`land` は、返す文（人が読む 1〜2 文）を出力の `detail` に入れる。`land` は、確かめた PR の先頭を出力の `head_sha` にも入れる。
+
+**一時的な失敗（`gh`・`git fetch`・`git push` が、ネットワークや認証で通らない）の扱い**は、「そのとき手元と PR の中身を変えていないなら、理由を添えてレビュー待ちへ戻す。変えた後なら、失敗で終える」で決めた。`land` の後の失敗で終わった実行は、flywheel が上流で確かめる（入っていなければ承認を取り消して見せる）ので行き止まりにはならないが、レビュー待ちへ戻せる所は戻す方が、実行を作り直さずに済む。段ごとの当てはめは、下の各段に書く。
+
+**`sync`**（rebase・強制 push をしない）:
+
+1. 作業ツリーに未コミットの変更があり、マージの途中（`MERGE_HEAD`）でもない → `step_error`。
+2. マージの途中のまま入った（衝突を直す段が終えなかった）→ `unresolved`。
+3. 自分の直前の出力が `conflict` だった（衝突を直す段の後の再入）→ いまの `HEAD` が、親をちょうど 2 つ持ち、第 1 の親が `conflict` を返したときの先頭（`head_before`）で、第 2 の親がそのときの宛先の先頭（`base_sha`）であることを確かめる。違えば `not_merge_only`（取り込みのコミットの外に変更を足した）。合えば次へ。
+4. `git fetch origin <base>`。作業ブランチが origin にあれば fetch し、手元が origin より遅れているだけなら早送りする。枝分かれしていれば `diverged`。fetch が通らなければ `unavailable`（ここまで、手元の中身は変えていない）。
+5. `with.expect_head` があり、上の 3 を通っていない（最初に入った）とき、手元の `HEAD` が `expect_head` と同じことを確かめる。違えば `head_moved`（push していない手元のコミットを、取り込みと一緒に出さない）。
+6. `HEAD` が `origin/<base>` の先頭を含んでいる → `current`。
+7. `git merge --no-ff --no-edit origin/<base>`。通れば `synced`。衝突したら、マージの途中のまま `conflict`（`head_before`・`base_sha` を出力に残す）。
+
+衝突は、LLM の段（指示文 `prompts/sync-resolve.md`）が直す。指示は「衝突の印が付いたファイルだけを直し、`git add` して `git commit --no-edit` でマージを終える。ほかのファイルを変えない・別のコミットを作らない・push しない・`git merge --abort` や rebase をしない」。終えたら `sync` へ戻り、上の 3 で機械が形を確かめる（3 を通った再入では、5 は確かめない。3 が「第 1 の親が、最初に入ったときの先頭」を確かめている）。直す段へ入る遷移は `limit: sync_resolve` で数える（数えられない循環を作らない。§3.1）。**取り込みのコミットの中身が衝突の解消だけかどうかは、harness は判定しない**（flywheel が上流の比較で判定する。契約）。
+
+`expect_head` を渡すのは `land` の後の取り込み（`land-sync`）だけで、値は `land` の段が一致を確かめた PR の先頭（`$steps.land.head_sha`）。最初の `sync` には渡さない（まだ PR が無く、手元の作業ブランチが正本）。`unavailable` は、`land-sync` ではレビュー待ちへ戻し（何も変えていない）、最初の `sync`・`reflect` の用意の `sync` では失敗で終える（戻るレビュー待ちがまだ無い）。
+
+**`push`**: `git push --porcelain origin HEAD:refs/heads/<作業ブランチ>`（強制しない）。既定ブランチと PR の宛先そのものへは push しない（`publish` と同じ検査）。
+
+| 結果 | いつ | `detail` の文 |
+| --- | --- | --- |
+| `pushed` | push が通り、origin の先頭が変わった | 「宛先 `<base>` の先頭 `<宛先の先頭>` を取り込み、PR の先頭は `<前の先頭>` から `<新しい先頭>` になった。宛先へは入れていない」 |
+| `unchanged` | origin の先頭が、手元の `HEAD` とすでに同じ（push するものが無い） | 「PR の先頭は `<先頭>` のまま（宛先 `<base>` の先頭 `<宛先の先頭>` を、すでに含んでいる）。宛先へは入れていない」 |
+| `rejected` | origin が拒否した（porcelain の状態が `!`。取り込みの間に、外から push された） | —（失敗で終える） |
+| `unavailable` | 3 回試しても、origin へ届かない（参照ごとの状態の行が出ない） | —（失敗で終える） |
+
+- コミットは短くせず、全部の桁で書く。宛先の先頭は、手元の `origin/<base>`（直前の `sync` が fetch したもの）。
+- `pushed`・`unchanged` では、PR の番号・URL・先頭を記録する。
+- **`unavailable` をレビュー待ちへ戻さない理由**: この時点で、手元には push していない取り込みのコミットがある。戻すと、次の `land` の後の `land-sync` が、`sync` の 5 の確かめ（手元の `HEAD` が PR の先頭と同じ）に当たって、どのみち失敗で終わる。手元を巻き戻す処理は足さない。
+- `unchanged` が出るのは、主に `reflect` の用意（PR がすでに既定ブランチの最新を含んでいる）。`land` の後では、`behind` と確かめた後なので、ふつうは `pushed` になる。
+
+**`land`**（上から順。最初に当たったものを返す）:
+
+| # | 確かめること | 結果 | 契約の `land` の後の動き |
+| --- | --- | --- | --- |
+| 1 | PR を読む（`gh pr view --json state,headRefOid,baseRefName,mergeCommit,isDraft`）。3 回試しても読めない | `blocked`（理由を `detail` に） | 4（理由を出して待つ。中身は変えていない） |
+| 2 | PR の宛先が `with.base` と違う（入った後の PR も含む） | `base_changed`（失敗） | 続けられない |
+| 3 | すでに入っている（`MERGED`）で、入った先頭が `approved_ref` と同じ | `landed` | 1 の続き（片付けへ） |
+| 4 | すでに入っているが、先頭が `approved_ref` と違う | `merged_other`（失敗） | 続けられない |
+| 5 | 入らずに閉じている | `closed`（失敗） | 続けられない |
+| 6 | `approved_ref` が空、または PR の先頭と違う | `mismatch` | 3（入れずに、いまの先頭を出して待つ） |
+| 7 | 宛先と PR の先頭を fetch し（`git fetch origin <base>` と `refs/pull/<番号>/head`）、PR の先頭が宛先の最新を含んでいない（`git merge-base --is-ancestor` の終了コード 1） | `behind` | 2（取り込んで待つ） |
+| 7' | 7 の fetch が通らない・祖先の判定が 0 でも 1 でもない終了コードで終わった | `blocked`（理由を `detail` に） | 4 |
+| 8 | 下書きの PR・失敗か未完了のチェックがある・チェックを読めない | `blocked` | 4（理由を出して待つ） |
+| 9 | `gh pr merge <pr> --squash --match-head-commit <approved_ref>` が通った → PR を読み直す（下） | `landed`・`not_confirmed` | 1・続けられない |
+| 10 | 9 が通らなかった → 1〜7' をもう一度確かめ、当たればその結果。どれにも当たらなければ `blocked`（`gh` の標準エラーを `detail` に） | — | 2・3・4 |
+
+- **2 を 3 より前に置く**: 宛先を付け替えられて、別のブランチへ入った PR を `landed` にしない。入った後の PR の `baseRefName` は、入った先のブランチである。
+- 6 と 9 で、先頭の一致を 2 度確かめる（9 は GitHub の側の条件）。7 と 9 の間に宛先が動く隙間は残る（契約が認めている）。
+- **7 で PR の先頭も fetch する**: 外から push された先頭は、手元に無いことがある。無いまま祖先を判定すると、コマンドの失敗（終了コード 128 など）を「含んでいない」と読み違える。`behind` にするのは終了コード 1 のときだけで、ほかは 7'。
+- **9 の後の読み直し**: 入れる命令が通っても、マージの待ち行列や、リポジトリの側の自動マージで「まだ入っていない」ことがある。PR を読み直し（数回・合わせて 10 秒ほどまで）、`MERGED` で、宛先が `with.base`、入った先頭が `approved_ref` と同じなら `landed`。そうでなければ `not_confirmed`（失敗 `merge_not_confirmed`）。入ったかどうかは flywheel が上流で確かめる。`--auto` は付けない。
+- **1・7' を `blocked` にする理由**: ここまで、手元も PR も変えていないので、理由を添えてレビュー待ちへ戻せる（上の「一時的な失敗」）。flywheel からは「入れられなかった」（契約の 4）に見える。
+- 記録: どの結果でも、PR のいまの先頭を記録する（`mismatch` の後の成果物が、いまの先頭になる）。`landed` では、入れた後のコミット（`mergeCommit.oid`）も記録する。
+- 8 のチェックは、PR の宛先の CI の運用の宣言が `after-merge`（§3.4 ⑪）なら見ない。ほかは `gh pr checks --json bucket` の `fail`・`cancel`・`pending` が 1 件でもあれば「通っていない」とする。**チェックが 0 件の PR は「通っていない」に数えない**（`ci-wait.sh` の `none` と同じ扱い）。`gh pr checks` は、未完了・失敗のチェックがあると 0 でない終了コードを返し、0 件のときは標準出力を空にして標準エラーに `no checks reported` を出すので、成否は終了コードではなく「標準出力が JSON の配列か」で決め、0 件は標準エラーの文で見分ける（`plugin/scripts/lib/common.sh` の `fetch_pr_checks` と同じ読み方。実コード確証・high）。どちらでもなければ「読めない」で `blocked`。flywheel は `land` の前に自分でチェックを確かめるので、ここは足しの確かめである。
+- `--delete-branch`・`--auto`・`--admin` は付けない。入れ方は squash に固定する（`docs/branching-strategy.md` の既定。リポジトリの設定が squash を許さなければ 10 で `blocked`）。
+- 実物の `gh` で確かめていないこと【要確認。実装の PR で確かめる】: マージ済みの PR の `headRefOid` が「入ったときの先頭」であること。9 が通らないときの `gh` の終了の仕方。マージの待ち行列のあるリポジトリで、9 が通った直後の PR の状態。`gh pr checks --json` の終了コードと 0 件のときの出力が、Go から呼んでも `fetch_pr_checks` の読み方どおりであること（`gh` の版で変わっていないか）。`--match-head-commit` と `gh pr checks --json bucket` が `gh` にあることは、手元の `gh` 2.67.0 の help で確かめた。
+
+#### `ticket` の遷移
+
+```yaml
+limits:
+  sync_resolve: 3                       # 取り込みの衝突を LLM に直させる回数（unit の累計）
+facts:
+  self_review: [$steps.implement.self_review, $steps.fix.self_review, $steps.respond.self_review]
+
+steps:
+  commit:
+    on: { committed: sync, failure: { fail: commit } }          # いまは committed: e2e-route
+
+  sync:                                 # 最初のレビュー待ちの前の取り込み
+    kind: pull-request
+    action: sync
+    with: { base: $steps.resolve.base }
+    on:
+      current: e2e-route
+      synced:  e2e-route
+      conflict: { goto: sync-resolve, limit: sync_resolve, exhausted: { fail: sync_conflict } }
+      unresolved:     { fail: sync_conflict }
+      not_merge_only: { fail: sync_not_merge_only }
+      diverged:       { fail: branch_diverged }
+      head_moved:     { fail: local_head_mismatch }    # expect_head を渡さないので、ここでは出ない
+      unavailable:    { fail: remote_unavailable }
+
+  sync-resolve:
+    kind: llm
+    prompt: prompts/sync-resolve.md
+    session: continue:implement
+    with: { base: $steps.resolve.base }
+    output: schemas/sync-resolve-result.json                    # outcome: resolved|failure, summary
+    on: { resolved: sync, failure: { fail: sync_conflict } }
+
+  review:
+    requested_action: PR のレビューを待つ。対応が要れば respond。この中身を宛先へ入れてよければ land（--approved-ref に通した先頭のコミット）。呼び出し元の側で反映まで済ませたなら ready
+    inputs: [respond, ready, land]
+    refresh: pr-head                    # 待っている間の PR の先頭を status で取り直す（下の「成果物」）
+    on:
+      respond: { goto: respond, with: { note: $gate.note }, note: optional }
+      ready: merge-route                # 変えない
+      land:  { goto: land, with: { approved_ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } }
+
+  land:
+    kind: pull-request
+    action: land
+    with: { pr: $steps.publish.pr_number, base: $steps.resolve.base, approved_ref: $edge.approved_ref }
+    on:
+      landed:   cleanup
+      behind:   land-sync
+      mismatch: { gate: review, detail: $steps.land.detail }
+      blocked:  { gate: review, detail: $steps.land.detail }
+      closed:       { fail: pr_closed }
+      merged_other: { fail: merged_unapproved }
+      base_changed: { fail: pr_base_changed }
+      not_confirmed: { fail: merge_not_confirmed }
+
+  land-sync:                            # sync と同じ action。遷移先だけが違う
+    kind: pull-request
+    action: sync
+    with: { base: $steps.resolve.base, expect_head: $steps.land.head_sha }
+    on:
+      current: land-push
+      synced:  land-push
+      conflict: { goto: land-sync-resolve, limit: sync_resolve, exhausted: { fail: sync_conflict } }
+      unresolved:     { fail: sync_conflict }
+      not_merge_only: { fail: sync_not_merge_only }
+      diverged:       { fail: branch_diverged }
+      head_moved:     { fail: local_head_mismatch }
+      unavailable:    { gate: review, detail: $steps.land-sync.detail }
+
+  land-sync-resolve:                    # sync-resolve と同じ指示文。session は new（レビュー待ちは長い）
+    kind: llm
+    prompt: prompts/sync-resolve.md
+    session: new
+    with: { base: $steps.resolve.base }
+    output: schemas/sync-resolve-result.json
+    on: { resolved: land-sync, failure: { fail: sync_conflict } }
+
+  land-push:
+    kind: pull-request
+    action: push
+    with: { pr: $steps.publish.pr_number, base: $steps.resolve.base }
+    on:
+      pushed:    { gate: review, detail: $steps.land-push.detail }
+      unchanged: { gate: review, detail: $steps.land-push.detail }
+      rejected:    { fail: push_rejected }
+      unavailable: { fail: push_failed }
+```
+
+- **最初の取り込みの置き場**は `commit` の後・`e2e-route` の前にする。品質の検査（`quality`）より前なので、検査は取り込んだ後のコミットに対して回る。`quality` の直前に置かないのは、`quality` へ入る 3 本の遷移（`e2e-route.no`・`e2e.pass`・`respond.pushed`）が上書きの候補を宣言していて（[harness-runtime-overrides.md](harness-runtime-overrides.md) §5.2）、間に段を挟むと「`quality` を省く」上書きが取り込みも省く形になるためである。`fix` の後も `commit` を通るので、差し戻しのたびに取り込み直す。`respond` の後（`respond.pushed → quality`）には挟まない（契約が求めるのは最初のレビュー待ちの前だけ。宛先が動いていれば `land` の 7 が拾う）。
+- **`land` の後の取り込みは、`quality`・`ci` を通さない**（`land-sync` → `land-push` → `review`）。契約は「`land` の後、レビュー待ちへ戻るほかの待ちへ移らない」ことを求め、`quality`・`ci` の先には `fix`（中身を変える）・`design-deviation`・`ci-pending`（別の待ち）がある。チェックの完了は flywheel が待つ。
+- `land` の後に `summary`・`requested_action.text` へ出る文は、戻った遷移の `detail`（`mismatch`・`blocked` は `land` の、取り込んだ後は `land-push` の、取り込みの fetch が通らなかったときは `land-sync` の）。
+- `ready` の後（`merge-route` → `merge` か `human-merge`）は変えない。`/pr-merge`（`merge` の段）にも手を入れない。
+- 入った後の片付けは、いまの `cleanup`（終わりの理由は `merged`）。
+- 段の数は 21 から 27 になる（`runtime/internal/cli/graph_test.go` の固定の数）。
+
+#### 成果物（`artifacts`）と PR の先頭の記録
+
+いまの `commit` の要素は「最新のラウンドで `publish` が push した先頭」（`Workspace.HeadSHAs`）で、取り込みの後・外からの push の後は古いままになる（実コード確証・high）。次のとおり改める。
+
+- `Workspace` に `head_sha`（PR のいまの先頭。1 つ）と `merge_commit`（入れた後のコミット）を足す。`pull-request` の `publish`・`push`・`land`・`adopt` が、`workspace` イベントで書く。`head_sha_by_round` はいままでどおり `publish` が書き、読む側（契約）は `head_sha` があればそれを、無ければ（この版より前に始めた run）`head_sha_by_round` の最新を使う。
+- 契約の `commit` の要素は、`merge_commit` があればそれ（宛先へ入れて終わった run。契約の「入れた後の中身の識別」）、無ければ `head_sha`。**`role` の無い `commit` は、いつもちょうど 1 つ**（PR を出す前は 0）。
+- **待っている間に外から push されたとき**: ゲートの任意のキー `refresh: pr-head`（input 型にだけ書ける。値はこの 1 つ）を足す。`harness status`（`contract status` も同じ道）は、この印のあるゲートで待っている unit について、`gh pr view --json headRefOid` で先頭を読み、記録と違えば `workspace` イベント（`action: head`）を足してから出力する。読めなければ何も足さず、いまの記録のまま出す（標準エラーに理由）。`status` が書くのは、落ちた runner の後始末（§4.5）と同じ扱いである。これが無いと、flywheel は「委譲先の言う中身」と上流の先頭が食い違ったまま `land` を返せない（S3a の「`content_mismatch`」）。
+  - `gh` はロックの外で呼ぶ（時間がかかりうる）。書き込みは `AppendIf` の中で、**同じ unit が、同じゲートで、同じ `opened_at` のまま待っている**ことを確かめ直したときだけ行う（読んでいる間に `resume` がゲートを解いた・解いた後に同じゲートへ戻ってきた、のどちらでも書かない。後者は、後ろの段が新しい先頭を記録している）。記録と同じ先頭なら、何も書かない。
+- **`workspace` イベントを、実行中の段の外で書く場面**: いまの畳み込みは、実行中の段が無い unit への `workspace` イベントを誤りにする（`applyWorkspace`。実コード確証・high）。次の 2 つだけを許し、ほかはいまと同じく誤りにする。
+
+  | `action` | 許す状態 | 許さない例 |
+  | --- | --- | --- |
+  | `head` | run が終わっていない。unit に実行中の段が無く、ゲートで待っていて、そのゲートに `refresh` の印がある。unit に PR の記録がある | `running` の unit・印の無いゲート・終わった run・PR の記録の無い unit |
+  | `released`（終わりの片付け。下の「`reflect`」） | run が終わっていない。unit に実行中の段が無い。unit に、払い出して、まだ返していない作業ツリーの記録がある。そのうえで、次のどれか: 取り消しの要求（`cancel_requested`）が記録済み／unit がすでに `failed`（失敗への遷移の後・`run_finished` の前）／unit が `running`（runner がシグナルで止められ、実行中だった段を打ち切った後。このとき `cancel_requested` は無い） | 取り消しの要求が無いまま、ゲートで待っている unit・`succeeded` の unit・作業ツリーの記録が無い、または返した後の unit |
+
+  実行中の段の中で書く `acquired`・`released`・`pr` の決まりは変えない。`head` は、段の中（`push`・`land`）では `pr` のイベントで書くので、段の中の `head` は誤りにする。2 つの場面とも、イベント → 状態の往復テスト（`runstate` の往復テスト）の対象に入れ、許さない例が誤りになることも確かめる。
+- `adopt` は作業ツリーの払い出しより前に PR を記録するので、`workspace` の `acquired` の畳み込みは、前の記録に作業ツリーの場所が無いときも PR の記録を持ち越す（いまは場所が同じときだけ）。
+- `artifact` に `role`（`omitempty`）を足すのは B（A では出さない）。
+
+#### `facts`
+
+- **契約の出力**: 任意のキー `facts`（名前 → 値。どちらも文字列）。値が 1 つも無ければキーごと省く。状態によらず出す。契約の版は 1 のまま。
+- **「レビュー待ちの出力には毎回出す」の範囲**: 値を返す段（作業の段）を持ち、`facts` を宣言したワークフローの話で、いまは `ticket` だけである。`ticket` のレビュー待ちは、必ず `implement` が成功した後に来るので、`facts.self_review` はいつも出る。**`reflect` は `facts` を宣言しない**（作業の段が無く、返す値が無い）ので、`reflect` の出力に `facts` は出ない。flywheel が `required_facts` を照らすのは、タスクの実行のレビュー待ちだけで、反映の依頼には照らさない。
+- **宣言**: ワークフローの最上位に `facts:`（名前 → 参照の配列）。参照は `$steps.<段>.<欄>` だけで、欄は出力のスキーマにある文字列であること（読み込みで検査する）。契約の Go には段の名前を書かない（§5.6）。上書きには書けない。
+- **値**: 並べた段のうち、**最後に成功して終わり、その欄を返した段**の値。`run_started` に宣言の写し（名前 → 段と欄）を記録し、畳み込みが `step_finished` のたびに unit の `facts` を更新する（`contract` は定義を読み込まずに `status --json` から写せる）。この版より前に始めた run には宣言の写しが無く、`facts` は出ない。
+- **`self_review`**（`complete`・`incomplete`・`not_run`）を返す段:
+
+  | 段 | 変えること |
+  | --- | --- |
+  | `implement` | 変えない（欄は必須。#381 の `self-review-route` もそのまま） |
+  | `fix` | `schemas/fix-result.json` に `self_review` を任意の欄として足す。指示文に「直して `/quality-check` を通した後、直した差分に `/self-review` を実行し、実行したら `self_review` を返す。`outcome: pass` で返すときは、必ず実行して返す」を足す |
+  | `respond` | `schemas/respond-result.json` に `self_review` を任意の欄として足す。指示文に下の決まりを足す |
+
+- **スキーマでは、どちらも任意の欄にする**（`outcome` による条件つきの必須を使わない。`fix` も同じ形に合わせる）。「返さなければ前の値のまま」は、上の畳み込み（欄を返した段だけが値を置き換える）で扱う。実行したのに返さない、を防ぐのは指示文で、返さなければ前の値が残り、flywheel の `required_facts` が拾う。
+- **`respond` の指示文に足す決まり**:
+  - `/pr-review-respond` を終えた後、この段で変えた分（この段で足したコミットと、未コミットの変更）に `/self-review` を実行し、指摘を直したらコミットする（push は後ろの `publish`）。
+  - **`/self-review` を実行したら、push の有無に関わらず `self_review` を返す**（`no_change`・`needs_human` でも返す）。実行していなければ返さない。
+  - **添え書き（`inputs.note`）が「自己レビューの実行」だけを求めていて、実行した結果、直すものが無かったときは、`no_change` を返してよい**（`self_review` を添える）。いまの決まり「添え書きが空でなければ `no_change` にしない」の例外にする。flywheel が `required_facts` を満たさないレビュー待ちを差し戻す添え書きは、この形（満たしていない名前と値の一覧）で、直すものが無いときに `needs_human`（端末が要る待ち）へ落とさないためである。直すものがあれば、直して `pushed`。
+  - この段で変えた分が無く、添え書きも自己レビューを求めていなければ、`/self-review` を実行しない（値は前のまま）。
+- `/pr-review-respond` のスキルは変えない。スキルの「`/self-review` を実行しない」は、スキルの中から 1 件ずつ呼ぶ修正の委譲（再入の回避）の決まりで、スキルを終えた後に段が `/self-review` を呼ぶことは妨げない（`plugin/skills/pr-review-respond/SKILL.md`。実コード確証・high）。
+- **取り込みでは値を変えない**: `sync-resolve`・`land-sync-resolve` と `pull-request` の段を `facts` に並べない。
+- `fix`・`respond` の `self_review` が `complete` でなくても、harness は止めない（値を返すだけ）。満たさないレビュー待ちを差し戻すのは、flywheel の宣言（`required_facts`）である。`implement` の後の歯止め（#381）は変えない。
+
+#### PR を受けて既定ブランチへ上げる依頼: `reflect`
+
+```yaml
+schema: harness.workflow/v1
+id: reflect
+description: すでにある PR を、既定ブランチの最新を取り込んで検証し、land を受けたら既定ブランチへ入れる
+inputs:
+  artifact_ref: { type: string, required: true }   # PR の URL（統合ブランチの名前は B）
+  challenge_id: { type: string }                   # 受けるだけ（B で統合先の鍵）
+limits:
+  budget_usd: 10
+  sync_resolve: 3
+release_on: [cancelled, failed]                    # 取り消し・失敗で終わるとき、自分が作った作業ツリーを片付ける
+overridable:
+  routes:
+    sync.current: [quality, push]                  # push は quality の省略
+    sync.synced:  [quality, push]
+  skips: [quality]
+
+steps:
+  adopt:
+    kind: pull-request
+    action: adopt
+    with: { ref: $inputs.artifact_ref }
+    on:
+      adopted: workspace
+      unsupported_ref:  { fail: integration_reflect_unsupported }   # PR の URL でない（A）
+      not_open:         { fail: pr_not_open }
+      not_default_base: { fail: pr_not_default_base }
+      fork:             { fail: pr_from_fork }
+      draft:            { fail: pr_draft }
+      other_repo:       { fail: pr_other_repo }
+  workspace:
+    kind: workspace
+    action: acquire
+    with: { key: $steps.adopt.key, branch: $steps.adopt.branch, base: $steps.adopt.base, mode: detached }
+    on: { created: sync, reused: sync, provided: sync, conflict: { fail: worktree_conflict } }
+  sync:           # ticket の sync と同じ（expect_head なし）。current・synced → quality、conflict → sync-resolve（session: new）、unavailable → { fail: remote_unavailable }
+  sync-resolve:
+  quality:        # ticket と同じ command（quality-gate）。fail → { fail: quality_gate_red }、undeclared → { fail: quality_gate_undeclared }
+  push:           # pushed・unchanged → { gate: review, detail: $steps.push.detail }、rejected → { fail: push_rejected }、unavailable → { fail: push_failed }
+  review:
+    kind: gate
+    type: input
+    decider: any
+    requested_action: 既定ブランチへ上げる用意ができた。この中身を入れてよければ land（--approved-ref に通した先頭のコミット）。やめるなら、この run を cancel
+    inputs: [land]
+    contract_kind: review
+    refresh: pr-head
+    on: { land: { goto: land, with: { approved_ref: $gate.approved_ref }, interrupted: { fail: interrupted_after_land } } }
+  land:           # ticket の land と同じ。behind → land-sync（expect_head: $steps.land.head_sha）→ land-push → review
+  land-sync:
+  land-sync-resolve:
+  land-push:
+  cleanup:        # workspace release。released・kept → { done: landed }、dirty → { done: landed_worktree_dirty }
+```
+
+`sync` から下の、中身が `ticket` と同じ段は、遷移先だけを注記にして略した（`with` の `pr`・`base` は `adopt` の出力を読む）。
+
+- **`adopt`**: `ref` が `https://<host>/<owner>/<repo>/pull/<番号>` の形でなければ `unsupported_ref`。`gh pr view <ref> --json number,url,state,baseRefName,headRefName,headRefOid,isCrossRepository,isDraft` と `gh repo view --json nameWithOwner,defaultBranchRef` で、起動したリポジトリの PR であること（`other_repo`）・開いていること（`not_open`）・宛先が既定ブランチであること（`not_default_base`）・フォークからでないこと（`fork`。相手のブランチへ取り込みを push できる保証が無い）・下書きでないこと（`draft`）を確かめる。出力は `pr_number`・`pr_url`・`branch`・`base`・`head_sha`・`key`（`pr-<番号>`）。PR を記録する。
+- **作業ツリーは、ブランチを checkout しない形（detached）で作る**。`workspace` の `acquire` の `with` に `mode`（リテラル `detached` だけ）を足し、`worktree-setup.sh --detach <鍵> <ブランチ> <base>` を呼ぶ（名前の形を検査しない・ブランチが origin に無ければ失敗・`git worktree add --detach <場所> origin/<ブランチ>`）。上げる PR のブランチは、作った側の作業ツリー（`/impl`・`/para-impl` の `issue-<n>`）で checkout されたまま残っていることが多く、同じブランチを 2 つの作業ツリーで checkout できないためである。push は `push` の段が `HEAD:refs/heads/<ブランチ>` へ行う。`mode: detached` と `provided` は一緒に使えない。
+- **用意の検証は、検査だけ**（`quality` が落ちたら失敗で終える）。`fix` の段を持たない。直すと、通した中身に関係のない変更が足されるためである。
+- **`options` は `land` だけ**。`respond`・`ready` は受けない。成果物は PR・ブランチ・先頭のコミット（`role` 無しを 1 つ）。
+- **取り消し・失敗で終わるときの片付け**: ワークフローの最上位の任意のキー `release_on`（終わりの状態の配列。書ける値は `cancelled` と `failed`）。`reflect` は `[cancelled, failed]` を書く。`succeeded` は書けない（入れた後の片付けは、`cleanup` の段が行う）。
+  - `run_started` に写しを記録する（`status`・`cancel` は定義を読み込まないので、状態から読めるようにする）。
+  - **終わりを記録する側が、終わりのイベント（`run_cancelled`・`run_finished` の `failed`）を書く前に片付ける**。この run が作った作業ツリー（所有の印で確かめる）を `worktree-cleanup.sh --force` で消し、`workspace` イベント（`released`）を残してから、終わりを書く。終わりを記録する側は 4 つある: runner（段の結果が失敗への遷移になったとき・取り消しを拾ったとき）、runner が居ないときの `harness cancel`、`status`・`resume` の後始末（上の「`land` の後は `interrupted` へ移らない」で失敗にするとき）、runner を起動できなかった `resume`。4 つとも同じ関数を通す（定義を読み込まず、状態の `scripts_dir`・`cwd`・作業ツリーの記録だけで動く形にする）。
+  - 消せなくても、終わりは成立させる（理由を `released` の記録か標準エラーに残す）。`--force` にするのは、取り込みの途中（マージの途中）で止まった作業ツリーも残さないためで、ここに push していない価値のあるものは無い（PR のブランチは origin にあり、取り込みは、やり直せば作り直せる）。
+  - 既定ブランチへは入れず、PR は閉じない（PR はこの run が作ったものではない）。push 済みの取り込みのコミットは残る。
+  - **`ticket` には書かない**（取り消し・失敗の後に、人が作業ツリーを見て続きを直す、いまの動きを変えない）。
+- `reflect` も `ticket` と同じ場所（起動したリポジトリの作業ツリーの置き場）に `pr-<番号>` を作る。同じ PR への依頼が 2 本重なると、後の方は `worktree_conflict` にならず `reused` になる（同じ detached の作業ツリー）ので、`acquire` は、別の run の所有の印がある detached の作業ツリーを `conflict` にする。
+
+#### 失敗の理由（足すもの）
+
+| 理由 | ワークフロー | いつ |
+| --- | --- | --- |
+| `input_invalid` | `ticket` | 入力の組み合わせ・形が受けられない（上の表） |
+| `integration_unsupported` | `ticket` | `uses_integration` が `true`（A。B で外す） |
+| `sync_conflict` | 両方 | 取り込みの衝突を直せなかった・回数を使い切った・マージの途中のまま戻った |
+| `sync_not_merge_only` | 両方 | 衝突を直す段が、取り込みのコミットの外に変更を足した |
+| `branch_diverged` | 両方 | 手元の作業ブランチと origin が枝分かれしている |
+| `push_rejected` | 両方 | 強制しない push が拒否された（取り込みの間に、外から push された） |
+| `push_failed` | 両方 | 取り込みの後の push が、3 回試しても origin へ届かない |
+| `remote_unavailable` | 両方 | レビュー待ちの前の取り込みで、fetch が通らない（`land` の後の取り込みでは、失敗にせずレビュー待ちへ戻す） |
+| `local_head_mismatch` | 両方 | `land` の後の取り込みの前に、手元の `HEAD` が、一致を確かめた PR の先頭と違う |
+| `interrupted_after_land` | 両方 | `land` を受けてから、レビュー待ちへ戻るか終わるまでの間に、runner が落ちた・起動できなかった |
+| `merge_not_confirmed` | 両方 | 入れる命令は通ったが、読み直した PR が「入った・先頭が一致」になっていない |
+| `pr_base_changed` | 両方 | PR の宛先が、run の宛先と違う（すでに入った PR も含む） |
+| `merged_unapproved` | 両方 | PR がすでに入っていて、入った先頭が `approved_ref` と違う |
+| `pr_closed`（いまもある） | 両方 | PR が入らずに閉じている |
+| `integration_reflect_unsupported` | `reflect` | `artifact_ref` が PR の URL でない（A。B で外す） |
+| `pr_not_open`・`pr_not_default_base`・`pr_from_fork`・`pr_draft`・`pr_other_repo` | `reflect` | 扱えない PR |
+| `quality_gate_red`・`quality_gate_undeclared`（いまもある） | `reflect` | 上げる前の検証が落ちた・宣言が無い |
+
+終わりの理由（成功）: `ticket` は `merged`（いまと同じ）、`reflect` は `landed`・`landed_worktree_dirty`。
+
+`land` を受けた後に失敗で終わるのは、上の表の `sync_*`・`branch_diverged`・`push_*`・`local_head_mismatch`・`interrupted_after_land`・`merge_not_confirmed`・`merged_unapproved`・`pr_closed`・`pr_base_changed` と、段の予約値（`step_error` など）。どれも、flywheel が上流で「入ったか」を確かめる前提で、レビュー待ち以外の待ちへは移らない。
+
+#### 守り（上書きで外せないこと）
+
+規則の正本は [harness-runtime-overrides.md](harness-runtime-overrides.md) §6.2 の規則 7。要点:
+
+- **宛先へ入れる操作は、`pull-request` の `action: land` の段の中にしか無く、その段はいつも先頭の一致を先に確かめる**。確かめる所と入れる所を 2 つの段に分けない（間の遷移を付け替えて、確かめずに入れる形が作れない）。
+- `approved_ref` は、ゲートの解決（`$gate.approved_ref`）からしか `land` の段へ届かない（定義の検査）。
+- `land` の段のキーと遷移、`$gate.approved_ref` を渡す遷移は、上書きできない。`land` の段は `overridable.skips` に挙げられない。
+- `--workflow-dir` で定義を丸ごと差し替える道は、いまと同じく規則の外（同 §6.3）。
+
+#### 互換と版
+
+- **契約の版は 1 のまま**。足すのは、任意のキー（`facts`）・選択肢の値（`options` の `land`）・任意のフラグ（`--approved-ref`）・新しい入力とワークフローだけで、いまあるキーと値の意味は変えない。
+- **ワークフローのスキーマ版は `harness.workflow/v1` のまま**（`overridable`・`contract_kind`・`note: optional` を足したときと同じ扱い）。足す文法: 最上位の `facts`・`release_on`、ゲートの `refresh`、ゲートへの遷移の `detail`、ゲートから出る `goto` の `interrupted`、参照 `$gate.approved_ref`、`pull-request` の `action`、`workspace` の `with.key`・`with.mode`。定義はバイナリに埋め込む（§6.5）ので、新しい定義を古い CLI が読むことは無い。この版より前に始めた run は、開始時の版の定義で続く（§7.3・N3）ので、`options` に `land` が出ず、`facts` も出ない（flywheel は `land_unavailable` で保留にする）。
+- **`issue` だけで始めた実行で変わること**:
+
+  | 変わること | 理由 |
+  | --- | --- |
+  | レビュー待ちの `options` に `land` が増える | 契約（`land` を受けられる委譲先の印）。いまの flywheel は `land` を返さない |
+  | `facts` が出る | 任意のキー。知らない側は読み飛ばす |
+  | 最初のレビュー待ちの前に、宛先の最新をマージのコミットで取り込む | 契約の「最初にレビュー待ちへ出す前にも取り込む」。下の「選択肢があった点と、採った案」の 1 |
+  | 成果物の `commit` が、待っている間の外からの push に追従する | 上の「成果物」 |
+
+  ほか（`respond`・`ready` の動き、`ready` の後のマージ、名前と場所、失敗の理由）は変えない。
+- **プラグインの版**: minor を上げる（5.1.0 → 5.2.0）。プラグインの側で変わるのは `plugin/scripts/worktree-setup.sh`（第 1 引数に鍵を受ける・`--detach`）と、その仕様だけで、数字だけの呼び方の動きは変えない。CLI が受けるプラグインの範囲（`>=4.9.0 <6.0.0`。`runtime/internal/version/version.go`）は変えない。runtime は、埋め込んだ側の `worktree-setup.sh` を使う（§6.5）ので、**新しい CLI は、古いプラグイン（5.1.0）のままでも動く**。flywheel が要るのは CLI のリリース（`runtime/vX.Y.Z`。minor を上げる）である。
+
+#### 実装の分け方
+
+この文書の PR を PR-0 とする。どれも `make check` を通し、`CHANGELOG.md` の「未リリース」に書く。
+
+| PR | 中身 | 依存 | 主に触るファイル | 足す試験 |
+| --- | --- | --- | --- | --- |
+| S3-1 | 入力と名前: 空の文字列を「無い」と読む。`ticket` の入力 4 つ・`issue` を任意に。`resolve` の検査と出力（`key`・`task_file`・`scope`）。鍵での作業ツリーとブランチ。`analyze`・`implement` の指示文。`uses_integration: true` を止める | — | `runtime/internal/cli/cli.go`（`parseInputs`）・`runtime/internal/workflow/builtin.go`・`runtime/internal/engine/workspace.go`・`runtime/workflows/ticket.yaml`・`scripts/resolve-ticket.sh`・`schemas/resolve-ticket.json`・`schemas/ticket-analysis.json`・`prompts/ticket-analyze.md`・`prompts/ticket-implement.md`・`plugin/scripts/worktree-setup.sh`・`plugin/scripts/specs/worktree-setup.md` | 空の入力（型ごと）。`resolve-ticket.sh` の表のテストに上の表の全行。`test-worktree-setup.sh` に鍵の形と、数字だけの呼び方が変わらないこと。通しのテスト: 文面のファイルと `task_id` だけで PR まで進む・同じ Issue で `task_id` の違う 2 本が別の作業ツリーとブランチになる・`issue` だけの run の場所と名前が変わらない |
+| S3-2 | ゲートの土台: `--approved-ref`・`Resolution.ApprovedRef`・`gate_resolved.approved_ref`・`$gate.approved_ref`。ゲートへの遷移の `detail`（`gate_opened.detail`・`waiting[].detail`・契約の `text` と `summary`）。`readsNote` の直し。`goto` の `interrupted`（`round_started` の契機への記録・`InterruptEvents` と `resolveDetached` の後始末） | — | `runtime/internal/cli/contract.go`・`cli.go`（`cmdResolve`・`waitingView`）・`runtime/internal/engine/gate.go`・`engine.go`（`value`・`resolve`・`transitionEvents`）・`runtime/internal/runstate/event.go`・`fold.go`・`runtime/internal/workflow/parse.go`・`validate.go`・`override.go`（`detail` を閉じる）・`cli/detach.go` | 練習用のワークフロー（`engine/testdata/workflows/`）で: 添えた値が次の段へ届く・無ければ空・`--note` を求めない・書けない所に書いた参照を拒否・`detail` が開き直しで置き換わる・契約の出力に出る。`interrupted` の印: 印のあるラウンドで runner が落ちた後の `status`・`resume` が、`interrupted` ゲートを開かずに印の理由で `failed` にする（実行中の段があるとき・段の間のとき）／runner を起動できなかった `resume` の応答が `failed` になる／印の無いラウンドは、いまと同じに `interrupted` ゲートで待つ／失敗で終えた後の `resume` が終わりの状態を返す。往復テスト（イベント → 状態） |
+| S3-3 | 取り込みと `land`: `pull-request` の `action`（`sync`・`push`・`land`）。`Workspace.head_sha`・`merge_commit` と契約の `commit`。`ticket.yaml` の `sync`・`sync-resolve`・`land`・`land-sync`・`land-sync-resolve`・`land-push` と `review` の `land`。`prompts/sync-resolve.md`。上書きの規則 7。`README` の種類の説明 | S3-1・S3-2 | `runtime/internal/engine/pullrequest.go`（分けてよい）・`runtime/internal/workflow/builtin.go`・`parse.go`・`validate.go`・`routes.go`・`runstate/event.go`・`fold.go`・`cli/contract.go`（`artifacts`）・`runtime/workflows/ticket.yaml`・`prompts/`・`schemas/`・`engine/testdata/scripts/fake-gh.sh`・`cli/graph_test.go` ほか段の数を固定で持つテスト | `land` の表の 1〜10 を 1 行ずつ（偽の `gh`・実の git の bare origin）: 読めない PR は `blocked`／宛先を付け替えて入った PR は `landed` にならない／外から push された先頭が手元に無くても `behind` と読み違えない・祖先の判定の失敗は `blocked`／チェック 0 件は通す・チェックを読めないときは `blocked`／入れる命令が通った後に `MERGED` でなければ `merge_not_confirmed`。`sync` の 1〜7（`expect_head` と違う手元は `local_head_mismatch`・再入では確かめない・fetch の失敗は、`land` の後ならレビュー待ち）。`push` の 4 つの結果と `detail` の文（宛先の先頭・前後の先頭が入る）。通しのテスト: `land` で一致 → 入って `succeeded`／宛先が動いた → 取り込んでレビュー待ち（新しい先頭・`running` を経る）／一致しない → 入れずにレビュー待ち／チェック失敗 → 理由つきでレビュー待ち／衝突 → 直してレビュー待ち／同じ `land` を 2 度／入った直後に落ちた run が `interrupted_after_land` で終わり、`resume` が終わりの状態を返す（2 度入れない）／`land` の後に、レビュー待ち以外の待ちへ移る道が無いこと（定義のグラフで確かめる）。`$gate.approved_ref` を渡す遷移に `interrupted` が無い定義を拒否。`--match-head-commit` が引数にあること。最初のレビュー待ちの前の取り込み。上書きの規則 7 の拒否（`override_routes_test.go`）。`ready` の道が変わらないこと |
+| S3-4 | `facts`: 最上位の `facts`・`run_started` の写し・畳み込み・契約の出力。`fix`・`respond` の `self_review`（スキーマと指示文） | S3-3（`ticket.yaml` の同じ所を触るため。機能の依存は無い） | `runtime/internal/workflow/parse.go`・`validate.go`・`override.go`・`runstate/event.go`・`fold.go`・`engine/engine.go`（`Start`）・`cli/contract.go`・`cli/contract_test.go`（`contractKeys`）・`ticket.yaml`・`schemas/fix-result.json`・`schemas/respond-result.json`・`prompts/ticket-fix.md`・`prompts/ticket-respond.md` | 宣言の検査（無い段・文字列でない欄・上書き）。値が「最後に、その欄を返した段」になること（`implement` → `respond` が返せば `pushed` でも `no_change` でも変わる・返さなければ変わらない・`fix` も同じ・取り込みで変わらない）。`self_review` の無い `respond`・`fix` の出力がスキーマを通ること。`ticket` のレビュー待ちの出力に毎回出ること。宣言の無いワークフローではキーが無いこと |
+| S3-5 | 待っている間の先頭の取り直し: ゲートの `refresh: pr-head`・`workspace` イベントの `head`・`status` での取り直し | S3-3 | `runtime/internal/workflow/parse.go`・`validate.go`・`override.go`・`runstate/event.go`・`fold.go`・`engine/gate.go`・`pullrequest.go`・`cli/cli.go`（`cmdStatus`） | 外から push された後の `contract status` の `commit` が新しい先頭になる・`gh` が失敗しても出力は変わらず出る・印の無いゲートでは `gh` を呼ばない・読んでいる間にゲートが解かれた／同じゲートへ戻ってきた（`opened_at` が違う）ときは書かない・記録と同じ先頭なら書かない。往復テスト: 待っているゲートでの `head` を許し、上の表の「許さない例」を誤りにする |
+| S3-6 | `reflect`: `action: adopt`・`workspace` の `mode: detached`・`worktree-setup.sh --detach`・最上位の `release_on`・取り消しと失敗のときの片付け・`workflows/reflect.yaml` | S3-3・S3-5（S3-1 の鍵） | `runtime/workflows/reflect.yaml`・`runtime/internal/engine/pullrequest.go`・`workspace.go`・`engine.go`（`cancel`・失敗への遷移）・`gate.go`（`InterruptEvents` の後始末）・`cli/cli.go`（`cmdCancel`・`cmdStatus`・`cmdResolve`）・`workflow/parse.go`・`builtin.go`・`runstate/event.go`・`fold.go`・`plugin/scripts/worktree-setup.sh`・`specs/worktree-setup.md`・`cli/dist_test.go` ほか定義の一覧を固定で持つテスト | `adopt` の結果を 1 行ずつ。通しのテスト: PR の URL → 取り込み → 検証 → レビュー待ち（`options` は `land` だけ・`commit` が 1 つ）→ `land` → 入って片付け → `succeeded`。`land` の前に既定ブランチへ入らないこと。取り消しで作業ツリーが消え、PR が開いたまま残ること（待っているとき・走っているとき）。失敗で終わるとき（用意の検証が落ちた・取り込みの衝突を直せない・`interrupted_after_land`）も作業ツリーが消えること。`ticket` は取り消し・失敗で作業ツリーを残すこと。往復テスト: 終わりの片付けの `released` を許し、上の表の「許さない例」を誤りにする。`facts` が出ないこと。ブランチが別の作業ツリーで checkout されていても進むこと。フォーク・下書き・宛先違い・ブランチの名前の入力で止まること |
+| S3-7 | リリース（`chore(release)`）: `CHANGELOG.md`・`plugin/.claude-plugin/plugin.json`。CLI のタグは人が打つ | 全部 | — | — |
+
+A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a は、S3-7 の後に main へ入る。
+
+#### B の粗い設計（A が邪魔をしないこと）
+
+| B で足すもの | 形（粗い） | A の側の受け |
+| --- | --- | --- |
+| 統合先を決めて作る | `resolve` が、`uses_integration: true` と `challenge_id` から統合ブランチの名前を決め（規則は B で決める）、無ければ既定ブランチの先頭から作る（作る所は Go の段にする）。`base` をそのブランチ、`base_kind` を `integration` にする | `integration_unsupported` の行を外すだけ。`land`・`sync` は宛先を `with.base` で受けていて、既定ブランチに限っていない |
+| `role: integration` の成果物 | `artifact` に `role`（`omitempty`）。`Workspace` に統合ブランチの名前と先頭。`land` が入れた後の先頭を記録する | 成果物の型と記録は足すだけ。`role` の無い `commit` が 1 つ、の決まりは変わらない |
+| 統合ブランチを上げる | `reflect` の `adopt` が、ブランチの名前を受けたら、統合ブランチから既定ブランチへの PR を探し、無ければ作る。取り込みは統合ブランチそのものへ push する。入れた後に統合ブランチを消す。取り消しでは消さない | `integration_reflect_unsupported` の行を外す。`push` の「PR の宛先そのものへ push しない」の検査は、統合ブランチが PR の head になるので当たらない。入れ方（squash か、マージのコミットか）は B で決める |
+| `ready` の後の統合ブランチ宛ての自動マージ（`merge` の段。LLM） | flywheel が `ready` を返さなくなった後、残すかを決める | A では触らない |
+
+#### 選択肢があった点と、採った案
+
+8 点とも、右の列の案を採った（2026-11-20。#388 に記録）。1 は、Issue の「新しい入力を受けていない実行は、いまと同じに動く」の例外として扱う（上の「互換と版」の表）。
+
+| # | 点 | 選択肢 | 採った案と理由 |
+| --- | --- | --- | --- |
+| 1 | 最初のレビュー待ちの前の取り込みを、`issue` だけで始めた実行にも入れるか。Issue の「新しい入力を受けていない実行は、いまと同じに動く」に、字のうえでは当たる（PR にマージのコミットが増える。衝突が PR の前に LLM の段で直される） | (a) どの実行にも入れる。(b) 新しい入力（`task_file`・`task_id`）を受けた実行だけ（`resolve` の出力で振り分ける `select` が要る）。(c) 入れて、上書きで外せる遷移を宣言する | (a)。契約の文は条件を付けていない。道が 1 本で、宛先とのずれがレビューの前に分かる。この設計は (a) で書いた |
+| 2 | `land` の 8 で、未完了のチェックを「入れられない」にするか | (a) 失敗と未完了の両方。(b) 失敗だけ。(c) 見ない（GitHub の保護の決まりに任せる） | (a)。flywheel は完了を待ってから `land` を返すので、未完了に当たるのはまれ。当たると flywheel は反映の承認を取り消してオーナーへ見せる（`land_refused`）ので、チェックの数え方が flywheel と食い違うリポジトリが出たら (b) へ寄せる |
+| 3 | 入れ方（squash に固定） | (a) 固定。(b) リポジトリの宣言（`.claude-harness/`）で選ぶ | A は (a)。flywheel の側の設定（`merge_method`）が無くなるので、squash を許さないリポジトリが出たら (b) を足す |
+| 4 | 待っている間の先頭の取り直し（`status` が `gh` を呼んで書く） | (a) 入れる（S3-5）。(b) 入れず、外からの push の後は `respond` を 1 度通してもらう | (a)。(b) では flywheel が `land` を返せないまま回数の上限に当たる |
+| 5 | `fix`・`respond` の `self_review` が `complete` でないとき、harness が止めるか | (a) 止めない（値を返すだけ。差し戻しは flywheel の `required_facts`）。(b) `implement`（#381）と同じに、1 度戻して、だめなら失敗 | (a)。PR が出た後の run を失敗で終えると、レビュー待ちへ戻れない |
+| 6 | 入れた後の作業ブランチ（origin）を消すか | (a) 消さない（リポジトリの「マージ後に自動で消す」の設定に任せる）。(b) `cleanup` で消す | (a)。`reflect` の PR のブランチは、この run が作ったものではない |
+| 7 | `T-<番号>` が、同じリポジトリへ出す 2 つの flywheel のワークスペースで重なること | (a) 受ける（`worktree_conflict` で止まる）。(b) 鍵に `challenge_id` も入れる | (a)。`challenge_id` もストアごとの番号で、入れても解けない |
+| 8 | 文面のファイルと Issue の両方があるとき、Issue の本文の `Base:` 行を読まないこと | (a) 読まない（宛先は `base` の入力か既定ブランチ）。(b) 読む（いまと同じ） | (a)。flywheel の S3a は、宛先を反映先（既定ブランチ）と決めて PR の宛先を確かめる（`base_changed`）。Issue の本文で宛先が変わると食い違う |
+
 ---
 
 ## 6. リポジトリ内の構成
@@ -868,6 +1332,7 @@ make check
 - `harness run` は YAML の `schema` が対応集合に無ければ読み込まず止まる（S1 を採ったので同梱の YAML は常に一致する。実際に効くのは開発時の `--workflow-dir` で別の定義を読ませた場合）。
 - 再開時も照合する: run は開始時のワークフロー定義のハッシュを記録しており、**`resume` 時に定義が変わっていたら既定では止まる**（途中で遷移表が変わった run を黙って続けない）。
 - S1 では **CLI を更新すると同梱の定義も変わる**ため、ゲートで待っている run（レビュー待ち等）が更新後の `resume` で止まる。回避策として、run が開始時の CLI 版を記録し、新しい CLI が**開始時の版の展開ディレクトリ（`~/.local/share/claude-harness/runtime/<開始時の版>/`）の定義**を、そのスキーマ版に対応していれば読み込んで続ける（N3 で決定・2026-09-21）。対応していなければ、止まって「開始時の版で `resume` する」か「その run を `cancel` する」かを案内する。
+- **#388 の受け口（§5.6.2）と版**: 接続契約の版は 1、ワークフローのスキーマ版は `harness.workflow/v1` のまま。CLI は minor を上げる（flywheel の S3a が要るのは CLI のリリース）。プラグインも minor を上げる（5.1.0 → 5.2.0。変わるのは `worktree-setup.sh` の引数の受け方だけ）が、CLI が受けるプラグインの範囲（`>=4.9.0 <6.0.0`）は変えず、新しい CLI は古いプラグインのままでも動く（runtime は埋め込んだ側のスクリプトを使う。§6.5）。この版より前に始めて待っている run は、上の N3 のとおり開始時の版の定義で続くので、`land` を受けられない（`options` に出ない）。
 
 ---
 
@@ -1055,7 +1520,28 @@ PR-7 の着手前に上げた問いの決定。§11.1〜§11.5 の記録は書�
 | R2 | ゲートの解決は呼び出し元で同期に行い、拒否はその場で返す。解いた後の進行だけを runner に渡す。`runner.lock` は解決の前に取るので、別の runner が持っていればゲートを解かずに止まる（従来の `resume` と同じ）。runner が引き継げなかった場合は §4.5 の既存の規則（`interrupted` ゲート）に従い、新しい状態・遷移は作らない |
 | R3 | `/impl` の再開の案内（`respond`・`ready`・`recheck` などの `harness resume`）を `--detach` 付きにし、再開の後は `harness status` で合流する（始めの起動と同じ形） |
 
+### 11.9 flywheel の区切り S3 の受け口（#388・2026-11-20）
+
+flywheel が、成果を宛先へ入れる処理を委譲先へ移すために足す受け口の決定。設計は §5.6.2。§11.1〜§11.8 の記録は書き換えていない。
+
+| # | 決定 | 決めた人 |
+| --- | --- | --- |
+| L1 | **R5 を改める**: 「既定ブランチへのマージは人が行う」は、`ready` を受けた後の道（`human-merge`）として残す。そこへ、`land` と通した中身を受け、PR の先頭のコミットが一致したときだけ、機械が宛先（統合ブランチでも既定ブランチでも）へ入れる道を足す。flywheel の側の承認が、人の承認に当たる。リポジトリごとに許す設定は足さない | 人間 |
+| L2 | `land` を受け付けてから、宛先へ入れ終えるかレビュー待ちへ戻るまで、`status` は `running` を返す | 人間（flywheel の S3a の仕様） |
+| L3 | タスクの実行（`facts` を宣言するワークフロー。いまは `ticket`）のレビュー待ちの出力には、毎回 `facts` を出す（反映の依頼 `reflect` は `facts` を宣言せず、出さない）。1 つの実行が既定ブランチ宛てに出す成果物は 1 つ | 人間（同上） |
+| L4 | 進める順: 取り込み元の無い入力・`land`・取り込んで待つ・`facts`・PR を受けて上げる依頼を先（A）、統合先と統合ブランチを上げる分を後（B）にする | 人間 |
+| L5 | 一致の確かめと入れる操作は、LLM の散文ではなく Go の 1 つの段（`pull-request` の `action: land`）で行い、入れる操作にも `gh pr merge --match-head-commit` を付ける。上書きで外せない（[harness-runtime-overrides.md](harness-runtime-overrides.md) §6.2 の規則 7） | 親 |
+| L6 | 通した中身は、`contract resume` の `--approved-ref` → ゲートの解決の記録 → `$gate.approved_ref` で後ろの段へ渡す。`ready`・`respond` の意味は変えない | 親 |
+| L7 | 名前と場所は、`task_id` があればそこから、無ければ Issue の番号から決める。値が空の文字列の入力は「無い」と読む | 親 |
+| L8 | `facts` は、ワークフローの定義の最上位に宣言し、契約の Go に段の名前を書かない | 親 |
+| L9 | `land` を受けた後は、レビュー待ち以外の待ちへ移らない。runner が落ちた・起動できなかったときも `interrupted` のゲートを開かず、失敗（`interrupted_after_land`）で終える。入れる命令が通った後に入ったことを確かめられないときも、失敗（`merge_not_confirmed`）で終える。失敗で終わった実行は、flywheel が上流で確かめる | 親 |
+| L10 | `reflect` は、取り消しでも失敗でも、自分が作った作業ツリーを片付ける。`ticket` は、いまのまま残す | 親 |
+
+選択肢があった点は §5.6.2 の「選択肢があった点と、採った案」。
+
 ## 12. 未検証事項
+
+- #388 の受け口（§5.6.2）: マージ済みの PR の `headRefOid` が「入ったときの先頭」であること、`gh pr merge --match-head-commit` が通らないときの終了の仕方、マージの待ち行列のあるリポジトリで入れる命令が通った直後の PR の状態、`gh pr checks --json` の終了コードと 0 件のときの出力、マージのコミットを含む PR ブランチを rebase マージのリポジトリで入れられるか。実装の PR で実物の `gh` で確かめる。
 
 - ~~`claude -p --agent claude-harness:feature-implementer` でプラグインのエージェントをセッションの主体に据えられるか~~ → PR-3 で実測済み（§1.1）。
 - ~~`claude -p --output-format json` の結果に含まれる費用・`session_id` のフィールド名~~ → PR-3 で実測済み（§4.3）。
