@@ -31,14 +31,34 @@ func TestTicketWorkflowFromATaskFileAndTaskID(t *testing.T) {
 	if u.Workspace == nil || u.Workspace.WorktreePath != wt || u.Workspace.Branch != branch || !u.Workspace.Created {
 		t.Fatalf("workspace = %+v, want %s on %s", u.Workspace, wt, branch)
 	}
+	var copyDir string
 	var resolved struct {
 		Issue    int    `json:"issue"`
 		Key      string `json:"key"`
 		TaskFile string `json:"task_file"`
 		Scope    string `json:"scope"`
 	}
-	if err := json.Unmarshal(u.Outputs["resolve"], &resolved); err != nil || resolved.Issue != 0 || resolved.Key != "task-12" || resolved.TaskFile != taskFile || resolved.Scope != "task_file" {
+	if err := json.Unmarshal(u.Outputs["resolve"], &resolved); err != nil || resolved.Issue != 0 || resolved.Key != "task-12" || resolved.TaskFile == taskFile || resolved.Scope != "task_file" {
 		t.Fatalf("resolve output %s (%v)", u.Outputs["resolve"], err)
+	}
+	// 段が読む正本のパスは、文面の写し（そのファイルだけが在る置き場）。元の親ディレクトリは渡らない
+	copyDir = filepath.Dir(resolved.TaskFile)
+	if copyDir == filepath.Dir(taskFile) || readFile(t, resolved.TaskFile) != "# T-12 widget を足す\n" {
+		t.Errorf("task_file %q is not a copy of %q in a dedicated directory", resolved.TaskFile, taskFile)
+	}
+	// 写しの置き場は run ディレクトリの下（OS の一時ディレクトリではない）。レビュー待ちの間に元のファイルが変わっても・消えても、
+	// run は写しを読む（差し戻しの後の段へ渡るパスも写しのまま）
+	if want := filepath.Join(v.RunDir, "task"); copyDir != want {
+		t.Errorf("the copy is in %q, want the run directory's %q", copyDir, want)
+	}
+	if err := os.WriteFile(taskFile, []byte("# 書き換えた\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(taskFile); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, resolved.TaskFile); got != "# T-12 widget を足す\n" {
+		t.Errorf("the copy after the original changed and was removed = %q", got)
 	}
 	// 空の入力は run_started.inputs に入らない
 	for _, name := range []string{"issue", "base", "worktree", "challenge_id"} {
@@ -47,17 +67,17 @@ func TestTicketWorkflowFromATaskFileAndTaskID(t *testing.T) {
 		}
 	}
 	// analyze・implement は文面のファイルのパスと鍵を受け取る（添付データの inputs）
-	if in := readFile(t, filepath.Join(f.fdir, "calls", "1.stdin")); !strings.Contains(in, taskFile) || !strings.Contains(in, `"key": "task-12"`) {
+	if in := readFile(t, filepath.Join(f.fdir, "calls", "1.stdin")); !strings.Contains(in, copyDir) || strings.Contains(in, taskFile) || !strings.Contains(in, `"key": "task-12"`) {
 		t.Errorf("analyze did not receive the task file and the key: %s", in)
 	}
-	if in := readFile(t, filepath.Join(f.fdir, "calls", "2.stdin")); !strings.Contains(in, taskFile) {
+	if in := readFile(t, filepath.Join(f.fdir, "calls", "2.stdin")); !strings.Contains(in, copyDir) {
 		t.Errorf("implement did not receive the task file: %s", in)
 	}
 	// 文面のファイルのあるフォルダを --add-dir で渡す（作業ツリーの外でも LLM の段が Read できるように。§5.6.2）。
 	// analyze（1 回目）・implement（2 回目）に付き、複数の add-dir にならない。
 	for _, n := range []int{1, 2} {
 		argv := readFile(t, filepath.Join(f.fdir, "calls", fmt.Sprintf("%d.argv", n)))
-		if want := "--add-dir\n" + filepath.Dir(taskFile) + "\n"; strings.Count(argv, "--add-dir\n") != 1 || !strings.Contains(argv, want) {
+		if want := "--add-dir\n" + copyDir + "\n"; strings.Count(argv, "--add-dir\n") != 1 || !strings.Contains(argv, want) {
 			t.Errorf("claude call %d: argv lacks %q exactly once:\n%s", n, want, argv)
 		}
 	}

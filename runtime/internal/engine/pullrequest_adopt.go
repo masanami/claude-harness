@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -65,12 +66,13 @@ func (c *prCtx) adopt() result {
 	}
 	var repo struct {
 		NameWithOwner    string `json:"nameWithOwner"`
+		URL              string `json:"url"`
 		DefaultBranchRef struct {
 			Name string `json:"name"`
 		} `json:"defaultBranchRef"`
 	}
 	r = c.try(func() toolResult {
-		argv, r = c.gh("repo", "view", "--json", "nameWithOwner,defaultBranchRef")
+		argv, r = c.gh("repo", "view", "--json", "nameWithOwner,url,defaultBranchRef")
 		return r
 	})
 	if cancelled(r) {
@@ -79,12 +81,16 @@ func (c *prCtx) adopt() result {
 	if !r.ok() {
 		return toolFailure(r, argv)
 	}
-	if err := json.Unmarshal(r.stdout, &repo); err != nil || repo.NameWithOwner == "" || repo.DefaultBranchRef.Name == "" {
+	if err := json.Unmarshal(r.stdout, &repo); err != nil || repo.NameWithOwner == "" || repo.URL == "" || repo.DefaultBranchRef.Name == "" {
 		return stepError("gh repo view output is not the expected JSON: %s", firstLine(string(r.stdout)))
 	}
 
+	repoHost := ""
+	if u, err := url.Parse(repo.URL); err == nil {
+		repoHost = u.Host
+	}
 	switch {
-	case !strings.EqualFold(repo.NameWithOwner, m[2]+"/"+m[3]) || pr.Number != number || !strings.EqualFold(pr.URL, ref):
+	case !strings.EqualFold(repoHost, m[1]) || !strings.EqualFold(repo.NameWithOwner, m[2]+"/"+m[3]) || pr.Number != number || !strings.EqualFold(pr.URL, ref):
 		return reject("other_repo", fmt.Sprintf("PR %s は、この run を始めたリポジトリ %s のものではない。", ref, repo.NameWithOwner))
 	case pr.State != "OPEN":
 		return reject("not_open", fmt.Sprintf("PR #%d は開いていない（状態 %s）。", pr.Number, pr.State))

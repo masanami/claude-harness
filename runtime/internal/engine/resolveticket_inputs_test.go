@@ -27,10 +27,17 @@ type resolvedInputs struct {
 // resolveWith は resolve-ticket.sh を、渡した引数そのままで偽の gh・git で動かす（--issue を足さない）。
 func resolveWith(t *testing.T, tl *tools, issueBody string, args ...string) (resolvedInputs, int, string) {
 	t.Helper()
+	return resolveIn(t, tl, "HARNESS_RUN_DIR="+t.TempDir(), issueBody, args...)
+}
+
+// resolveIn は run ディレクトリの環境変数（runDirEnv。"HARNESS_RUN_DIR=<パス>"）を指定して resolve-ticket.sh を動かす。
+func resolveIn(t *testing.T, tl *tools, runDirEnv, issueBody string, args ...string) (resolvedInputs, int, string) {
+	t.Helper()
 	issue, _ := json.Marshal(map[string]any{"number": 42, "title": "Add the widget", "body": issueBody, "state": "OPEN"})
 	tl.write(tl.gh, "issue.json", string(issue))
 	cmd := exec.Command("bash", append([]string{filepath.Join("..", "..", "workflows", "scripts", "resolve-ticket.sh")}, args...)...)
-	cmd.Env = append(os.Environ(), "PATH="+fakeBin(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// TMPDIR は在りえない場所にする: 文面の写しの置き場に OS の一時ディレクトリを使っていれば、ここで失敗する
+	cmd.Env = append(os.Environ(), runDirEnv, "TMPDIR="+filepath.Join(t.TempDir(), "no-such-tmp"), "PATH="+fakeBin(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -126,9 +133,19 @@ func TestResolveTicketTaskFileOnly(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if r.Outcome != "ok" || r.Issue != 0 || r.Key != "task-5" || r.TaskFile != taskFile || r.TaskDir != dir || r.Base != "main" || r.BaseKind != "default" ||
+	if r.Outcome != "ok" || r.Issue != 0 || r.Key != "task-5" || r.Base != "main" || r.BaseKind != "default" ||
 		r.Closes == nil || *r.Closes != 0 || len(r.Refs) != 0 {
 		t.Fatalf("got %+v", r)
+	}
+	// 文面のファイルは、そのファイルだけが在る新しい置き場へ写される。task_file は写しのパス、task_dir は置き場（元の親ディレクトリではない）
+	if r.TaskDir == dir || filepath.Dir(r.TaskFile) != r.TaskDir || r.TaskFile == taskFile {
+		t.Errorf("task_file %q task_dir %q: want a copy in a dedicated directory, not the parent %q of the original", r.TaskFile, r.TaskDir, dir)
+	}
+	if b, err := os.ReadFile(r.TaskFile); err != nil || string(b) != "Base: feat/ignored\n" {
+		t.Errorf("the copy = %q (%v)", b, err)
+	}
+	if entries, err := os.ReadDir(r.TaskDir); err != nil || len(entries) != 1 {
+		t.Errorf("the dedicated directory holds %v (%v), want only the copy", entries, err)
 	}
 	if strings.Contains(tl.read(tl.gh, "calls"), "issue\tview") {
 		t.Errorf("read an issue that was not given: %s", tl.read(tl.gh, "calls"))
@@ -166,5 +183,75 @@ func TestResolveTicketIssueWithTaskFile(t *testing.T) {
 	r, _, _ = resolveWith(t, tl, "Refs: abc\n", "--issue", "42", "--task_file", taskFile, "--task_id", "T-2")
 	if r.Outcome != "links_invalid" {
 		t.Fatalf("got %+v", r)
+	}
+}
+
+// 文面の写しの置き場は run ディレクトリ（HARNESS_RUN_DIR）の下の task/ で、OS の一時ディレクトリではない（レビュー待ちの間に
+// 掃除されない）。写した後に元のファイルが変わっても・消えても、写しは最初の中身のまま（この段をやり直しても写し直さない）。
+func TestResolveTicketKeepsTheTaskFileCopyInTheRunDirectory(t *testing.T) {
+	runDir := t.TempDir()
+	taskFile := filepath.Join(t.TempDir(), "task.md")
+	if err := os.WriteFile(taskFile, []byte("first\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tl := newTools(t)
+	r, code, stderr := resolveIn(t, tl, "HARNESS_RUN_DIR="+runDir, "", "--task_file", taskFile, "--task_id", "T-5")
+	if code != 0 || r.Outcome != "ok" {
+		t.Fatalf("exit %d outcome %q: %s", code, r.Outcome, stderr)
+	}
+	if want := filepath.Join(runDir, "task"); r.TaskDir != want || r.TaskFile != filepath.Join(want, "task.md") {
+		t.Fatalf("task_dir %q task_file %q, want the copy at %s/task.md", r.TaskDir, r.TaskFile, want)
+	}
+	if fi, err := os.Stat(r.TaskDir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("the directory of the copy: %v (%v), want mode 0700", fi, err)
+	}
+	// 元のファイルを書き換えてやり直しても、run は最初の写しを読む
+	if err := os.WriteFile(taskFile, []byte("second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, code, stderr = resolveIn(t, tl, "HARNESS_RUN_DIR="+runDir, "", "--task_file", taskFile, "--task_id", "T-5")
+	if code != 0 || r.Outcome != "ok" {
+		t.Fatalf("rerun: exit %d outcome %q: %s", code, r.Outcome, stderr)
+	}
+	if b, err := os.ReadFile(r.TaskFile); err != nil || string(b) != "first\n" {
+		t.Errorf("the copy after the original changed = %q (%v), want the first content", b, err)
+	}
+	if entries, err := os.ReadDir(r.TaskDir); err != nil || len(entries) != 1 {
+		t.Errorf("the directory of the copy holds %v (%v), want only the copy", entries, err)
+	}
+	// 元のファイルが消えても写しは残る
+	if err := os.Remove(taskFile); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(runDir, "task", "task.md")); err != nil || string(b) != "first\n" {
+		t.Errorf("the copy after the original was removed = %q (%v)", b, err)
+	}
+}
+
+// run ディレクトリが渡っていない（HARNESS_RUN_DIR が無い・絶対パスでない・無いディレクトリ）ときは、一時ディレクトリへ逃げずに
+// 理由を出して非 0 で終わる。文面のファイルを渡していなければ run ディレクトリは要らない。task_file が読めない・絶対パスでない
+// ときの input_invalid は、run ディレクトリの有無に関わらず保つ。
+func TestResolveTicketNeedsTheRunDirectoryOnlyForATaskFile(t *testing.T) {
+	taskFile := filepath.Join(t.TempDir(), "task.md")
+	if err := os.WriteFile(taskFile, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tl := newTools(t)
+	for _, env := range []string{"HARNESS_RUN_DIR=", "HARNESS_RUN_DIR=relative/dir", "HARNESS_RUN_DIR=" + filepath.Join(t.TempDir(), "missing")} {
+		_, code, stderr := resolveIn(t, tl, env, "", "--task_file", taskFile, "--task_id", "T-5")
+		if code == 0 || !strings.Contains(stderr, "HARNESS_RUN_DIR") {
+			t.Errorf("%s: exit %d stderr %q, want a non-zero exit naming HARNESS_RUN_DIR", env, code, stderr)
+		}
+	}
+	if r, code, stderr := resolveIn(t, tl, "HARNESS_RUN_DIR=", "body", "--issue", "42"); code != 0 || r.Outcome != "ok" || r.TaskDir != "" {
+		t.Errorf("issue only without a run directory: exit %d %+v %s", code, r, stderr)
+	}
+	for _, bad := range []string{"relative/task.md", filepath.Join(t.TempDir(), "missing.md"), t.TempDir()} {
+		for _, env := range []string{"HARNESS_RUN_DIR=", "HARNESS_RUN_DIR=" + t.TempDir()} {
+			r, code, stderr := resolveIn(t, tl, env, "", "--task_file", bad, "--task_id", "T-5")
+			if code != 0 || r.Outcome != "input_invalid" || r.TaskDir != "" {
+				t.Errorf("task_file %q (%s): exit %d %+v %s, want input_invalid", bad, env, code, r, stderr)
+			}
+		}
 	}
 }

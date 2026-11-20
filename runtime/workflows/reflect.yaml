@@ -5,6 +5,7 @@
 #
 # 段は adopt → workspace → sync（→ sync-resolve）→ quality → push → review（gate）→ land（→ land-sync → land-sync-resolve → land-push → review）
 # → cleanup。sync 以降は ticket と同じ中身で、pr・base は adopt の出力を読む。ticket との違い:
+#   - 最初の sync に expect_head（adopt が受けた PR の先頭）を渡す。使い回した作業ツリーの、push していない手元のコミットを一緒に出さない（local_head_mismatch）
 #   - 作業ツリーは detached で作る（上げる PR のブランチが、作った側の作業ツリーで checkout されたままでもよい）。push は HEAD:refs/heads/<ブランチ>
 #   - 用意の検証（quality）は検査だけ。落ちたら fix へ送らず失敗で終える（通した中身に関係のない変更を足さない）
 #   - review は land だけを受ける（respond・ready は受けない）。レビューの指摘への対応はこの依頼の外
@@ -47,13 +48,13 @@ steps:
     on:
       created:  sync
       reused:   sync
-      provided: sync
+      provided: sync                                # 到達しない: reflect は run の入力に worktree を持たず、provided は入力の worktree を受けたときだけ返る
       conflict: { fail: worktree_conflict }         # 別の run の所有の印がある detached の作業ツリー・別ブランチの作業ツリー・未登録ディレクトリ
 
-  sync:                                             # ticket の sync と同じ（expect_head なし）
+  sync:                                             # ticket の最初の sync と違い expect_head を渡す（PR が正本。使い回した作業ツリーの、push していない手元のコミットを、受けた PR へ一緒に出さない）
     kind: pull-request
     action: sync
-    with: { base: $steps.adopt.base }
+    with: { base: $steps.adopt.base, expect_head: $steps.adopt.head_sha }
     on:
       current: quality
       synced:  quality
@@ -61,7 +62,7 @@ steps:
       unresolved:     { fail: sync_conflict }
       not_merge_only: { fail: sync_not_merge_only }
       diverged:       { fail: branch_diverged }
-      head_moved:     { fail: local_head_mismatch } # expect_head を渡さないので、ここでは出ない
+      head_moved:     { fail: local_head_mismatch } # 手元の HEAD が受けた PR の先頭と違う（push していない手元のコミット）。push せずに終える
       unavailable:    { fail: remote_unavailable }  # 戻るレビュー待ちがまだ無い
 
   sync-resolve:

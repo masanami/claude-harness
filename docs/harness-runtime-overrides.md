@@ -139,6 +139,18 @@ overridable:
 - `skips` は付け替えを開くものではない。省く付け替えそのものは `routes` に候補として宣言し、上書きで選ぶ。`skips` は、その付け替えが規則 6 に当たらないようにするだけである。
 - `overridable` は上書きに書けない（§5.3）ので、`skips` を広げられるのも保守者だけである。
 
+同梱の `reflect`（#396）も `overridable` を宣言する。`quality`（用意の検証）へ入る遷移は `sync.current`・`sync.synced` の 2 本で、省く上書きは **2 行そろえて** 書く（`steps: { sync: { on: { current: push, synced: push } } }`。`push` は `quality` の省略）。
+
+```yaml
+overridable:
+  routes:
+    sync.current: [quality, push]   # push は quality の省略
+    sync.synced:  [quality, push]
+  skips: [quality]
+```
+
+`reflect` の `quality` は検査だけで `fix` を持たない（落ちたら `quality_gate_red` で失敗）。1 行だけ書くと、付け替えた側の経路でだけ `quality` を通らない（`ticket` と同じ。`skipped_steps` には出ず `changes` にだけ出る）。
+
 ステップの「省略」は、このしくみで前段の遷移を後段へ付け替えることとして表す（`skip: true` のような専用のキーは持たない）。省略したときにどこへ進むかが定義に書かれた候補から読め、`outcome` の仮定（省略したステップが何を返したことにするか）を持ち込まずに済むためである。
 
 `ticket.yaml` で付け替えの候補になりうる遷移と、v1 での扱い:
@@ -167,7 +179,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 次のキーは上書きに書けない。書けば `validate` が「上書きできない」として拒否する。
 
 - 定義の同定と入口: `schema`・`id`・`description`・`inputs`
-- ステップの振る舞い: `kind`・`run`・`prompt`・`agent`・`output`・`outcome_field`・`exit`・`session`・`with`・`value`・`action`
+- ステップの振る舞い: `kind`・`run`・`prompt`・`agent`・`output`・`outcome_field`・`exit`・`session`・`with`（`workspace` の `with.key`・`with.mode` を含む）・`value`・`action`・`add_dirs`（LLM の段が読めるフォルダ。上書きで増やすと、読める範囲が広がる）
 - ゲート: `type`・`decider`・`inputs`・`observe`・`requested_action`・`contract_kind`（`decider` を `human` から `any` へ変えると、TTY を要求しない経路でゲートを解決できてしまう。設計書 §5.3）
 - 遷移: `overridable.routes` に宣言の無い `on` のすべて。`limit`・`exhausted`・`retry` の形も変えられない（回数は `limits` の値で変える）
 - `overridable` 自体（上書きで候補を広げることはできない）

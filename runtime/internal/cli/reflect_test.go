@@ -146,6 +146,7 @@ func TestReflectAdoptOutcomes(t *testing.T) {
 		{name: "a pull request to another base", adopt: "develop", outcome: "not_default_base", reason: "pr_not_default_base", ghCalled: true},
 		{name: "a pull request from a fork", adopt: "fork", outcome: "fork", reason: "pr_from_fork", ghCalled: true},
 		{name: "a draft pull request", adopt: "draft", outcome: "draft", reason: "pr_draft", ghCalled: true},
+		{name: "a pull request of the same name on another host", ref: "https://ghe.example.com/o/r/pull/7", adopt: "otherhost", outcome: "other_repo", reason: "pr_other_repo", ghCalled: true},
 		{name: "a pull request of another repository", ref: "https://github.com/x/y/pull/7", outcome: "other_repo", reason: "pr_other_repo", ghCalled: true},
 	}
 	for _, c := range cases {
@@ -158,6 +159,8 @@ func TestReflectAdoptOutcomes(t *testing.T) {
 			switch c.adopt {
 			case "closed", "merged":
 				f.write("adopt.json", adoptJSON(f.branch, f.head, strings.ToUpper(c.adopt), "main", false, false))
+			case "otherhost": // gh は、受けた URL のとおりの PR を返す。この run のリポジトリ（repo view）は github.com の o/r
+				f.write("adopt.json", strings.Replace(adoptJSON(f.branch, f.head, "OPEN", "main", false, false), reflectURL, ref, 1))
 			case "develop":
 				f.write("adopt.json", adoptJSON(f.branch, f.head, "OPEN", "develop", false, false))
 			case "fork":
@@ -460,6 +463,27 @@ func TestReflectFailureRemovesTheWorktree(t *testing.T) {
 		f.assertWorktreeGone(id, true)
 		f.assertPROpenAndUntouched()
 	})
+}
+
+// 使い回した detached の作業ツリー（所有の印が無い）の HEAD が、受けた PR の先頭より進んでいる（push していない手元のコミット）とき、
+// 最初の取り込みは push せずに local_head_mismatch で終える。PR のブランチ（origin）は動かない。
+func TestReflectFirstSyncRefusesALocalCommitAheadOfThePR(t *testing.T) {
+	f := newReflectFixture(t, `{"test": "true"}`)
+	git(t, f.repo, "worktree", "add", "-q", "--detach", f.wt, f.head)
+	if err := os.WriteFile(filepath.Join(f.wt, "local.txt"), []byte("not pushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, f.wt, "add", "local.txt")
+	git(t, f.wt, "commit", "-q", "-m", "wip: a local commit that was never pushed")
+	out, errOut, code := f.h.run(f.runArgs(reflectURL)...)
+	if code != ExitFailed {
+		t.Fatalf("run exit %d\n%s\n%s", code, out, errOut)
+	}
+	v := decode[statusView](t, out)
+	if v.Reason != "local_head_mismatch" || !strings.Contains(stepSeq(v), "workspace:reused sync:head_moved") || strings.Contains(stepSeq(v), "push") {
+		t.Fatalf("reason %s steps %s", v.Reason, stepSeq(v))
+	}
+	f.assertPROpenAndUntouched()
 }
 
 // 同じ PR への依頼が 2 本重なっても、後の方は別の run の detached の作業ツリーに相乗りしない（worktree_conflict）。先の run の作業ツリーは残る。

@@ -67,9 +67,16 @@ func AppendEnding(run *runstate.Run, build func(*runstate.State) ([]runstate.Eve
 		if err != nil || len(evs) == 0 {
 			return nil, err
 		}
-		if k := endKind(evs[len(evs)-1]); k != "" && wantsRelease(cur, k) {
-			last := evs[len(evs)-1]
-			end, evs = &last, evs[:len(evs)-1]
+		if k := endKind(evs[len(evs)-1]); k != "" {
+			before, serr := stateBeforeEnd(run, cur, evs[:len(evs)-1])
+			if serr != nil {
+				// 終わりは成立させる（片付けられるかの判定だけが、手前のイベントを当てる前の状態になる）。黙って握りつぶさない。
+				fmt.Fprintf(os.Stderr, "harness: warning: cannot tell from the events before the end whether run %s has worktrees to release (%v); deciding from the state before them, so a worktree may be left behind\n", run.ID, serr)
+			}
+			if wantsRelease(before, k) {
+				last := evs[len(evs)-1]
+				end, evs = &last, evs[:len(evs)-1]
+			}
 		}
 		return evs, nil
 	})
@@ -83,6 +90,31 @@ func AppendEnding(run *runstate.Run, build func(*runstate.State) ([]runstate.Eve
 		}
 		return []runstate.Event{*end}, nil
 	})
+}
+
+// stateBeforeEnd は、終わりの手前までのイベント（before）を cur に当てた後の状態を返す（cur は変えない）。片付けるものがあるかは、
+// この状態で判定する（interrupted のゲートの abort のように、unit を失敗にするイベントと終わりが一緒に返る道があるため）。
+// 記録を読み直せない・イベントを当てられないときは、cur と理由（エラー）を返す。呼び出し側は cur で判定を続け、理由を警告に出す
+// （返す状態は nil にしない。途中まで当てた状態は返さない）。
+func stateBeforeEnd(run *runstate.Run, cur *runstate.State, before []runstate.Event) (*runstate.State, error) {
+	if len(before) == 0 {
+		return cur, nil
+	}
+	st, _, err := run.Load() // AppendIf のロックの中。cur と同じ内容の、当てても構わない写し
+	if err != nil {
+		return cur, fmt.Errorf("cannot reload the run's record: %w", err)
+	}
+	for i := range before {
+		ev := before[i]
+		ev.Seq = st.LastSeq + 1
+		ev.TS = st.UpdatedAt
+		next, err := runstate.Apply(st, &ev)
+		if err != nil {
+			return cur, fmt.Errorf("cannot apply the %s event before the end: %w", ev.Type, err)
+		}
+		st = next
+	}
+	return st, nil
 }
 
 // releaseAtEnd は、st の unit が持つ、この run が作った作業ツリーを worktree-cleanup.sh --force で消し、released を記録する。
