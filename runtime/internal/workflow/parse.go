@@ -262,7 +262,7 @@ func Parse(path string, data []byte) (*Workflow, error) {
 	if !ok {
 		return nil, p.problems
 	}
-	p.allowKeys(top, "workflow", "schema", "id", "description", "inputs", "limits", "overridable", "steps")
+	p.allowKeys(top, "workflow", "schema", "id", "description", "inputs", "limits", "facts", "overridable", "steps")
 	var stepsNode *yaml.Node
 	for _, pr := range top {
 		switch pr.key {
@@ -276,6 +276,8 @@ func Parse(path string, data []byte) (*Workflow, error) {
 			wf.Inputs = p.inputs(pr.val)
 		case "limits":
 			wf.Limits = p.limits(pr.val)
+		case "facts":
+			wf.Facts = p.facts(pr.val)
 		case "overridable":
 			wf.Routes = p.overridable(pr.val, wf)
 		case "steps":
@@ -411,6 +413,43 @@ func (p *parser) limits(n *yaml.Node) []*Limit {
 		l.Value = v
 		l.Integer = pr.val.Tag == "!!int"
 		out = append(out, l)
+	}
+	return out
+}
+
+// facts は最上位の facts（名前 → 参照の配列）を読む。参照は $steps.<段>.<欄> の形だけ。
+func (p *parser) facts(n *yaml.Node) []*FactDecl {
+	pairs, ok := p.mapping(n, "facts")
+	if !ok {
+		return nil
+	}
+	var out []*FactDecl
+	for _, pr := range pairs {
+		what := "facts." + pr.key
+		if !reName.MatchString(pr.key) {
+			p.errf(pr.knode, "fact name %q must match %s", pr.key, reName.String())
+			continue
+		}
+		if !p.plain(pr.val, what) {
+			continue
+		}
+		if pr.val.Kind != yaml.SequenceNode || len(pr.val.Content) == 0 {
+			p.errf(pr.val, "%s must be a non-empty list of references ($steps.<step>.<field>)", what)
+			continue
+		}
+		d := &FactDecl{Name: pr.key, Line: pr.knode.Line}
+		for _, it := range pr.val.Content {
+			ref := p.reference(it, what+" item")
+			if ref == nil {
+				continue
+			}
+			if ref.Kind != RefSteps {
+				p.errf(it, "%s: %s must be a $steps.<step>.<field> reference (the value a step returned)", what, ref.Raw)
+				continue
+			}
+			d.Refs = append(d.Refs, ref)
+		}
+		out = append(out, d)
 	}
 	return out
 }

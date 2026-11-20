@@ -41,6 +41,9 @@ type State struct {
 	Cancel      *CancelRequested           `json:"cancel_requested,omitempty"`
 	Cancelled   *RunCancelled              `json:"cancelled,omitempty"`
 	Units       []*Unit                    `json:"units"`
+	// Facts は run_started に記録した facts の宣言の写し（名前 → 段と欄）。無ければ（宣言の無いワークフロー・この版より前の run）
+	// facts は出ない。
+	FactSources map[string][]FactSource `json:"fact_sources,omitempty"`
 
 	// Overrides は run_started の上書きの記録（resume が同じ上書きで定義を組み立て直す材料。§7.2）。state.json には
 	// 出さない。status --json は cli の statusView が workflow の下に overrides・changes・skipped_steps を足して出す（#314）。
@@ -69,6 +72,9 @@ type Unit struct {
 	Rounds []*Round `json:"rounds"`
 	// Workspace は unit の作業ツリー（§4.1。workspace 種類の acquire で入り、release で Released になる）と PR。
 	Workspace *Workspace `json:"workspace,omitempty"`
+	// Facts は facts の名前ごとの値: 並べた段のうち最後に成功して終わり、その欄を返した段の値（接続契約の facts の元）。
+	// 欄を返さなかった段は値を置き換えない。
+	Facts map[string]string `json:"facts,omitempty"`
 }
 
 // Workspace は unit の作業ツリーと PR（§4.1 Workspace）。HeadSHAs はラウンドごとの PR の head（pull-request 種類が push した時点）。
@@ -284,7 +290,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 		p := ev.RunStarted
 		s = &State{
 			RunID: p.RunID, Workflow: p.Workflow.WorkflowRef, Overrides: p.Workflow.OverrideRecord, Inputs: p.Inputs, Limits: p.Limits,
-			Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID, PIDStart: p.PIDStart,
+			FactSources: p.Facts, Status: StatusRunning, CreatedAt: ev.TS, Origin: p.Origin, Cwd: p.Cwd, PID: p.PID, PIDStart: p.PIDStart,
 			ScriptsDir: p.ScriptsDir, WorkflowDir: p.WorkflowDir, CLIVersion: p.CLIVersion, Embedded: p.Embedded, Units: []*Unit{},
 		}
 		for _, k := range p.Units {
@@ -409,6 +415,7 @@ func Apply(s *State, ev *Event) (*State, error) {
 					u.Outputs = map[string]json.RawMessage{}
 				}
 				u.Outputs[p.Step] = p.Output
+				u.updateFacts(s.FactSources, p.Step, p.Output)
 			}
 		}
 	case EvTransition:
@@ -685,4 +692,40 @@ func applyHead(s *State, u *Unit, p *WorkspaceEvent, seq int) error {
 	}
 	u.Workspace.HeadSHA = p.HeadSHA
 	return nil
+}
+
+// updateFacts は、成功して終わった段 step の出力が、facts の宣言にある欄（文字列）を返していれば、その名前の値を置き換える。
+// 欄が無い・文字列でない出力は何も変えない（前の値のまま）。
+func (u *Unit) updateFacts(decl map[string][]FactSource, step string, output json.RawMessage) {
+	if len(decl) == 0 {
+		return
+	}
+	var doc any
+	for name, sources := range decl {
+		for _, src := range sources {
+			if src.Step != step {
+				continue
+			}
+			if doc == nil {
+				if err := json.Unmarshal(output, &doc); err != nil {
+					return
+				}
+			}
+			cur := doc
+			for _, k := range src.Field {
+				m, ok := cur.(map[string]any)
+				if !ok {
+					cur = nil
+					break
+				}
+				cur = m[k]
+			}
+			if str, ok := cur.(string); ok {
+				if u.Facts == nil {
+					u.Facts = map[string]string{}
+				}
+				u.Facts[name] = str
+			}
+		}
+	}
 }
