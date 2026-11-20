@@ -198,8 +198,11 @@ type Step struct {
 	Timeout      time.Duration
 
 	// llm 種類（§3.2・§4.3・§4.4）
-	Prompt      string  // ワークフローのディレクトリからの相対パス
-	Agent       string  // claude-harness:<エージェント名>（--agent へ渡す）
+	Prompt string // ワークフローのディレクトリからの相対パス
+	Agent  string // claude-harness:<エージェント名>（--agent へ渡す）
+	// AddDirs は claude の --add-dir へ渡すフォルダ（作業ディレクトリの外のファイルを読ませる。§5.6.2）。
+	// 値は参照かリテラルの文字列。解決した値が空の文字列なら渡さない。
+	AddDirs     []*Binding
 	Session     string  // new | continue
 	SessionFrom string  // continue:<step> の <step>
 	BudgetUSD   float64 // --max-budget-usd の上限（残予算と小さいほうを付与する）

@@ -168,6 +168,7 @@ YAML に書けるのは次だけ。**条件式・演算・文字列の組み立�
 | `limits` | 名前付きの**整数・金額リテラル** | 上限値（予算・差し戻し回数）。ステップと遷移から名前で参照する |
 | `steps.<id>.kind` | Go に登録された種類名 | 振る舞いは Go 側 |
 | `steps.<id>.with` | 名前 → **参照 1 つ**またはリテラル | ステップ入力。参照の文法は §3.3 |
+| `steps.<id>.add_dirs` | **文字列の参照**またはリテラルの列（`llm` だけ） | `claude` の `--add-dir` へ渡すフォルダ。作業ディレクトリの外のファイルを読ませる（§5.6.2）。解決した値が空の文字列なら渡さない |
 | `steps.<id>.output` | JSON Schema ファイル | 出力の検証。**`outcome`（enum）を必ず持つ**＝遷移のキー |
 | `steps.<id>.on` | `outcome の値` → 遷移先 | **一致だけ**。すべての enum 値を網羅していなければ読み込み時に拒否 |
 | 遷移先 | ステップ id ／ `{goto, with, limit, exhausted, note}` ／ `{gate: <id>}` ／ `{fail: <理由>}` ／ `{done: <理由>}` ／ `{retry: <n>, exhausted: …}` | `limit` は `limits` の名前。回数は Go が数える。`note: optional` は `$gate.note` を渡す `goto` の添え書きを任意にする（§3.3。#377） |
@@ -799,7 +800,7 @@ inputs:
   | `uses_integration` が `true` | `integration_unsupported`（A。B で外す） |
 
 - **両方あるとき**は、文面のファイルが作業の範囲の正本で、Issue は PR が閉じる対象としてだけ使う。`resolve` は Issue の本文から `Closes: なし` 行・`Refs:` 行だけを読み（PR と Issue のつながりの宣言なので）、**`Base:` 行は読まない**（宛先は `base` の入力か、既定ブランチ。統合先は `uses_integration` で決めるものにする）。`task_file` が無いときの `Base:` 行の扱いは、いまと同じ。
-- **文面のファイルは解釈しない**。`resolve` は在ることだけを確かめ、`analyze`・`implement` へパスを渡す。両方の指示文は「`inputs.task_file` が空でなければ、そのファイルを読んで要件の正本にする（`gh issue view` で範囲を決めない）。空なら、いまと同じく Issue を読む」に改める。`critical_design` は、文面のファイルがあるときは、その文面から写す。
+- **文面のファイルは解釈しない**。`resolve` は在ることだけを確かめ、`analyze`・`implement` へパスを渡す（文面のファイルは作業ツリーの外にあるので、読めるように `add_dirs` でフォルダも渡す。下の「S3-1 の実装の記録」）。両方の指示文は「`inputs.task_file` が空でなければ、そのファイルを読んで要件の正本にする（`gh issue view` で範囲を決めない）。空なら、いまと同じく Issue を読む」に改める。`critical_design` は、文面のファイルがあるときは、その文面から写す。
 - `resolve` の出力（`schemas/resolve-ticket.json`）に足す欄: `key`（名前の鍵。下）・`task_file`（無ければ空文字）・`scope`（`issue` / `task_file`）。`issue` は無ければ `0`。後ろの段は、省かれうる `$inputs.issue` を直接読まず、`$steps.resolve.issue`・`$steps.resolve.task_file`・`$steps.resolve.key` を読む（null を文法に持ち込まない。§3.3）。`outcome` に `input_invalid`・`integration_unsupported` を足す。
 
 #### 名前と場所（Issue の番号から切り離す）
@@ -1208,6 +1209,7 @@ A は S3-1〜S3-7。S3-1 と S3-2 は並べて進められる。flywheel の S3a
 - **`analyze` へ渡す値**: `issue`（無ければ 0）・`task_file`（無ければ空文字）・`key`。`implement` へは `issue`・`task_file`・`critical_design`。指示文は `task_file` が空かどうかで読む先を決める。
 - **`workspace` の `acquire`**: `with.issue`・`with.key` はどちらも任意で、`issue` が 0 のときは「無い」と読む。`key` が空でなければ `key` を、そうでなければ `issue` の数字を `worktree-setup.sh` に渡す（どちらも無ければ `step_error`。スクリプトは呼ばない）。
 - **`e2e` の段**: `with` に `task_file`（`$steps.resolve.task_file`）を足し、`e2e`・`fix`・`commit` の指示文の「この Issue」を「要件の正本」に直した（実装から続くセッションの段が、Issue を範囲と読まないため）。
+- **作業ツリーの外の文面のファイルを、LLM の段が読めるようにした（`add_dirs`）**: `claude -p` は作業ディレクトリの外のファイルを、permission mode によっては読めない。flywheel は文面を `<ワークスペース>/.flywheel/runs/<実行の ID>/task.md` に書いて絶対パスを渡すので、作業ツリーの外になる。実の `claude`（2.1.328）で、作業ディレクトリの外に置いた一時ファイルを `claude -p --output-format json` で Read させて確かめた（`--setting-sources project` でユーザー設定の許可を外した状態でも同じ）: `--permission-mode auto`（`/impl` が既定で渡す値。`HARNESS_CLAUDE_PERMISSION_MODE` で上書き）では読めた。`--permission-mode default`（環境変数を空にして `harness` を直に起動した場合は、runtime が `--permission-mode` を付けないのでこの形）では「作業ディレクトリの外」で Read も shell の読みも拒否された。`--add-dir <フォルダ>` を足すと `default` でも読めた。mode に依らず読めるよう、`llm` の段に任意のキー `add_dirs`（文字列の参照かリテラルの列）を足し、解決した値のうち空でないもの（重複は 1 つ）を `--add-dir` として渡す（入力の名前は Go に書かない）。`resolve` の出力に `task_dir`（`task_file` のあるフォルダ。無ければ空文字）を足し、文面を読む `analyze`・`implement`・`e2e` が `add_dirs: [ $steps.resolve.task_dir ]` を書く（`fix`・`commit` は文面を読まない）。`issue` だけの run は `task_dir` が空で、`--add-dir` は付かない。`add_dirs` は `overridable` の許可リストに無いので、上書きでは付け替えられない（閉じている）。
 - **`worktree-setup.sh`**: 第 1 引数が鍵のとき、出力の `issue` は `issue-<n>` のときだけ数で、ほかは `null`。`issue-<n>` の鍵と数字だけの呼び方は、同じ場所・同じ出力（`key` が増えただけ）で、同じ作業ツリーを再利用する（`test-worktree-setup.sh`）。
 
 実物で確かめたこと（設計の【要確認】のうち、S3-1 の範囲のもの）:

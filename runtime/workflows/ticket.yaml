@@ -67,6 +67,7 @@ steps:
   analyze:
     kind: llm
     prompt: prompts/ticket-analyze.md
+    add_dirs: [ $steps.resolve.task_dir ]           # 文面のファイルが作業ツリーの外にあっても Read できるように（無ければ空文字で渡さない。#391）
     with: { issue: $steps.resolve.issue, task_file: $steps.resolve.task_file, key: $steps.resolve.key }
     output: schemas/ticket-analysis.json
     budget_usd: 2
@@ -89,6 +90,7 @@ steps:
     agent: claude-harness:feature-implementer
     prompt: prompts/ticket-implement.md
     session: new
+    add_dirs: [ $steps.resolve.task_dir ]
     with: { issue: $steps.resolve.issue, task_file: $steps.resolve.task_file, critical_design: $steps.analyze.critical_design }
     output: schemas/implement-result.json
     budget_usd: 15
@@ -139,6 +141,7 @@ steps:
   e2e:
     kind: llm
     prompt: prompts/ticket-e2e.md                   # /create-e2e まで。/explain-e2e は runtime の外（§3.7）
+    add_dirs: [ $steps.resolve.task_dir ]
     with: { task_file: $steps.resolve.task_file }   # 文面のファイルがあれば要件の正本（無ければ空文字。#391）
     session: continue:implement
     output: schemas/e2e-result.json

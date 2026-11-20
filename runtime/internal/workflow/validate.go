@@ -461,6 +461,15 @@ func (v *validator) references(g *graph) {
 				v.acceptable(s, b.Name, t, b.Line, what)
 			}
 		}
+		for _, b := range s.AddDirs {
+			what := fmt.Sprintf("steps.%s.%s", s.ID, b.Name)
+			if t := v.valueType(g, b, what, s.ID, "", false); t != nil && t.Name != "string" {
+				v.errf(b.Line, "%s: must be a string (a folder path), got %s", what, t)
+			}
+			if b.Value.Ref != nil && b.Value.Ref.Kind == RefEdge {
+				edgeNames[b.Value.Ref.Name] = true
+			}
+		}
 		if s.Kind == "select" && s.Value != nil && s.Value.Kind == RefSteps && s.Value.Step != s.ID {
 			// 選ぶ値は、その経路で必ず成功しているステップの出力でなければならない（値の無い経路を作らない）。
 			if !g.guaranteed(s.Value.Step, s.ID) {

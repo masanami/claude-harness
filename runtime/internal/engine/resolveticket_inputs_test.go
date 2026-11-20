@@ -15,6 +15,7 @@ type resolvedInputs struct {
 	Issue    int    `json:"issue"`
 	Key      string `json:"key"`
 	TaskFile string `json:"task_file"`
+	TaskDir  string `json:"task_dir"`
 	Scope    string `json:"scope"`
 	Base     string `json:"base"`
 	BaseKind string `json:"base_kind"`
@@ -125,7 +126,7 @@ func TestResolveTicketTaskFileOnly(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if r.Outcome != "ok" || r.Issue != 0 || r.Key != "task-5" || r.TaskFile != taskFile || r.Base != "main" || r.BaseKind != "default" ||
+	if r.Outcome != "ok" || r.Issue != 0 || r.Key != "task-5" || r.TaskFile != taskFile || r.TaskDir != dir || r.Base != "main" || r.BaseKind != "default" ||
 		r.Closes == nil || *r.Closes != 0 || len(r.Refs) != 0 {
 		t.Fatalf("got %+v", r)
 	}

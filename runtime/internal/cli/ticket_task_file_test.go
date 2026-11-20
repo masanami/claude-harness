@@ -53,6 +53,14 @@ func TestTicketWorkflowFromATaskFileAndTaskID(t *testing.T) {
 	if in := readFile(t, filepath.Join(f.fdir, "calls", "2.stdin")); !strings.Contains(in, taskFile) {
 		t.Errorf("implement did not receive the task file: %s", in)
 	}
+	// 文面のファイルのあるフォルダを --add-dir で渡す（作業ツリーの外でも LLM の段が Read できるように。§5.6.2）。
+	// analyze（1 回目）・implement（2 回目）に付き、複数の add-dir にならない。
+	for _, n := range []int{1, 2} {
+		argv := readFile(t, filepath.Join(f.fdir, "calls", fmt.Sprintf("%d.argv", n)))
+		if want := "--add-dir\n" + filepath.Dir(taskFile) + "\n"; strings.Count(argv, "--add-dir\n") != 1 || !strings.Contains(argv, want) {
+			t.Errorf("claude call %d: argv lacks %q exactly once:\n%s", n, want, argv)
+		}
+	}
 	// PR は何も閉じず、Refs も書かない
 	body := readFile(t, filepath.Join(f.ghDir, "body.1.md"))
 	if strings.Contains(body, "Closes") || strings.Contains(body, "Refs") {
@@ -115,6 +123,16 @@ func TestTicketWorkflowIssueOnlyKeepsThePlaceAndTheName(t *testing.T) {
 	}
 	if err := json.Unmarshal(u.Outputs["resolve"], &resolved); err != nil || resolved.Key != "issue-42" || resolved.Scope != "issue" {
 		t.Fatalf("resolve output %s", u.Outputs["resolve"])
+	}
+	// 文面のファイルが無いときは --add-dir を付けない（task_dir は空文字）
+	calls, _ := filepath.Glob(filepath.Join(f.fdir, "calls", "*.argv"))
+	if len(calls) == 0 {
+		t.Fatal("claude was not called")
+	}
+	for _, c := range calls {
+		if argv := readFile(t, c); strings.Contains(argv, "--add-dir") {
+			t.Errorf("%s: an issue-only run passed --add-dir:\n%s", filepath.Base(c), argv)
+		}
 	}
 }
 

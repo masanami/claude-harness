@@ -111,6 +111,13 @@ func (e *Engine) executeLLM(ctx context.Context, st *runstate.State, u *runstate
 	if e.PermissionMode != "" {
 		args = append(args, "--permission-mode", e.PermissionMode)
 	}
+	dirs, err := addDirValues(st, u, step)
+	if err != nil {
+		return notLaunched("step_error", "cannot resolve add_dirs: "+err.Error())
+	}
+	for _, d := range dirs {
+		args = append(args, "--add-dir", d)
+	}
 
 	prompt, err := e.prompt(st, u, step, attempt, granted)
 	if err != nil {
@@ -367,6 +374,34 @@ type briefBudget struct {
 	SpentUSD     float64 `json:"spent_usd"`
 	RemainingUSD float64 `json:"remaining_usd"`
 	GrantedUSD   float64 `json:"granted_usd"`
+}
+
+// addDirValues は add_dirs の値を解決する。空の文字列（文面のファイルが無いときの task_dir など）と、
+// 省略された任意の入力・重複は渡さない。claude の --add-dir は作業ディレクトリの外のファイルを Read できるようにする。
+func addDirValues(st *runstate.State, u *runstate.Unit, step *workflow.Step) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, b := range step.AddDirs {
+		if r := b.Value.Ref; r != nil && r.Kind == workflow.RefInputs {
+			if _, given := st.Inputs[r.Name]; !given {
+				continue
+			}
+		}
+		raw, err := value(st, succeeded(u), u.Edge, b.Value)
+		if err != nil {
+			return nil, err
+		}
+		var d string
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return nil, fmt.Errorf("%s: not a string", b.Name)
+		}
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 // prompt はプロンプトの本文（ワークフローの prompt ファイル）に、with の値と現在地を JSON のデータブロックとして

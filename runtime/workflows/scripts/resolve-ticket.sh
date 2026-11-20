@@ -61,7 +61,11 @@ fi
 # 名前の鍵と作業の範囲の正本。key は入力が正しいときだけ意味を持つ（誤りのときは空文字）。
 key=""
 scope="issue"
-[ -n "$task_file" ] && scope="task_file"
+task_dir=""
+if [ -n "$task_file" ]; then
+  scope="task_file"
+  task_dir="$(dirname -- "$task_file")" # 文面のファイルのあるフォルダ。LLM の段に --add-dir で渡す（作業ツリーの外でも読めるように。§5.6.2）
+fi
 
 # emit_early は gh・git を呼ばずに出す出力（input_invalid・integration_unsupported）。
 emit_early() {
@@ -72,7 +76,8 @@ emit_early() {
     --arg key "$key" \
     --arg task_file "$task_file" \
     --arg scope "$scope" \
-    '{outcome: $outcome, issue: $issue, key: $key, task_file: $task_file, scope: $scope, title: "", state: "", base: "",
+    --arg task_dir "$task_dir" \
+    '{outcome: $outcome, issue: $issue, key: $key, task_file: $task_file, task_dir: $task_dir, scope: $scope, title: "", state: "", base: "",
       base_kind: "default", base_source: "default", default_branch: "", closes: 0, refs: [], message: $message}'
   exit 0
 }
@@ -257,6 +262,7 @@ jq -n \
   --arg key "$key" \
   --arg task_file "$task_file" \
   --arg scope "$scope" \
+  --arg task_dir "$task_dir" \
   --arg title "$title" \
   --arg state "$state" \
   --arg base "$base" \
@@ -266,5 +272,5 @@ jq -n \
   --argjson closes "$closes" \
   --argjson refs "$refs_json" \
   --arg message "$message" \
-  '{outcome: $outcome, issue: $issue, key: $key, task_file: $task_file, scope: $scope, title: $title, state: $state, base: $base, base_kind: $base_kind,
+  '{outcome: $outcome, issue: $issue, key: $key, task_file: $task_file, task_dir: $task_dir, scope: $scope, title: $title, state: $state, base: $base, base_kind: $base_kind,
     base_source: $base_source, default_branch: $default_branch, closes: $closes, refs: $refs, message: $message}'
