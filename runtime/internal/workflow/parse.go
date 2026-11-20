@@ -262,7 +262,7 @@ func Parse(path string, data []byte) (*Workflow, error) {
 	if !ok {
 		return nil, p.problems
 	}
-	p.allowKeys(top, "workflow", "schema", "id", "description", "inputs", "limits", "facts", "overridable", "steps")
+	p.allowKeys(top, "workflow", "schema", "id", "description", "inputs", "limits", "facts", "release_on", "overridable", "steps")
 	var stepsNode *yaml.Node
 	for _, pr := range top {
 		switch pr.key {
@@ -278,6 +278,8 @@ func Parse(path string, data []byte) (*Workflow, error) {
 			wf.Limits = p.limits(pr.val)
 		case "facts":
 			wf.Facts = p.facts(pr.val)
+		case "release_on":
+			wf.ReleaseOn = p.releaseOn(pr.val)
 		case "overridable":
 			wf.Routes = p.overridable(pr.val, wf)
 		case "steps":
@@ -450,6 +452,44 @@ func (p *parser) facts(n *yaml.Node) []*FactDecl {
 			d.Refs = append(d.Refs, ref)
 		}
 		out = append(out, d)
+	}
+	return out
+}
+
+// ReleaseOnValues は release_on に書ける値（終わり方）。succeeded は書けない。
+var ReleaseOnValues = []string{"cancelled", "failed"}
+
+// releaseOn は最上位の release_on（終わり方の配列）を読む。
+func (p *parser) releaseOn(n *yaml.Node) []string {
+	if !p.plain(n, "release_on") {
+		return nil
+	}
+	if n.Kind != yaml.SequenceNode || len(n.Content) == 0 {
+		p.errf(n, "release_on must be a non-empty list of end states (cancelled, failed)")
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, it := range n.Content {
+		v, ok := p.str(it, "release_on item")
+		if !ok {
+			continue
+		}
+		known := false
+		for _, k := range ReleaseOnValues {
+			known = known || k == v
+		}
+		switch {
+		case v == "succeeded":
+			p.errf(it, "release_on: succeeded cannot be listed (the worktree is released by a cleanup step after landing)")
+		case !known:
+			p.errf(it, "release_on: %q must be cancelled or failed", v)
+		case seen[v]:
+			p.errf(it, "release_on: duplicate value %q", v)
+		default:
+			seen[v] = true
+			out = append(out, v)
+		}
 	}
 	return out
 }

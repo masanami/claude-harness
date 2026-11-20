@@ -281,6 +281,37 @@ echo "=== main(): 実際のgit worktree操作(一時リポジトリ) ==="
   assert_eq "鍵 task-12 が別ブランチで登録済み: 非0 exit" "1" "$task_conflict_exit"
   assert_eq "鍵 task-12 が別ブランチで登録済み: 衝突の説明" "true" "$(echo "$task_conflict_stderr" | grep -q "already registered for a different branch" && echo true || echo false)"
 
+  # --- --detach: 既に origin にあるブランチを、checkout しない形で作る（#388 S3-6。名前の形を検査しない）。
+  #     ブランチが別の作業ツリー（issue-45）で checkout されたままでも作れる ---
+  (cd "$REPO_DIR" && git push -q origin "feature/issue-45-add-x")
+  output_detach="$(cd "$REPO_DIR" && main --detach pr-7 "feature/issue-45-add-x" main "$WORKTREE_ROOT")"
+  assert_eq "--detach: created=true" "true" "$(jq -r '.created' <<<"$output_detach")"
+  assert_eq "--detach: key は pr-7" "pr-7" "$(jq -r '.key' <<<"$output_detach")"
+  assert_eq "--detach: issue は null" "null" "$(jq -r '.issue' <<<"$output_detach")"
+  assert_eq "--detach: branch は渡したブランチ" "feature/issue-45-add-x" "$(jq -r '.branch' <<<"$output_detach")"
+  assert_eq "--detach: detached=true" "true" "$(jq -r '.detached' <<<"$output_detach")"
+  assert_eq "--detach: 作業ツリーはブランチを checkout していない" "" "$(git -C "${WORKTREE_ROOT}/pr-7" branch --show-current)"
+  assert_eq "--detach: HEAD は origin のブランチの先頭" "$(git -C "$REPO_DIR" rev-parse origin/feature/issue-45-add-x)" "$(git -C "${WORKTREE_ROOT}/pr-7" rev-parse HEAD)"
+  output_detach2="$(cd "$REPO_DIR" && main --detach pr-7 "feature/issue-45-add-x" main "$WORKTREE_ROOT")"
+  assert_eq "--detach 再実行: reused=true" "true" "$(jq -r '.reused' <<<"$output_detach2")"
+  assert_eq "--detach 再実行: created=false" "false" "$(jq -r '.created' <<<"$output_detach2")"
+  # 名前の形（{type}/<鍵>-…）を検査しない
+  (cd "$REPO_DIR" && git push -q origin "main:refs/heads/some-free-name")
+  output_detach_free="$(cd "$REPO_DIR" && main --detach pr-8 "some-free-name" main "$WORKTREE_ROOT")"
+  assert_eq "--detach: 名前の形を検査しない" "true" "$(jq -r '.created' <<<"$output_detach_free")"
+  # ブランチが origin に無ければ失敗する
+  detach_missing_stderr="$(cd "$REPO_DIR" && main --detach pr-9 "no-such-branch" main "$WORKTREE_ROOT" 2>&1 1>/dev/null)"
+  detach_missing_exit=$?
+  assert_eq "--detach: ブランチが origin に無い: 非0 exit" "1" "$detach_missing_exit"
+  assert_eq "--detach: ブランチが origin に無い: 説明" "true" "$(echo "$detach_missing_stderr" | grep -q "branch 'no-such-branch' does not exist on remote" && echo true || echo false)"
+  assert_eq "--detach: ブランチが origin に無い: 作業ツリーを作らない" "false" "$([ -e "${WORKTREE_ROOT}/pr-9" ] && echo true || echo false)"
+  # ブランチを checkout した登録済みの場所は、衝突で止まる（相乗りしない）
+  (cd "$REPO_DIR" && git push -q origin "feature/task-12-add-y")
+  detach_clash_stderr="$(cd "$REPO_DIR" && main --detach task-12 "feature/task-12-add-y" main "$WORKTREE_ROOT" 2>&1 1>/dev/null)"
+  detach_clash_exit=$?
+  assert_eq "--detach: ブランチを checkout 済みの場所: 非0 exit" "1" "$detach_clash_exit"
+  assert_eq "--detach: ブランチを checkout 済みの場所: 衝突の説明" "true" "$(echo "$detach_clash_stderr" | grep -q "already registered for a different branch" && echo true || echo false)"
+
   cleanup
   trap - EXIT
 }

@@ -171,7 +171,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 - ゲート: `type`・`decider`・`inputs`・`observe`・`requested_action`・`contract_kind`（`decider` を `human` から `any` へ変えると、TTY を要求しない経路でゲートを解決できてしまう。設計書 §5.3）
 - 遷移: `overridable.routes` に宣言の無い `on` のすべて。`limit`・`exhausted`・`retry` の形も変えられない（回数は `limits` の値で変える）
 - `overridable` 自体（上書きで候補を広げることはできない）
-- #388 の設計で足すキー（設計書 §5.6.2。`detail`・`interrupted` は S3-2〔#392〕、`pull-request` の `action` は S3-3〔#393〕、最上位の `facts` は S3-4〔#394〕、ゲートの `refresh` は S3-5〔#395〕で実装済み、ほかは実装はこれから。`refresh` は上書きで足す・外すことができない（`steps.<id>.refresh cannot be overridden`）。`detail` を持つ遷移はステップ id だけの形ではないので宣言できず、`interrupted` も `goto` の遷移の一部なので上書きで外せない）: 最上位の `facts`・`release_on`、ゲートの `refresh`、ゲートへの遷移の `detail`、ゲートから出る `goto` の `interrupted`。入れる段（`pull-request` の `action: land`）には、上書きで書けるキーが無い（§6.2 の規則 7）
+- #388 の設計で足すキー（設計書 §5.6.2。`detail`・`interrupted` は S3-2〔#392〕、`pull-request` の `action` は S3-3〔#393〕、最上位の `facts` は S3-4〔#394〕、ゲートの `refresh` は S3-5〔#395〕、最上位の `release_on`・`pull-request` の `action: adopt`・`workspace` の `with.mode` は S3-6〔#396〕で実装済み。`release_on` は上書きで足す・外すことができない（`key "release_on" cannot be overridden`。取り消し・失敗で作業ツリーを片付けるかは定義が決める。`reflect` は片付け、`ticket` は残す）。`refresh` は上書きで足す・外すことができない（`steps.<id>.refresh cannot be overridden`）。`detail` を持つ遷移はステップ id だけの形ではないので宣言できず、`interrupted` も `goto` の遷移の一部なので上書きで外せない）: 最上位の `facts`・`release_on`、ゲートの `refresh`、ゲートへの遷移の `detail`、ゲートから出る `goto` の `interrupted`。入れる段（`pull-request` の `action: land`）には、上書きで書けるキーが無い（§6.2 の規則 7）
 
 ## 6. 外せないゲート: 人のゲートと、そこへ向かう遷移と、`fail` への遷移
 

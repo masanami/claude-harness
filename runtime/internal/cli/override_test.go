@@ -154,7 +154,7 @@ func TestValidateOverrideLayers(t *testing.T) {
 		t.Fatalf("validate output lacks\n%s\ngot\n%s", want, out)
 	}
 	// 上書きの無い定義（list-tests 等）には何も出さない。
-	if strings.Count(out, "changes:") != 1 || !strings.Contains(out, "total=3 passed=3 failed=0") {
+	if strings.Count(out, "changes:") != 1 || !strings.Contains(out, "total=4 passed=4 failed=0") {
 		t.Fatalf("validate output = %s", out)
 	}
 }

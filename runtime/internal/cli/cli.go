@@ -1049,7 +1049,12 @@ func cmdCancel(args []string, env Env) int {
 					engine.StopOrphan(x.PID, 5*time.Second)
 				}
 			}
-			if _, err := run.Append(engine.CancelEvents(st, "cli", channel, "runner was not alive; stopped by cancel")...); err != nil {
+			if _, err := engine.AppendEnding(run, func(cur *runstate.State) ([]runstate.Event, error) {
+				if runstate.Terminal(cur.Status) {
+					return nil, nil
+				}
+				return engine.CancelEvents(cur, "cli", channel, "runner was not alive; stopped by cancel"), nil
+			}); err != nil {
 				// runner が同時に終えた等。読み直して終端なら良い。
 				if st2, _, lerr := run.Load(); lerr == nil && runstate.Terminal(st2.Status) {
 					st = st2

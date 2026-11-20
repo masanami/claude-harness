@@ -89,7 +89,10 @@ type Workflow struct {
 	Limits      []*Limit
 	// Facts は最上位の facts（名前 → 参照の並び）。接続契約の facts に出す値の宣言（docs/harness-runtime-design.md §5.6.2）。
 	Facts []*FactDecl
-	Steps []*Step
+	// ReleaseOn は最上位の release_on（cancelled・failed）。その終わり方をするとき、終わりを書く前に、この run が作った作業ツリーを
+	// 片付ける（docs/harness-runtime-design.md §5.6.2）。succeeded は書けない（入れた後の片付けは cleanup の段が行う）。
+	ReleaseOn []string
+	Steps     []*Step
 	// Routes は overridable.routes（docs/harness-runtime-overrides.md §5.2）。上書きで付け替えてよい遷移と候補。
 	Routes []*RouteDecl
 	// Skips は overridable.skips（§5.2・§6.2 の規則 6）。付け替えで省いてよいと定義が明示した、fail へ落ちうるステップ。
