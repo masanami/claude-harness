@@ -33,11 +33,11 @@ func TestTextUnwrapped(t *testing.T) {
 		t.Fatalf("legend = %q", lines[2:4])
 	}
 	steps := stepLines(lines)
-	if len(steps) != 27 {
+	if len(steps) != 29 {
 		t.Fatalf("%d step lines:\n%s", len(steps), strings.Join(steps, "\n"))
 	}
 	want := map[string][]string{
-		"resolve":      {"command 2m", "ok -> analyze | base_missing ! base_missing | links_invalid ! links_invalid"},
+		"resolve":      {"command 2m", "ok -> integration-route | base_missing ! base_missing | links_invalid ! links_invalid"},
 		"e2e":          {"llm $8 60m", "pass -> quality | fail ~ fix (rework<=3, then ! e2e)"},
 		"quality":      {"command 30m", "pass -> publish | fail ~ fix (rework<=3, then ! quality_gate_red) | undeclared ! quality_gate_undeclared"},
 		"ci":           {"command 20m", "red ~ fix (rework<=3, then ! ci_red)", "timeout ~ ci (retry<=1, then -> ci-pending)"},
@@ -113,7 +113,7 @@ func TestTextWrapped(t *testing.T) {
 	}
 	// 80 桁では続きの行が遷移の欄（ステップの頭の行の遷移の開始位置）に揃う。
 	steps := stepLines(text(g, 80))
-	col := strings.Index(steps[0], "ok -> analyze")
+	col := strings.Index(steps[0], "ok -> integration-route")
 	if col <= 0 || !strings.HasPrefix(steps[1], strings.Repeat(" ", col)+"base_missing ! base_missing") {
 		t.Fatalf("80 columns: continuation not aligned at %d:\n%s\n%s", col, steps[0], steps[1])
 	}

@@ -198,7 +198,7 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
 | `design-deviation` | `input` × `human`（TTY 必須）。`implement.deviation`・`fix.deviation` から入る | クリティカル設計からの逸脱を人が判断する | 外せない |
 | `review-human` | `input` × `human`（TTY 必須）。`respond.needs_human`・`merge.blocked` から入る | レビュー対応で品質ゲートの失敗や設計変更が出たときに人が判断する | 外せない |
 | 品質の失敗での停止 | `implement.failure`・`implement.review_incomplete`・`fix.failure`・`commit.failure` → `fail` | 品質ゲートに通らない変更・セルフレビューと合流できない変更を PR にしない（#262） | 付け替え不可 |
-| 入口の検査での停止 | `resolve.base_missing`・`resolve.links_invalid`・`resolve.input_invalid`・`resolve.integration_unsupported`・`workspace.conflict` → `fail` | 宛先や作業ツリーが不正なまま進まない | 付け替え不可 |
+| 入口の検査での停止 | `resolve.base_missing`・`resolve.links_invalid`・`resolve.input_invalid`・`integration.refused`・`integration.unavailable`・`workspace.conflict` → `fail` | 宛先や作業ツリーが不正なまま進まない | 付け替え不可 |
 | 差し戻しの上限 | `e2e.fail`・`ci.red`・`quality.fail`（#326）の `limit: rework` | 修正の繰り返しを止める | 形は変えない。回数は `limits.rework` で変えられる（§5.1） |
 | `quality`（#326） | `command`。`fail` は `fix` へ差し戻し、尽きたら `quality_gate_red`。宣言が無ければ `quality_gate_undeclared` | PR を作る前に、push するコミットに対して品質ゲートを機械で回す | `quality` 自身の遷移は付け替え不可。前段から省くことは `overridable.skips` で許す（§5.2） |
 | `review`・`ci-pending` | `input` × `any` | レビュー待ち・CI を確かめる外部待ち | ゲート自体のキーは閉じる（§5.3）。前段から飛ばすことは v1 では許さない（§5.2） |
@@ -236,8 +236,15 @@ E2E・レビュー待ち・CI 待ちの省略は v1 では許さないが、用�
    - **`$gate.approved_ref` を渡す遷移は、`interrupted: { fail: <理由> }` を書かなければならない**（元の定義の検査）: 入れてよいの答えを受けた後に runner が居なくなっても、`interrupted` のゲート（人や呼び出し元の `rerun` で、同じ識別のまま入れる段をやり直す待ち）を開かず、失敗で終える。やり直しは、新しい答え（新しい識別）からにする。
    - 規則 7 が守るのは「一致しない中身が宛先へ入らない」ことで、`land` を受けるゲートへ到達できることは守らない（`land` の道が通らなくなる上書きは、入れない側に倒れるだけである）。
    - `ready` の後の道（`merge-route`・`merge`・`human-merge`）は、規則 1〜3・6 のまま。`merge` の段（`/pr-merge`）は先頭の一致を確かめないが、既定ブランチ宛てへは `merge-route` が通さない。
+8. **origin のブランチを作る・消す・PR を作る段は、外せず、迂回できず、付け替えられない**（#409 で追加。S3b-3〔#413〕で実装済み。`runtime/internal/workflow/landrules.go`・`routes.go`）: 対象は、種類と `action` で決まる段（`pull-request` の `action: ensure-base`・`open`・`retire`）である。段の名前は Go に書かない。
+   - **origin のブランチを消す操作は、`action: retire` の段の中にしか無い**。その段は消す前に、PR が入っている（`MERGED`）・宛先・head のブランチ・入った先頭を、`gh pr view` で自分で確かめる（確かめる所と消す所を 2 つの段に分けない。前の段が `land` であることに頼らない）。1 つでも合わない・読めないときは消さずに `kept`。`branch` が `base` と同じ・リポジトリの既定ブランチのときは、どんな入力でも消す命令を組み立てず `step_error`。消す命令は `git push --porcelain --force-with-lease=refs/heads/<branch>:<入った先頭> origin :refs/heads/<branch>` で、origin の先頭が入った先頭と同じときだけ消える。統合ブランチ宛ての、開いている PR が在るときも消さない。
+   - **`ensure-base` は在る参照を書き換えない**（期待する値を空にした `--force-with-lease`）。rebase・書き換える向きの強制の push は、どの段にも足さない。
+   - **3 つの段のキーは上書きに書けない**（`kind`・`action`・`with` は §5.3 で閉じ、`pull-request` の種類は数値のキーを持たない）。**そこへ入る遷移と、そこから出る遷移は、`overridable.routes` に宣言できない**（宣言があれば元の定義の検査で拒否する。段・候補のどちらにも挙げられない）。上書きで書こうとすると、宣言が無いので `cannot be overridden` で拒否される。
+   - **3 つの段は守るステップで、`overridable.skips` に挙げられない**（規則 6 の守るステップに足す。`fail` へ入る遷移の有無に依らない）。
+   - **既定ブランチへ入れる道は、規則 7 のとおり `land` の段だけ**。`reflect` が統合ブランチの名前を受けても、入れる段は同じ 1 つである。`release_on`（取り消し・失敗のときの片付け）にブランチを消す処理は無く、足さない（消せるのは `retire` だけで、`retire` へ入れるのは `land` の `landed` の後だけ）。
+   - `open` の本文の `Closes`・`Refs` の行は、gh で読んだタスクの PR の本文のうち、行の全体が `Closes #<番号>`・`Refs #<番号>` の形のものだけから Go が写す。LLM（`describe`）の出力からは作らない（概要の中の Issue を閉じる記法は無効にする）。
 
-規則 1〜3・6 はゲートの名前（`human-merge` 等）を Go に書かず、`decider: human` という性質で決める。規則 7 も段の名前を書かず、種類と `action` で決める。`ticket` 以外のワークフローにも同じ規則が効き、新しい人のゲートを足したときに Go を直す必要が無い。`fail` への遷移まで含めたのは、付け替えられると品質ゲートに通らない変更（#262 で塞いだ `review_incomplete` を含む）を PR にする経路が上書き 1 行で開くためである。
+規則 1〜3・6 はゲートの名前（`human-merge` 等）を Go に書かず、`decider: human` という性質で決める。規則 7・8 も段の名前を書かず、種類と `action` で決める。`ticket` 以外のワークフローにも同じ規則が効き、新しい人のゲートを足したときに Go を直す必要が無い。`fail` への遷移まで含めたのは、付け替えられると品質ゲートに通らない変更（#262 で塞いだ `review_incomplete` を含む）を PR にする経路が上書き 1 行で開くためである。
 
 ### 6.3 `--workflow-dir` はこの規則の外にある
 

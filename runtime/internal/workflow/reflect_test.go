@@ -86,6 +86,9 @@ steps:
     with: { ref: $inputs.ref }
     on:
       adopted: { done: ok }
+      no_pr: { fail: no_pr }
+      branch_missing: { fail: branch_missing }
+      empty: { fail: empty }
       unsupported_ref: { fail: unsupported_ref }
       not_open: { fail: not_open }
       not_default_base: { fail: not_default_base }

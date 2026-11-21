@@ -25,13 +25,17 @@ const retryTimes = 3
 
 // prCtx は 1 つの action の実行に要るもの（外部コマンドの起動口と、unit・段・解決した with）。
 type prCtx struct {
-	e     *Engine
-	ctx   context.Context
-	u     *runstate.Unit
-	step  *workflow.Step
-	tools *stepTools
-	with  map[string]json.RawMessage
-	dir   string
+	e       *Engine
+	ctx     context.Context
+	u       *runstate.Unit
+	step    *workflow.Step
+	tools   *stepTools
+	with    map[string]json.RawMessage
+	dir     string
+	runID   string
+	attempt int
+	// fetchedBase は、land が fetch した宛先の先頭（fetch できていなければ空）。統合ブランチ宛ての記録に使う。
+	fetchedBase string
 }
 
 func (c *prCtx) git(args ...string) ([]string, toolResult) {
@@ -139,6 +143,7 @@ func (c *prCtx) sync() result {
 	expect := c.str("expect_head")
 	out := syncOutput{}
 	reentry := false
+	integHead := "" // 取り込みで fetch した宛先の先頭（統合ブランチ宛てのとき記録する）
 	fin := func(outcome, detail string) result {
 		if reentry && outcome == "unavailable" {
 			// 衝突を直した後の取り込みのコミット（push していない）が手元にある。レビュー待ちへ戻すと、次の取り込みが
@@ -146,7 +151,9 @@ func (c *prCtx) sync() result {
 			return stepError("could not reach origin after the conflict was resolved locally: %s", detail)
 		}
 		out.Outcome, out.Detail = outcome, detail
-		return c.done(out)
+		res := c.done(out)
+		res.extra = append(res.extra, c.integrationEvent(base, integHead)...)
+		return res
 	}
 	baseRef := "refs/remotes/origin/" + base
 
@@ -203,6 +210,9 @@ func (c *prCtx) sync() result {
 	}
 	if !r.ok() {
 		return fin("unavailable", "宛先 "+base+" を取得できなかった（手元は変えていない）: "+firstLine(r.describe([]string{"git", "fetch", "origin", base})))
+	}
+	if sha, _ := c.revParse(baseRef); sha != "" {
+		integHead = sha
 	}
 	branch, bres := c.branch()
 	if bres != nil {
@@ -432,6 +442,18 @@ func (c *prCtx) refuseProtected(branch, base string) *result {
 	return nil
 }
 
+// integrationEvent は、宛先 base が、この unit が記録した統合ブランチ（Workspace.IntegrationBranch）と同じときだけ、その先頭 head の
+// 記録（action: integration）を返す。統合先を使わない実行・既定ブランチ宛ての実行には何も返さない。
+func (c *prCtx) integrationEvent(base, head string) []runstate.Event {
+	ws := c.u.Workspace
+	if ws == nil || ws.IntegrationBranch == "" || ws.IntegrationBranch != base || head == "" {
+		return nil
+	}
+	return []runstate.Event{{Type: runstate.EvWorkspace, Workspace: &runstate.WorkspaceEvent{
+		Unit: c.u.Key, Action: runstate.WorkspaceIntegration, Branch: base, HeadSHA: head,
+	}}}
+}
+
 // prEvent は pr の記録（PR のいまの先頭・入れた後のコミット）。ラウンドごとの先頭の記録は publish だけが書く。
 func (c *prCtx) prEvent(pr int, url, branch, head, merge string, headOnly bool) runstate.Event {
 	return runstate.Event{Type: runstate.EvWorkspace, Workspace: &runstate.WorkspaceEvent{
@@ -450,6 +472,7 @@ type landOutput struct {
 }
 
 type prView struct {
+	Title       string `json:"title"`
 	State       string `json:"state"`
 	HeadRefOid  string `json:"headRefOid"`
 	BaseRefName string `json:"baseRefName"`
@@ -487,6 +510,13 @@ func (c *prCtx) land() result {
 		if head != "" || merge != "" {
 			res.extra = append(res.extra, c.prEvent(pr, "", "", head, merge, true))
 		}
+		// 統合ブランチの先頭: 入れた（landed）なら入れた後のコミット（読み直した origin の先頭にしない）、そうでなく宛先を fetch したなら
+		// fetch した先頭。
+		if outcome == "landed" {
+			res.extra = append(res.extra, c.integrationEvent(base, merge)...)
+		} else {
+			res.extra = append(res.extra, c.integrationEvent(base, c.fetchedBase)...)
+		}
 		return res
 	}
 
@@ -519,8 +549,13 @@ func (c *prCtx) land() result {
 	}
 
 	// 9: 入れる。squash に固定し、先頭が通した中身と一致するときだけ GitHub が受ける（--match-head-commit）。
-	// --auto・--admin・--delete-branch は付けない。
-	argv, r := c.gh("pr", "merge", fmt.Sprint(pr), "--squash", "--match-head-commit", approved)
+	// 出来るコミットの題名は、PR のコミットの数に関わらず「PR の題名 (#番号)」にする（GitHub の既定は、コミットが 1 つだけの PR ではそのコミットの
+	// 文面）。--auto・--admin・--delete-branch は付けない。
+	mergeArgs := []string{"pr", "merge", fmt.Sprint(pr), "--squash", "--match-head-commit", approved}
+	if t := strings.TrimSpace(view.Title); t != "" {
+		mergeArgs = append(mergeArgs, "--subject", fmt.Sprintf("%s (#%d)", t, pr))
+	}
+	argv, r := c.gh(mergeArgs...)
 	if cancelled(r) {
 		return result{cancelled: true}
 	}
@@ -567,7 +602,7 @@ func (c *prCtx) readPR(pr int, v *prView, tries int) ([]string, toolResult) {
 		if i > 0 && !c.pause() {
 			return argv, toolResult{how: cancelledByRequest, code: -1}
 		}
-		argv, r = c.gh("pr", "view", fmt.Sprint(pr), "--json", "state,headRefOid,baseRefName,mergeCommit,isDraft")
+		argv, r = c.gh("pr", "view", fmt.Sprint(pr), "--json", "title,state,headRefOid,baseRefName,mergeCommit,isDraft")
 		if cancelled(r) {
 			return argv, r
 		}
@@ -587,6 +622,7 @@ func (c *prCtx) readPR(pr int, v *prView, tries int) ([]string, toolResult) {
 // landChecks は land の表の 1〜7' を上から順に確かめ、最初に当たったものを返す（どれにも当たらなければ nil）。
 // 取り消されたら 2 つ目の値を返す。view には読めた PR を入れる。
 func (c *prCtx) landChecks(pr int, base, approved string, view *prView) (*landOutput, *result) {
+	c.fetchedBase = "" // この確かめで宛先を fetch したときだけ、その先頭を統合ブランチの記録に使う
 	// 1: PR を読む。
 	var v prView
 	argv, r := c.readPR(pr, &v, retryTimes)
@@ -625,6 +661,11 @@ func (c *prCtx) landChecks(pr int, base, approved string, view *prView) (*landOu
 	if cancelled(r) {
 		res := result{cancelled: true}
 		return nil, &res
+	}
+	if r.ok() {
+		if sha, _ := c.revParse(baseRef); sha != "" {
+			c.fetchedBase = sha
+		}
 	}
 	if !r.ok() {
 		return &landOutput{Outcome: "blocked", Detail: "宛先 " + base + " を取得できなかった: " + firstLine(r.describe([]string{"git", "fetch", "origin", base}))}, nil

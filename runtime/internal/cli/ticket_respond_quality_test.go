@@ -62,7 +62,7 @@ func originHead(t *testing.T, f *ticketFixture) string {
 	return remote[0]
 }
 
-const firstRound = "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:green"
+const firstRound = "resolve:ok integration-route:none analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current e2e-route:no quality:pass publish:opened ci:green"
 
 // respond の push の後は quality を通り、PR が既にあるので publish は updated で ci へ進む。PR は作り直さず、本文も書かない。
 // 記録の commit_sha は respond が push した SHA（= 実際の PR の head）になる。
@@ -191,7 +191,7 @@ func TestTicketRespondSkipsQualityWithTheOverride(t *testing.T) {
 				t.Fatalf("resume exit %d\n%s\n%s", code, out, errOut)
 			}
 			v := decode[statusView](t, out)
-			want := "resolve:ok analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current " + c.first + " respond:pushed ci:green"
+			want := "resolve:ok integration-route:none analyze:ok workspace:created implement:pass self-review-route:complete commit:committed sync:current " + c.first + " respond:pushed ci:green"
 			if got := stepSeq(v); got != want {
 				t.Fatalf("steps:\n got %s\nwant %s", got, want)
 			}

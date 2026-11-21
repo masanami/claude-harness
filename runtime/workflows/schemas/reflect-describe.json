@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "reflect ワークフローの describe（統合ブランチから既定ブランチへ作る PR の題名と概要）の型付き出力",
+  "type": "object",
+  "required": ["outcome", "pr_title", "summary"],
+  "properties": {
+    "outcome": { "type": "string", "enum": ["ok", "failure"] },
+    "pr_title": { "type": "string" },
+    "summary": { "type": "string" }
+  },
+  "additionalProperties": false
+}

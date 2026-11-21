@@ -1,0 +1,21 @@
+# pull-request 種類の action: adopt（§5.6.2・§5.6.3）。結果の outcome ごとに別の理由で終える。
+schema: harness.workflow/v1
+id: pr-adopt
+inputs:
+  ref: { type: string, required: true }
+steps:
+  adopt:
+    kind: pull-request
+    action: adopt
+    with: { ref: $inputs.ref }
+    on:
+      adopted: { done: adopted }
+      no_pr: { done: no_pr }
+      unsupported_ref: { done: unsupported_ref }
+      branch_missing: { done: branch_missing }
+      empty: { done: empty }
+      not_open: { done: not_open }
+      not_default_base: { done: not_default_base }
+      fork: { done: fork }
+      draft: { done: draft }
+      other_repo: { done: other_repo }

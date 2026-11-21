@@ -47,6 +47,7 @@ var (
 	reArgName  = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)       // command の with の名前（--<名前> になる）
 	reName     = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)        // limits の名前・fail/done の理由
 	reOutcome  = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)       // outcome の値
+	reAction   = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)       // pull-request・workspace の action の値（ensure-base のようにハイフンを含みうる）
 	reScript   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)     // command の run（スクリプト名）
 	reRefInput = regexp.MustCompile(`^\$inputs\.([A-Za-z_][A-Za-z0-9_]*)$`)
 	reRefStep  = regexp.MustCompile(`^\$steps\.([a-z][a-z0-9-]*)((?:\.[A-Za-z_][A-Za-z0-9_]*)+)$`)
@@ -608,7 +609,7 @@ func (p *parser) step(id string, knode, n *yaml.Node) *Step {
 		case "value":
 			s.Value = p.reference(f.val, fw)
 		case "action":
-			s.Action, _ = p.matched(f.val, fw, reName)
+			s.Action, _ = p.matched(f.val, fw, reAction)
 		case "on":
 			onNode = f.val
 		}

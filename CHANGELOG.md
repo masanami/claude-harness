@@ -8,6 +8,27 @@
 
 ---
 
+## 5.3.0（harness CLI: `runtime/v5.3.0`）
+
+### 追加
+
+- **`harness run reflect` が、統合ブランチの名前を `artifact_ref` に受けられるようになった（Issue #413。#409 の S3b-3）。** `--input artifact_ref=integration/c-12` のように渡すと、統合ブランチから既定ブランチへの PR を探し（在れば使い、PR を増やさない）、無ければ題名と概要を LLM（新しい段 `describe`。読むだけ）が書き、`open`（`pull-request` の新しい `action: open`。決定的な Go の段）が PR を作る。本文の「入っているタスクの PR」の表と、`Closes`・`Refs` の行は、統合ブランチへ入ったタスクの PR の本文から（行の全体が `Closes #<番号>`・`Refs #<番号>` の形のものだけ）Go が写し、LLM の出力からは作らない。既定ブランチの最新はマージのコミットで統合ブランチへ push し、検証して、レビュー待ち（`options` は `land` だけ。`role` の付いた要素は出さない）で待つ。`land`（squash）で既定ブランチへ入れた後は、`retire`（`pull-request` の新しい `action: retire`）が統合ブランチを origin から消す。消すのは「PR が入っている・宛先・head のブランチ・入った先頭」を段の中で確かめ、origin の先頭が入った先頭と同じときだけ（`--force-with-lease=<参照>:<先頭>`）で、合わなければ消さずに `kept`（実行は `succeeded`・終わりの理由 `landed_integration_kept`）。取り消し・失敗では統合ブランチを消さず、作った PR も閉じない。PR の URL を渡した依頼は、動きが変わらない（入れた後に PR のブランチを消さない。`land` の後に `retire-route`〔`select`〕を 1 つ通るだけ）。段は 12 → 17。`adopt` の出力に `source`（`pr`・`integration`）を、`outcome` に `no_pr`・`branch_missing`・`empty` を足した。接続契約の版（1）・ワークフローのスキーマ版（`harness.workflow/v1`）は変えない。`plugin/` のスクリプトは変えない。**利用者が取る操作**: 5.2.0 で始めて、レビュー待ちのまま残っている `reflect` の run は、組み込みの `adopt` の出力に足した結果（`no_pr`・`branch_missing`・`empty`）を開始時の定義が扱わないため、新しい CLI では再開できない（版の不一致として止まる）。5.2.0 の CLI で終えるか、`harness cancel` して新しい CLI で依頼し直す。
+- **上書きで外せない守りに、規則 8 を足した（docs/harness-runtime-overrides.md §6.2）。** origin のブランチを作る・消す・PR を作る段（`pull-request` の `action: ensure-base`・`open`・`retire`）のキーと、そこへ入る・そこから出る遷移は上書きで変えられず、`overridable.skips` にも `overridable.routes` にも挙げられない。origin のブランチを消す操作は `retire` の段の中にしか無い。**利用者が取る操作**: 何もしなくてよい（同梱の定義は、この規則に当たる宣言を持たない）。
+- **統合ブランチ宛ての `land`・取り込みが、入れた後の統合ブランチの先頭を記録するようになった（Issue #412。#409 の S3b-2）。** 宛先が `Workspace.integration_branch` と同じ `sync`・`land-sync`・`land` は、`workspace` イベント（`action: integration`）で統合ブランチの先頭を書く。取り込みで fetch した宛先は fetch した `origin/<統合ブランチ>` の先頭、`land` が入れたとき（`landed`）は入れた後のコミット（`merge_commit` と同じ値）。入れて終えた実行では、`harness contract` の `role: integration` の `commit` が入れた後のコミットになる（`role` の無い `commit` と同じ値で、いつもちょうど 1 つの決まりは変わらない）。`ready` の後の道（`merge`・`human-merge`）で終えた実行は変わらない。
+- **`harness status`・`harness contract status` が、`refresh: pr-head` のゲートで待っている間に、統合ブランチの先頭も読み直すようになった。** 統合先の記録のある実行だけ、PR の先頭の前に `git ls-remote origin refs/heads/<統合ブランチ>` を呼び、記録と違えば `integration` を書く（読めなければ書かず、標準エラーに理由を出して記録のまま出す）。統合先の記録の無い実行は `ls-remote` を呼ばない。文法・接続契約の版（1）・スキーマ版（`harness.workflow/v1`）は変わらない。**利用者が取る操作**: 何もしなくてよい。
+- **`harness run ticket` が、統合先（統合ブランチ）を決めて作れるようになった（Issue #411。#409 の S3b-1）。** `uses_integration=true` と `challenge_id` を渡すと、PR の宛先は統合ブランチ `integration/<challenge_id を小文字にしたもの>`（例: `C-12` → `integration/c-12`）になり、origin に無ければ既定ブランチの先頭から作る（在れば動かさない）。`resolve` の後に、段 `integration-route`（`select`）と `integration`（`pull-request` の新しい `action: ensure-base`）を足した（段は 27 → 29）。`uses_integration` を渡さない実行は、段が 1 つ（`integration-route`。外部を呼ばない）増えるだけで、動き・出力・失敗の理由は変わらない。`Base:` 行・`base` の入力で人が作った統合ブランチを渡す今までの道も変わらない（無ければ `base_missing`）。
+- **`harness contract` の `artifacts` の要素に、任意のキー `role` を足した。** 統合先を使う実行だけが、統合ブランチ（`kind: branch`）とその先頭（`kind: commit`）を `role: integration` の要素で 1 つずつ出す。`role` の無い要素（PR・作業ブランチ・`commit`）の意味と数は変えない（`role` の無い `commit` はいつもちょうど 1 つ。PR を出す前は 0）。
+- `Workspace` に `integration_branch`・`integration_head` を、`workspace` イベントに `action: integration` を足した（任意の欄。古い記録には無い）。
+
+### 変更
+
+- **`land` が squash で入れるとき、出来るコミットの題名を「PR の題名 (#番号)」にするようになった（Issue #417）。** `gh pr merge` に `--subject "<PR の題名> (#<番号>)"` を付ける。今までは、コミットが 1 つだけの PR では GitHub の既定でそのコミットの文面が題名になっていた（複数なら PR の題名）。統合ブランチ宛て（`ticket`）・既定ブランチ宛て（`ticket`・`reflect`）のどちらにも効く。`--match-head-commit` と、通した中身（`approved_ref`）の確かめ・squash で入れること・`--auto`・`--admin`・`--delete-branch` を付けないことは変えない。接続契約の版（1）・スキーマ版（`harness.workflow/v1`）・flywheel との契約の形は変えない。**利用者が取る操作**: 何もしなくてよい。
+- **5.2.0 の CLI で始めてレビュー待ちのまま残っている `reflect` の実行は、新しい CLI では再開できない。** 組み込みの `adopt` の出力に足した結果（`no_pr`・`branch_missing`・`empty`）を、開始時の定義が扱わないため、版の不一致として止まる。**利用者が取る操作**: 5.2.0 の CLI で終えるか、`harness cancel` して新しい CLI で依頼し直す。
+- **`reflect` の失敗の理由 `integration_reflect_unsupported` を外し、`artifact_ref_invalid`（PR の URL でも受けられるブランチの名前でもない・既定ブランチの名前）に置き換えた。** 足した理由: `integration_missing`（受けた名前のブランチが origin に無い）・`integration_empty`（既定ブランチに無いコミットが 1 つも無い）・`describe_failed`（題名と概要を書けなかった）・`pr_not_found`（PR を作ったのに見つからない）。終わりの理由（成功）に `landed_integration_kept`（既定ブランチへ入れたが、統合ブランチを残した）を足した。flywheel は失敗の理由の語で分岐しない。ブランチの名前の形の `artifact_ref`（例: `7`）は、これまで `unsupported_ref` で止まっていたが、ブランチの名前として扱われ、origin に無ければ `integration_missing` で止まる。
+- **失敗の理由 `integration_unsupported` を外し、`integration_create_failed`（origin が統合ブランチを作ることを拒んだ）を足した。** `uses_integration=true` が `integration_unsupported` で止まることはなくなった。`uses_integration=true` で `challenge_id` が無い・形が違う・`base` も渡された場合は `input_invalid` で止まる。ワークフローの定義の文法では、`action` の値にハイフン（`ensure-base`）を書けるようにした。接続契約の版（1）・ワークフローのスキーマ版（`harness.workflow/v1`）は変えない。
+
+---
+
 ## 5.2.0（harness CLI: `runtime/v5.2.0`）
 
 ### 追加

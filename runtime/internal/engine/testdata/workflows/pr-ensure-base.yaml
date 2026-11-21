@@ -1,0 +1,16 @@
+# pull-request 種類の action: ensure-base（§5.6.3）。結果の outcome ごとに別の理由で終える。
+schema: harness.workflow/v1
+id: pr-ensure-base
+inputs:
+  branch: { type: string, required: true }
+  from:   { type: string, required: true }
+steps:
+  integration:
+    kind: pull-request
+    action: ensure-base
+    with: { branch: $inputs.branch, from: $inputs.from }
+    on:
+      created: { done: created }
+      existing: { done: existing }
+      refused: { fail: refused }
+      unavailable: { fail: unavailable }

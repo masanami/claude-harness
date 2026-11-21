@@ -42,7 +42,7 @@ func (e *Engine) executePullRequest(ctx context.Context, st *runstate.State, u *
 	}
 	dir := e.dirFor(u)
 	if action := workflow.PRAction(step); action != workflow.PRActionPublish {
-		c := &prCtx{e: e, ctx: ctx, u: u, step: step, tools: tools, with: with, dir: dir}
+		c := &prCtx{e: e, ctx: ctx, u: u, step: step, tools: tools, with: with, dir: dir, runID: st.RunID, attempt: attempt}
 		switch action {
 		case workflow.PRActionSync:
 			return c.sync()
@@ -52,6 +52,12 @@ func (e *Engine) executePullRequest(ctx context.Context, st *runstate.State, u *
 			return c.land()
 		case workflow.PRActionAdopt:
 			return c.adopt()
+		case workflow.PRActionEnsureBase:
+			return c.ensureBase()
+		case workflow.PRActionOpen:
+			return c.open()
+		case workflow.PRActionRetire:
+			return c.retire()
 		}
 		return stepError("pull-request action %q is not supported", action)
 	}

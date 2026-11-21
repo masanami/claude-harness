@@ -1,0 +1,17 @@
+# pull-request 種類の action: retire（§5.6.3）。
+schema: harness.workflow/v1
+id: pr-retire
+inputs:
+  pr: { type: integer, required: true }
+  branch: { type: string, required: true }
+  base: { type: string, required: true }
+  head: { type: string, required: true }
+steps:
+  retire:
+    kind: pull-request
+    action: retire
+    with: { pr: $inputs.pr, branch: $inputs.branch, base: $inputs.base, head: $inputs.head }
+    on:
+      deleted: { done: deleted }
+      absent: { done: absent }
+      kept: { done: kept }

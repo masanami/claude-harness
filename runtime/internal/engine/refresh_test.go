@@ -80,7 +80,7 @@ func refreshWhile(t *testing.T, run *runstate.Run, st *runstate.State, bin, dir 
 	done := make(chan res, 1)
 	go func() {
 		var warn bytes.Buffer
-		s := RefreshHeads(context.Background(), run, st, bin, t.TempDir(), &warn)
+		s := RefreshHeads(context.Background(), run, st, bin, "", t.TempDir(), &warn)
 		done <- res{s, warn.String()}
 	}()
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
@@ -135,7 +135,7 @@ func TestRefreshHeadsWritesNothingForTheRecordedHead(t *testing.T) {
 func TestRefreshHeadsDoesNotCallGhWithoutTheMark(t *testing.T) {
 	run, st := refreshRun(t, "")
 	bin, dir := ghScript(t, "def")
-	got := RefreshHeads(context.Background(), run, st, bin, t.TempDir(), &bytes.Buffer{})
+	got := RefreshHeads(context.Background(), run, st, bin, "", t.TempDir(), &bytes.Buffer{})
 	if n := ghCalls(dir); n != 0 || got != st {
 		t.Fatalf("gh calls = %d (state returned as is: %v)", n, got == st)
 	}
@@ -145,7 +145,7 @@ func TestRefreshHeadsDoesNotCallGhWithoutTheMark(t *testing.T) {
 func TestRefreshHeadsKeepsTheRecordWhenGhFails(t *testing.T) {
 	run, st := refreshRun(t, "pr-head")
 	var warn bytes.Buffer
-	got := RefreshHeads(context.Background(), run, st, filepath.Join(t.TempDir(), "no-such-gh"), t.TempDir(), &warn)
+	got := RefreshHeads(context.Background(), run, st, filepath.Join(t.TempDir(), "no-such-gh"), "", t.TempDir(), &warn)
 	if got.Unit(MainUnit).Workspace.HeadSHA != "abc" || !strings.Contains(warn.String(), "cannot refresh the PR head") || headEventCount(t, run) != 0 {
 		t.Fatalf("workspace = %+v warn = %q", got.Unit(MainUnit).Workspace, warn.String())
 	}
