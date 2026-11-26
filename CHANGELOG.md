@@ -8,6 +8,20 @@
 
 ---
 
+## [Unreleased]
+
+### 変更
+
+- **`/promote-verify` が、受入基準を検証しやすい単位のまとまりで 1 体のエージェントに渡すようになった（Issue #423）。** 今までは受入基準 1 件につき `doc-verifier` を 1 体、`consistent` と出た基準ごとに `finding-verifier` をもう 1 体起動していた（基準が 127 件なら最大で約 250 体）。これからは、1 まとまり（上限は既定 10 件。正本は `skills/promote-verify/SKILL.md` の `MAX_CRITERIA_PER_GROUP` の 1 行）を 1 体に渡し、1 体が基準ごとに判定・根拠・推奨を返す。反証（`finding-verifier`）も、`consistent` になった基準を同じまとまりのまま 1 体に渡す。まとまりは、(1) 子Issueの `対応する受入基準:` の行（子Issueごと。対応するマージ済みの PR の変更ファイルの一覧を添える） (2) 親Issueの受入基準の節の中の `### ` の小見出し (3) 並び順、の順に最初に使える手がかりで作り、上限を超えたら並び順のまま割る。小さいまとまりは、ほかのまとまりと混ぜない。まとまりの応答に入っていない基準・形が違う基準は、今までどおり `verification_failed`（反証では `uncertain`）として人の確認へ回す。報告に「まとまりの作り方」（まとまりの数と使った手がかり・複数の子Issueが挙げた基準・親Issueに無い ID）が増える。受入基準チェックリストの表の列と、`readyForPromotion` の判定式（`promotion-decision`）は変わらない。**利用者が取る操作**: 何もしなくてよい（プラグインを更新すれば効く）。
+- `agents/doc-verifier.md`・`agents/finding-verifier.md` に、複数の対象をまとめて渡されたときは対象ごとに独立に判定して 1 件ずつ返すことを足した。`/self-review`・`/pr-merge` での `finding-verifier` の使い方（指摘ごとに 1 体）は変わらない。
+
+### 追加
+
+- **`extract-acceptance-criteria` の出力の `criteria` の各要素に、節 `section`（`"受入基準"` | `"完了条件"`）と小見出し `subheading`（節の中の `### ` 見出しの文。無ければ `null`）を足した（Issue #423）。** 既存の項目（`id`・`text`・`checked`）と通しIDの振り方は変わらない。
+- **スクリプト `group-acceptance-criteria` を足した（Issue #423）。** 受入基準の一覧・子Issueごとの受け持ち・上限（`--max-per-group`。必須で既定値は無い）から、まとまりの一覧・複数の子Issueが挙げた基準・親Issueに無い ID を JSON で返す。仕様は `scripts/specs/group-acceptance-criteria.md`。`claude-harness-run group-acceptance-criteria` で呼べる（`scripts/` 直下の `*.sh` は追加の登録なしでランチャーの対象になる）。
+
+---
+
 ## 5.3.0（harness CLI: `runtime/v5.3.0`）
 
 ### 追加

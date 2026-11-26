@@ -207,6 +207,84 @@ assert_eq "CLI: excluded_headings が 3 件" "3" "$(jq '.excluded_headings | len
 assert_eq "CLI: 括弧付き見出しが無い本文では空配列" "[]" "$(jq -c '.excluded_headings' <<<"$CLI_OUTPUT")"
 
 echo ""
+echo "=== test: 基準ごとに節（section）と小見出し（subheading）を出す（#423） ==="
+
+read -r -d '' FIXTURE_SUBHEADINGS <<'EOF'
+## 受入基準
+
+- [ ] 小見出しの前の基準
+
+### ログイン
+
+- [ ] ログインできる
+- [x] 失敗時にエラーが出る
+
+#### 細かい場合
+
+- [ ] ロックされる
+
+### 通知
+
+- [ ] 通知が届く
+
+###
+
+- [ ] 文の無い見出しの後ろは小見出し無しに戻る
+
+## 完了条件
+
+- [ ] 節が変わると小見出しを引き継がない
+
+### 後始末
+
+- [ ] 一時ファイルを消す
+
+## 補足
+
+### 節の外の小見出し
+
+- [ ] 節の外の行は抽出しない
+EOF
+parse_acceptance_criteria "$FIXTURE_SUBHEADINGS"
+assert_eq "小見出し: 抽出は 8 件（節の外は含めない）" "8" "$(jq 'length' <<<"$CRITERIA_JSON")"
+assert_eq "小見出しの前の基準は subheading が null（空文字にしない）" "null" "$(jq -c '.[0].subheading' <<<"$CRITERIA_JSON")"
+assert_eq "### の見出しの文が subheading になる（### と前後の空白を除く）" "ログイン" "$(jq -r '.[1].subheading' <<<"$CRITERIA_JSON")"
+assert_eq "同じ小見出しの 2 件目も同じ値" "ログイン" "$(jq -r '.[2].subheading' <<<"$CRITERIA_JSON")"
+assert_eq "#### より深い見出しの下の基準は、直近の ### に含める" "ログイン" "$(jq -r '.[3].subheading' <<<"$CRITERIA_JSON")"
+assert_eq "次の ### で小見出しが変わる" "通知" "$(jq -r '.[4].subheading' <<<"$CRITERIA_JSON")"
+assert_eq "文の無い ### だけの行（行末の空白なし）の後ろは null に戻る" "null" "$(jq -c '.[5].subheading' <<<"$CRITERIA_JSON")"
+assert_eq "節が変わると小見出しを引き継がない（null に戻る）" "null" "$(jq -c '.[6].subheading' <<<"$CRITERIA_JSON")"
+assert_eq "次の節の ### も小見出しになる" "後始末" "$(jq -r '.[7].subheading' <<<"$CRITERIA_JSON")"
+assert_eq "section は、受入基準の節の基準で 受入基準" "受入基準" "$(jq -r '[.[0:6][].section] | unique | join(",")' <<<"$CRITERIA_JSON")"
+assert_eq "section は、完了条件の節の基準で 完了条件" "完了条件" "$(jq -r '[.[6:8][].section] | unique | join(",")' <<<"$CRITERIA_JSON")"
+
+# 文が空の見出し（"### " の後ろが空白だけ）。行末の空白をエディタに消されないよう printf で組み立てる。
+FIXTURE_EMPTY_HEADING="$(printf '## 受入基準\n\n### 見出しA\n\n- [ ] A の基準\n\n###  \n\n- [ ] 文が空の見出しの後ろ\n')"
+parse_acceptance_criteria "$FIXTURE_EMPTY_HEADING"
+assert_eq "文が空の ###（行末に空白あり）の後ろも subheading が null に戻る" '"見出しA" null' \
+  "$(jq -r '[.[].subheading | tojson] | join(" ")' <<<"$CRITERIA_JSON")"
+
+echo ""
+echo "=== test: 既存の項目（id・text・checked）の形は変えない（ほかの利用者を壊さない） ==="
+
+parse_acceptance_criteria "$FIXTURE_FEATURE_SPEC"
+assert_eq "項目のキーは id・text・checked に section・subheading を足しただけ" \
+  '["checked","id","section","subheading","text"]' "$(jq -c '.[0] | keys' <<<"$CRITERIA_JSON")"
+assert_eq "id・text・checked の値は今までどおり" \
+  '{"id":"AC-2","text":"ログイン失敗時にエラーメッセージが表示される","checked":true}' \
+  "$(jq -c '.[1] | {id, text, checked}' <<<"$CRITERIA_JSON")"
+assert_eq "小見出しの無い本文では、全件の subheading が null" "true" \
+  "$(jq -c 'all(.[]; .subheading == null)' <<<"$CRITERIA_JSON")"
+assert_eq "id・text の型は文字列のまま（check-e2e-traceability の入力検査と同じ条件）" "true" \
+  "$(jq -c 'all(.[]; (.id | type) == "string" and (.text | type) == "string")' <<<"$CRITERIA_JSON")"
+
+CLI_SUB_OUTPUT="$(bash "$TARGET_SCRIPT" --stdin <<<"$FIXTURE_SUBHEADINGS")"
+assert_eq "CLI: 出力の最上位のキーは変えない" '["criteria","excluded_headings","issue","parse_status"]' \
+  "$(jq -c 'keys' <<<"$CLI_SUB_OUTPUT")"
+assert_eq "CLI: criteria に section・subheading が出る" "受入基準|ログイン" \
+  "$(jq -r '.criteria[1] | .section + "|" + .subheading' <<<"$CLI_SUB_OUTPUT")"
+
+echo ""
 echo "=== summary ==="
 echo "pass: ${PASS_COUNT}, fail: ${FAIL_COUNT}"
 

@@ -18,6 +18,7 @@
 | worktree-setup.sh / worktree-cleanup.sh | `scripts/specs/worktree-setup.md` |
 | demo-e2e-out.sh | `scripts/specs/demo-e2e-out.md` |
 | promotion-decision.sh | `scripts/specs/promotion-decision.md` |
+| group-acceptance-criteria.sh | `scripts/specs/group-acceptance-criteria.md` |
 | list-test-files.sh | `scripts/specs/list-test-files.md` |
 | read-plugin-doc.sh | `scripts/specs/read-plugin-doc.md` |
 | retirement-sweep.sh | `scripts/specs/retirement-sweep.md` |
